@@ -47,7 +47,7 @@ pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncForm
     var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch bun.outOfMemory();
+    return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
 }
 
 pub fn estimatedSize(this: *Response) callconv(.C) usize {
@@ -173,38 +173,38 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
         try writer.writeAll("\"");
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.init.status_text});
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         formatter.resetLine();
@@ -532,7 +532,7 @@ pub fn constructRedirect(
 
     const vm = globalThis.bunVM();
     // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
-    if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
+    if (vm.getDevServerAsyncLocalStorage()) |async_local_storage| {
         try assertStreamingDisabled(globalThis, async_local_storage, "Response.redirect");
         return ptr.toJSForSSR(globalThis, .redirect);
     }
@@ -550,8 +550,8 @@ pub fn constructRender(
     const arguments = callframe.arguments_old(2);
     const vm = globalThis.bunVM();
 
-    // Check if dev_server_async_local_storage is set
-    const async_local_storage = vm.dev_server_async_local_storage.get() orelse {
+    // Check if dev server async local_storage is set
+    const async_local_storage = vm.getDevServerAsyncLocalStorage() orelse {
         return globalThis.throwInvalidArguments("Response.render() is only available in the Bun dev server", .{});
     };
 
@@ -678,27 +678,14 @@ pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
         // inside of a react component
         if (bake_ssr_has_jsx != null) {
             bake_ssr_has_jsx.?.* = 0;
-            if (globalThis.allowJSXInResponseConstructor() and try arguments[0].isJSXElement(globalThis)) {
+            if (try arguments[0].isJSXElement(globalThis)) {
                 const vm = globalThis.bunVM();
-                if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
+                if (vm.getDevServerAsyncLocalStorage()) |async_local_storage| {
                     try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
                 }
                 bake_ssr_has_jsx.?.* = 1;
             }
             _ = this_value;
-            // const arg = arguments[0];
-            // // Check if it's a JSX element (object with $$typeof)
-            // if (try arg.isJSXElement(globalThis)) {
-            //     const vm = globalThis.bunVM();
-            //     if (vm.dev_server_async_local_storage.get()) |async_local_storage| {
-            //         try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
-            //     }
-
-            //     // Pass the response options (arguments[1]) to transformToReactElement
-            //     // so it can store them for later use when the component is rendered
-            //     const responseOptions = if (arguments[1].isObject()) adirectrguments[1] else .js_undefined;
-            //     try JSValue.transformToReactElementWithOptions(this_value, arg, responseOptions, globalThis);
-            // }
         }
     }
     var init: Init = (brk: {

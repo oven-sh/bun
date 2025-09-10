@@ -1,7 +1,8 @@
 import { fileURLToPath, $ as Shell } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { makeTree } from "harness";
 import { readFileSync } from "node:fs";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
@@ -13,7 +14,7 @@ const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
 const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.json");
 const BUN_TYPES_PACKAGE_JSON_PATH = join(BUN_TYPES_PACKAGE_ROOT, "package.json");
 const BUN_VERSION = (process.env.BUN_VERSION ?? Bun.version ?? process.versions.bun).replace(/^.*v/, "");
-const BUN_TYPES_TARBALL_NAME = `types-bun-${BUN_VERSION}.tgz`;
+const BUN_TYPES_TARBALL_NAME = `bun-types-${BUN_VERSION}.tgz`;
 
 const { config: sourceTsconfig } = ts.readConfigFile(TSCONFIG_SOURCE_PATH, ts.sys.readFile);
 
@@ -26,44 +27,55 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
 const $ = Shell.cwd(BUN_REPO_ROOT);
 
 let TEMP_DIR: string;
-let FIXTURE_DIR: string;
+let TEMP_FIXTURE_DIR: string;
 
 beforeAll(async () => {
   TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
-  FIXTURE_DIR = join(TEMP_DIR, "fixture");
+  TEMP_FIXTURE_DIR = join(TEMP_DIR, "fixture");
 
   try {
-    await $`mkdir -p ${FIXTURE_DIR}`;
+    await $`mkdir -p ${TEMP_FIXTURE_DIR}`;
 
-    await cp(FIXTURE_SOURCE_DIR, FIXTURE_DIR, { recursive: true });
+    await cp(FIXTURE_SOURCE_DIR, TEMP_FIXTURE_DIR, { recursive: true });
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun install
-
-      # temp package.json with @types/bun name and version
       cp package.json package.json.backup
     `;
 
     const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
 
-    await Bun.write(
-      BUN_TYPES_PACKAGE_JSON_PATH,
-      JSON.stringify({ ...pkg, name: "@types/bun", version: BUN_VERSION }, null, 2),
-    );
+    await Bun.write(BUN_TYPES_PACKAGE_JSON_PATH, JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun run build
-      bun pm pack --destination ${FIXTURE_DIR}
+      bun pm pack --destination ${TEMP_FIXTURE_DIR}
       rm CLAUDE.md
       mv package.json.backup package.json
 
-      cd ${FIXTURE_DIR}
-      bun uninstall @types/bun || true
-      bun add @types/bun@${BUN_TYPES_TARBALL_NAME}
+      cd ${TEMP_FIXTURE_DIR}
+      bun add bun-types@${BUN_TYPES_TARBALL_NAME}
       rm ${BUN_TYPES_TARBALL_NAME}
     `;
+
+    const atTypesBunDir = join(TEMP_FIXTURE_DIR, "node_modules", "@types", "bun");
+    console.log("Making tree", atTypesBunDir);
+
+    await mkdir(atTypesBunDir, { recursive: true });
+    await makeTree(atTypesBunDir, {
+      "index.d.ts": '/// <reference types="bun-types" />',
+      "package.json": JSON.stringify({
+        "private": true,
+        "name": "@types/bun",
+        "version": BUN_VERSION,
+        "projects": ["https://bun.sh"],
+        "dependencies": {
+          "bun-types": BUN_VERSION,
+        },
+      }),
+    });
   } catch (e) {
     if (e instanceof Bun.$.ShellError) {
       console.log(e.stderr.toString());
@@ -85,7 +97,7 @@ async function diagnose(
   const tsconfig = config.options ?? {};
   const extraFiles = config.files;
 
-  const glob = new Bun.Glob("**/*.{ts,tsx}").scan({
+  const glob = new Bun.Glob("./*.{ts,tsx}").scan({
     cwd: fixtureDir,
     absolute: true,
   });
@@ -180,7 +192,7 @@ function checkForEmptyInterfaces(program: ts.Program) {
 
   for (const symbol of globalSymbols) {
     // find only globals
-    const declarations = symbol.declarations || [];
+    const declarations = symbol.declarations ?? [];
 
     const concernsBun = declarations.some(decl => decl.getSourceFile().fileName.includes("node_modules/@types/bun"));
 
@@ -240,7 +252,7 @@ afterAll(async () => {
 
 describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR);
+    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR);
 
     expect(emptyInterfaces).toEqual(new Set());
     expect(diagnostics).toEqual([]);
@@ -263,9 +275,9 @@ describe("@types/bun integration test", () => {
     `;
 
     test("checks without lib.dom.d.ts and test-globals references", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
         files: {
-          "reference-the-globals.ts": `/// <reference types="bun/test-globals" />`,
+          "reference-the-globals.ts": `/// <reference types="bun-types/test-globals" />`,
           "my-test.test.ts": code,
         },
       });
@@ -275,17 +287,81 @@ describe("@types/bun integration test", () => {
     });
 
     test("test-globals FAILS when the test-globals.d.ts is not referenced", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
-        files: { "my-test.test.ts": code }, // no reference to bun/test-globals
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: { "my-test.test.ts": code }, // no reference to bun-types/test-globals
       });
 
       expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces
-      expect(diagnostics).not.toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          "code": 2582,
+          "line": "my-test.test.ts:2:48",
+          "message":
+            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+        },
+        {
+          "code": 2582,
+          "line": "my-test.test.ts:3:46",
+          "message":
+            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+        },
+        {
+          "code": 2582,
+          "line": "my-test.test.ts:4:52",
+          "message":
+            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:5:50",
+          "message": "Cannot find name 'expect'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:6:53",
+          "message": "Cannot find name 'beforeAll'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:7:54",
+          "message": "Cannot find name 'beforeEach'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:8:53",
+          "message": "Cannot find name 'afterEach'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:9:52",
+          "message": "Cannot find name 'afterAll'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:10:61",
+          "message": "Cannot find name 'setDefaultTimeout'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:11:48",
+          "message": "Cannot find name 'mock'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:12:49",
+          "message": "Cannot find name 'spyOn'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:13:44",
+          "message": "Cannot find name 'jest'.",
+        },
+      ]);
     });
   });
 
   test("checks with no lib at all", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
       options: {
         lib: [],
       },
@@ -295,8 +371,29 @@ describe("@types/bun integration test", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  test("fails with types: [] and no jsx", async () => {
+    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+      options: {
+        lib: [],
+        types: [],
+        jsx: ts.JsxEmit.None,
+      },
+    });
+
+    expect(emptyInterfaces).toEqual(new Set());
+    expect(diagnostics).toEqual([
+      // This is expected because we, of course, can't check that our tsx file is passing
+      // when tsx is turned off...
+      {
+        "code": 17004,
+        "line": "[slug].tsx:17:10",
+        "message": "Cannot use JSX unless the '--jsx' flag is provided.",
+      },
+    ]);
+  });
+
   test("checks with lib.dom.d.ts", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(FIXTURE_DIR, {
+    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
       options: {
         lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
       },

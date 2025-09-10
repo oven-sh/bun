@@ -11,6 +11,9 @@ import {
   type Mock,
   spyOn,
   test,
+  xdescribe,
+  xit,
+  xtest,
 } from "bun:test";
 import { expectType } from "./utilities";
 
@@ -157,6 +160,10 @@ expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
+
+xtest("", () => {});
+xdescribe("", () => {});
+xit("", () => {});
 
 test("expectTypeOf basic type checks", () => {
   expectTypeOf({ name: "test" }).toMatchObjectType<{ name: string }>();

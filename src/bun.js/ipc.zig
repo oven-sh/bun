@@ -583,7 +583,7 @@ pub const SendQueue = struct {
         }
 
         // fallback case: append a new message to the queue
-        self.queue.append(.{ .handle = handle, .callbacks = .init(callback) }) catch bun.outOfMemory();
+        bun.handleOom(self.queue.append(.{ .handle = handle, .callbacks = .init(callback) }));
         return &self.queue.items[self.queue.items.len - 1];
     }
     /// returned pointer is invalidated if the queue is modified
@@ -592,11 +592,11 @@ pub const SendQueue = struct {
         if (Environment.allow_assert) bun.debugAssert(this.has_written_version == 1);
         if ((this.queue.items.len == 0 or this.queue.items[0].data.cursor == 0) and !this.write_in_progress) {
             // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
-            this.queue.insert(0, message) catch bun.outOfMemory();
+            bun.handleOom(this.queue.insert(0, message));
         } else {
             // insert at index 1 (we are in the middle of sending a message to the other process)
             bun.debugAssert(this.queue.items[0].isAckNack());
-            this.queue.insert(1, message) catch bun.outOfMemory();
+            bun.handleOom(this.queue.insert(1, message));
         }
     }
 
@@ -745,8 +745,8 @@ pub const SendQueue = struct {
         bun.debugAssert(this.waiting_for_ack == null);
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
-            this.queue.append(.{ .handle = null, .callbacks = .none }) catch bun.outOfMemory();
-            this.queue.items[this.queue.items.len - 1].data.write(bytes) catch bun.outOfMemory();
+            bun.handleOom(this.queue.append(.{ .handle = null, .callbacks = .none }));
+            bun.handleOom(this.queue.items[this.queue.items.len - 1].data.write(bytes));
             log("IPC call continueSend() from version packet", .{});
             this.continueSend(global, .new_message_appended);
         }
@@ -804,7 +804,7 @@ pub const SendQueue = struct {
                 const write_len = @min(data.len, std.math.maxInt(i32));
 
                 // create write request
-                const write_req_slice = bun.default_allocator.dupe(u8, data[0..write_len]) catch bun.outOfMemory();
+                const write_req_slice = bun.handleOom(bun.default_allocator.dupe(u8, data[0..write_len]));
                 const write_req = bun.new(WindowsWrite, .{
                     .owner = this,
                     .write_slice = write_req_slice,
@@ -885,7 +885,7 @@ pub const SendQueue = struct {
 
     pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FileDescriptor) !void {
         log("configureClient", .{});
-        const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
+        const ipc_pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe));
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
             bun.default_allocator.destroy(ipc_pipe);
             return err;
@@ -1068,7 +1068,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
 
                 const packet = if (ack) getAckPacket(send_queue.mode) else getNackPacket(send_queue.mode);
                 var handle = SendHandle{ .data = .{}, .handle = null, .callbacks = .ack_nack };
-                handle.data.write(packet) catch bun.outOfMemory();
+                bun.handleOom(handle.data.write(packet));
 
                 // Insert at appropriate position in send queue
                 send_queue.insertMessage(handle);
@@ -1134,7 +1134,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
         while (true) {
             const result = decodeIPCMessage(send_queue.mode, data, globalThis) catch |e| switch (e) {
                 error.NotEnoughBytes => {
-                    _ = send_queue.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+                    _ = bun.handleOom(send_queue.incoming.write(bun.default_allocator, data));
                     log("hit NotEnoughBytes", .{});
                     return;
                 },
@@ -1159,7 +1159,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
         }
     }
 
-    _ = send_queue.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+    _ = bun.handleOom(send_queue.incoming.write(bun.default_allocator, data));
 
     var slice = send_queue.incoming.slice();
     while (true) {
@@ -1299,7 +1299,7 @@ pub const IPCHandlers = struct {
         fn onReadAlloc(send_queue: *SendQueue, suggested_size: usize) []u8 {
             var available = send_queue.incoming.available();
             if (available.len < suggested_size) {
-                send_queue.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
+                bun.handleOom(send_queue.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size));
                 available = send_queue.incoming.available();
             }
             log("NewNamedPipeIPCHandler#onReadAlloc {d}", .{suggested_size});

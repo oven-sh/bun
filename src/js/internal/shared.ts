@@ -124,7 +124,7 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   };
 }
 
-const kEmptyObject = ObjectFreeze({ __proto__: null });
+const kEmptyObject = ObjectFreeze(Object.create(null));
 
 //
 

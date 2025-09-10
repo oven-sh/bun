@@ -1517,7 +1517,7 @@ pub fn transpileSourceCode(
 
             const value = brk: {
                 if (!jsc_vm.origin.isEmpty()) {
-                    var buf = MutableString.init2048(jsc_vm.allocator) catch bun.outOfMemory();
+                    var buf = bun.handleOom(MutableString.init2048(jsc_vm.allocator));
                     defer buf.deinit();
                     var writer = buf.writer();
                     jsc.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
@@ -1947,7 +1947,8 @@ export fn Bun__transpileVirtualModule(
 ) bool {
     jsc.markBinding(@src());
     const jsc_vm = globalObject.bunVM();
-    bun.assert(jsc_vm.plugin_runner != null);
+    // Plugin runner is not required for virtual modules created via build.module()
+    // bun.assert(jsc_vm.plugin_runner != null);
 
     var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
     const specifier = specifier_slice.slice();
@@ -2079,7 +2080,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
         };
         if (vm.source_mappings.get(specifier)) |mappings| {
             defer mappings.deref();
-            const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
+            const map_path = bun.handleOom(std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }));
             defer bun.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});
             defer file.close();
@@ -2319,7 +2320,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (ast_memory_store == null) {
-                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch bun.outOfMemory();
+                ast_memory_store = bun.handleOom(bun.default_allocator.create(js_ast.ASTMemoryAllocator));
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
                     .allocator = allocator,
                     .previous = null,
@@ -2340,7 +2341,7 @@ pub const RuntimeTranspilerStore = struct {
             var log = logger.Log.init(allocator);
             defer {
                 this.log = logger.Log.init(bun.default_allocator);
-                log.cloneToWithRecycled(&this.log, true) catch bun.outOfMemory();
+                bun.handleOom(log.cloneToWithRecycled(&this.log, true));
             }
             var vm = this.vm;
             var transpiler: bun.Transpiler = undefined;

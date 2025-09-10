@@ -1080,7 +1080,7 @@ class Dir {
       return this.read().then(entry => cb(null, entry));
     }
 
-    if (this.#entries) return Promise.resolve(this.#entries.shift() ?? null);
+    if (this.#entries) return Promise.$resolve(this.#entries.shift() ?? null);
 
     return fs
       .readdir(this.#path, {

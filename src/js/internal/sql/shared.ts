@@ -12,7 +12,7 @@ class SQLResultArray<T> extends PublicArray<T> {
   public count!: number | null;
   public command!: string | null;
   public lastInsertRowid!: number | bigint | null;
-
+  public affectedRows!: number | bigint | null;
   static [Symbol.toStringTag] = "SQLResults";
 
   constructor(values: T[] = []) {
@@ -24,6 +24,7 @@ class SQLResultArray<T> extends PublicArray<T> {
       count: { value: null, writable: true },
       command: { value: null, writable: true },
       lastInsertRowid: { value: null, writable: true },
+      affectedRows: { value: null, writable: true },
     });
   }
 

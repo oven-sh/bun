@@ -19,6 +19,7 @@ export type RequestContext = {
 
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
+let asyncLocalStorageWasSet = false;
 
 interface Exports {
   handleRequest: (
@@ -29,7 +30,6 @@ interface Exports {
     styles: string[],
     params: Record<string, string> | null,
     setAsyncLocalStorage: Function,
-    getAsyncLocalStorage: Function,
   ) => any;
   registerUpdate: (
     modules: any,
@@ -40,19 +40,11 @@ interface Exports {
 
 declare let server_exports: Exports;
 server_exports = {
-  async handleRequest(
-    req,
-    routerTypeMain,
-    routeModules,
-    clientEntryUrl,
-    styles,
-    params,
-    setAsyncLocalStorage,
-    getAsyncLocalStorage,
-  ) {
-    // FIXME: We should only have to create an AsyncLocalStorage instance once
-    // Set the AsyncLocalStorage instance in the VM
-    setAsyncLocalStorage(responseOptionsALS);
+  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params, setAsyncLocalStorage) {
+    if (!asyncLocalStorageWasSet) {
+      asyncLocalStorageWasSet = true;
+      setAsyncLocalStorage(responseOptionsALS);
+    }
 
     if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
       console.log("handleRequest", {

@@ -176,12 +176,6 @@ channel_ref_overridden: bool = false,
 // if one disconnect event listener should be ignored
 channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
 
-/// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
-/// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
-/// true may expose bugs that would otherwise only occur using Workers. Controlled by
-/// Options.destruct_main_thread_on_exit.
-destruct_main_thread_on_exit: bool,
-
 /// A set of extensions that exist in the require.extensions map. Keys
 /// contain the leading '.'. Value is either a loader for built in
 /// functions, or an index into JSCommonJSExtensions.
@@ -196,56 +190,12 @@ has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
 
-dev_server_async_local_storage: jsc.Strong.Optional = .empty,
-
-pub fn setAllowJSXInResponseConstructor(this: *VirtualMachine, value: bool) void {
-    // When enabled, we create an AsyncLocalStorage instance
-    // When disabled, we clear it
-    if (value) {
-        // We'll set this from JavaScript when we create the AsyncLocalStorage instance
-        // For now, just keep track of the flag internally
-    } else {
-        this.dev_server_async_local_storage.deinit();
-    }
-}
-
-pub fn allowJSXInResponseConstructor(this: *VirtualMachine) bool {
-    // Check if the AsyncLocalStorage instance exists
-    return this.dev_server_async_local_storage.has();
-}
+extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) jsc.JSValue;
 
 pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) ?jsc.JSValue {
-    return this.dev_server_async_local_storage.get();
-}
-
-pub fn setDevServerAsyncLocalStorage(this: *VirtualMachine, global: *jsc.JSGlobalObject, value: jsc.JSValue) void {
-    if (value == .zero) {
-        this.dev_server_async_local_storage.deinit();
-    } else if (this.dev_server_async_local_storage.has()) {
-        this.dev_server_async_local_storage.set(global, value);
-    } else {
-        this.dev_server_async_local_storage = jsc.Strong.Optional.create(value, global);
-    }
-}
-
-// JavaScript binding to set the AsyncLocalStorage instance
-pub export fn VirtualMachine__setDevServerAsyncLocalStorage(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) jsc.JSValue {
-    const arguments = callframe.arguments_old(1).slice();
-    const vm = global.bunVM();
-
-    if (arguments.len < 1) {
-        _ = global.throwInvalidArguments("setDevServerAsyncLocalStorage expects 1 argument", .{}) catch {};
-        return .zero;
-    }
-
-    vm.setDevServerAsyncLocalStorage(global, arguments[0]);
-    return .js_undefined;
-}
-
-// JavaScript binding to get the AsyncLocalStorage instance
-pub export fn VirtualMachine__getDevServerAsyncLocalStorage(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) jsc.JSValue {
-    const vm = global.bunVM();
-    return vm.getDevServerAsyncLocalStorage() orelse .js_undefined;
+    const jsvalue = Bake__getAsyncLocalStorage(this.global);
+    if (jsvalue.isEmptyOrUndefinedOrNull()) return null;
+    return jsvalue;
 }
 
 pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
@@ -268,6 +218,13 @@ pub fn unhandledRejectionsMode(this: *VirtualMachine) api.UnhandledRejections {
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: jsc.WebCore.Body.Value) !*Body.Value.HiveRef {
     return .init(body, &this.body_value_hive_allocator);
+}
+
+/// Whether this VM should be destroyed after it exits, even if it is the main thread's VM.
+/// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
+/// true may expose bugs that would otherwise only occur using Workers. Controlled by
+pub fn shouldDestructMainThreadOnExit(_: *const VirtualMachine) bool {
+    return bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT);
 }
 
 pub threadlocal var is_bundler_thread_for_bytecode_cache: bool = false;
@@ -888,7 +845,7 @@ pub fn onExit(this: *VirtualMachine) void {
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
-    if (this.destruct_main_thread_on_exit and this.is_main_thread) {
+    if (this.shouldDestructMainThreadOnExit()) {
         Zig__GlobalObject__destructOnExit(this.global);
         this.deinit();
     }
@@ -1041,7 +998,7 @@ pub fn initWithModuleGraph(
         .ref_strings_mutex = .{},
         .standalone_module_graph = opts.graph.?,
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+
         .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
@@ -1062,6 +1019,9 @@ pub fn initWithModuleGraph(
         .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
         .onDependencyError = ModuleLoader.AsyncModule.Queue.onDependencyError,
     };
+
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
 
     vm.transpiler.resolver.standalone_module_graph = opts.graph.?;
 
@@ -1163,7 +1123,7 @@ pub fn init(opts: Options) !*VirtualMachine {
         .ref_strings = jsc.RefString.Map.init(allocator),
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+
         .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
@@ -1175,6 +1135,9 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
     vm.regular_event_loop.concurrent_tasks = .{};
     vm.event_loop = &vm.regular_event_loop;
+
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
 
     vm.transpiler.macro_context = null;
     vm.transpiler.resolver.store_fd = opts.store_fd;
@@ -1322,14 +1285,15 @@ pub fn initWorker(
         .standalone_module_graph = worker.parent.standalone_module_graph,
         .worker = worker,
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        // This option is irrelevant for Workers
-        .destruct_main_thread_on_exit = false,
         .initial_script_execution_context_identifier = @as(i32, @intCast(worker.execution_context_id)),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
     vm.regular_event_loop.tasks = EventLoop.Queue.init(
         default_allocator,
     );
+
+    // Emitting "@__PURE__" comments at runtime is a waste of memory and time.
+    vm.transpiler.options.emit_dce_annotations = false;
 
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
@@ -1415,7 +1379,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         .ref_strings = jsc.RefString.Map.init(allocator),
         .ref_strings_mutex = .{},
         .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId(),
-        .destruct_main_thread_on_exit = opts.destruct_main_thread_on_exit,
+
         .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
@@ -1763,7 +1727,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             source_utf8.slice(),
             error.NameTooLong,
             if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
         const msg = logger.Msg{
             .data = logger.rangeData(
                 null,

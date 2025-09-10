@@ -1554,13 +1554,10 @@ extern "C" napi_status napi_object_freeze(napi_env env, napi_value object_value)
     NAPI_RETURN_EARLY_IF_FALSE(env, value.isObject(), napi_object_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSObject* object = JSC::jsCast<JSC::JSObject*>(value);
-    // TODO is this check necessary?
-    if (!hasIndexedProperties(object->indexingType())) {
-        object->freeze(vm);
-    }
+    objectConstructorFreeze(globalObject, object);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     NAPI_RETURN_SUCCESS(env);
 }
@@ -1572,13 +1569,10 @@ extern "C" napi_status napi_object_seal(napi_env env, napi_value object_value)
     NAPI_RETURN_EARLY_IF_FALSE(env, value.isObject(), napi_object_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = JSC::getVM(globalObject);
 
     JSC::JSObject* object = JSC::jsCast<JSC::JSObject*>(value);
-    // TODO is this check necessary?
-    if (!hasIndexedProperties(object->indexingType())) {
-        object->seal(vm);
-    }
+    objectConstructorSeal(globalObject, object);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     NAPI_RETURN_SUCCESS(env);
 }
@@ -1637,8 +1631,8 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
 
     if (byte_offset + length > arraybufferPtr->impl()->byteLength()) {
-        JSC::throwRangeError(globalObject, scope, "byteOffset exceeds source ArrayBuffer byteLength"_s);
-        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+        napi_throw_range_error(env, "ERR_NAPI_INVALID_DATAVIEW_ARGS", "byte_offset + byte_length should be less than or equal to the size in bytes of the array passed in");
+        return napi_set_last_error(env, napi_pending_exception);
     }
 
     auto dataView = JSC::DataView::create(arraybufferPtr->impl(), byte_offset, length);
@@ -2318,15 +2312,14 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
 extern "C" napi_status napi_typeof(napi_env env, napi_value val,
     napi_valuetype* result)
 {
-    NAPI_PREAMBLE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, val);
     NAPI_CHECK_ARG(env, result);
 
     JSValue value = toJS(val);
     if (value.isEmpty()) {
-        // This can happen
-        *result = napi_undefined;
-        NAPI_RETURN_SUCCESS(env);
+        *result = napi_object;
+        return napi_clear_last_error(env);
     }
 
     if (value.isCell()) {
@@ -2336,44 +2329,44 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
         case JSC::JSFunctionType:
         case JSC::InternalFunctionType:
             *result = napi_function;
-            NAPI_RETURN_SUCCESS(env);
+            return napi_clear_last_error(env);
 
         case JSC::ObjectType:
             if (JSC::jsDynamicCast<Bun::NapiExternal*>(value)) {
                 *result = napi_external;
-                NAPI_RETURN_SUCCESS(env);
+                return napi_clear_last_error(env);
             }
 
             *result = napi_object;
-            NAPI_RETURN_SUCCESS(env);
+            return napi_clear_last_error(env);
 
         case JSC::HeapBigIntType:
             *result = napi_bigint;
-            NAPI_RETURN_SUCCESS(env);
+            return napi_clear_last_error(env);
         case JSC::DerivedStringObjectType:
         case JSC::StringObjectType:
         case JSC::StringType:
             *result = napi_string;
-            NAPI_RETURN_SUCCESS(env);
+            return napi_clear_last_error(env);
         case JSC::SymbolType:
             *result = napi_symbol;
-            NAPI_RETURN_SUCCESS(env);
+            return napi_clear_last_error(env);
 
         case JSC::FinalObjectType:
         case JSC::ArrayType:
         case JSC::DerivedArrayType:
             *result = napi_object;
-            NAPI_RETURN_SUCCESS(env);
+            return napi_clear_last_error(env);
 
         default: {
             if (cell->isCallable() || cell->isConstructor()) {
                 *result = napi_function;
-                NAPI_RETURN_SUCCESS(env);
+                return napi_clear_last_error(env);
             }
 
             if (cell->isObject()) {
                 *result = napi_object;
-                NAPI_RETURN_SUCCESS(env);
+                return napi_clear_last_error(env);
             }
 
             break;
@@ -2383,22 +2376,22 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
 
     if (value.isNumber()) {
         *result = napi_number;
-        NAPI_RETURN_SUCCESS(env);
+        return napi_clear_last_error(env);
     }
 
     if (value.isUndefined()) {
         *result = napi_undefined;
-        NAPI_RETURN_SUCCESS(env);
+        return napi_clear_last_error(env);
     }
 
     if (value.isNull()) {
         *result = napi_null;
-        NAPI_RETURN_SUCCESS(env);
+        return napi_clear_last_error(env);
     }
 
     if (value.isBoolean()) {
         *result = napi_boolean;
-        NAPI_RETURN_SUCCESS(env);
+        return napi_clear_last_error(env);
     }
 
     // Unexpected type, report an error in debug mode
@@ -2735,6 +2728,7 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
     }
 
     NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, recv);
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
     NAPI_CHECK_ARG(env, func);
     JSValue funcValue = toJS(func);

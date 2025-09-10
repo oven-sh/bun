@@ -2,8 +2,10 @@
 pub const Data = union(enum) {
     owned: bun.ByteList,
     temporary: []const u8,
-    inline_storage: std.BoundedArray(u8, 15),
+    inline_storage: InlineStorage,
     empty: void,
+
+    pub const InlineStorage = bun.BoundedArray(u8, 15);
 
     pub const Empty: Data = .{ .empty = {} };
 
@@ -13,7 +15,7 @@ pub const Data = union(enum) {
         }
 
         if (possibly_inline_bytes.len <= 15) {
-            var inline_storage = std.BoundedArray(u8, 15){};
+            var inline_storage = InlineStorage{};
             @memcpy(inline_storage.buffer[0..possibly_inline_bytes.len], possibly_inline_bytes);
             inline_storage.len = @truncate(possibly_inline_bytes.len);
             return .{ .inline_storage = inline_storage };

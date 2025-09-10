@@ -152,10 +152,40 @@ declare module "bun:test" {
     type SpiedSetter<T> = JestMock.SpiedSetter<T>;
   }
 
+  /**
+   * Create a spy on an object property or method
+   */
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
     methodOrPropertyValue: K,
   ): Mock<Extract<T[K], (...args: any[]) => any>>;
+
+  /**
+   * Vitest-compatible mocking utilities
+   * Provides Vitest-style mocking API for easier migration from Vitest to Bun
+   */
+  export const vi: {
+    /**
+     * Create a mock function
+     */
+    fn: typeof jest.fn;
+    /**
+     * Create a spy on an object property or method
+     */
+    spyOn: typeof spyOn;
+    /**
+     * Mock a module
+     */
+    module: typeof mock.module;
+    /**
+     * Restore all mocks to their original implementation
+     */
+    restoreAllMocks: typeof jest.restoreAllMocks;
+    /**
+     * Clear all mock state (calls, results, etc.) without restoring original implementation
+     */
+    clearAllMocks: typeof jest.clearAllMocks;
+  };
 
   interface FunctionLike {
     readonly name: string;
@@ -262,6 +292,15 @@ declare module "bun:test" {
    * @param fn the function that defines the tests
    */
   export const describe: Describe;
+  /**
+   * Skips a group of related tests.
+   *
+   * This is equivalent to calling `describe.skip()`.
+   *
+   * @param label the label for the tests
+   * @param fn the function that defines the tests
+   */
+  export const xdescribe: Describe;
   /**
    * Runs a function, once, before all the tests.
    *
@@ -515,7 +554,17 @@ declare module "bun:test" {
    * @param fn the test function
    */
   export const test: Test;
-  export { test as it };
+  export { test as it, xtest as xit };
+
+  /**
+   * Skips a test.
+   *
+   * This is equivalent to calling `test.skip()`.
+   *
+   * @param label the label for the test
+   * @param fn the test function
+   */
+  export const xtest: Test;
 
   /**
    * Asserts that a value matches some criteria.

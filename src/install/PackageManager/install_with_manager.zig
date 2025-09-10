@@ -109,7 +109,7 @@ pub fn installWithManager(
                         const tag_total = original.tag.pre.len() + original.tag.build.len();
                         if (tag_total > 0) {
                             // clone because don't know if lockfile buffer will reallocate
-                            const tag_buf = manager.allocator.alloc(u8, tag_total) catch bun.outOfMemory();
+                            const tag_buf = bun.handleOom(manager.allocator.alloc(u8, tag_total));
                             var ptr = tag_buf;
                             original.tag = original_resolution.value.npm.version.tag.cloneInto(
                                 lockfile.buffers.string_bytes.items,
@@ -605,7 +605,7 @@ pub fn installWithManager(
                                     @field(manager.lockfile.scripts, Lockfile.Scripts.names[i]).append(
                                         manager.lockfile.allocator,
                                         entry,
-                                    ) catch bun.outOfMemory();
+                                    ) catch |err| bun.handleOom(err);
                                 }
                             }
                         }
@@ -626,7 +626,7 @@ pub fn installWithManager(
                                 @field(manager.lockfile.scripts, Lockfile.Scripts.names[i]).append(
                                     manager.lockfile.allocator,
                                     entry,
-                                ) catch bun.outOfMemory();
+                                ) catch |err| bun.handleOom(err);
                             }
                         }
                     }
@@ -643,7 +643,7 @@ pub fn installWithManager(
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
         if (load_result.loadedFromTextLockfile()) {
-            if (manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator) catch bun.outOfMemory()) {
+            if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {
                 break :frozen_lockfile;
             }
         } else {

@@ -5,9 +5,16 @@
  * and then exits. We only await the `process.exited` promise without reading
  * any of the output data to test for potential memory leaks.
  */
-import { bunExe, isWindows } from "harness";
+import { bunExe, isASAN, isCI, isWindows } from "harness";
 
-describe("Bun.spawn", () => {
+describe.todoIf(
+  /**
+   * ASAN CI runs out of file descriptors? Or maybe it's virtual memory
+   *
+   * It causes the entire test runner to stop and get a little unstable.
+   */
+  isASAN && isCI,
+)("Bun.spawn", () => {
   const DEBUG_LOGS = true; // turn this on to see debug logs
   const log = (...args: any[]) => DEBUG_LOGS && console.log(...args);
 

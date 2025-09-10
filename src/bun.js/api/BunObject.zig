@@ -72,9 +72,6 @@ pub const BunObject = struct {
     pub const inspect = toJSLazyPropertyCallback(Bun.getInspect);
     pub const origin = toJSLazyPropertyCallback(Bun.getOrigin);
     pub const semver = toJSLazyPropertyCallback(Bun.getSemver);
-    pub const stderr = toJSLazyPropertyCallback(Bun.getStderr);
-    pub const stdin = toJSLazyPropertyCallback(Bun.getStdin);
-    pub const stdout = toJSLazyPropertyCallback(Bun.getStdout);
     pub const unsafe = toJSLazyPropertyCallback(Bun.getUnsafe);
     pub const S3Client = toJSLazyPropertyCallback(Bun.getS3ClientConstructor);
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
@@ -139,9 +136,6 @@ pub const BunObject = struct {
         @export(&BunObject.hash, .{ .name = lazyPropertyCallbackName("hash") });
         @export(&BunObject.inspect, .{ .name = lazyPropertyCallbackName("inspect") });
         @export(&BunObject.origin, .{ .name = lazyPropertyCallbackName("origin") });
-        @export(&BunObject.stderr, .{ .name = lazyPropertyCallbackName("stderr") });
-        @export(&BunObject.stdin, .{ .name = lazyPropertyCallbackName("stdin") });
-        @export(&BunObject.stdout, .{ .name = lazyPropertyCallbackName("stdout") });
         @export(&BunObject.unsafe, .{ .name = lazyPropertyCallbackName("unsafe") });
         @export(&BunObject.semver, .{ .name = lazyPropertyCallbackName("semver") });
         @export(&BunObject.embeddedFiles, .{ .name = lazyPropertyCallbackName("embeddedFiles") });
@@ -187,6 +181,12 @@ pub const BunObject = struct {
         @export(&BunObject.zstdCompress, .{ .name = callbackName("zstdCompress") });
         @export(&BunObject.zstdDecompress, .{ .name = callbackName("zstdDecompress") });
         // --- Callbacks ---
+
+        // --- LazyProperty initializers ---
+        @export(&createBunStdin, .{ .name = "BunObject__createBunStdin" });
+        @export(&createBunStderr, .{ .name = "BunObject__createBunStderr" });
+        @export(&createBunStdout, .{ .name = "BunObject__createBunStdout" });
+        // --- LazyProperty initializers ---
 
         // --- Getters ---
         @export(&BunObject.main, .{ .name = "BunObject_getter_main" });
@@ -394,7 +394,7 @@ pub fn inspectTable(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
     }
 
     // very stable memory address
-    var array = MutableString.init(bun.default_allocator, 0) catch bun.outOfMemory();
+    var array = bun.handleOom(MutableString.init(bun.default_allocator, 0));
     defer array.deinit();
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
@@ -557,39 +557,6 @@ pub fn getCWD(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
 
 pub fn getOrigin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
-}
-
-pub fn getStdin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stdin();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
-}
-
-pub fn getStderr(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stderr();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
-}
-
-pub fn getStdout(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var rare_data = globalThis.bunVM().rareData();
-    var store = rare_data.stdout();
-    store.ref();
-    var blob = jsc.WebCore.Blob.new(
-        jsc.WebCore.Blob.initWithStore(store, globalThis),
-    );
-    blob.allocator = bun.default_allocator;
-    return blob.toJS(globalThis);
 }
 
 pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1133,7 +1100,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                         );
                         debugger.http_server_agent.notifyServerRoutesUpdated(
                             jsc.API.AnyServer.from(server),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
 
                     return obj;
@@ -1347,7 +1314,7 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
     const graph = vm.standalone_module_graph orelse return try jsc.JSValue.createEmptyArray(globalThis, 0);
 
     const unsorted_files = graph.files.values();
-    var sort_indices = std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len) catch bun.outOfMemory();
+    var sort_indices = bun.handleOom(std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len));
     defer sort_indices.deinit();
     for (0..unsorted_files.len) |index| {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -1609,7 +1576,7 @@ pub const JSZlib = struct {
                     return globalThis.throwError(err, "Zlib error") catch return .zero;
                 };
 
-                reader.readAll() catch {
+                reader.readAll(true) catch {
                     defer reader.deinit();
                     return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
@@ -1720,7 +1687,7 @@ pub const JSZlib = struct {
                     defer reader.deinit();
                     return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
-                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch bun.outOfMemory() };
+                reader.list = .{ .items = bun.handleOom(reader.list.toOwnedSlice(allocator)) };
                 reader.list.capacity = reader.list.items.len;
                 reader.list_ptr = &reader.list;
 
@@ -2067,6 +2034,40 @@ comptime {
 }
 
 const string = []const u8;
+
+// LazyProperty initializers for stdin/stderr/stdout
+pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stdin();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    blob.allocator = bun.default_allocator;
+    return blob.toJS(globalThis);
+}
+
+pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stderr();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    blob.allocator = bun.default_allocator;
+    return blob.toJS(globalThis);
+}
+
+pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    var rare_data = globalThis.bunVM().rareData();
+    var store = rare_data.stdout();
+    store.ref();
+    var blob = jsc.WebCore.Blob.new(
+        jsc.WebCore.Blob.initWithStore(store, globalThis),
+    );
+    blob.allocator = bun.default_allocator;
+    return blob.toJS(globalThis);
+}
 
 const Braces = @import("../../shell/braces.zig");
 const Which = @import("../../which.zig");

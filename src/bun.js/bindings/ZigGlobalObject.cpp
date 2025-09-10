@@ -331,6 +331,11 @@ extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
+// Declare the Zig functions for LazyProperty initializers
+extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2727,16 +2732,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_commonStrings.initialize();
     m_http2CommonStrings.initialize();
-
-    m_reactLegacyElementSymbol.initLater(
-        [](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
-            init.set(JSC::Symbol::create(init.vm, init.vm.symbolRegistry().symbolForKey("react.element"_s)));
-        });
-
-    m_reactElementSymbol.initLater(
-        [](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
-            init.set(JSC::Symbol::create(init.vm, init.vm.symbolRegistry().symbolForKey("react.transitional.element"_s)));
-        });
+    m_bakeAdditions.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(
@@ -3376,11 +3372,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_JSBakeResponseClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::setupJSBakeResponseClassStructure(init);
-        });
-
     m_JSNetworkSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::NetworkSink);
@@ -3477,6 +3468,17 @@ void GlobalObject::finishCreation(VM& vm)
     });
     m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
         init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
+
+    // Initialize LazyProperties for stdin/stderr/stdout
+    m_bunStdin.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());
+    });
+    m_bunStderr.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStderr(init.owner)).getObject());
+    });
+    m_bunStdout.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStdout(init.owner)).getObject());
     });
 
     configureNodeVM(vm, this);

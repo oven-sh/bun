@@ -41,7 +41,7 @@
   ResolveError                    GlobalObject::m_JSResolveMessage                     ClassStructure
   ResolveMessage                  GlobalObject::m_JSResolveMessage                     ClassStructure
   Response                        GlobalObject::m_JSResponse                           ClassStructure
-  SSRResponse                     GlobalObject::m_JSBakeResponseClassStructure         ClassStructure
+  SSRResponse                     GlobalObject::m_JSBakeResponseClassStructure         ClassStructure                                                      "OBJECT_OFFSETOF(GlobalObject, m_bakeAdditions) + OBJECT_OFFSETOF(Bun::BakeAdditionsToGlobalObject, m_JSBakeResponseClassStructure)"
   TextDecoder                     GlobalObject::m_JSTextDecoder                        ClassStructure
 
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback

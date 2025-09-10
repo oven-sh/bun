@@ -89,7 +89,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                             .cooked = E.String.init(" "),
                         },
                         .tail_loc = visitor.loc,
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
 
                     if (from_this_file) {
                         visitor.inner_visited.set(ref.innerIndex());
@@ -121,7 +121,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                         .{
                             .loc = loc,
                         },
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
 
                 fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, css_ref: bun.css.CssRef, idx: Index.Int) void {
@@ -146,7 +146,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                                                 visitor.allocator,
                                                 "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
                                                 .{bun.fmt.quote(visitor.all_sources[import_record.source_index.get()].path.pretty)},
-                                            ) catch bun.outOfMemory();
+                                            ) catch |err| bun.handleOom(err);
                                             continue;
                                         };
                                         for (compose.names.slice()) |name| {
@@ -177,7 +177,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                                                 },
                                                 .tail_loc = visitor.loc,
                                             },
-                                        ) catch bun.outOfMemory();
+                                        ) catch |err| bun.handleOom(err);
                                     }
                                 }
                             } else {
@@ -193,7 +193,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                                                 bun.fmt.quote(name.v),
                                                 bun.fmt.quote(visitor.all_sources[idx].path.pretty),
                                             },
-                                        ) catch bun.outOfMemory();
+                                        ) catch |err| bun.handleOom(err);
                                         continue;
                                     };
                                     const name_ref = name_entry.ref;
@@ -240,7 +240,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                         .value = value,
                         .tail_loc = stmt.loc,
                         .tail = .{ .cooked = E.String.init("") },
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
                     value = Expr.init(
                         E.Template,
                         E.Template{

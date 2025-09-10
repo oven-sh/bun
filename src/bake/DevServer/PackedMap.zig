@@ -4,7 +4,7 @@ const Self = @This();
 
 /// Allocated by `dev.allocator()`. Access with `.vlq()`
 /// This is stored to allow lazy construction of source map files.
-vlq_: ScopedOwned([]u8),
+vlq_: OwnedIn([]u8, DevAllocator),
 /// The bundler runs quoting on multiple threads, so it only makes
 /// sense to preserve that effort for concatenation and
 /// re-concatenation.
@@ -22,8 +22,9 @@ end_state: struct {
 pub fn newNonEmpty(chunk: *SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.Shared(*Self) {
     var buffer = &chunk.buffer;
     assert(!buffer.isEmpty());
+    const dev_allocator = DevAllocator.downcast(buffer.allocator);
     return .new(.{
-        .vlq_ = .fromDynamic(buffer.toDynamicOwned()),
+        .vlq_ = .fromRawIn(buffer.toOwnedSlice(), dev_allocator),
         .escaped_source = escaped_source,
         .end_state = .{
             .original_line = chunk.end_state.original_line,
@@ -42,12 +43,12 @@ pub fn memoryCost(self: *const Self) usize {
 }
 
 pub fn vlq(self: *const Self) []const u8 {
-    return self.vlq_.getConst();
+    return self.vlq_.get();
 }
 
 // TODO: rename to `escapedSource`
 pub fn quotedContents(self: *const Self) []const u8 {
-    return self.escaped_source.getConst();
+    return self.escaped_source.get();
 }
 
 comptime {
@@ -94,9 +95,10 @@ pub const Shared = union(enum) {
         };
     }
 
-    pub fn deinit(self: Shared) void {
-        switch (self) {
-            .some => |ptr| ptr.deinit(),
+    pub fn deinit(self: *Shared) void {
+        defer self.* = undefined;
+        switch (self.*) {
+            .some => |*ptr| ptr.deinit(),
             else => {},
         }
     }
@@ -116,6 +118,7 @@ const SourceMap = bun.sourcemap;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;
 const Chunk = bun.bundle_v2.Chunk;
+const DevAllocator = bun.bake.DevServer.DevAllocator;
 
 const Owned = bun.ptr.Owned;
-const ScopedOwned = bun.ptr.ScopedOwned;
+const OwnedIn = bun.ptr.OwnedIn;

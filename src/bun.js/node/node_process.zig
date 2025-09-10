@@ -26,7 +26,7 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C
     title_mutex.lock();
     defer title_mutex.unlock();
     if (bun.cli.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.cli.Bun__Node__ProcessTitle.?);
-    bun.cli.Bun__Node__ProcessTitle = newvalue.dupe(bun.default_allocator) catch bun.outOfMemory();
+    bun.cli.Bun__Node__ProcessTitle = bun.handleOom(newvalue.dupe(bun.default_allocator));
     return newvalue.toJS(globalObject);
 }
 
@@ -160,7 +160,7 @@ fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
         // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
         // argv also omits the script name
         args_count + 2,
-    ) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
     defer allocator.free(args);
 
     var args_list: std.ArrayListUnmanaged(bun.String) = .initBuffer(args);
@@ -300,9 +300,9 @@ pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C
     const wtf1 = k.value.WTFStringImpl;
     var fixed_stack_allocator = std.heap.stackFallback(1025, bun.default_allocator);
     const allocator = fixed_stack_allocator.get();
-    var buf1 = allocator.alloc(u16, k.utf16ByteLength() + 1) catch bun.outOfMemory();
+    var buf1 = bun.handleOom(allocator.alloc(u16, k.utf16ByteLength() + 1));
     defer allocator.free(buf1);
-    var buf2 = allocator.alloc(u16, v.utf16ByteLength() + 1) catch bun.outOfMemory();
+    var buf2 = bun.handleOom(allocator.alloc(u16, v.utf16ByteLength() + 1));
     defer allocator.free(buf2);
     const len1: usize = switch (wtf1.is8Bit()) {
         true => bun.strings.copyLatin1IntoUTF16([]u16, buf1, []const u8, wtf1.latin1Slice()).written,

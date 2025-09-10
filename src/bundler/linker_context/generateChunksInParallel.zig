@@ -46,7 +46,7 @@ pub fn generateChunksInParallel(
             defer debug("  DONE {d} prepare CSS ast (total count)", .{total_count});
 
             var batch = ThreadPoolLib.Batch{};
-            const tasks = c.allocator().alloc(LinkerContext.PrepareCssAstTask, total_count) catch bun.outOfMemory();
+            const tasks = bun.handleOom(c.allocator().alloc(LinkerContext.PrepareCssAstTask, total_count));
             var i: usize = 0;
             for (chunks) |*chunk| {
                 if (chunk.content == .css) {
@@ -71,7 +71,7 @@ pub fn generateChunksInParallel(
     }
 
     {
-        const chunk_contexts = c.allocator().alloc(GenerateChunkCtx, chunks.len) catch bun.outOfMemory();
+        const chunk_contexts = bun.handleOom(c.allocator().alloc(GenerateChunkCtx, chunks.len));
         defer c.allocator().free(chunk_contexts);
 
         {
@@ -81,28 +81,28 @@ pub fn generateChunksInParallel(
                     .javascript => {
                         chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
-                        chunk.compile_results_for_chunk = c.allocator().alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch bun.outOfMemory();
+                        chunk.compile_results_for_chunk = bun.handleOom(c.allocator().alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len));
                         has_js_chunk = true;
                     },
                     .css => {
                         has_css_chunk = true;
                         chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += chunk.content.css.imports_in_chunk_in_order.len;
-                        chunk.compile_results_for_chunk = c.allocator().alloc(CompileResult, chunk.content.css.imports_in_chunk_in_order.len) catch bun.outOfMemory();
+                        chunk.compile_results_for_chunk = bun.handleOom(c.allocator().alloc(CompileResult, chunk.content.css.imports_in_chunk_in_order.len));
                     },
                     .html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
                         chunk_ctx.* = .{ .c = c, .chunks = chunks, .chunk = chunk };
                         total_count += 1;
-                        chunk.compile_results_for_chunk = c.allocator().alloc(CompileResult, 1) catch bun.outOfMemory();
+                        chunk.compile_results_for_chunk = bun.handleOom(c.allocator().alloc(CompileResult, 1));
                     },
                 }
             }
 
             debug(" START {d} compiling part ranges", .{total_count});
             defer debug("  DONE {d} compiling part ranges", .{total_count});
-            const combined_part_ranges = c.allocator().alloc(PendingPartRange, total_count) catch bun.outOfMemory();
+            const combined_part_ranges = bun.handleOom(c.allocator().alloc(PendingPartRange, total_count));
             defer c.allocator().free(combined_part_ranges);
             var remaining_part_ranges = combined_part_ranges;
             var batch = ThreadPoolLib.Batch{};
@@ -227,7 +227,7 @@ pub fn generateChunksInParallel(
             chunk_visit_map.setAll(false);
             chunk.template.placeholder.hash = hash.digest();
 
-            const rel_path = std.fmt.allocPrint(c.allocator(), "{any}", .{chunk.template}) catch bun.outOfMemory();
+            const rel_path = bun.handleOom(std.fmt.allocPrint(c.allocator(), "{any}", .{chunk.template}));
             bun.path.platformToPosixInPlace(u8, rel_path);
 
             if ((try path_names_map.getOrPut(rel_path)).found_existing) {
@@ -242,7 +242,7 @@ pub fn generateChunksInParallel(
             // use resolvePosix since we asserted above all seps are '/'
             if (Environment.isWindows and std.mem.indexOf(u8, rel_path, "/./") != null) {
                 var buf: bun.PathBuffer = undefined;
-                const rel_path_fixed = c.allocator().dupe(u8, bun.path.normalizeBuf(rel_path, &buf, .posix)) catch bun.outOfMemory();
+                const rel_path_fixed = bun.handleOom(c.allocator().dupe(u8, bun.path.normalizeBuf(rel_path, &buf, .posix)));
                 chunk.final_rel_path = rel_path_fixed;
                 continue;
             }
@@ -315,7 +315,7 @@ pub fn generateChunksInParallel(
     }
 
     const bundler = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
-    var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len) catch bun.outOfMemory() };
+    var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.handleOom(bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len)) };
     defer static_route_visitor.deinit();
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
@@ -356,7 +356,7 @@ pub fn generateChunksInParallel(
             switch (chunk.content.sourcemap(c.options.source_maps)) {
                 .external, .linked => |tag| {
                     const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
-                    var source_map_final_rel_path = bun.default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch bun.outOfMemory();
+                    var source_map_final_rel_path = bun.handleOom(bun.default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len));
                     bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
                     bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
 
@@ -427,7 +427,7 @@ pub fn generateChunksInParallel(
                     else
                         .js;
 
-                    if (loader.isJavaScriptLike()) {
+                    if (chunk.content == .javascript and loader.isJavaScriptLike()) {
                         jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
                         jsc.initialize(false);
                         var fdpath: bun.PathBuffer = undefined;
@@ -445,8 +445,8 @@ pub fn generateChunksInParallel(
                             fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
 
                             break :brk options.OutputFile.init(.{
-                                .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch bun.outOfMemory(),
-                                .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch bun.outOfMemory(),
+                                .output_path = bun.handleOom(bun.default_allocator.dupe(u8, source_provider_url_str.slice())),
+                                .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path})),
                                 .input_loader = .js,
                                 .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
                                 .output_kind = .bytecode,
@@ -464,7 +464,7 @@ pub fn generateChunksInParallel(
                             // an error
                             c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
                                 chunk.final_rel_path,
-                            }) catch bun.outOfMemory();
+                            }) catch |err| bun.handleOom(err);
                         }
                     }
                 }

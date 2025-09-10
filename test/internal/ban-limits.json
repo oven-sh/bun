@@ -1,6 +1,7 @@
 {
   " != undefined": 0,
   " == undefined": 0,
+  " catch bun.outOfMemory()": 0,
   "!= alloc.ptr": 0,
   "!= allocator.ptr": 0,
   ".arguments_old(": 276,
@@ -37,7 +38,7 @@
   "std.fs.cwd": 104,
   "std.log": 1,
   "std.mem.indexOfAny(u8": 0,
-  "std.unicode": 33,
+  "std.unicode": 27,
   "undefined != ": 0,
   "undefined == ": 0,
   "usingnamespace": 0

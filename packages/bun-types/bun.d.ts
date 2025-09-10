@@ -620,6 +620,65 @@ declare module "bun" {
   }
 
   /**
+   * YAML related APIs
+   */
+  namespace YAML {
+    /**
+     * Parse a YAML string into a JavaScript value
+     *
+     * @category Utilities
+     *
+     * @param input The YAML string to parse
+     * @returns A JavaScript value
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * console.log(YAML.parse("123")) // 123
+     * console.log(YAML.parse("123")) // null
+     * console.log(YAML.parse("false")) // false
+     * console.log(YAML.parse("abc")) // "abc"
+     * console.log(YAML.parse("- abc")) // [ "abc" ]
+     * console.log(YAML.parse("abc: def")) // { "abc": "def" }
+     * ```
+     */
+    export function parse(input: string): unknown;
+
+    /**
+     * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
+     * escaped characters, or if a YAML parser would parse them as numbers. Anchors and aliases are inferred from objects, allowing cycles.
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript value to stringify.
+     * @param replacer Currently not supported.
+     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation. The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     * @returns A string containing the YAML document.
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * const input = {
+     *   abc: "def"
+     * };
+     * console.log(YAML.stringify(input));
+     * // # output
+     * // abc: def
+     *
+     * const cycle = {};
+     * cycle.obj = cycle;
+     * console.log(YAML.stringify(cycle));
+     * // # output
+     * // &root
+     * // obj:
+     * //   *root
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
+  }
+
+  /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
    * On failure, throws a `ResolveMessage`
@@ -1628,7 +1687,7 @@ declare module "bun" {
     kind: ImportKind;
   }
 
-  namespace _BunBuildInterface {
+  namespace Build {
     type Architecture = "x64" | "arm64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
@@ -1641,15 +1700,21 @@ declare module "bun" {
       | `bun-windows-x64-${SIMD}`
       | `bun-linux-x64-${SIMD}-${Libc}`;
   }
+
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
   interface BuildConfigBase {
-    entrypoints: string[]; // list of file path
+    /**
+     * List of entrypoints, usually file paths
+     */
+    entrypoints: string[];
+
     /**
      * @default "browser"
      */
     target?: Target; // default: "browser"
+
     /**
      * Output module format. Top-level await is only supported for `"esm"`.
      *
@@ -1813,9 +1878,10 @@ declare module "bun" {
     drop?: string[];
 
     /**
-     * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
-     * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
-     * This defaults to `true`.
+     * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+     * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
+     *
+     * @default true
      */
     throw?: boolean;
 
@@ -1836,7 +1902,7 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
-    target?: _BunBuildInterface.Target;
+    target?: Bun.Build.Target;
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
@@ -1878,13 +1944,29 @@ declare module "bun" {
      * });
      * ```
      */
-    compile: boolean | _BunBuildInterface.Target | CompileBuildOptions;
+    compile: boolean | Bun.Build.Target | CompileBuildOptions;
+
+    /**
+     * Splitting is not currently supported with `.compile`
+     */
+    splitting?: never;
+  }
+
+  interface NormalBuildConfig extends BuildConfigBase {
+    /**
+     * Enable code splitting
+     *
+     * This does not currently work with {@link CompileBuildConfig.compile `compile`}
+     *
+     * @default true
+     */
+    splitting?: boolean;
   }
 
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  type BuildConfig = BuildConfigBase | CompileBuildConfig;
+  type BuildConfig = CompileBuildConfig | NormalBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt
@@ -3764,6 +3846,11 @@ declare module "bun" {
    * @category HTTP & Networking
    */
   interface Server extends Disposable {
+    /*
+     * Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
+     */
+    closeIdleConnections(): void;
+
     /**
      * Stop listening to prevent new connections from being accepted.
      *
@@ -5484,6 +5571,12 @@ declare module "bun" {
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
+  type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
+  type OnBeforeParseCallback = {
+    napiModule: unknown;
+    symbol: string;
+    external?: unknown | undefined;
+  };
 
   interface OnResolveArgs {
     /**
@@ -5561,14 +5654,26 @@ declare module "bun" {
      * @returns `this` for method chaining
      */
     onStart(callback: OnStartCallback): this;
-    onBeforeParse(
-      constraints: PluginConstraints,
-      callback: {
-        napiModule: unknown;
-        symbol: string;
-        external?: unknown | undefined;
-      },
-    ): this;
+    /**
+     * Register a callback which will be invoked when bundling ends. This is
+     * called after all modules have been bundled and the build is complete.
+     *
+     * @example
+     * ```ts
+     * const plugin: Bun.BunPlugin = {
+     *   name: "my-plugin",
+     *   setup(builder) {
+     *     builder.onEnd((result) => {
+     *       console.log("bundle just finished!!", result);
+     *     });
+     *   },
+     * };
+     * ```
+     *
+     * @returns `this` for method chaining
+     */
+    onEnd(callback: OnEndCallback): this;
+    onBeforeParse(constraints: PluginConstraints, callback: OnBeforeParseCallback): this;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to

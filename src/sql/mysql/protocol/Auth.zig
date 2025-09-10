@@ -8,6 +8,9 @@ pub const mysql_native_password = struct {
         var stage2 = [_]u8{0} ** 20;
         var stage3 = [_]u8{0} ** 20;
         var result: [20]u8 = [_]u8{0} ** 20;
+        if (password.len == 0) {
+            return result;
+        }
 
         // Stage 1: SHA1(password)
         bun.sha.SHA1.hash(password, &stage1, jsc.VirtualMachine.get().rareData().boringEngine());
@@ -16,15 +19,16 @@ pub const mysql_native_password = struct {
         bun.sha.SHA1.hash(&stage1, &stage2, jsc.VirtualMachine.get().rareData().boringEngine());
 
         // Stage 3: SHA1(nonce + SHA1(SHA1(password)))
-        const combined = try bun.default_allocator.alloc(u8, nonce.len + stage2.len);
-        defer bun.default_allocator.free(combined);
-        @memcpy(combined[0..nonce.len], nonce);
-        @memcpy(combined[nonce.len..], &stage2);
-        bun.sha.SHA1.hash(combined, &stage3, jsc.VirtualMachine.get().rareData().boringEngine());
+        var sha1 = bun.sha.SHA1.init();
+        defer sha1.deinit();
+        sha1.update(nonce[0..8]);
+        sha1.update(nonce[8..20]);
+        sha1.update(&stage2);
+        sha1.final(&stage3);
 
         // Final: stage1 XOR stage3
         for (&result, &stage1, &stage3) |*out, d1, d3| {
-            out.* = d1 ^ d3;
+            out.* = d3 ^ d1;
         }
 
         return result;

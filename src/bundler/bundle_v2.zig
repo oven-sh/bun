@@ -1822,6 +1822,10 @@ pub const BundleV2 = struct {
             );
             transpiler.options.env.behavior = config.env_behavior;
             transpiler.options.env.prefix = config.env_prefix.slice();
+            // If env was explicitly disabled, prevent NODE_ENV inlining
+            if (config.env_explicitly_disabled) {
+                transpiler.options.env.behavior = .load_all_without_inlining;
+            }
             if (config.force_node_env != .unspecified) {
                 transpiler.options.force_node_env = config.force_node_env;
             }

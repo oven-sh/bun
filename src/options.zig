@@ -1461,7 +1461,7 @@ pub fn definesFromTransformOptions(
         );
     }
 
-    if (behavior != .load_all_without_inlining and behavior != .disable) {
+    if (behavior != .load_all_without_inlining) {
         const quoted_node_env: string = brk: {
             if (NODE_ENV) |node_env| {
                 if (node_env.len > 0) {

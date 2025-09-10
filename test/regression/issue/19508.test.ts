@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDir, bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("Bun.build with env: 'disable' should not inline process.env.NODE_ENV (issue #19508)", async () => {
@@ -54,10 +54,7 @@ test("Bun.build with env: 'disable' should not inline process.env.NODE_ENV (issu
     stdout: "pipe",
   });
 
-  const [runStdout, runExitCode] = await Promise.all([
-    runProc.stdout.text(),
-    runProc.exited,
-  ]);
+  const [runStdout, runExitCode] = await Promise.all([runProc.stdout.text(), runProc.exited]);
 
   expect(runExitCode).toBe(0);
   expect(runStdout.trim()).toBe("test-runtime");

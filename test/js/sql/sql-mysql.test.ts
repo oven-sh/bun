@@ -613,25 +613,23 @@ if (docker) {
           }
         });
 
-        for (let i = 0; i < 10000; i++) {
-          test.only("Support dynamic async password function that throws" + i, async () => {
-            await using sql = new SQL({
-              ...options,
-              max: 1,
-              password: async () => {
-                await Bun.sleep(10);
-                throw new Error("password error");
-              },
-            });
-            try {
-              await sql`select true as x`;
-              expect.unreachable();
-            } catch (e: any) {
-              expect(e).toBeInstanceOf(Error);
-              expect(e.message).toBe("password error");
-            }
+        test("Support dynamic async password function that throws", async () => {
+          await using sql = new SQL({
+            ...options,
+            max: 1,
+            password: async () => {
+              await Bun.sleep(10);
+              throw new Error("password error");
+            },
           });
-        }
+          try {
+            await sql`select true as x`;
+            expect.unreachable();
+          } catch (e: any) {
+            expect(e).toBeInstanceOf(Error);
+            expect(e.message).toBe("password error");
+          }
+        });
 
         test("sql file", async () => {
           await using sql = new SQL(options);

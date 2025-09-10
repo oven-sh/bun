@@ -201,7 +201,7 @@ pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         const pending = encoded_data[@intCast(written)..];
         if (pending.len > 0) {
             // lets flush when we are truly writable
-            proxy.write_buffer.write(pending) catch bun.outOfMemory();
+            bun.handleOom(proxy.write_buffer.write(pending));
         }
     }
 }

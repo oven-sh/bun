@@ -225,7 +225,8 @@ pub const FD = packed struct(backing_int) {
     /// In debug, fd assertion failure can print where the FD was actually
     /// closed.
     pub fn close(fd: FD) void {
-        bun.debugAssert(fd.closeAllowingBadFileDescriptor(@returnAddress()) == null); // use after close!
+        const err = fd.closeAllowingBadFileDescriptor(@returnAddress());
+        bun.debugAssert(err == null); // use after close!
     }
 
     /// fd function will NOT CLOSE stdin/stdout/stderr.
@@ -651,6 +652,81 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) error{SystemFdQuotaExceeded}!c_in
     if (out == -1) return error.SystemFdQuotaExceeded;
     return out;
 }
+
+/// On Windows we use libuv and often pass file descriptors to functions
+/// like `uv_pipe_open`, `uv_tty_init`.
+///
+/// But `uv_pipe` and `uv_tty` **take ownership of the file descriptor**.
+///
+/// This can easily cause use-after-frees, double closing the FD, etc.
+///
+/// So this type represents an FD that could possibly be moved to libuv.
+///
+/// Note that on Posix, this is just a wrapper over FD and does nothing.
+pub const MovableIfWindowsFd = union(enum) {
+    const Self = @This();
+
+    _inner: if (bun.Environment.isWindows) ?FD else FD,
+
+    pub fn init(fd: FD) Self {
+        return .{ ._inner = fd };
+    }
+
+    pub fn get(self: *const Self) ?FD {
+        return self._inner;
+    }
+
+    pub fn getPosix(self: *const Self) FD {
+        if (comptime bun.Environment.isWindows)
+            @compileError("MovableIfWindowsFd.getPosix is not available on Windows");
+
+        return self._inner;
+    }
+
+    pub fn close(self: *Self) void {
+        if (comptime bun.Environment.isPosix) {
+            self._inner.close();
+            self._inner = FD.invalid;
+            return;
+        }
+        if (self._inner) |fd| {
+            fd.close();
+            self._inner = null;
+        }
+    }
+
+    pub fn isValid(self: *const Self) bool {
+        if (comptime bun.Environment.isPosix) return self._inner.isValid();
+        return self._inner != null and self._inner.?.isValid();
+    }
+
+    pub fn isOwned(self: *const Self) bool {
+        if (comptime bun.Environment.isPosix) return true;
+        return self._inner != null;
+    }
+
+    /// Takes the FD, leaving `self` in a "moved-from" state. Only available on Windows.
+    pub fn take(self: *Self) ?FD {
+        if (comptime bun.Environment.isPosix) {
+            @compileError("MovableIfWindowsFd.take is not available on Posix");
+        }
+        const result = self._inner;
+        self._inner = null;
+        return result;
+    }
+
+    pub fn format(self: *const Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (comptime bun.Environment.isPosix) {
+            try writer.print("{}", .{self.get().?});
+            return;
+        }
+        if (self._inner) |fd| {
+            try writer.print("{}", .{fd});
+            return;
+        }
+        try writer.print("[moved]", .{});
+    }
+};
 
 pub var windows_cached_fd_set: if (Environment.isDebug) bool else void = if (Environment.isDebug) false;
 pub var windows_cached_stdin: FD = undefined;

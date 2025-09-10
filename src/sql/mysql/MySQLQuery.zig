@@ -177,7 +177,7 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     const event_loop = vm.eventLoop();
     var js_error = err.toError() orelse err;
     if (js_error == .zero) {
-        js_error = AnyMySQLError.mysqlErrorToJS(globalObject, "Query failed", err);
+        js_error = AnyMySQLError.mysqlErrorToJS(globalObject, "Query failed", error.UnknownError);
     }
     js_error.ensureStillAlive();
     event_loop.runCallback(function, globalObject, thisValue, &.{

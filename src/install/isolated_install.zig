@@ -168,9 +168,9 @@ pub fn installIsolatedPackages(
                 Lockfile.DepSorter.isLessThan,
             );
 
-            queue_deps: {
-                defer peer_dep_ids.clearRetainingCapacity();
+            peer_dep_ids.clearRetainingCapacity();
 
+            queue_deps: {
                 if (packages_to_install) |packages| {
                     if (node_id == .root) { // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
                         for (dep_ids_sort_buf.items) |dep_id| {

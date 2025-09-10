@@ -77,6 +77,49 @@ describe("WebSocket custom headers", () => {
     ws.close();
   });
   
+  it("should reject invalid Sec-WebSocket-Key and generate a valid one", async () => {
+    const url = await createHeaderEchoServer();
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    
+    // Invalid keys that should be rejected
+    const invalidKeys = [
+      "not-base64!@#",  // Invalid base64
+      "dG9vc2hvcnQ=",   // Valid base64 but decodes to 8 bytes, not 16
+      btoa("toolongkeytoolongkey"), // Valid base64 but decodes to >16 bytes
+    ];
+    
+    for (const invalidKey of invalidKeys) {
+      const ws = new WebSocket(url.href, {
+        headers: {
+          "Sec-WebSocket-Key": invalidKey,
+        },
+      });
+      clients.push(ws);
+      
+      const headerPromise = new Promise<any>((res, rej) => {
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === "headers") {
+              res(data.headers);
+            }
+          } catch (e) {
+            rej(e);
+          }
+        };
+        ws.onerror = rej;
+      });
+      
+      const headers = await headerPromise;
+      // Should have generated a new valid key instead of using the invalid one
+      expect(headers["sec-websocket-key"]).not.toBe(invalidKey);
+      // The generated key should be valid base64 that decodes to 16 bytes
+      const keyBytes = atob(headers["sec-websocket-key"]);
+      expect(keyBytes.length).toBe(16);
+      ws.close();
+    }
+  });
+  
   it("should send custom Sec-WebSocket-Key header", async () => {
     const url = await createHeaderEchoServer();
     const { promise, resolve, reject } = Promise.withResolvers<any>();
@@ -279,8 +322,24 @@ describe("WebSocket custom headers", () => {
     ws.onerror = reject;
     
     const headers = await promise;
-    // Empty headers should either be filtered out or passed through
-    // The validation function should reject truly empty values
+    
+    // Check X-Empty-Header: should either be filtered out or have empty value
+    if ("x-empty-header" in headers) {
+      expect(headers["x-empty-header"]).toBe("");
+    } else {
+      // Header was filtered out, which is also acceptable
+      expect(headers["x-empty-header"]).toBeUndefined();
+    }
+    
+    // Check X-Whitespace-Header: should either be filtered out, trimmed to empty, or have the exact whitespace
+    if ("x-whitespace-header" in headers) {
+      // Whitespace might be preserved or trimmed - both are acceptable
+      expect(["", "  "]).toContain(headers["x-whitespace-header"]);
+    } else {
+      // Header was filtered out, which is also acceptable
+      expect(headers["x-whitespace-header"]).toBeUndefined();
+    }
+    
     ws.close();
   });
   

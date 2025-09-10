@@ -679,9 +679,31 @@ fn buildRequestBody(
         }
     }
     
-    // Generate key
+    // Validate and use user key, or generate a new one
     var encoded_buf: [24]u8 = undefined;
-    const key = if (user_key) |k| k.slice() else std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
+    const key = blk: {
+        if (user_key) |k| {
+            const k_slice = k.slice();
+            // Validate that it's a valid base64-encoded 16-byte value
+            var decoded_buf: [24]u8 = undefined; // Max possible decoded size
+            const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(k_slice) catch {
+                // Invalid base64, fall through to generate
+                break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
+            };
+            
+            if (decoded_len == 16) {
+                // Try to decode to verify it's valid base64
+                _ = std.base64.standard.Decoder.decode(&decoded_buf, k_slice) catch {
+                    // Invalid base64, fall through to generate
+                    break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
+                };
+                // Valid 16-byte key, use it as-is
+                break :blk k_slice;
+            }
+        }
+        // Generate a new key if user key is invalid or not provided
+        break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
+    };
     const protocol = if (user_protocol) |p| p.slice() else client_protocol.slice();
     
     const pathname_ = pathname.toSlice(allocator);

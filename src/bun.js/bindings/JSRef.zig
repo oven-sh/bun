@@ -44,6 +44,7 @@ pub const JSRef = union(enum) {
     }
 
     pub fn setStrong(this: *@This(), value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
+        bun.assert(value != .zero);
         if (this.* == .strong) {
             this.strong.set(globalThis, value);
             return;

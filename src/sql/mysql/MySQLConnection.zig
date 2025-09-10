@@ -349,9 +349,6 @@ pub fn stopTimers(this: *@This()) void {
 
 pub fn getQueriesArray(this: *const @This()) JSValue {
     if (this.js_value.tryGet()) |value| {
-        if (value == .zero) {
-            return .js_undefined;
-        }
         return js.queriesGetCached(value) orelse .js_undefined;
     }
     return .js_undefined;
@@ -1292,9 +1289,6 @@ fn handleHandshakeDecodePublicKey(this: *MySQLConnection, comptime Context: type
 pub fn consumeOnConnectCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnConnectCallback", .{});
     if (this.js_value.tryGet()) |value| {
-        if (value == .zero) {
-            return null;
-        }
         const on_connect = js.onconnectGetCached(value) orelse return null;
         debug("consumeOnConnectCallback exists", .{});
         js.onconnectSetCached(value, globalObject, .zero);
@@ -1309,9 +1303,6 @@ pub fn consumeOnConnectCallback(this: *const @This(), globalObject: *jsc.JSGloba
 pub fn consumeOnCloseCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnCloseCallback", .{});
     if (this.js_value.tryGet()) |value| {
-        if (value == .zero) {
-            return null;
-        }
         const on_close = js.oncloseGetCached(value) orelse return null;
         debug("consumeOnCloseCallback exists", .{});
         js.oncloseSetCached(value, globalObject, .zero);

@@ -2,9 +2,9 @@
 // contributors to hack on `bun-framework-react` without needing
 // to compile bun itself. If changes to this are made, please
 // update 'pub fn react' in 'bake.zig'
-import type { Bake } from "bun";
+import type * as App from "bun:app";
 
-export function react(): Bake.Framework {
+export function react(): App.Framework {
   return {
     // When the files are embedded in the Bun binary,
     // relative path resolution does not work.

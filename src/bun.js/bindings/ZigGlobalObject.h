@@ -453,7 +453,7 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
-    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                            \
+    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \

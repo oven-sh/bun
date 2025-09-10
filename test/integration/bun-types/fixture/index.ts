@@ -461,3 +461,15 @@ expectType(signal).is<AbortSignal>();
 expectType(signal.aborted).is<boolean>();
 
 expectType(RegExp.escape("foo.bar")).is<string>();
+
+const controller = new AbortController();
+expectType(controller.signal).is<AbortSignal>();
+expectType(controller.abort()).is<void>();
+expectType(controller.abort("reason")).is<void>();
+expectType(controller.signal.aborted).is<boolean>();
+controller.signal.addEventListener("abort", event => {
+  expectType(event).is<Event>();
+});
+controller.signal.removeEventListener("abort", event => {
+  expectType(event).is<Event>();
+});

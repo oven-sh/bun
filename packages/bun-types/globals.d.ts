@@ -1556,6 +1556,10 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: any): void;
+}
 declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   "AbortController",
   {

@@ -990,6 +990,7 @@ pub const BundleV2 = struct {
             // try this.graph.entry_points.append(allocator, Index.runtime);
             try this.graph.ast.append(this.allocator(), JSAst.empty);
             try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), "bun:wrap", Index.runtime.get());
+            try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), "bun:app", Index.runtime.get());
             var runtime_parse_task = try this.allocator().create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
@@ -1152,7 +1153,7 @@ pub const BundleV2 = struct {
         }
     }
 
-    /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
+    /// This generates the two asts for 'bun:app/client' and 'bun:app/server'. Both are generated
     /// at the same time in one pass over the SCB list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If a server components is not configured, do nothing
@@ -3092,6 +3093,14 @@ pub const BundleV2 = struct {
                 }
             };
 
+            if (strings.eqlComptime(import_record.path.text, "bun:app")) {
+                import_record.path.namespace = "bun";
+                import_record.tag = .runtime;
+                import_record.path.text = "app";
+                import_record.source_index = .runtime;
+                continue;
+            }
+
             if (strings.eqlComptime(import_record.path.text, "bun:wrap")) {
                 import_record.path.namespace = "bun";
                 import_record.tag = .runtime;
@@ -4458,7 +4467,7 @@ const ExternalFreeFunctionAllocator = struct {
     }
 
     fn free(ext_free_function: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {
-        const info: *ExternalFreeFunctionAllocator = @alignCast(@ptrCast(ext_free_function));
+        const info: *ExternalFreeFunctionAllocator = @ptrCast(@alignCast(ext_free_function));
         info.free_callback(info.context);
         bun.default_allocator.destroy(info);
     }

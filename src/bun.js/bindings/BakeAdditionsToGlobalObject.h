@@ -39,24 +39,27 @@ struct BakeAdditionsToGlobalObject {
 
         m_bakeGetAsyncLocalStorage.initLater(
             [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 0, String("bakeGetAsyncLocalStorage"_s), jsFunctionBakeGetAsyncLocalStorage, ImplementationVisibility::Public, NoIntrinsic));
+                init.set(JSFunction::create(init.vm, init.owner, 0, String("bakeGetAsyncLocalStorage"_s), jsFunctionBakeGetAsyncLocalStorage, ImplementationVisibility::Public, NoIntrinsic));
             });
 
         m_bakeEnsureAsyncLocalStorage.initLater(
             [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 1, String("bakeSetAsyncLocalStorage"_s), jsFunctionBakeEnsureAsyncLocalStorage, ImplementationVisibility::Public, NoIntrinsic));
+                init.set(JSFunction::create(init.vm, init.owner, 1, String("bakeSetAsyncLocalStorage"_s), jsFunctionBakeEnsureAsyncLocalStorage, ImplementationVisibility::Public, NoIntrinsic));
             });
     }
 
-    void ensureAsyncLocalStorageInstance(JSGlobalObject* globalObject, JSValue asyncLocalStorage) {
+    void ensureAsyncLocalStorageInstance(JSGlobalObject* globalObject, JSValue asyncLocalStorage)
+    {
         m_asyncLocalStorageInstance.set(globalObject->vm(), globalObject, asyncLocalStorage);
     }
 
-    JSValue ensureAsyncLocalStorageInstanceJSFunction(const JSGlobalObject* globalObject) {
+    JSValue ensureAsyncLocalStorageInstanceJSFunction(const JSGlobalObject* globalObject)
+    {
         return m_bakeEnsureAsyncLocalStorage.get(globalObject);
     }
 
-    JSValue getAsyncLocalStorage(JSGlobalObject* globalObject) {
+    JSValue getAsyncLocalStorage(JSGlobalObject* globalObject)
+    {
         return m_asyncLocalStorageInstance.get();
     }
 

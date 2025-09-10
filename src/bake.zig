@@ -282,14 +282,13 @@ pub const Framework = struct {
                 "bun-framework-react/server.tsx",
                 "bun-framework-react/ssr.tsx",
             }, if (Environment.codegen_embed) &.{
-                .{ .code = @embedFile("./bake/bun-framework-react/client.tsx") },
-                .{ .code = @embedFile("./bake/bun-framework-react/server.tsx") },
-                .{ .code = @embedFile("./bake/bun-framework-react/ssr.tsx") },
+                .{ .code = @embedFile("../packages/bun-framework-react/client.tsx") },
+                .{ .code = @embedFile("../packages/bun-framework-react/server.tsx") },
+                .{ .code = @embedFile("../packages/bun-framework-react/ssr.tsx") },
             } else &.{
-                // Cannot use .import because resolution must happen from the user's POV
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/server.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/ssr.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/server.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/ssr.tsx") },
             }) catch |err| bun.handleOom(err),
         };
     }
@@ -934,13 +933,13 @@ pub fn addImportMetaDefines(
 }
 
 pub const server_virtual_source: bun.logger.Source = .{
-    .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
+    .path = bun.fs.Path.initForKitBuiltIn("bun", "app/server"),
     .contents = "", // Virtual
     .index = bun.ast.Index.bake_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
-    .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
+    .path = bun.fs.Path.initForKitBuiltIn("bun", "app/client"),
     .contents = "", // Virtual
     .index = bun.ast.Index.bake_client_data,
 };

@@ -496,8 +496,8 @@ describe("bundler", () => {
       "-123.567",
       "8.325",
       "1e8",
-      ".1",  // Our optimization drops leading zero
-      ".1",  // Our optimization drops leading zero
+      ".1", // Our optimization drops leading zero
+      ".1", // Our optimization drops leading zero
       "NaN",
       // untouched
       '+"æ"',
@@ -710,16 +710,7 @@ describe("bundler", () => {
         capture(0.0);
       `,
     },
-    capture: [
-      ".5",
-      ".25",
-      ".125",
-      ".999",
-      ".001",
-      "1.5",
-      "10.5",
-      "0",
-    ],
+    capture: [".5", ".25", ".125", ".999", ".001", "1.5", "10.5", "0"],
     minifySyntax: true,
   });
 
@@ -748,17 +739,17 @@ describe("bundler", () => {
       `,
     },
     capture: [
-      "!1",  // (5 & 7) === 0 is false, constant folded
-      "!1",  // 1 === 7 is false, constant folded  
-      "!0",  // (5 ^ 3) === 6 is true, constant folded
-      "!0",  // 15 === 15 is true, constant folded
-      "!0",  // 10 === 10 is true, constant folded
-      "!0",  // 1 === 1 is true, constant folded
-      "(someVar & 255) == 128",  // Optimized to ==
-      "someVar == 42",  // Optimized to == (42 is numeric)
-      "otherVar == 100",  // Optimized to == (100 is numeric)
-      "someVar === otherVar",  // NOT optimized (neither side is definitely numeric)
-      "!0",  // "5" === "5" is true, constant folded
+      "!1", // (5 & 7) === 0 is false, constant folded
+      "!1", // 1 === 7 is false, constant folded
+      "!0", // (5 ^ 3) === 6 is true, constant folded
+      "!0", // 15 === 15 is true, constant folded
+      "!0", // 10 === 10 is true, constant folded
+      "!0", // 1 === 1 is true, constant folded
+      "(someVar & 255) == 128", // Optimized to ==
+      "someVar == 42", // Optimized to == (42 is numeric)
+      "otherVar == 100", // Optimized to == (100 is numeric)
+      "someVar === otherVar", // NOT optimized (neither side is definitely numeric)
+      "!0", // "5" === "5" is true, constant folded
     ],
     minifySyntax: true,
   });

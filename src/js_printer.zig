@@ -1599,7 +1599,7 @@ fn NewPrinter(
         // Check if a binary expression is in a numeric context (safe to use == instead of ===)
         fn isNumericContext(p: *Printer, e: *E.Binary) bool {
             _ = p;
-            
+
             // Helper to check if an expression is guaranteed to be numeric
             const isDefinitelyNumeric = struct {
                 fn check(expr: Expr) bool {
@@ -1613,8 +1613,7 @@ fn NewPrinter(
                         },
                         .e_binary => |bin| switch (bin.op) {
                             // Bitwise operators always return 32-bit integers
-                            .bin_bitwise_and, .bin_bitwise_or, .bin_bitwise_xor,
-                            .bin_shl, .bin_shr, .bin_u_shr => true,
+                            .bin_bitwise_and, .bin_bitwise_or, .bin_bitwise_xor, .bin_shl, .bin_shr, .bin_u_shr => true,
                             // Arithmetic operators always return numbers
                             .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => true,
                             else => false,
@@ -1623,10 +1622,10 @@ fn NewPrinter(
                     };
                 }
             }.check;
-            
+
             const left_is_numeric = isDefinitelyNumeric(e.left);
             const right_is_numeric = isDefinitelyNumeric(e.right);
-            
+
             // Safe to use == if at least one side is definitely numeric
             // because == with a number coerces the other side to number
             return left_is_numeric or right_is_numeric;

@@ -225,7 +225,7 @@ pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
         .connected => {
             this.failFmt(error.IdleTimeout, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
-        else => {
+        .connecting => {
             this.failFmt(error.ConnectionTimedOut, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .handshaking,
@@ -234,6 +234,7 @@ pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
         => {
             this.failFmt(error.ConnectionTimedOut, "Connection timeout after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
+        .disconnected, .failed => {},
     }
     return .disarm;
 }
@@ -362,9 +363,9 @@ pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:
 }
 pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     defer this.updateHasPendingActivity();
+    this.stopTimers();
     if (this.status == .failed) return;
 
-    this.stopTimers();
     this.ref();
     defer {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
@@ -408,15 +409,15 @@ pub fn onClose(this: *MySQLConnection) void {
 fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
     // refAndClose is always called when we wanna to disconnect or when we are closed
 
+    // cleanup requests
+    this.cleanUpRequests(js_reason);
+
     if (!this.socket.isClosed()) {
         // event loop need to be alive to close the socket
         this.poll_ref.ref(this.vm);
         // will unref on socket close
         this.socket.close();
     }
-
-    // cleanup requests
-    this.cleanUpRequests(js_reason);
 }
 
 pub fn disconnect(this: *@This()) void {

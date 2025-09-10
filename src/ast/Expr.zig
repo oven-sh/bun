@@ -273,13 +273,10 @@ pub fn set(expr: *Expr, allocator: std.mem.Allocator, name: string, value: Expr)
         }
     }
 
-    var new_props = expr.data.e_object.properties.listManaged(allocator);
-    try new_props.append(.{
+    try expr.data.e_object.properties.append(allocator, .{
         .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
         .value = value,
     });
-
-    expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
 }
 
 /// Don't use this if you care about performance.
@@ -298,13 +295,10 @@ pub fn setString(expr: *Expr, allocator: std.mem.Allocator, name: string, value:
         }
     }
 
-    var new_props = expr.data.e_object.properties.listManaged(allocator);
-    try new_props.append(.{
+    try expr.data.e_object.properties.append(allocator, .{
         .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
         .value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty),
     });
-
-    expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
 }
 
 pub fn getObject(expr: *const Expr, name: string) ?Expr {
@@ -3245,7 +3239,6 @@ const JSPrinter = @import("../js_printer.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const JSONParser = bun.json;
 const MutableString = bun.MutableString;

@@ -78,6 +78,15 @@ pub const Borrowed = struct {
         else
             null;
     }
+
+    pub fn downcast(std_alloc: std.mem.Allocator) Borrowed {
+        bun.assertf(
+            isInstance(std_alloc),
+            "not a MimallocArena (vtable is {*})",
+            .{std_alloc.vtable},
+        );
+        return .fromOpaque(std_alloc.ptr);
+    }
 };
 
 const BorrowedHeap = if (safety_checks) *DebugHeap else *mimalloc.Heap;

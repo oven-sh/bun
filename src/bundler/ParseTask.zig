@@ -636,6 +636,22 @@ fn getCodeForParseTaskWithoutPlugins(
             const trace = bun.perf.trace("Bundler.readFile");
             defer trace.end();
 
+            // Check if this is a nativefill virtual path
+            if (strings.hasPrefixComptime(file_path.text, "/bun-nativefill/")) {
+                const NativefillModules = @import("../nativefill.zig");
+                // Extract module name from path like "/bun-nativefill/strip-ansi.js"
+                const module_name = file_path.text["/bun-nativefill/".len..];
+                const dot_index = std.mem.indexOfScalar(u8, module_name, '.') orelse module_name.len;
+                const base_name = module_name[0..dot_index];
+                
+                if (NativefillModules.Map.get(base_name)) |source| {
+                    break :brk .{
+                        .contents = source.contents,
+                        .fd = bun.invalid_fd,
+                    };
+                }
+            }
+
             if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
                 if (task.ctx.framework) |f| {
                     if (f.built_in_modules.get(file_path.text)) |file| {

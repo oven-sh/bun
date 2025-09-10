@@ -1217,6 +1217,22 @@ pub const Resolver = struct {
         }
 
         if (check_package) {
+            // Check for nativefill replacements when enabled and target is bun
+            if (r.opts.nativefill and r.opts.target.isBun()) {
+                if (NativefillModules.Map.get(import_path)) |source| {
+                    // Return a virtual module with the nativefill source
+                    result.path_pair.primary = Fs.Path.init(source.path.text);
+                    result.is_from_node_modules = true;
+                    result.diff_case = null;
+                    result.file_fd = .invalid;
+                    result.dirname_fd = .invalid;
+                    result.module_type = .esm;
+                    result.primary_side_effects_data = .no_side_effects__pure_data;
+                    result.is_external = false;
+                    return .{ .success = result };
+                }
+            }
+
             if (r.opts.polyfill_node_globals) {
                 const had_node_prefix = strings.hasPrefixComptime(import_path, "node:");
                 const import_path_without_node_prefix = if (had_node_prefix) import_path["node:".len..] else import_path;
@@ -4346,6 +4362,7 @@ const string = []const u8;
 const Dependency = @import("../install/dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
+const NativefillModules = @import("../nativefill.zig");
 const ResolvePath = @import("./resolve_path.zig");
 const ast = @import("../import_record.zig");
 const options = @import("../options.zig");

@@ -421,6 +421,7 @@ pub const Command = struct {
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
             bytecode: bool = false,
+            nativefill: bool = false,
             banner: []const u8 = "",
             footer: []const u8 = "",
             css_chunking: bool = false,

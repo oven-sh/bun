@@ -1861,6 +1861,7 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+            transpiler.options.nativefill = config.nativefill;
 
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.

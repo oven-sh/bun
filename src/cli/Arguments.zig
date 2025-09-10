@@ -67,6 +67,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls.") catch unreachable,
     clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
     clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
+    clap.parseParam("--nativefill                      Replace imports of packages with Bun's native implementations when available (requires target to be 'bun')") catch unreachable,
     clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
     clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
     clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
@@ -1222,6 +1223,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     if (args.flag("--no-macros")) {
         ctx.debug.macros = .{ .disable = {} };
+    }
+
+    if (args.flag("--nativefill")) {
+        ctx.bundler_options.nativefill = true;
     }
 
     opts.output_dir = output_dir;

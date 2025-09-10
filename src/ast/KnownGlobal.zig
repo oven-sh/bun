@@ -129,7 +129,7 @@ pub const KnownGlobal = enum {
                                     var list = e.args.moveToListManaged(allocator);
                                     list.clearRetainingCapacity();
                                     bun.handleOom(list.appendNTimes(js_ast.Expr{ .data = js_parser.Prefill.Data.EMissing, .loc = arg_loc }, @intFromFloat(val)));
-                                    return js_ast.Expr.init(E.Array, .{ .items = .fromList(list) }, loc);
+                                    return js_ast.Expr.init(E.Array, .{ .items = .moveFromList(&list) }, loc);
                                 }
                                 return callFromNew(e, loc);
                             },

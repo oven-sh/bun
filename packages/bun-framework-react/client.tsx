@@ -3,13 +3,10 @@
 // applications on, and to showcase what features that Bake offers.
 /// <reference lib="dom" />
 import { onServerSideReload } from "bun:app/client";
-import { use, useLayoutEffect } from "react";
 import { flushSync } from "react-dom";
 import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-bun/client.browser";
-import { isThenable } from "./lib/util.ts";
-import { APP_RSC_PAYLOAD, type NonNullishReactNode } from "./client/react.ts";
-import { useStore } from "./client/simple-store.ts";
+import { type NonNullishReactNode } from "./client/react.ts";
 
 const td = new TextDecoder();
 
@@ -31,7 +28,6 @@ declare global {
 // and uses the ".disabled" property to enable/disable them.
 const cssFiles = new Map<string, { promise: Promise<void> | null; link: HTMLLinkElement }>();
 let currentCssList: string[] | undefined = undefined;
-
 
 // let setPage: React.Dispatch<React.SetStateAction<Promise<NonNullishReactNode> | NonNullishReactNode>>;
 // let abortOnRender: AbortController | undefined;

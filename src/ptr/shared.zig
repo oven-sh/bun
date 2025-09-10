@@ -182,13 +182,13 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             }
         }.take;
 
-        const SharedOptional = WithOptions(?Pointer, options);
+        pub const Optional = WithOptions(?Pointer, options);
 
         /// Converts a `Shared(*T)` into a non-null `Shared(?*T)`.
         ///
         /// This method invalidates `self`.
         pub const toOptional = if (!info.isOptional()) struct {
-            pub fn toOptional(self: *Self) SharedOptional {
+            pub fn toOptional(self: *Self) Optional {
                 defer self.* = undefined;
                 return .{ .#pointer = self.#pointer };
             }
@@ -231,6 +231,10 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
         fn getData(self: Self) if (info.isOptional()) ?*Data else *Data {
             return .fromValuePtr(self.#pointer);
+        }
+
+        pub fn unsafeGetStrongFromPointer(pointer: Pointer) Self {
+            return .{ .#pointer = pointer };
         }
     };
 }

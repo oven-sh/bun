@@ -1,6 +1,10 @@
-pub fn getActive() ?*BunTest {
+pub fn getActiveStrong() ?BunTestPtr {
     const runner = bun.jsc.Jest.Jest.runner orelse return null;
-    return runner.describe2Root.active_file orelse return null;
+    return runner.describe2Root.active_file.take();
+}
+pub fn getActive() ?*BunTest {
+    const active_strong = getActiveStrong() orelse return null;
+    return active_strong.get();
 }
 
 pub const DoneCallback = @import("./DoneCallback.zig");
@@ -30,7 +34,7 @@ pub const js_fns = struct {
     }
     pub fn getActive(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTest {
         const bunTestRoot = try getActiveTestRoot(globalThis, cfg);
-        const bunTest = bunTestRoot.active_file orelse {
+        const bunTest = bunTestRoot.active_file.get() orelse {
             return globalThis.throw("Cannot use {s} outside of a test file.", .{cfg.signature});
         };
 
@@ -82,9 +86,13 @@ pub const js_fns = struct {
     }
 };
 
+pub const BunTestPtr = bun.ptr.shared.WithOptions(*BunTest, .{
+    .allow_weak = true,
+    .Allocator = bun.DefaultAllocator,
+});
 pub const BunTestRoot = struct {
     gpa: std.mem.Allocator,
-    active_file: ?*BunTest,
+    active_file: BunTestPtr.Optional,
 
     hook_scope: *DescribeScope,
 
@@ -101,7 +109,7 @@ pub const BunTestRoot = struct {
         });
         return .{
             .gpa = outer_gpa,
-            .active_file = null,
+            .active_file = .initNull(),
             .hook_scope = hook_scope,
         };
     }
@@ -115,24 +123,24 @@ pub const BunTestRoot = struct {
         group.begin(@src());
         defer group.end();
 
-        bun.assert(this.active_file == null);
-        this.active_file = bun.create(this.gpa, BunTest, .init(this.gpa, this, file_id, reporter));
+        bun.assert(this.active_file.get() == null);
+
+        this.active_file = .new(.init(this.gpa, this, file_id, reporter));
     }
     pub fn exitFile(this: *BunTestRoot) void {
         group.begin(@src());
         defer group.end();
 
-        bun.assert(this.active_file != null);
-        this.active_file.?.reporter = null;
-        this.active_file.?.deinit(); // TODO: deref rather than deinit
-        this.gpa.destroy(this.active_file.?);
-        this.active_file = null;
+        bun.assert(this.active_file.get() != null);
+        this.active_file.get().?.reporter = null;
+        this.active_file.deinit();
+        this.active_file = .initNull();
     }
     pub fn getActiveFileUnlessInPreload(this: *BunTestRoot, vm: *jsc.VirtualMachine) ?*BunTest {
         if (vm.is_in_preload) {
             return null;
         }
-        return this.active_file;
+        return this.active_file.get();
     }
 };
 
@@ -191,10 +199,7 @@ pub const BunTest = struct {
         this.execution.deinit();
         this.collection.deinit();
         this.result_queue.deinit();
-        const backing = this.allocation_scope.parent();
         this.allocation_scope.deinit();
-        // TODO: consider making a StrongScope to ensure jsc.Strong values are deinitialized, or requiring a gpa for a strong that is used in asan builds for safety?
-        backing.destroy(this.allocation_scope);
     }
 
     pub const RefDataValue = union(enum) {
@@ -241,7 +246,7 @@ pub const BunTest = struct {
         }
     };
     pub const RefData = struct {
-        buntest: *BunTest,
+        buntest_weak: BunTestPtr.Weak,
         phase: RefDataValue,
         ref_count: RefCount,
         const RefCount = bun.ptr.RefCount(RefData, "ref_count", #destroy, .{});
@@ -259,12 +264,14 @@ pub const BunTest = struct {
             defer group.end();
             group.log("refData: {}", .{this.phase});
 
-            const buntest = this.buntest;
-            // buntest.gpa.destroy(this); // need to destroy the RefData before unref'ing the buntest because it may free the allocator
-            // TODO: use buntest.gpa to destroy the RefData. this can't be done right now because RefData is stored in expect which needs BunTest to be ref-counted
+            var buntest_weak = this.buntest_weak;
             bun.destroy(this);
-            _ = buntest;
-            // TODO: unref buntest here
+            buntest_weak.deinit();
+        }
+        pub fn bunTest(this: *RefData) ?*BunTest {
+            var buntest_strong = this.buntest_weak.upgrade() orelse return null;
+            defer buntest_strong.deinit();
+            return buntest_strong.get();
         }
     };
     pub fn getCurrentStateData(this: *BunTest) RefDataValue {
@@ -298,15 +305,14 @@ pub const BunTest = struct {
             .done => .{ .done = .{} },
         };
     }
-    pub fn ref(this: *BunTest, phase: RefDataValue) *RefData {
+    pub fn ref(this_strong: BunTestPtr, phase: RefDataValue) *RefData {
+        // TODO: this function may be possible to remove? RefData doesn't need to be a pointer unless it is for the ref-counted version
         group.begin(@src());
         defer group.end();
         group.log("ref: {}", .{phase});
 
-        // TODO this.ref()
-        // TODO: allocate with bun.create(this.gpa). this can't be done right now because RefData is stored in expect which needs BunTest to be ref-counted
         return bun.new(RefData, .{
-            .buntest = this,
+            .buntest_weak = this_strong.cloneWeak(),
             .phase = phase,
             .ref_count = .init(),
         });
@@ -324,7 +330,9 @@ pub const BunTest = struct {
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
         defer refdata.deref();
         const has_one_ref = refdata.ref_count.hasOneRef();
-        const this = refdata.buntest;
+        var this_strong = refdata.buntest_weak.upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
+        defer this_strong.deinit();
+        const this = this_strong.get();
 
         if (is_catch) {
             this.onUncaughtException(globalThis, result, true, refdata.phase);
@@ -334,7 +342,7 @@ pub const BunTest = struct {
         }
 
         this.addResult(refdata.phase);
-        try this.run(globalThis);
+        try run(this_strong, globalThis);
     }
     fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         try bunTestThenOrCatch(globalThis, callframe, false);
@@ -344,20 +352,22 @@ pub const BunTest = struct {
         try bunTestThenOrCatch(globalThis, callframe, true);
         return .js_undefined;
     }
-    pub fn bunTestDoneCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, data: RefDataValue, has_one_ref: bool) bun.JSError!void {
+    pub fn bunTestDoneCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, data: RefDataValue, has_one_ref: bool) bun.JSError!void {
         group.begin(@src());
         defer group.end();
+        const this = this_strong.get();
 
         if (!has_one_ref) {
             return group.log("bunTestDoneCallback -> refdata has multiple refs; don't add result until the last ref", .{});
         }
 
         this.addResult(data);
-        try this.run(globalThis);
+        try run(this_strong, globalThis);
     }
-    pub fn bunTestTimeoutCallback(this: *BunTest, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+    pub fn bunTestTimeoutCallback(this_strong: BunTestPtr, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
         group.begin(@src());
         defer group.end();
+        const this = this_strong.get();
         this.timer.next = .epoch;
         this.timer.state = .PENDING;
 
@@ -368,7 +378,7 @@ pub const BunTest = struct {
             },
             .done => {},
         }
-        this.run(vm.global) catch |e| {
+        run(this_strong, vm.global) catch |e| {
             this.onUncaughtException(vm.global, vm.global.takeException(e), false, .done);
         };
 
@@ -379,9 +389,10 @@ pub const BunTest = struct {
         bun.handleOom(this.result_queue.writeItem(result));
     }
 
-    pub fn run(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
+    pub fn run(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
         group.begin(@src());
         defer group.end();
+        const this = this_strong.get();
 
         if (this.in_run_loop) return;
         this.in_run_loop = true;
@@ -391,8 +402,8 @@ pub const BunTest = struct {
 
         while (this.result_queue.readItem()) |result| {
             const step_result: StepResult = switch (this.phase) {
-                .collection => try this.collection.step(globalThis, result),
-                .execution => try this.execution.step(globalThis, result),
+                .collection => try Collection.step(this_strong, globalThis, result),
+                .execution => try Execution.step(this_strong, globalThis, result),
                 .done => .complete,
             };
             switch (step_result) {
@@ -458,9 +469,10 @@ pub const BunTest = struct {
     }
 
     /// if sync, the result is queued and appended later
-    pub fn runTestCallback(this: *BunTest, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!void {
+    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!void {
         group.begin(@src());
         defer group.end();
+        const this = this_strong.get();
 
         var args: Strong.List = cfg.callback.args.dupe(this.gpa);
         defer args.deinit(this.gpa);
@@ -484,7 +496,7 @@ pub const BunTest = struct {
                 if (dcb_data.called) {
                     // done callback already called; add result immediately
                 } else {
-                    dcb_ref = this.ref(cfg.data);
+                    dcb_ref = ref(this_strong, cfg.data);
                     dcb_data.ref = dcb_ref;
                 }
             } else bun.debugAssert(false); // this should be unreachable, we create DoneCallback above
@@ -492,7 +504,7 @@ pub const BunTest = struct {
 
         if (result != null and result.?.asPromise() != null) {
             group.log("callTestCallback -> promise: data {}", .{cfg.data});
-            const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else this.ref(cfg.data);
+            const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg.data);
             result.?.then(globalThis, this_ref, bunTestThen, bunTestCatch);
             return;
         }
@@ -535,8 +547,7 @@ pub const BunTest = struct {
             , .{});
             bun.Output.flush();
         }
-        globalThis.bunVM().last_reported_error_for_dedupe = .zero;
-        globalThis.bunVM().runErrorHandlerWithDedupe(exception, null);
+        globalThis.bunVM().runErrorHandler(exception, null);
         bun.Output.flush();
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             bun.Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});

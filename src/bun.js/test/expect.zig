@@ -30,22 +30,23 @@ pub const Expect = struct {
         describe: *DescribeScope,
     };
 
-    pub fn bunTest(_: *const Expect) ?*bun.jsc.Jest.describe2.BunTest {
-        const runner = bun.jsc.Jest.Jest.runner orelse return null;
-        return runner.describe2Root.active_file orelse return null;
-    }
-
     pub fn incrementExpectCallCounter(this: *Expect) void {
         const parent = this.parent orelse return; // not in bun:test
-        if (parent.phase.sequence(parent.buntest)) |sequence| {
+        const buntest = parent.bunTest() orelse return; // the test file this expect() call was for is no longer
+        if (parent.phase.sequence(buntest)) |sequence| {
             // found active sequence
             sequence.expect_call_count +|= 1;
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
-            if (parent.buntest.reporter) |reporter| {
+            if (buntest.reporter) |reporter| {
                 reporter.summary().expectations +|= 1;
             }
         }
+    }
+
+    pub fn bunTest(this: *Expect) ?*bun.jsc.Jest.describe2.BunTest {
+        const parent = this.parent orelse return null;
+        return parent.bunTest();
     }
 
     pub const Flags = packed struct(u8) {
@@ -274,7 +275,8 @@ pub const Expect = struct {
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
         const parent = this.parent orelse return error.NoTest;
-        const execution_entry = parent.phase.entry(parent.buntest) orelse return error.SnapshotInConcurrentGroup;
+        const buntest = parent.bunTest() orelse return error.TestNotActive;
+        const execution_entry = parent.phase.entry(buntest) orelse return error.SnapshotInConcurrentGroup;
 
         const test_name = execution_entry.base.name orelse "(unnamed)";
 
@@ -344,7 +346,7 @@ pub const Expect = struct {
             return globalThis.throwOutOfMemory();
         };
 
-        const active_execution_entry_ref = if (bun.jsc.Jest.describe2.getActive()) |buntest| buntest.ref(buntest.getCurrentStateData()) else null;
+        const active_execution_entry_ref = if (bun.jsc.Jest.describe2.getActiveStrong()) |buntest_strong| bun.jsc.Jest.describe2.BunTest.ref(buntest_strong, buntest_strong.get().getCurrentStateData()) else null;
         errdefer if (active_execution_entry_ref) |entry_ref| entry_ref.deinit();
 
         expect.* = .{
@@ -688,6 +690,7 @@ pub const Expect = struct {
             error.OutOfMemory => return error.OutOfMemory,
             error.NoTest => {},
             error.SnapshotInConcurrentGroup => {},
+            error.TestNotActive => {},
         };
 
         const update = Jest.runner.?.snapshots.update_snapshots;
@@ -729,7 +732,7 @@ pub const Expect = struct {
         }
 
         if (needs_write) {
-            const parent = this.parent orelse {
+            const buntest = this.bunTest() orelse {
                 const signature = comptime getSignature(fn_name, "", true);
                 return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
             };
@@ -737,7 +740,7 @@ pub const Expect = struct {
             // 1. find the src loc of the snapshot
             const srcloc = callFrame.getCallerSrcLoc(globalThis);
             defer srcloc.str.deref();
-            const file_id = parent.buntest.file_id;
+            const file_id = buntest.file_id;
             const fget = Jest.runner.?.files.get(file_id);
 
             if (!srcloc.str.eqlUTF8(fget.source.path.text)) {
@@ -806,14 +809,15 @@ pub const Expect = struct {
         const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.slice(), hint) catch |err| {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
-            const parent = this.parent orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
-            const test_file_path = Jest.runner.?.files.get(parent.buntest.file_id).source.path.text;
+            const buntest = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
+            const test_file_path = Jest.runner.?.files.get(buntest.file_id).source.path.text;
             return switch (err) {
                 error.FailedToOpenSnapshotFile => globalThis.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
                 error.SnapshotInConcurrentGroup => globalThis.throw("Snapshot matchers are not supported in concurrent tests", .{}),
+                error.TestNotActive => globalThis.throw("Snapshot matchers are not supported after the test has finished executing", .{}),
                 else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
             };
         };

@@ -10,8 +10,10 @@ const DoneCallbackTask = struct {
         defer bun.destroy(this);
         defer this.ref.deref();
         const has_one_ref = this.ref.ref_count.hasOneRef();
-        this.ref.buntest.bunTestDoneCallback(this.globalThis, this.ref.phase, has_one_ref) catch |e| {
-            this.ref.buntest.onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.ref.phase);
+        var strong = this.ref.buntest_weak.upgrade() orelse return;
+        defer strong.deinit();
+        BunTest.bunTestDoneCallback(strong, this.globalThis, this.ref.phase, has_one_ref) catch |e| {
+            strong.get().onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.ref.phase);
         };
     }
 };

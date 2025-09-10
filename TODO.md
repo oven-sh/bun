@@ -287,19 +287,21 @@ $> bun-after test hook-timeouts
 
 # Add features:
 
-- [ ] drain microtasks / tick? between callback calls?
+- [ ] `done` is missing `.call()`/`.apply()`
+- [ ] drain microtasks / tick? between callback calls? tickImmediateTasks()?
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
 - [ ] add retry/repeat back
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
 - [ ] make sure DoneCallback class can finalize, same as above
-- [ ] make BunTest into a gc object so you can't deinit it while a .then() is still active
+- [x] weak pointers to BunTest
 - [ ] fix `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3. note that existing behaviour is similar?
 - [ ] bun test > support for Github Actions > should annotate a test timeout
 - [ ] a failure in beforeAll should prevent tests from running "unhandled errors between tests are reported"
 
 # Add tests:
 
+- [ ] what is existing behaviour for an uncaught exception? do we resume execution immediately or later?
 - [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
 - [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
 - [ ] add tests for debugger.test_reporter_agent reporting, maybe using `bun-debug x bun-inspect-echo` or using the existing setup but fixing it
@@ -308,6 +310,8 @@ $> bun-after test hook-timeouts
 
 # Final validation:
 
+- [ ] remove runErrorHandlerWithDedupe, last_reported_error_for_dedupe
+- [ ] eliminate fn bunTest() in Execution.zig
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
 - [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
 - [ ] replace debug-only asserts with ciAssert
@@ -398,8 +402,8 @@ $> bun-after test hook-timeouts
 - [ ] consider a memory pool for describescope/executionentry. test if it improves performance.
 - [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
 - [ ] instead of 'description orelse (unnamed)', let's have description default to 'unnamed' and not free it if it === the global that defines that
-- [ ] switch to bun.ptr.shared weak ptr
-- [ ] need to weakly hold BunTestFile from ref()
+- [x] switch to bun.ptr.shared weak ptr
+- [x] need to weakly hold BunTestFile from ref()
   - two tests for comparing performance
     - 1: as-is
     - 2: rather than holding JSValues as Strongs, we hold them as indices into a JSArray that is visited by BunTestFile
@@ -420,7 +424,6 @@ $> bun-after test hook-timeouts
   - the problem with .protect() is that every protected value is visited by the gc every gc, which is slow
   - basically we make BunTestFile into a class. BunTest is a class that holds BunTestFile. Expect holds a weak reference to BunTest
   - an alternative option is making BunTestFile a jsobject that holds a jsarray rather than protect/unprotect ← do the c++ class
-- [ ] strong.list should only have one jsvalue (or be removed fully)
 
 - [ ] Add a phase before ordering results that inherits properties to the parents. (eg inherit only from the child and inherit has_callback from the child. and has_callback can be on describe/test individually rather than on base). then we won't have that happening in an init() function (terrible!)
 - [x] rename sequence.index to sequence.active_index because it is misleading.
@@ -450,6 +453,7 @@ $> bun-after test hook-timeouts
 
 # Follow-up:
 
+- [ ] strong.list should only have one jsvalue (or be removed fully)
 - [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.
 - [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled
 - [ ] limit the number of concurrent tests that run at once

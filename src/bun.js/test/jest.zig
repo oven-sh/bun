@@ -277,9 +277,8 @@ pub const Jest = struct {
 
 pub const on_unhandled_rejection = struct {
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
-        if (Jest.runner != null and Jest.runner.?.describe2Root.active_file != null) {
-            var active_file = Jest.runner.?.describe2Root.active_file.?;
-            return active_file.onUncaughtException(globalObject, rejection, true, active_file.getCurrentStateData());
+        if (bun.jsc.Jest.describe2.getActive()) |buntest| {
+            return buntest.onUncaughtException(globalObject, rejection, true, buntest.getCurrentStateData());
         }
 
         jsc_vm.last_reported_error_for_dedupe = .zero;

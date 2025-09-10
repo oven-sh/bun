@@ -1829,7 +1829,7 @@ pub const TestCommand = struct {
 
             const file_end = reporter.jest.files.len;
 
-            {
+            blk: {
                 _ = file_start;
                 _ = file_end;
                 _ = is_last;
@@ -1837,12 +1837,15 @@ pub const TestCommand = struct {
                 defer bun.jsc.Jest.describe2.debug.group.end();
 
                 // Check if describe2 is available and has tests to run
-                bun.assert(describe2Root.active_file != null);
-                const buntest = describe2Root.active_file.?;
+                const buntest_strong = describe2Root.active_file.take() orelse {
+                    bun.assert(false);
+                    break :blk;
+                };
+                const buntest = buntest_strong.get();
 
                 // Automatically execute describe2 tests
                 buntest.addResult(.start);
-                try buntest.run(vm.global);
+                try bun.jsc.Jest.describe2.BunTest.run(buntest_strong, vm.global);
 
                 // Process event loop while describe2 tests are running
                 vm.eventLoop().tick();

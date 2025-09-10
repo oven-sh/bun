@@ -95,13 +95,13 @@ pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?j
     group.log("collection:runOneCompleted reset scope back to {s}", .{this.active_scope.base.name orelse "undefined"});
 }
 
-pub fn step(this: *Collection, globalThis: *jsc.JSGlobalObject, data: describe2.BunTest.RefDataValue) bun.JSError!describe2.StepResult {
+pub fn step(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObject, data: describe2.BunTest.RefDataValue) bun.JSError!describe2.StepResult {
     group.begin(@src());
     defer group.end();
+    const buntest = buntest_strong.get();
+    const this = &buntest.collection;
 
     if (data != .start) try this.runOneCompleted(globalThis, null, data);
-
-    const buntest = this.bunTest();
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
@@ -136,7 +136,7 @@ pub fn step(this: *Collection, globalThis: *jsc.JSGlobalObject, data: describe2.
         this.active_scope = new_scope;
         group.log("collection:runOne set scope to {s}", .{this.active_scope.base.name orelse "undefined"});
 
-        try buntest.runTestCallback(globalThis, .{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = .{
+        try BunTest.runTestCallback(buntest_strong, globalThis, .{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = .{
             .collection = .{
                 .active_scope = previous_scope,
             },

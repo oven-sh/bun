@@ -317,5 +317,5 @@ describe("junit reporter", () => {
 });
 
 function filterJunitXmlOutput(xmlContent) {
-  return xmlContent.replaceAll(/ time="[\d.]+"/g, "");
+  return xmlContent.replaceAll(/ (time|hostname)=".+?"/g, "");
 }

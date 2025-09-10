@@ -461,7 +461,6 @@ $> bun-after test hook-timeouts
 - [ ] migrate RefData to bun.ptr.Strong
 - [ ] setting both result and maybe_skip is not ideal, maybe there should be a function to do both at once?
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance
-- [ ] consider modifying the junit reporter to print the whole describe tree rather than exploring the execution tree (if that's what it's doing? either way it needs to include tests that are filtered out)
 - [ ] consider a memory pool for describescope/executionentry. test if it improves performance.
 - [ ] consider making RefDataValue methods return the reason for failure rather than ?value. that way we can improve error messages. the reason could be a string or it could be a defined error set
 - [ ] instead of 'description orelse (unnamed)', let's have description default to 'unnamed' and not free it if it === the global that defines that
@@ -516,6 +515,7 @@ $> bun-after test hook-timeouts
 
 # Follow-up:
 
+- [ ] consider modifying the junit reporter to print the whole describe tree at the end instead of trying to output as test results come in. and move it into its own file.
 - [ ] strong.list should only have one jsvalue (or be removed fully)
 - [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.
 - [ ] Should make line_no be an enum with a none option and a function to get if line nombers are enabled

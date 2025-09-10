@@ -962,6 +962,10 @@ pub const Value = union(Tag) {
         if (tag == .Error) {
             this.Error.deinit();
         }
+
+        if (tag == .Render) {
+            bun.default_allocator.free(this.Render.path);
+        }
     }
 
     pub fn tee(this: *Value, globalThis: *jsc.JSGlobalObject) bun.JSError!Value {

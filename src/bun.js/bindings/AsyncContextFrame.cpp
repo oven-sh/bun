@@ -3,6 +3,10 @@
 #include "AsyncContextFrame.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
+#endif
+
 using namespace JSC;
 using namespace WebCore;
 
@@ -64,6 +68,28 @@ void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(AsyncContextFrame);
 
+#if ASSERT_ENABLED
+void auditEverything(JSGlobalObject* globalObject, JSValue value, JSValue thisValue, const ArgList& args)
+{
+
+    auto& vm = globalObject->vm();
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "Value is JSValue.zero. This will cause a crash.");
+    ASSERT_WITH_MESSAGE(value.isCell(), "AsyncContextFrame value is not a cell. This will cause a crash.");
+    ASSERT_WITH_MESSAGE(!thisValue.isEmpty(), "This value is JSValue.zero. This will cause a crash.");
+    JSC::Integrity::auditCellFully(vm, value.asCell());
+    if (thisValue.isCell()) {
+        JSC::Integrity::auditCellFully(vm, thisValue.asCell());
+    }
+
+    for (size_t i = 0; i < args.size(); i++) {
+        ASSERT_WITH_MESSAGE(!args.at(i).isEmpty(), "Argument #%lu is JSValue.zero. This will cause a crash.", i);
+        if (args.at(i).isCell()) {
+            JSC::Integrity::auditCellFully(vm, args.at(i).asCell());
+        }
+    }
+}
+#endif
+
 extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)
 {
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
@@ -97,6 +123,10 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
 // }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
+#if ASSERT_ENABLED
+    auditEverything(global, functionObject, thisValue, args);
+#endif
+
     if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }
@@ -105,6 +135,10 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
 {
+#if ASSERT_ENABLED
+    auditEverything(global, functionObject, thisValue, args);
+#endif
+
     if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
     }
@@ -123,7 +157,9 @@ JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue function
 JSC::JSValue AsyncContextFrame::run(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
     ASSERT(global->isAsyncContextTrackingEnabled());
-
+#if ASSERT_ENABLED
+    auditEverything(global, functionObject, thisValue, args);
+#endif
     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
 #undef ASYNCCONTEXTFRAME_CALL_IMPL

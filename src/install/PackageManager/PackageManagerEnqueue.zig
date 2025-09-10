@@ -253,9 +253,6 @@ pub fn enqueuePackageForDownload(
 
     if (task_queue.found_existing) return;
 
-    // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-    if (!this.options.do.prefetch_resolved_tarballs) return;
-
     const is_required = this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired();
 
     if (try this.generateNetworkTaskForTarball(

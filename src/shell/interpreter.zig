@@ -417,10 +417,10 @@ pub const Interpreter = struct {
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stdout.owned.deinit(bun.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stderr.owned.deinit(bun.default_allocator);
                 }
             }
 
@@ -1181,10 +1181,10 @@ pub const Interpreter = struct {
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
         if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
         }
         if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
         this.allocator.destroy(this);

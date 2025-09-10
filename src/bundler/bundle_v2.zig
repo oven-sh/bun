@@ -758,7 +758,7 @@ pub const BundleV2 = struct {
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = .no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
             }
@@ -824,7 +824,7 @@ pub const BundleV2 = struct {
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
             }
@@ -1138,8 +1138,8 @@ pub const BundleV2 = struct {
         bun.safety.alloc.assertEq(this.allocator(), this.transpiler.allocator);
         bun.safety.alloc.assertEq(this.allocator(), this.linker.graph.allocator);
         this.linker.graph.ast = try this.graph.ast.clone(this.allocator());
-        var ast = this.linker.graph.ast.slice();
-        for (ast.items(.module_scope)) |*module_scope| {
+
+        for (this.linker.graph.ast.items(.module_scope)) |*module_scope| {
             for (module_scope.children.slice()) |child| {
                 child.parent = module_scope;
             }
@@ -1150,6 +1150,10 @@ pub const BundleV2 = struct {
 
             module_scope.generated = try module_scope.generated.clone(this.allocator());
         }
+
+        // Some parts of the AST are owned by worker allocators at this point.
+        // Transfer ownership to the graph heap.
+        this.linker.graph.takeAstOwnership();
     }
 
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
@@ -1249,7 +1253,7 @@ pub const BundleV2 = struct {
                 try client_manifest_props.append(alloc, .{
                     .key = client_path,
                     .value = server.newExpr(E.Object{
-                        .properties = G.Property.List.init(client_manifest_items),
+                        .properties = G.Property.List.fromOwnedSlice(client_manifest_items),
                     }),
                 });
             } else {
@@ -1264,7 +1268,7 @@ pub const BundleV2 = struct {
                     .ref = try server.newSymbol(.other, "serverManifest"),
                 }, Logger.Loc.Empty),
                 .value = server.newExpr(E.Object{
-                    .properties = G.Property.List.fromList(server_manifest_props),
+                    .properties = G.Property.List.moveFromList(&server_manifest_props),
                 }),
             }}),
             .is_export = true,
@@ -1276,7 +1280,7 @@ pub const BundleV2 = struct {
                     .ref = try server.newSymbol(.other, "ssrManifest"),
                 }, Logger.Loc.Empty),
                 .value = server.newExpr(E.Object{
-                    .properties = G.Property.List.fromList(client_manifest_props),
+                    .properties = G.Property.List.moveFromList(&client_manifest_props),
                 }),
             }}),
             .is_export = true,
@@ -1316,7 +1320,7 @@ pub const BundleV2 = struct {
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
             }
@@ -1370,7 +1374,7 @@ pub const BundleV2 = struct {
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling()) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
             }
@@ -1679,9 +1683,9 @@ pub const BundleV2 = struct {
                         .entry_point_index = null,
                         .is_executable = false,
                     })) catch unreachable;
-                    additional_files[index].push(this.allocator(), AdditionalFile{
+                    additional_files[index].append(this.allocator(), AdditionalFile{
                         .output_file = @as(u32, @truncate(additional_output_files.items.len - 1)),
-                    }) catch unreachable;
+                    }) catch |err| bun.handleOom(err);
                 }
             }
 
@@ -1852,6 +1856,7 @@ pub const BundleV2 = struct {
             transpiler.options.minify_syntax = config.minify.syntax;
             transpiler.options.minify_whitespace = config.minify.whitespace;
             transpiler.options.minify_identifiers = config.minify.identifiers;
+            transpiler.options.keep_names = config.minify.keep_names;
             transpiler.options.inlining = config.minify.syntax;
             transpiler.options.source_map = config.source_map;
             transpiler.options.packages = config.packages;
@@ -2259,7 +2264,7 @@ pub const BundleV2 = struct {
                 if (should_copy_for_bundling) {
                     const source_index = load.source_index;
                     var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                    additional_files.push(this.allocator(), .{ .source_index = source_index.get() }) catch unreachable;
+                    bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = source_index.get() }));
                     this.graph.input_files.items(.side_effects)[source_index.get()] = .no_side_effects__pure_data;
                     this.graph.estimated_file_loader_count += 1;
                 }
@@ -2458,7 +2463,7 @@ pub const BundleV2 = struct {
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
                             if (loader.shouldCopyForBundling()) {
                                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
-                                additional_files.push(this.allocator(), .{ .source_index = task.source_index.get() }) catch unreachable;
+                                bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                                 this.graph.estimated_file_loader_count += 1;
                             }
@@ -2492,7 +2497,7 @@ pub const BundleV2 = struct {
                             if (!entry.found_existing) {
                                 entry.value_ptr.* = .{};
                             }
-                            entry.value_ptr.push(
+                            entry.value_ptr.append(
                                 this.allocator(),
                                 .{
                                     .to_source_index = source_index,
@@ -3529,7 +3534,7 @@ pub const BundleV2 = struct {
 
         import_record.source_index = fake_input_file.source.index;
         try this.pathToSourceIndexMap(target).put(this.allocator(), path_text, fake_input_file.source.index.get());
-        try graph.html_imports.server_source_indices.push(this.allocator(), fake_input_file.source.index.get());
+        try graph.html_imports.server_source_indices.append(this.allocator(), fake_input_file.source.index.get());
         this.ensureClientTranspiler();
     }
 
@@ -3710,7 +3715,7 @@ pub const BundleV2 = struct {
 
                         if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
-                            additional_files.push(this.allocator(), .{ .source_index = new_task.source_index.get() }) catch unreachable;
+                            bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = new_task.source_index.get() }));
                             new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
                             graph.estimated_file_loader_count += 1;
                         }
@@ -3719,7 +3724,7 @@ pub const BundleV2 = struct {
                     } else {
                         if (loader.shouldCopyForBundling()) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
-                            additional_files.push(this.allocator(), .{ .source_index = existing.value_ptr.* }) catch unreachable;
+                            bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = existing.value_ptr.* }));
                             graph.estimated_file_loader_count += 1;
                         }
 
@@ -3735,16 +3740,15 @@ pub const BundleV2 = struct {
                     result.loader.isCSS();
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
-                    for (pending_entry.value.slice()) |to_assign| {
+                    var value = pending_entry.value;
+                    for (value.slice()) |to_assign| {
                         if (save_import_record_source_index or
                             input_file_loaders[to_assign.to_source_index.get()].isCSS())
                         {
                             import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
                         }
                     }
-
-                    var list = pending_entry.value.list();
-                    list.deinit(this.allocator());
+                    value.deinit(this.allocator());
                 }
 
                 if (result.ast.css != null) {

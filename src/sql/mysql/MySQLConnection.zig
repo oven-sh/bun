@@ -1144,6 +1144,17 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         const header = PacketHeader.decode(reader.peek()) orelse return AnyMySQLError.Error.ShortRead;
         const header_length = header.length;
         debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header_length });
+        
+        // Check for potential integer overflow and invalid packet sizes
+        // MySQL packets have a max size of 16MB (0xFFFFFF), but we need to prevent overflow
+        // when adding PacketHeader.size (4 bytes)
+        const max_safe_packet_size = 0xFFFFFF - PacketHeader.size;
+        if (header_length > max_safe_packet_size) {
+            // Malformed packet with impossible length - forcefully close connection
+            this.fail("Malformed packet: invalid length", AnyMySQLError.Error.InvalidEncodedLength);
+            return AnyMySQLError.Error.InvalidEncodedLength;
+        }
+        
         // Ensure we have the full packet
         reader.ensureCapacity(header_length + PacketHeader.size) catch return AnyMySQLError.Error.ShortRead;
         // always skip the full packet, we dont care about padding or unreaded bytes

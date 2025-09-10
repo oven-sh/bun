@@ -203,7 +203,7 @@ pub const BunTest = struct {
     }
 
     pub const RefDataValue = union(enum) {
-        start,
+        start, // TODO: rename to 'none'
         collection: struct {
             active_scope: *DescribeScope,
         },

@@ -278,7 +278,7 @@ pub const Jest = struct {
 pub const on_unhandled_rejection = struct {
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
         if (bun.jsc.Jest.describe2.getActive()) |buntest| {
-            return buntest.onUncaughtException(globalObject, rejection, true, buntest.getCurrentStateData());
+            return buntest.onUncaughtException(globalObject, rejection, true, .start);
         }
 
         jsc_vm.last_reported_error_for_dedupe = .zero;

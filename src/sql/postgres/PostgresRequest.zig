@@ -255,8 +255,8 @@ pub fn executeQuery(
     writer: protocol.NewWriter(Context),
 ) !void {
     try protocol.writeQuery(query, Context, writer);
-    try writer.write(&protocol.Flush);
-    try writer.write(&protocol.Sync);
+    // Simple protocol (Query message) is self-contained per PostgreSQL spec
+    // No Flush or Sync needed - server automatically sends ReadyForQuery after Query
 }
 
 pub fn onData(

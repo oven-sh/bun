@@ -433,7 +433,7 @@ describe("Bun.build", () => {
 
     expect(result.success).toBe(true);
     expect(result.outputs).toHaveLength(1);
-    
+
     // Check that the virtual module content is in the output
     const output = await result.outputs[0].text();
     expect(output).toContain("Hello from virtual module");

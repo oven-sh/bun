@@ -427,7 +427,7 @@ test("Bun.build plugin virtual modules - virtual module as entrypoint", async ()
 
   expect(result.success).toBe(true);
   expect(result.outputs).toHaveLength(1);
-  
+
   const output = await Bun.file(result.outputs[0].path).text();
   expect(output).toContain("Hello from virtual entrypoint");
 });

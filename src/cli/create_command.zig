@@ -327,8 +327,8 @@ pub const CreateCommand = struct {
 
                 var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
                 var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
-                try gunzip.readAll();
-                gunzip.deinit();
+                defer gunzip.deinit();
+                try gunzip.readAll(true);
 
                 node.name = try ProgressBuf.print("Extracting {s}", .{template});
                 node.setCompletedItems(0);

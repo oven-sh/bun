@@ -1576,7 +1576,7 @@ pub const JSZlib = struct {
                     return globalThis.throwError(err, "Zlib error") catch return .zero;
                 };
 
-                reader.readAll() catch {
+                reader.readAll(true) catch {
                     defer reader.deinit();
                     return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };

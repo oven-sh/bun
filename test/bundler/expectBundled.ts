@@ -717,6 +717,7 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
+              jsx.side_effects && ["--jsx-side-effects"],
               dotenv && ["--env", dotenv],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
@@ -760,6 +761,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
+              jsx.side_effects && `--jsx-side-effects`,
               env?.NODE_ENV !== "production" && `--jsx-dev`,
               entryNaming &&
                 entryNaming !== "[dir]/[name].[ext]" &&

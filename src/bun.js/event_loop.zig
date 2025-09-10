@@ -98,7 +98,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
 }
 
 pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
-const log = bun.Output.scoped(.EventLoop, .visible);
+const log = bun.Output.scoped(.EventLoop, .hidden);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     while (!done.*) {

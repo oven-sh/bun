@@ -4,18 +4,14 @@ This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed
 
 ### Build Commands
 
-- **Build debug version**: `bun bd`
+- **Build Bun**: `bun bd`
   - Creates a debug build at `./build/debug/bun-debug`
-  - **CRITICAL**: DO NOT set a build timeout. Compilation takes ~5 minutes. Be patient.
+  - **CRITICAL**: no need for a timeout, the build is really fast!
 - **Run tests with your debug build**: `bun bd test <test-file>`
   - **CRITICAL**: Never use `bun test` directly - it won't include your changes
 - **Run any command with debug build**: `bun bd <command>`
 
-### Other Build Variants
-
-- `bun run build:release` - Release build
-
-Address sanitizer is enabled by default in debug builds of Bun.
+Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.json script.
 
 ## Testing
 
@@ -43,16 +39,11 @@ Tests use Bun's Jest-compatible test runner with proper test fixtures:
 
 ```typescript
 import { test, expect } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  normalizeBunSnapshot,
-  tempDirWithFiles,
-} from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("my feature", async () => {
   // Create temp directory with test files
-  const dir = tempDirWithFiles("test-prefix", {
+  using dir = tempDir("test-prefix", {
     "index.js": `console.log("hello");`,
   });
 
@@ -60,7 +51,7 @@ test("my feature", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     env: bunEnv,
-    cwd: dir,
+    cwd: String(dir),
     stderr: "pipe",
   });
 

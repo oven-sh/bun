@@ -10,6 +10,8 @@ pub const Environment = @import("./env.zig");
 
 pub const use_mimalloc = true;
 pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
+/// Zero-sized type whose `allocator` method returns `default_allocator`.
+pub const DefaultAllocator = allocators.Default;
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
@@ -40,16 +42,16 @@ pub const debug_allocator_data = struct {
         return backing.?.allocator().rawAlloc(new_len, alignment, ret_addr);
     }
 
-    fn resize(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
-        return backing.?.allocator().rawResize(memory, alignment, new_len, ret_addr);
+    fn resize(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        return backing.?.allocator().rawResize(mem, alignment, new_len, ret_addr);
     }
 
-    fn remap(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        return backing.?.allocator().rawRemap(memory, alignment, new_len, ret_addr);
+    fn remap(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawRemap(mem, alignment, new_len, ret_addr);
     }
 
-    fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
-        return backing.?.allocator().rawFree(memory, alignment, ret_addr);
+    fn free(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        return backing.?.allocator().rawFree(mem, alignment, ret_addr);
     }
 };
 
@@ -663,17 +665,18 @@ pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnT
     return Result.execute();
 }
 
-pub fn isHeapMemory(memory: anytype) bool {
+pub fn isHeapMemory(mem: anytype) bool {
     if (comptime use_mimalloc) {
-        const Memory = @TypeOf(memory);
+        const Memory = @TypeOf(mem);
         if (comptime std.meta.trait.isSingleItemPtr(Memory)) {
-            return mimalloc.mi_is_in_heap_region(memory);
+            return mimalloc.mi_is_in_heap_region(mem);
         }
-        return mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
+        return mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(mem).ptr);
     }
     return false;
 }
 
+pub const memory = @import("./memory.zig");
 pub const allocators = @import("./allocators.zig");
 pub const mimalloc = allocators.mimalloc;
 pub const MimallocArena = allocators.MimallocArena;
@@ -1734,7 +1737,7 @@ pub const StringSet = struct {
 
     pub const Map = StringArrayHashMap(void);
 
-    pub fn clone(self: StringSet) !StringSet {
+    pub fn clone(self: *const StringSet) !StringSet {
         var new_map = Map.init(self.map.allocator);
         try new_map.ensureTotalCapacity(self.map.count());
         for (self.map.keys()) |key| {
@@ -1751,7 +1754,15 @@ pub const StringSet = struct {
         };
     }
 
-    pub fn keys(self: StringSet) []const []const u8 {
+    pub fn isEmpty(self: *const StringSet) bool {
+        return self.count() == 0;
+    }
+
+    pub fn count(self: *const StringSet) usize {
+        return self.map.count();
+    }
+
+    pub fn keys(self: *const StringSet) []const []const u8 {
         return self.map.keys();
     }
 
@@ -1768,6 +1779,13 @@ pub const StringSet = struct {
 
     pub fn swapRemove(self: *StringSet, key: []const u8) bool {
         return self.map.swapRemove(key);
+    }
+
+    pub fn clearAndFree(self: *StringSet) void {
+        for (self.map.keys()) |key| {
+            self.map.allocator.free(key);
+        }
+        self.map.clearAndFree();
     }
 
     pub fn deinit(self: *StringSet) void {
@@ -3112,8 +3130,6 @@ pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(ca
     }
 
     if (!ok) {
-        // crash handler has runtime-only code.
-        if (@inComptime()) @compileError(std.fmt.comptimePrint(format, args));
         assertionFailureWithMsg(format, args);
     }
 }

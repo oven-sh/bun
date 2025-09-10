@@ -1,22 +1,5 @@
 const owned = @This();
 
-/// Options for `WithOptions`.
-pub const Options = struct {
-    // Whether to call `deinit` on the data before freeing it, if such a method exists.
-    deinit: bool = true,
-
-    // If non-null, the owned pointer will always use the provided allocator. This makes it the
-    // same size as a raw pointer, as it no longer has to store the allocator at runtime, but it
-    // means it will be a different type from owned pointers that use different allocators.
-    allocator: ?Allocator = bun.default_allocator,
-
-    fn asDynamic(self: Options) Options {
-        var new = self;
-        new.allocator = null;
-        return new;
-    }
-};
-
 /// An owned pointer or slice that was allocated using the default allocator.
 ///
 /// This type is a wrapper around a pointer or slice of type `Pointer` that was allocated using
@@ -26,188 +9,232 @@ pub const Options = struct {
 /// `Pointer` can be a single-item pointer, a slice, or an optional version of either of those;
 /// e.g., `Owned(*u8)`, `Owned([]u8)`, `Owned(?*u8)`, or `Owned(?[]u8)`.
 ///
-/// Use the `alloc*` functions to create an `Owned(Pointer)` by allocating memory, or use
-/// `fromRawOwned` to create one from a raw pointer. Use `get` to access the inner pointer, and
-/// call `deinit` to free the memory. If `Pointer` is optional, use `initNull` to create a null
-/// `Owned(Pointer)`.
-///
-/// See `Dynamic` for a version that supports any allocator. You can also specify a different
-/// fixed allocator using `WithOptions(Pointer, .{ .allocator = some_other_allocator })`.
+/// This type is an alias of `OwnedIn(Pointer, bun.DefaultAllocator)`, and thus has no overhead
+/// because `bun.DefaultAllocator` is a zero-sized type.
 pub fn Owned(comptime Pointer: type) type {
-    return WithOptions(Pointer, .{});
+    return OwnedIn(Pointer, bun.DefaultAllocator);
 }
 
-/// An owned pointer or slice allocated using any allocator.
+/// An owned pointer or slice allocated using any `std.mem.Allocator`.
 ///
-/// This type is like `Owned`, but it supports data allocated by any allocator. To do this, it
-/// stores the allocator at runtime, which increases the size of the type. An unmanaged version
-/// which doesn't store the allocator is available with `Dynamic(Pointer).Unmanaged`.
+/// This type is an alias of `OwnedIn(Pointer, std.mem.Allocator)`, and thus stores the
+/// `std.mem.Allocator` at runtime.
 pub fn Dynamic(comptime Pointer: type) type {
-    return WithOptions(Pointer, .{ .allocator = null });
+    return OwnedIn(Pointer, std.mem.Allocator);
 }
 
-/// Like `Owned`, but takes explicit options.
+/// An owned pointer or slice, allocated using an instance of `Allocator`.
 ///
-/// `Owned(Pointer)` is simply an alias of `WithOptions(Pointer, .{})`.
-pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
+/// `Allocator` must be one of the following:
+///
+/// * `std.mem.Allocator`
+/// * A type with a method named `allocator` that takes no parameters (except `self`) and returns
+///   an instance of `std.mem.Allocator`.
+///
+/// If `Allocator` is a zero-sized type, the owned pointer has no overhead compared to a raw
+/// pointer.
+pub fn OwnedIn(comptime Pointer: type, comptime Allocator: type) type {
     const info = PointerInfo.parse(Pointer, .{});
     const NonOptionalPointer = info.NonOptionalPointer;
     const Child = info.Child;
+    const ConstPointer = AddConst(Pointer);
 
     return struct {
         const Self = @This();
 
-        #unsafe_raw_pointer: Pointer,
-        unsafe_allocator: if (options.allocator == null) Allocator else void,
+        #pointer: Pointer,
+        #allocator: Allocator,
 
         /// An unmanaged version of this owned pointer. This type doesn't store the allocator and
         /// is the same size as a raw pointer.
         ///
-        /// This type is provided only if `options.allocator` is null, since if it's non-null,
-        /// the owned pointer is already the size of a raw pointer.
-        pub const Unmanaged = if (options.allocator == null) owned.Unmanaged(Pointer, options);
+        /// If `Allocator` is a zero-sized type, there is no advantage to using this type. Just
+        /// use a normal owned pointer, which has no overhead in this case.
+        pub const Unmanaged = owned.Unmanaged(Pointer, Allocator);
 
-        /// Allocates a new owned pointer. The signature of this function depends on whether the
-        /// pointer is a single-item pointer or a slice, and whether a fixed allocator was provided
-        /// in `options`.
-        pub const alloc = (if (options.allocator) |allocator| switch (info.kind()) {
+        /// Allocates a new owned pointer with a default-initialized `Allocator`.
+        pub const alloc = switch (info.kind()) {
             .single => struct {
-                /// Allocates memory for a single value using `options.allocator`, and initializes
-                /// it with `value`.
-                pub fn alloc(value: Child) Allocator.Error!Self {
-                    return .allocSingle(allocator, value);
+                pub fn alloc(value: Child) AllocError!Self {
+                    return .allocIn(value, bun.memory.initDefault(Allocator));
                 }
             },
             .slice => struct {
-                /// Allocates memory for `count` elements using `options.allocator`, and initializes
-                /// every element with `elem`.
-                pub fn alloc(count: usize, elem: Child) Allocator.Error!Self {
-                    return .allocSlice(allocator, count, elem);
+                pub fn alloc(count: usize, elem: Child) AllocError!Self {
+                    return .allocIn(count, elem, bun.memory.initDefault(Allocator));
                 }
             },
-        } else switch (info.kind()) {
+        }.alloc;
+
+        /// Allocates a new owned pointer with the given allocator.
+        pub const allocIn = switch (info.kind()) {
             .single => struct {
-                /// Allocates memory for a single value and initialize it with `value`.
-                pub fn alloc(allocator: Allocator, value: Child) Allocator.Error!Self {
-                    return .allocSingle(allocator, value);
+                pub fn allocIn(value: Child, allocator_: Allocator) AllocError!Self {
+                    const data = try bun.memory.create(
+                        Child,
+                        bun.allocators.asStd(allocator_),
+                        value,
+                    );
+                    return .{
+                        .#pointer = data,
+                        .#allocator = allocator_,
+                    };
                 }
             },
             .slice => struct {
-                /// Allocates memory for `count` elements, and initialize every element with `elem`.
-                pub fn alloc(allocator: Allocator, count: usize, elem: Child) Allocator.Error!Self {
-                    return .allocSlice(allocator, count, elem);
+                pub fn allocIn(count: usize, elem: Child, allocator_: Allocator) AllocError!Self {
+                    const data = try bun.allocators.asStd(allocator_).alloc(Child, count);
+                    @memset(data, elem);
+                    return .{
+                        .#pointer = data,
+                        .#allocator = allocator_,
+                    };
                 }
             },
-        }).alloc;
+        }.allocIn;
 
-        const supports_default_allocator = if (options.allocator) |allocator|
-            bun.allocators.isDefault(allocator)
-        else
-            true;
-
-        /// Allocates an owned pointer using the default allocator. This function calls
-        /// `bun.outOfMemory` if memory allocation fails.
-        pub const new = if (info.kind() == .single and supports_default_allocator) struct {
+        /// Allocates an owned pointer for a single item, and calls `bun.outOfMemory` if allocation
+        /// fails.
+        ///
+        /// It must be possible to default-initialize `Allocator`.
+        pub const new = if (info.kind() == .single) struct {
             pub fn new(value: Child) Self {
-                return bun.handleOom(Self.allocSingle(bun.default_allocator, value));
+                return bun.handleOom(Self.alloc(value));
             }
         }.new;
 
-        /// Creates an owned pointer by allocating memory and performing a shallow copy of
-        /// `data`.
-        pub const allocDupe = (if (options.allocator) |allocator| struct {
-            pub fn allocDupe(data: NonOptionalPointer) Allocator.Error!Self {
-                return .allocDupeImpl(data, allocator);
-            }
-        } else struct {
-            pub fn allocDupe(data: NonOptionalPointer, allocator: Allocator) Allocator.Error!Self {
-                return .allocDupeImpl(data, allocator);
-            }
-        }).allocDupe;
-
-        pub const fromRawOwned = (if (options.allocator == null) struct {
-            /// Creates an owned pointer from a raw pointer and allocator.
-            ///
-            /// Requirements:
-            ///
-            /// * `data` must have been allocated by `allocator`.
-            /// * `data` must not be freed for the life of the owned pointer.
-            pub fn fromRawOwned(data: NonOptionalPointer, allocator: Allocator) Self {
-                return .{
-                    .#unsafe_raw_pointer = data,
-                    .unsafe_allocator = allocator,
-                };
-            }
-        } else struct {
-            /// Creates an owned pointer from a raw pointer.
-            ///
-            /// Requirements:
-            ///
-            /// * `data` must have been allocated by `options.allocator`.
-            /// * `data` must not be freed for the life of the owned pointer.
-            pub fn fromRawOwned(data: NonOptionalPointer) Self {
-                return .{
-                    .#unsafe_raw_pointer = data,
-                    .unsafe_allocator = {},
-                };
-            }
-        }).fromRawOwned;
-
-        /// Deinitializes the pointer or slice, freeing its memory.
+        /// Creates an owned pointer by allocating memory and performing a shallow copy of `data`.
         ///
-        /// By default, this will first call `deinit` on the data itself, if such a method exists.
-        /// (For slices, this will call `deinit` on every element in this slice.) This behavior can
-        /// be disabled in `options`.
-        pub fn deinit(self: Self) void {
-            const data = if (comptime info.isOptional())
-                self.#unsafe_raw_pointer orelse return
+        /// It must be possible to default-initialize `Allocator`.
+        pub fn allocDupe(data: ConstPointer) AllocError!Self {
+            return .allocDupeIn(data, bun.memory.initDefault(Allocator));
+        }
+
+        /// Creates an owned pointer by allocating memory with the given allocator and performing
+        /// a shallow copy of `data`.
+        pub fn allocDupeIn(data: ConstPointer, allocator_: Allocator) AllocError!Self {
+            const unwrapped = if (comptime info.isOptional())
+                data orelse return .initNull()
             else
-                self.#unsafe_raw_pointer;
-            if (comptime options.deinit and std.meta.hasFn(Child, "deinit")) {
-                switch (comptime info.kind()) {
-                    .single => data.deinit(),
-                    .slice => for (data) |*elem| elem.deinit(),
-                }
-            }
-            switch (comptime info.kind()) {
-                .single => bun.allocators.destroy(self.getAllocator(), data),
-                .slice => self.getAllocator().free(data),
-            }
+                data;
+            return switch (comptime info.kind()) {
+                .single => .allocIn(unwrapped.*, allocator_),
+                .slice => .{
+                    .#pointer = try bun.allocators.asStd(allocator_).dupe(Child, unwrapped),
+                    .#allocator = allocator_,
+                },
+            };
         }
 
-        const SelfOrPtr = if (info.isConst()) Self else *Self;
-
-        /// Returns the inner pointer or slice.
-        pub fn get(self: SelfOrPtr) Pointer {
-            return self.#unsafe_raw_pointer;
-        }
-
-        /// Returns a const version of the inner pointer or slice.
+        /// Creates an owned pointer from a raw pointer.
         ///
-        /// This method is not provided if the pointer is already const; use `get` in that case.
-        pub const getConst = if (!info.isConst()) struct {
-            pub fn getConst(self: Self) AddConst(Pointer) {
-                return self.#unsafe_raw_pointer;
-            }
-        }.getConst;
+        /// Requirements:
+        ///
+        /// * It must be permissible to free `data` with a new instance of `Allocator` created
+        ///   with `bun.memory.initDefault(Allocator)`.
+        /// * `data` must not be freed for the life of the owned pointer.
+        ///
+        /// NOTE: If `Allocator` is the default allocator, and `Pointer` is a single-item pointer,
+        /// `data` must have been allocated with `bun.new`, `bun.tryNew`, or `bun.memory.create`,
+        /// NOT `bun.default_allocator.create`. If `data` came from an owned pointer, this
+        /// requirement is satisfied.
+        ///
+        /// `Allocator` is the default allocator if `Allocator.allocator` returns
+        /// `bun.default_allocator` when called on a default-initialized `Allocator` (created with
+        /// `bun.memory.initDefault`). Most notably, this is true for `bun.DefaultAllocator`.
+        pub fn fromRaw(data: Pointer) Self {
+            return .fromRawIn(data, bun.memory.initDefault(Allocator));
+        }
 
-        /// Converts an owned pointer into a raw pointer. If `options.allocator` is non-null,
-        /// this method also returns the allocator.
+        /// Creates an owned pointer from a raw pointer and allocator.
+        ///
+        /// Requirements:
+        ///
+        /// * It must be permissible to free `data` with `allocator`.
+        /// * `data` must not be freed for the life of the owned pointer.
+        ///
+        /// NOTE: If `allocator` is the default allocator, and `Pointer` is a single-item pointer,
+        /// `data` must have been allocated with `bun.new`, `bun.tryNew`, or `bun.memory.create`,
+        /// NOT `bun.default_allocator.create`. If `data` came from `intoRaw` on another owned
+        /// pointer, this requirement is satisfied.
+        ///
+        /// `allocator` is the default allocator if either of the following is true:
+        /// * `allocator` is `bun.default_allocator`
+        /// * `allocator.allocator()` returns `bun.default_allocator`
+        pub fn fromRawIn(data: Pointer, allocator_: Allocator) Self {
+            return .{
+                .#pointer = data,
+                // Code shouldn't rely on null pointers having a specific allocator, since
+                // `initNull` necessarily sets this field to undefined.
+                .#allocator = if ((comptime info.isOptional()) and data == null)
+                    undefined
+                else
+                    allocator_,
+            };
+        }
+
+        /// Calls `deinit` on the underlying data (pointer target or slice elements) and then
+        /// frees the memory.
+        ///
+        /// `deinit` is also called on the allocator.
         ///
         /// This method invalidates `self`.
-        pub const intoRawOwned = (if (options.allocator != null) struct {
-            pub fn intoRawOwned(self: Self) Pointer {
-                return self.#unsafe_raw_pointer;
+        pub fn deinit(self: *Self) void {
+            self.deinitImpl(.deep);
+        }
+
+        /// Frees the memory without calling `deinit` on the underlying data. `deinit` is still
+        /// called on the allocator.
+        ///
+        /// This method invalidates `self`.
+        pub fn deinitShallow(self: *Self) void {
+            self.deinitImpl(.shallow);
+        }
+
+        /// Returns the inner pointer or slice.
+        pub fn get(self: Self) Pointer {
+            return self.#pointer;
+        }
+
+        /// Converts an owned pointer into a raw pointer. This releases ownership of the pointer.
+        ///
+        /// This method calls `deinit` on the allocator. If you need to retain access to the
+        /// allocator, use `intoRawWithAllocator`.
+        ///
+        /// NOTE: If the current allocator is the default allocator, and `Pointer` is a single-item
+        /// pointer, the pointer must be freed with `bun.destroy` or `bun.memory.destroy`, NOT
+        /// `bun.default_allocator.destroy`. Or it can be turned back into an owned pointer.
+        ///
+        /// This method invalidates `self`.
+        pub fn intoRaw(self: *Self) Pointer {
+            defer self.* = undefined;
+            if ((comptime !info.isOptional()) or self.#pointer != null) {
+                bun.memory.deinit(&self.#allocator);
             }
-        } else if (info.isOptional()) struct {
-            pub fn intoRawOwned(self: Self) ?struct { NonOptionalPointer, Allocator } {
-                return .{ self.#unsafe_raw_pointer orelse return null, self.unsafe_allocator };
-            }
-        } else struct {
-            pub fn intoRawOwned(self: Self) struct { Pointer, Allocator } {
-                return .{ self.#unsafe_raw_pointer, self.unsafe_allocator };
-            }
-        }).intoRawOwned;
+            return self.#pointer;
+        }
+
+        const PointerAndAllocator = if (info.isOptional())
+            ?struct { NonOptionalPointer, Allocator }
+        else
+            struct { Pointer, Allocator };
+
+        /// Converts an owned pointer into a raw pointer and allocator, releasing ownership of the
+        /// pointer.
+        ///
+        /// NOTE: If the current allocator is the default allocator, and `Pointer` is a single-item
+        /// pointer, the pointer must be freed with `bun.destroy` or `bun.memory.destroy`, NOT
+        /// `bun.default_allocator.destroy`. Or it can be turned back into an owned pointer.
+        ///
+        /// This method invalidates `self`.
+        pub fn intoRawWithAllocator(self: *Self) PointerAndAllocator {
+            defer self.* = undefined;
+            const data = if (comptime info.isOptional())
+                self.#pointer orelse return null
+            else
+                self.#pointer;
+            return .{ data, self.#allocator };
+        }
 
         /// Returns a null owned pointer. This function is provided only if `Pointer` is an
         /// optional type.
@@ -216,13 +243,11 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         pub const initNull = if (info.isOptional()) struct {
             pub fn initNull() Self {
                 return .{
-                    .#unsafe_raw_pointer = null,
-                    .unsafe_allocator = undefined,
+                    .#pointer = null,
+                    .#allocator = undefined,
                 };
             }
         }.initNull;
-
-        const OwnedNonOptional = WithOptions(NonOptionalPointer, options);
 
         /// Converts an `Owned(?T)` into an `?Owned(T)`.
         ///
@@ -231,149 +256,172 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         ///
         /// This method is provided only if `Pointer` is an optional type.
         pub const take = if (info.isOptional()) struct {
+            const OwnedNonOptional = OwnedIn(NonOptionalPointer, Allocator);
+
             pub fn take(self: *Self) ?OwnedNonOptional {
                 defer self.* = .initNull();
                 return .{
-                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer orelse return null,
-                    .unsafe_allocator = self.unsafe_allocator,
+                    .#pointer = self.#pointer orelse return null,
+                    .#allocator = self.#allocator,
                 };
             }
         }.take;
 
-        const OwnedOptional = WithOptions(?Pointer, options);
+        /// Like `deinit`, but sets `self` to null instead of invalidating it.
+        ///
+        /// This method is provided only if `Pointer` is an optional type.
+        pub const reset = if (info.isOptional()) struct {
+            pub fn reset(self: *Self) void {
+                defer self.* = .initNull();
+                self.deinit();
+            }
+        }.reset;
 
         /// Converts an `Owned(T)` into a non-null `Owned(?T)`.
         ///
         /// This method invalidates `self`.
         pub const toOptional = if (!info.isOptional()) struct {
-            pub fn toOptional(self: Self) OwnedOptional {
+            const OwnedOptional = OwnedIn(?Pointer, Allocator);
+
+            pub fn toOptional(self: *Self) OwnedOptional {
+                defer self.* = undefined;
                 return .{
-                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer,
-                    .unsafe_allocator = self.unsafe_allocator,
+                    .#pointer = self.#pointer,
+                    .#allocator = self.#allocator,
                 };
             }
         }.toOptional;
 
         /// Converts this owned pointer into an unmanaged variant that doesn't store the allocator.
         ///
-        /// This method invalidates `self`.
-        ///
-        /// This method is provided only if `options.allocator` is null, since if it's non-null,
-        /// this type is already the size of a raw pointer.
-        pub const toUnmanaged = if (options.allocator == null) struct {
-            pub fn toUnmanaged(self: Self) Self.Unmanaged {
-                return .{
-                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer,
-                };
-            }
-        }.toUnmanaged;
-
-        const DynamicOwned = WithOptions(Pointer, options.asDynamic());
-
-        /// Converts an owned pointer that uses a fixed allocator into a dynamic one.
+        /// There is no reason to use this method if `Allocator` is a zero-sized type, as a normal
+        /// owned pointer has no overhead in this case.
         ///
         /// This method invalidates `self`.
-        ///
-        /// This method is provided only if `options.allocator` is non-null, and returns
-        /// a new owned pointer that has `options.allocator` set to null.
-        pub const toDynamic = if (options.allocator) |allocator| struct {
-            pub fn toDynamic(self: Self) DynamicOwned {
-                return .{
-                    .#unsafe_raw_pointer = self.#unsafe_raw_pointer,
-                    .unsafe_allocator = allocator,
-                };
-            }
-        }.toDynamic;
-
-        fn rawInit(data: NonOptionalPointer, allocator: Allocator) Self {
+        pub fn toUnmanaged(self: *Self) Self.Unmanaged {
+            defer self.* = undefined;
             return .{
-                .#unsafe_raw_pointer = data,
-                .unsafe_allocator = if (comptime options.allocator == null) allocator,
+                .#pointer = self.#pointer,
             };
         }
 
-        fn allocSingle(allocator: Allocator, value: Child) !Self {
-            const data = try bun.allocators.create(Child, allocator, value);
-            return .rawInit(data, allocator);
+        /// Converts an owned pointer that uses a fixed type of allocator into a dynamic one
+        /// that uses any `std.mem.Allocator`.
+        ///
+        /// It must be possible to use the `std.mem.Allocator` returned by `Allocator.allocator`
+        /// even after deinitializing the `Allocator`. As a safety check, this method will not
+        /// compile if `Allocator.Borrowed` exists and is a different type from `Allocator`, as
+        /// this likely indicates a scenario where this invariant will not hold.
+        ///
+        /// There is no reason to use this method if `Allocator` is already `std.mem.Allocator`.
+        ///
+        /// This method invalidates `self`.
+        pub fn toDynamic(self: *Self) owned.Dynamic(Pointer) {
+            if (comptime @hasDecl(Allocator, "Borrowed") and Allocator.Borrowed != Allocator) {
+                // If this allocator can be borrowed as a different type, it's likely that the
+                // `std.mem.Allocator` returned by `Allocator.allocator` won't be valid after the
+                // `Allocator` is dropped.
+                @compileError("allocator won't live long enough");
+            }
+
+            defer self.* = undefined;
+            const data = if (comptime info.isOptional())
+                self.#pointer orelse return .initNull()
+            else
+                self.#pointer;
+            defer bun.memory.deinit(&self.#allocator);
+            return .fromRawIn(data, self.getStdAllocator());
         }
 
-        fn allocSlice(allocator: Allocator, count: usize, elem: Child) !Self {
-            const data = try allocator.alloc(Child, count);
-            @memset(data, elem);
-            return .rawInit(data, allocator);
+        const MaybeAllocator = if (info.isOptional())
+            ?bun.allocators.Borrowed(Allocator)
+        else
+            bun.allocators.Borrowed(Allocator);
+
+        /// Returns a borrowed version of the allocator.
+        ///
+        /// Not all allocators have a separate borrowed type; in this case, the allocator is
+        /// returned as-is. For example, if `Allocator` is `std.mem.Allocator`, this method also
+        /// returns `std.mem.Allocator`.
+        pub fn allocator(self: Self) MaybeAllocator {
+            return if ((comptime info.isOptional()) and self.#pointer == null)
+                null
+            else
+                bun.allocators.borrow(self.#allocator);
         }
 
-        fn allocDupeImpl(data: NonOptionalPointer, allocator: Allocator) !Self {
-            return switch (comptime info.kind()) {
-                .single => .allocSingle(allocator, data.*),
-                .slice => .rawInit(try allocator.dupe(Child, data), allocator),
-            };
+        fn getStdAllocator(self: Self) std.mem.Allocator {
+            return bun.allocators.asStd(self.#allocator);
         }
 
-        fn getAllocator(self: Self) Allocator {
-            return (comptime options.allocator) orelse self.unsafe_allocator;
+        fn deinitImpl(self: *Self, comptime mode: enum { deep, shallow }) void {
+            defer self.* = undefined;
+            const data = if (comptime info.isOptional())
+                self.#pointer orelse return
+            else
+                self.#pointer;
+            if (comptime mode == .deep) {
+                bun.memory.deinit(data);
+            }
+            switch (comptime info.kind()) {
+                .single => bun.memory.destroy(self.getStdAllocator(), data),
+                .slice => self.getStdAllocator().free(data),
+            }
+            bun.memory.deinit(&self.#allocator);
         }
     };
 }
 
-/// An unmanaged version of `Dynamic(Pointer)` that doesn't store the allocator.
-fn Unmanaged(comptime Pointer: type, comptime options: Options) type {
+/// An unmanaged version of `OwnedIn(Pointer, Allocator)` that doesn't store the allocator.
+///
+/// If `Allocator` is a zero-sized type, there is no benefit to using this type. Just use a
+/// normal owned pointer, which has no overhead in this case.
+///
+/// This type is accessible as `OwnedIn(Pointer, Allocator).Unmanaged`.
+fn Unmanaged(comptime Pointer: type, comptime Allocator: type) type {
     const info = PointerInfo.parse(Pointer, .{});
-    bun.assertf(
-        options.allocator == null,
-        "owned.Unmanaged is useless if options.allocator is provided",
-        .{},
-    );
 
     return struct {
         const Self = @This();
 
-        #unsafe_raw_pointer: Pointer,
+        #pointer: Pointer,
 
-        const Managed = WithOptions(Pointer, options);
+        const Managed = OwnedIn(Pointer, Allocator);
 
         /// Converts this unmanaged owned pointer back into a managed version.
         ///
         /// `allocator` must be the allocator that was used to allocate the pointer.
-        pub fn toManaged(self: Self, allocator: Allocator) Managed {
+        ///
+        /// This method invalidates `self`.
+        pub fn toManaged(self: *Self, allocator: Allocator) Managed {
+            defer self.* = undefined;
             const data = if (comptime info.isOptional())
-                self.#unsafe_raw_pointer orelse return .initNull()
+                self.#pointer orelse return .initNull()
             else
-                self.#unsafe_raw_pointer;
-            return .fromRawOwned(data, allocator);
+                self.#pointer;
+            return .fromRawIn(data, allocator);
         }
 
         /// Deinitializes the pointer or slice. See `Owned.deinit` for more information.
         ///
         /// `allocator` must be the allocator that was used to allocate the pointer.
-        pub fn deinit(self: Self, allocator: Allocator) void {
-            self.toManaged(allocator).deinit();
+        ///
+        /// This method invalidates `self`.
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            var managed = self.toManaged(allocator);
+            managed.deinit();
         }
-
-        const SelfOrPtr = if (info.isConst()) Self else *Self;
 
         /// Returns the inner pointer or slice.
-        pub fn get(self: SelfOrPtr) Pointer {
-            return self.#unsafe_raw_pointer;
+        pub fn get(self: Self) Pointer {
+            return self.#pointer;
         }
-
-        /// Returns a const version of the inner pointer or slice.
-        ///
-        /// This method is not provided if the pointer is already const; use `get` in that case.
-        pub const getConst = if (!info.isConst()) struct {
-            pub fn getConst(self: Self) AddConst(Pointer) {
-                return self.#unsafe_raw_pointer;
-            }
-        }.getConst;
     };
 }
 
-pub const maybe = @import("./owned/maybe.zig");
-pub const scoped = @import("./owned/scoped.zig");
-
 const bun = @import("bun");
 const std = @import("std");
-const Allocator = std.mem.Allocator;
+const AllocError = std.mem.Allocator.Error;
 
 const meta = @import("./meta.zig");
 const AddConst = meta.AddConst;

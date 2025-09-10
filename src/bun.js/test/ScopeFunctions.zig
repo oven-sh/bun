@@ -6,19 +6,19 @@ each: jsc.JSValue,
 line_no: u32 = std.math.maxInt(u32),
 
 pub fn getSkip(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-    return genericExtend(this, globalThis, .{ .self_mode = .skip }, "get .skip");
+    return genericExtend(this, globalThis, .{ .self_mode = .skip }, "get .skip", null);
 }
 pub fn getTodo(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-    return genericExtend(this, globalThis, .{ .self_mode = .todo }, "get .todo");
+    return genericExtend(this, globalThis, .{ .self_mode = .todo }, "get .todo", null);
 }
 pub fn getFailing(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-    return genericExtend(this, globalThis, .{ .self_mode = .failing }, "get .failing");
+    return genericExtend(this, globalThis, .{ .self_mode = .failing }, "get .failing", null);
 }
 pub fn getConcurrent(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-    return genericExtend(this, globalThis, .{ .self_concurrent = true }, "get .concurrent");
+    return genericExtend(this, globalThis, .{ .self_concurrent = true }, "get .concurrent", null);
 }
 pub fn getOnly(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-    return genericExtend(this, globalThis, .{ .self_only = true }, "get .only");
+    return genericExtend(this, globalThis, .{ .self_only = true }, "get .only", null);
 }
 pub fn fnIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     return genericIf(this, globalThis, callFrame, .{ .self_mode = .skip }, "call .if()", true);
@@ -208,19 +208,19 @@ fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Cal
     const condition = args[0];
     const cond = condition.toBoolean();
     if (cond != invert) {
-        return genericExtend(this, globalThis, cfg, name);
+        return genericExtend(this, globalThis, cfg, name, this.maybeCaptureLineNumber(globalThis, callFrame));
     } else {
         return create(globalThis, this.mode, this.each, this.cfg, this.maybeCaptureLineNumber(globalThis, callFrame));
     }
 }
-fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: describe2.BaseScopeCfg, name: []const u8) bun.JSError!JSValue {
+fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: describe2.BaseScopeCfg, name: []const u8, line_no: ?u32) bun.JSError!JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
     if (cfg.self_mode == .failing and this.mode == .describe) return globalThis.throw("Cannot {s} on {f}", .{ name, this });
     if (cfg.self_only) try errorInCI(globalThis, ".only");
     const extended = this.cfg.extend(cfg) orelse return globalThis.throw("Cannot {s} on {f}", .{ name, this });
-    return create(globalThis, this.mode, this.each, extended, this.line_no);
+    return create(globalThis, this.mode, this.each, extended, line_no);
 }
 
 fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {

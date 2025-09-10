@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { describeWithContainer, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { describeWithContainer, tempDirWithFiles } from "harness";
 import net from "net";
 import path from "path";
 const dir = tempDirWithFiles("sql-test", {
@@ -10,49 +10,38 @@ const dir = tempDirWithFiles("sql-test", {
 function rel(filename: string) {
   return path.join(dir, filename);
 }
-const docker = isDockerEnabled() ? dockerExe() : null;
-if (docker) {
-  const dockerfilePath = path.join(import.meta.dir, "mysql-tls", ".");
-  console.log("Building Docker image...");
-  const dockerProcess = Bun.spawn([docker, "build", "-t", "mysql-tls", dockerfilePath], {
-    cwd: path.join(import.meta.dir, "mysql-tls"),
-  });
-  expect(await dockerProcess.exited).toBe(0);
-  console.log("Docker image built");
-  const images = [
-    {
-      name: "MySQL with TLS",
-      image: "mysql-tls",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
-    },
-    {
-      name: "MySQL",
-      image: "mysql:8",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
-    },
-  ];
 
-  for (const image of images) {
-    describeWithContainer(
-      image.name,
-      {
-        image: image.image,
-        env: image.env,
-      },
-      (container: { port: number; host: string }) => {
-        const options: Bun.SQL.Options = {
-          url: `mysql://root:bun@${container.host}:${container.port}`,
+// Use docker-compose services instead of building our own
+const images = [
+  {
+    name: "MySQL with TLS",
+    image: "mysql_tls",
+    password: "bun",
+  },
+  {
+    name: "MySQL",
+    image: "mysql_plain",
+    password: "",
+  },
+];
+
+for (const image of images) {
+  describeWithContainer(
+    image.name,
+    {
+      image: image.image,
+      env: {},
+      args: [],
+    },
+    (container: { port: number; host: string }) => {
+        const options = {
+          get url() { return `mysql://root:${image.password}@${container.host}:${container.port}`; },
           max: 1,
           tls:
             image.name === "MySQL with TLS"
               ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))
               : undefined,
         };
-        const sql = new SQL(options);
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...options, max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
@@ -901,4 +890,3 @@ if (docker) {
       },
     );
   }
-}

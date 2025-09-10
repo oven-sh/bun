@@ -128,7 +128,6 @@ export default [
         getter: "getBodyUsed",
       },
     },
-    constructNeedsThis: true,
   }),
   define({
     name: "Blob",

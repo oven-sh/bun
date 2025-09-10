@@ -170,6 +170,7 @@ pub const Runtime = struct {
         minify_identifiers: bool = false,
         /// Preserve function/class names during minification (CLI: --keep-names)
         minify_keep_names: bool = false,
+        minify_whitespace: bool = false,
         dead_code_elimination: bool = true,
 
         set_breakpoint_on_first_line: bool = false,

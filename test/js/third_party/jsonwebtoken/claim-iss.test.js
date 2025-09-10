@@ -39,10 +39,7 @@ describe("issuer", function () {
     });
 
     it('should error when "iss" is in payload', function (done) {
-      let called = false; // work around https://github.com/auth0/node-jsonwebtoken/issues/1000
       signWithIssuer("foo", { iss: "bar" }, err => {
-        if (called) return;
-        called = true;
         testUtils.asyncCheck(done, () => {
           expect(err).toBeInstanceOf(Error);
           expect(err).toHaveProperty(

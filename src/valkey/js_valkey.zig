@@ -1222,6 +1222,7 @@ fn SocketHandler(comptime ssl: bool) type {
 
         pub fn onClose(this: *JSValkeyClient, _: SocketType, _: i32, _: ?*anyopaque) void {
             // Ensure the socket pointer is updated.
+            this.client.socket = .{ .SocketTCP = .detached };
 
             this.client.onClose();
         }

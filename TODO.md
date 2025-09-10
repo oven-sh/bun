@@ -285,6 +285,58 @@ $> bun-after test hook-timeouts
 
 (TODO)
 
+# Test failures:
+
+- [ ] test/regression/issue/18159/18159.test.ts
+- [ ] test/js/node/process/process-nexttick.test.js
+- [ ] test/js/bun/test/describe2.test.ts
+- [ ] test/js/bun/net/tcp-server.test.ts
+- [ ] test/js/node/test_runner/node-test.test.ts
+- [ ] (flaky) test/bundler/bundler_compile.test.ts
+- [ ] (flaky) test/js/bun/http/serve.test.ts
+- [ ] (flaky) test/js/web/fetch/fetch-leak.test.ts
+- [ ] (flaky) test/js/node/zlib/leak.test.ts
+- [ ] (flaky) test/js/bun/shell/bunshell.test.ts
+- [ ] (maybe flaky) test/cli/test/test-timeout-behavior.test.ts
+- [ ] (flaky) test/cli/install/bun-install.test.ts
+- [ ] (flaky) test/js/bun/s3/s3.leak.test.ts
+- [ ] (flaky) test/js/bun/s3/s3.test.ts
+- [ ] (flaky) test/napi/napi.test.ts
+- [ ] test/js/bun/test/test-test.test.ts
+- [ ] test/cli/install/bun-install-patch.test.ts
+- [ ] test/js/node/net/node-net-server.test.ts
+- [ ] test/cli/install/bun-install-registry.test.ts
+- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
+- [ ] test/cli/install/bun-lock.test.ts
+- [ ] test/js/node/test/parallel/test-util-inspect-long-running.js
+- [ ] test/js/bun/glob/scan.test.ts
+- [ ] test/js/bun/util/v8-heap-snapshot.test.ts
+- [ ] test/js/junit-reporter/junit.test.js
+- [ ] test/js/bun/net/socket.test.ts
+- [ ] (maybe flaky) test/bake/dev/bundle.test.ts
+- [ ] (flaky) test/js/web/websocket/autobahn.test.ts
+- [ ] test/js/node/tls/node-tls-server.test.ts
+- [ ] test/internal/ban-words.test.ts (format.yml isn't running?)
+- [ ] (maybe flaky) test/bake/dev/hot.test.ts
+- [ ] (maybe flaky) test/js/node/test/parallel/test-file-write-stream4.js
+- [ ] test/js/bun/util/inspect-error.test.js
+- [ ] test/js/bun/test/done-async.test.ts
+- [ ] test/cli/test/bun-test.test.ts
+- [ ] test/integration/bun-types/bun-types.test.ts
+- [ ] test/js/web/fetch/abort-signal-leak.test.ts
+- [ ] test/js/bun/test/test-failing.test.ts
+- [ ] (flaky) test/bake/dev/stress.test.ts
+- [ ] (flaky) test/cli/inspect/BunFrontendDevServer.test.ts
+- [ ] (flaky) test/js/node/child_process/child_process_ipc.test.js
+- [ ] (flaky) test/js/node/test/parallel/test-worker-heap-snapshot.js
+- [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
+- [ ] test/js/bun/spawn/spawn-noread-leak.test.ts
+- [ ] test/js/bun/test/test-error-code-done-callback.test.ts
+- [ ] test/js/bun/bun-object/write.spec.ts
+- [ ] test/js/bun/test/describe.test.ts
+- [ ] test/cli/test/test-filter-lifecycle-snapshot.test.ts
+- [ ] test/js/web/fetch/fetch.upgrade.test.ts
+
 # Add features:
 
 - [x] `done` is missing `.call()`/`.apply()`

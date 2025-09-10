@@ -11,9 +11,9 @@ const This = @This();
 // into methods on `bun.FD`, and keeping this namespace to just overall stuff
 // like `Error`, `Maybe`, `Tag`, and so on.
 const platform_defs = switch (Environment.os) {
+    .mac => @import("./errno/darwin_errno.zig"),
     .windows => @import("./errno/windows_errno.zig"),
     .linux => @import("./errno/linux_errno.zig"),
-    .mac => @import("./errno/darwin_errno.zig"),
     .wasm => {},
 };
 pub const workaround_symbols = @import("./workaround_missing_symbols.zig").current;

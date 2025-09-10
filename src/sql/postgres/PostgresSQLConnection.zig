@@ -734,7 +734,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
         if (path.len > 0) {
             ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
+                .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false, null) catch |err| {
                     tls_config.deinit();
                     if (tls_ctx) |tls| {
                         tls.deinit(true);
@@ -745,7 +745,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             };
         } else {
             ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
+                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false, null) catch |err| {
                     tls_config.deinit();
                     if (tls_ctx) |tls| {
                         tls.deinit(true);

@@ -1637,7 +1637,7 @@ pub const ARES_ECANCELLED = 24;
 pub const ARES_ESERVICE = 25;
 pub const ARES_ENOSERVER = 26;
 
-pub const Error = enum(i32) {
+pub const Error = enum(u16) {
     ENODATA = ARES_ENODATA,
     EFORMERR = ARES_EFORMERR,
     ESERVFAIL = ARES_ESERVFAIL,

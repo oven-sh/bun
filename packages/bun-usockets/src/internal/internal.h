@@ -63,8 +63,9 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #endif
 
 #ifdef _WIN32
+int us_wsa_to_libuv_errno(int);
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
-#define LIBUS_ERR WSAGetLastError()
+#define LIBUS_ERR us_wsa_to_libuv_errno(WSAGetLastError())
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
@@ -410,11 +411,12 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
 
 struct us_socket_t *us_internal_ssl_socket_context_connect(
     us_internal_ssl_socket_context_r context, const char *host,
-    int port, int options, int socket_ext_size, int* is_resolved);
+    int port, int options, int socket_ext_size, int* is_resolved,
+    int *error);
 
 struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     us_internal_ssl_socket_context_r context, const char *server_path,
-    size_t pathlen, int options, int socket_ext_size);
+    size_t pathlen, int options, int socket_ext_size, int *error);
 
 int us_internal_ssl_socket_write(us_internal_ssl_socket_r s,
                                  const char *data, int length);

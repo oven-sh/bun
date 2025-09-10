@@ -10,6 +10,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSC = bun.JSC;
+const sys = bun.sys;
 const js_ast = bun.ast;
 const bundler = bun.bundle_v2;
 const LinkerContext = bundler.LinkerContext;
@@ -118,7 +119,8 @@ pub const GraphVisualizer = struct {
         if (strings.eqlComptime(env_val, "compute")) return .after_compute;
         if (strings.eqlComptime(env_val, "chunks")) return .after_chunks;
         if (strings.eqlComptime(env_val, "link")) return .after_link;
-        if (strings.eqlComptime(env_val, "generation")) return .after_generation;
+        if (strings.eqlComptime(env_val, "write")) return .after_write;
+        if (strings.eqlComptime(env_val, "generation")) return .after_write; // Legacy alias
         
         return .all; // Default to all if set but not recognized
     }
@@ -129,7 +131,7 @@ pub const GraphVisualizer = struct {
         after_compute, 
         after_chunks,
         after_link,
-        after_generation,
+        after_write,
         all,
     };
 
@@ -155,7 +157,7 @@ pub const GraphVisualizer = struct {
             .after_compute => strings.eqlComptime(stage, "after_compute"),
             .after_chunks => strings.eqlComptime(stage, "after_chunks"),
             .after_link => strings.eqlComptime(stage, "after_link"),
-            .after_generation => strings.eqlComptime(stage, "after_generation"),
+            .after_write => strings.eqlComptime(stage, "after_write"),
         };
         
         if (!should_dump_now) {
@@ -413,16 +415,7 @@ pub const GraphVisualizer = struct {
         final_path: []const u8,
         content_type: []const u8,
         output_snippet: ?[]const u8, // First 1000 chars of output
-        source_mappings: []SourceMapping,
-    };
-    
-    const SourceMapping = struct {
-        output_line: u32,
-        output_column: u32,
-        source_index: u32,
-        source_line: u32,
-        source_column: u32,
-        symbol_name: ?[]const u8,
+        sourcemap_data: ?[]const u8, // VLQ-encoded sourcemap mappings
     };
     
     const CrossChunkImportInfo = struct {
@@ -596,7 +589,7 @@ pub const GraphVisualizer = struct {
                 .named_imports_count = named_imports_count,
                 .flags = flags,
                 .source_snippet = source_snippet,
-                .transformed_code = null, // TODO: get from compile results
+                .transformed_code = null, // Transformed code is available in chunk compile results, not per-file
             };
         }
         
@@ -791,9 +784,16 @@ pub const GraphVisualizer = struct {
                 const output_snippet: ?[]const u8 = null;
                 // Don't try to extract from compile_results here - it may be poisoned
                 
-                // TODO: Extract actual source mappings from chunk.output_source_map
-                // For now, just use empty mappings
-                const source_mappings: []SourceMapping = &.{};
+                // Store sourcemap data if available
+                var sourcemap_data: ?[]const u8 = null;
+                if (chunk.output_source_map.mappings.items.len > 0) {
+                    // The sourcemap mappings are in VLQ format
+                    sourcemap_data = try allocator.dupe(u8, chunk.output_source_map.mappings.items);
+                } else if (chunk.output_source_map.prefix.items.len > 0 or chunk.output_source_map.suffix.items.len > 0) {
+                    // Sometimes the mappings might be empty but we have prefix/suffix
+                    // Just indicate that source map generation was attempted
+                    sourcemap_data = try allocator.dupe(u8, "sourcemap_generated");
+                }
                 
                 chunks_data.?[i] = .{
                     .index = i,
@@ -806,7 +806,7 @@ pub const GraphVisualizer = struct {
                     .final_path = chunk.final_rel_path,
                     .content_type = @tagName(chunk.content),
                     .output_snippet = output_snippet,
-                    .source_mappings = source_mappings,
+                    .sourcemap_data = sourcemap_data,
                 };
             }
         }
@@ -843,8 +843,13 @@ pub const GraphVisualizer = struct {
             break :blk false;
         };
         
+        // Get current memory usage
+        const memory_usage_mb: f64 = if (bun.sys.selfProcessMemoryUsage()) |rss| 
+            @as(f64, @floatFromInt(rss)) / (1024.0 * 1024.0)
+        else 0;
+        
         const runtime_meta = RuntimeMeta{
-            .memory_usage_mb = 0, // TODO: calculate actual memory usage
+            .memory_usage_mb = memory_usage_mb,
             .parse_graph_file_count = ctx.parse_graph.input_files.len,
             .estimated_file_loader_count = ctx.parse_graph.estimated_file_loader_count,
             .has_css = has_css,

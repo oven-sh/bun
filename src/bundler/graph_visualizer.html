@@ -557,12 +557,98 @@
             });
         }
         
-        function showFileDetails(file, index) {
-            const detailsHtml = `
-                <h3>File: ${file.path || `File ${index}`}</h3>
-                <pre>${JSON.stringify(file, null, 2)}</pre>
-            `;
+        function showFileDetails(data, index) {
+            let detailsHtml = '';
+            
+            // Check if it's a chunk or a file
+            if (data.final_path !== undefined || data.content_type !== undefined) {
+                // It's a chunk
+                detailsHtml = `
+                    <h3>Chunk ${index}</h3>
+                    <div style="margin-bottom: 10px;">
+                        <strong>Path:</strong> ${data.final_path || 'N/A'}<br>
+                        <strong>Type:</strong> ${data.content_type || 'N/A'}<br>
+                        <strong>Entry Point:</strong> ${data.is_entry_point ? 'Yes' : 'No'}<br>
+                        <strong>Files in Chunk:</strong> ${data.files_in_chunk?.length || 0}<br>
+                        <strong>Cross-Chunk Imports:</strong> ${data.cross_chunk_import_count || 0}
+                    </div>
+                `;
+                
+                // Add sourcemap viewer if available
+                if (data.sourcemap_data) {
+                    detailsHtml += `
+                        <div style="margin-top: 15px;">
+                            <h4>Source Map Data</h4>
+                            <div style="background: #2d2d30; padding: 10px; border-radius: 3px; margin-top: 5px;">
+                                <div style="color: #4EC9B0; margin-bottom: 5px;">VLQ-encoded mappings available</div>
+                                <textarea readonly style="width: 100%; height: 100px; background: #1e1e1e; color: #d4d4d4; border: 1px solid #3e3e42; padding: 5px; font-family: monospace; font-size: 11px;">${data.sourcemap_data.substring(0, 500)}${data.sourcemap_data.length > 500 ? '...' : ''}</textarea>
+                                <div style="color: #808080; font-size: 11px; margin-top: 5px;">
+                                    Total length: ${data.sourcemap_data.length} characters
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                // Add output snippet if available
+                if (data.output_snippet) {
+                    detailsHtml += `
+                        <div style="margin-top: 15px;">
+                            <h4>Output Preview</h4>
+                            <pre style="background: #2d2d30; padding: 10px; border-radius: 3px; overflow-x: auto; max-height: 200px;">${escapeHtml(data.output_snippet)}</pre>
+                        </div>
+                    `;
+                }
+                
+                // Add full data in collapsible section
+                detailsHtml += `
+                    <details style="margin-top: 15px;">
+                        <summary style="cursor: pointer; color: #4EC9B0;">Full Chunk Data</summary>
+                        <pre style="margin-top: 10px; background: #2d2d30; padding: 10px; border-radius: 3px; overflow-x: auto;">${JSON.stringify(data, null, 2)}</pre>
+                    </details>
+                `;
+            } else {
+                // It's a file
+                detailsHtml = `
+                    <h3>File: ${data.path || `File ${index}`}</h3>
+                    <div style="margin-bottom: 10px;">
+                        <strong>Loader:</strong> ${data.loader || 'N/A'}<br>
+                        <strong>Source Length:</strong> ${data.source_length || 0} bytes<br>
+                        <strong>Entry Point:</strong> ${data.entry_point_kind || 'none'}<br>
+                        <strong>Parts:</strong> ${data.part_count || 0}<br>
+                        <strong>Named Exports:</strong> ${data.named_exports_count || 0}<br>
+                        <strong>Named Imports:</strong> ${data.named_imports_count || 0}
+                    </div>
+                `;
+                
+                // Add source snippet if available
+                if (data.source_snippet) {
+                    const preview = data.source_snippet.substring(0, 500);
+                    detailsHtml += `
+                        <div style="margin-top: 15px;">
+                            <h4>Source Preview</h4>
+                            <pre style="background: #2d2d30; padding: 10px; border-radius: 3px; overflow-x: auto; max-height: 200px;">${escapeHtml(preview)}${data.source_snippet.length > 500 ? '...' : ''}</pre>
+                        </div>
+                    `;
+                }
+                
+                // Add full data in collapsible section
+                detailsHtml += `
+                    <details style="margin-top: 15px;">
+                        <summary style="cursor: pointer; color: #4EC9B0;">Full File Data</summary>
+                        <pre style="margin-top: 10px; background: #2d2d30; padding: 10px; border-radius: 3px; overflow-x: auto;">${JSON.stringify(data, null, 2)}</pre>
+                    </details>
+                `;
+            }
+            
             document.getElementById('details').innerHTML = detailsHtml;
+        }
+        
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
         
         function renderGraph() {

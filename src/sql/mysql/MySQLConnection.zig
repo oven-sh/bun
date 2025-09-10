@@ -128,7 +128,7 @@ pub fn hasPendingActivity(this: *MySQLConnection) bool {
 
 fn updateHasPendingActivity(this: *MySQLConnection) void {
     const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
+    const b: u32 = if (this.status != .disconnected and this.status != .failed) 1 else 0;
     this.pending_activity_count.store(a + b, .release);
 }
 
@@ -269,34 +269,6 @@ pub fn finalize(this: *MySQLConnection) void {
     this.stopTimers();
     debug("MySQLConnection finalize", .{});
 
-    // Ensure we disconnect before finalizing
-    if (this.status != .disconnected) {
-        // delay disconnecting to avoid calling JS code inside the finalizer
-        const DisconnectTask = struct {
-            connection: *MySQLConnection,
-            task: jsc.AnyTask,
-
-            fn run(ctx: *@This()) void {
-                ctx.connection.disconnect();
-
-                ctx.connection.deref();
-                bun.default_allocator.destroy(ctx);
-            }
-
-            pub fn enqueue(connection: *MySQLConnection) void {
-                const holder = bun.handleOom(bun.default_allocator.create(@This()));
-                holder.* = .{
-                    .connection = connection,
-                    .task = jsc.AnyTask.New(@This(), @This().run).init(holder),
-                };
-                connection.ref();
-                connection.vm.enqueueTask(jsc.Task.init(&holder.task));
-            }
-        };
-
-        DisconnectTask.enqueue(this);
-    }
-
     this.js_value = .zero;
     this.deref();
 }
@@ -389,6 +361,7 @@ pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:
     this.failWithJSValue(err);
 }
 pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
+    defer this.updateHasPendingActivity();
     if (this.status == .failed) return;
 
     this.stopTimers();
@@ -760,7 +733,7 @@ fn SocketHandler(comptime ssl: bool) type {
 
         pub fn onConnectError(this: *MySQLConnection, socket: SocketType, _: i32) void {
             _ = socket;
-            this.onClose();
+            this.onEnd();
         }
 
         pub fn onTimeout(this: *MySQLConnection, socket: SocketType) void {
@@ -1034,10 +1007,10 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.setupMaxLifetimeTimerIfNecessary();
     this.resetConnectionTimeout();
     this.socket = socket;
-    this.ref(); // one ref for the socket
     if (socket == .SocketTCP) {
         // when upgrading to TLS the onOpen callback will be called again and at this moment we dont wanna to change the status to handshaking
         this.setStatus(.handshaking);
+        this.ref(); // keep a ref for the socket
     }
     this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();

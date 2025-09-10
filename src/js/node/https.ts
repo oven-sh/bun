@@ -172,7 +172,7 @@ function request(...args) {
   options._defaultAgent = globalAgent;
   ArrayPrototypeUnshift.$call(args, options);
 
-  return ReflectConstruct(http.ClientRequest, args);
+  return new http.ClientRequest(...args);
 }
 
 function get(input, options, cb) {

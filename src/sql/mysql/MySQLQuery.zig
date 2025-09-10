@@ -175,9 +175,14 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     var vm = jsc.VirtualMachine.get();
     const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
     const event_loop = vm.eventLoop();
+    var js_error = err.toError() orelse err;
+    if (js_error == .zero) {
+        js_error = AnyMySQLError.mysqlErrorToJS(globalObject, "Query failed", err);
+    }
+    js_error.ensureStillAlive();
     event_loop.runCallback(function, globalObject, thisValue, &.{
-        targetValue.toError() orelse targetValue,
-        err,
+        targetValue,
+        js_error,
     });
 }
 pub fn getTarget(this: *@This(), globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {

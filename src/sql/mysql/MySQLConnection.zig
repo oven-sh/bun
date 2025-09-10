@@ -358,7 +358,13 @@ pub fn getQueriesArray(this: *const @This()) JSValue {
     if (this.js_value == .zero) {
         return .js_undefined;
     }
-    return js.queriesGetCached(this.js_value) orelse .js_undefined;
+    if (js.queriesGetCached(this.js_value)) |value| {
+        if (value == .zero) {
+            return .js_undefined;
+        }
+        return value;
+    }
+    return .js_undefined;
 }
 pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
     const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
@@ -387,8 +393,12 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     loop.enter();
     defer loop.exit();
 
-    const js_error = value.toError() orelse value;
+    var js_error = value.toError() orelse value;
+    if (js_error == .zero) {
+        js_error = AnyMySQLError.mysqlErrorToJS(this.globalObject, "Connection closed", error.ConnectionClosed);
+    }
     js_error.ensureStillAlive();
+
     const queries_array = this.getQueriesArray();
     queries_array.ensureStillAlive();
     // this.globalObject.queueMicrotask(on_close, &[_]JSValue{ js_error, queries_array });

@@ -66,21 +66,28 @@ let domNavBar: {
   dismissAllBtn: HTMLButtonElement;
 } = {} as any;
 
+type TsLiteralStringables = string | number | bigint | boolean | null | undefined;
+type PropsFor<T extends keyof HTMLElementTagNameMap> = null | Partial<{
+  [Key in keyof HTMLElementTagNameMap[T] as HTMLElementTagNameMap[T][Key] extends TsLiteralStringables
+    ? Key
+    : never]: `${Extract<HTMLElementTagNameMap[T][Key], TsLiteralStringables>}`;
+}>;
+
 // I would have used JSX, but TypeScript types interfere in odd ways. However,
 // this pattern allows concise construction of DOM nodes, but also extremely
 // simple capturing of referenced nodes. Consider:
 //      let title;
 //      const btn = elem("button", { class: "file-name" }, [(title = textNode())]);
 // Now you can edit `title.textContent` freely.
-function elem<T extends keyof HTMLElementTagNameMap>(
-  tagName: T,
-  props?: null | Record<string, string>,
-  children?: Node[],
-) {
+function elem<T extends keyof HTMLElementTagNameMap>(tagName: T, props?: null | PropsFor<T>, children?: Node[]) {
   const node = document.createElement(tagName);
 
   if (props) {
-    for (const key in props) node.setAttribute(key, props[key]);
+    for (const key in props) {
+      const value = props[key];
+      if (value === undefined) continue;
+      node.setAttribute(key, value);
+    }
   }
 
   if (children) {
@@ -90,17 +97,16 @@ function elem<T extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-function elemText<T extends keyof HTMLElementTagNameMap>(
-  tagName: T,
-  props: null | Record<string, string>,
-  innerHTML: string,
-) {
+function elemText<T extends keyof HTMLElementTagNameMap>(tagName: T, props: null | PropsFor<T>, textContent: string) {
   const node = document.createElement(tagName);
-  if (props)
-    for (let key in props) {
-      node.setAttribute(key, props[key]);
+  if (props) {
+    for (const key in props) {
+      const value = props[key];
+      if (value === undefined) continue;
+      node.setAttribute(key, value);
     }
-  node.textContent = innerHTML;
+  }
+  node.textContent = textContent;
   return node;
 }
 
@@ -556,10 +562,11 @@ function updateBuildErrorOverlay({ remountAll = false }) {
 
     // Create the element for the root if it does not yet exist.
     if (!dom || remountAll) {
-      let fileName: Text;
+      const fileName = textNode();
       const root = elem("div", { class: "b-group" }, [
-        elem("div", { class: "trace-frame" }, [elem("div", { class: "file-name" }, [(fileName = textNode())])]),
+        elem("div", { class: "trace-frame" }, [elem("div", { class: "file-name" }, [fileName])]),
       ]);
+
       dom = { root, fileName, messages: [] };
       domErrorContent.appendChild(root);
       errorDoms.set(owner, dom);
@@ -577,6 +584,7 @@ function updateBuildErrorOverlay({ remountAll = false }) {
       dom.messages.push(domMessage);
     }
   }
+
   updatedErrorOwners.clear();
 }
 

@@ -406,6 +406,32 @@ test("Bun.build plugin virtual modules - onLoad plugins still work", async () =>
   expect(output).toContain("by onLoad plugin");
 });
 
+test("Bun.build plugin virtual modules - virtual module as entrypoint", async () => {
+  using dir = tempDir("virtual-entrypoint", {});
+
+  const result = await Bun.build({
+    entrypoints: ["virtual-entry"],
+    outdir: String(dir),
+    plugins: [
+      {
+        name: "in-memory-entrypoint",
+        setup(build) {
+          build.module("virtual-entry", () => ({
+            contents: `console.log("Hello from virtual entrypoint");`,
+            loader: "js",
+          }));
+        },
+      },
+    ],
+  });
+
+  expect(result.success).toBe(true);
+  expect(result.outputs).toHaveLength(1);
+  
+  const output = await Bun.file(result.outputs[0].path).text();
+  expect(output).toContain("Hello from virtual entrypoint");
+});
+
 test("Bun.build plugin virtual modules - no memory leak on repeated builds", async () => {
   using dir = tempDir("virtual-memory", {
     "entry.ts": `

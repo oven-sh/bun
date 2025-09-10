@@ -356,11 +356,11 @@ export function runSetupFunction(
     onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
     module: (specifier: string, callback: () => { contents: string; loader?: string }) => {
-      if (typeof specifier !== "string") {
-        throw new TypeError("module() specifier must be a string");
+      if (!(typeof specifier === "string")) {
+        throw $ERR_INVALID_ARG_TYPE("specifier", "string", specifier);
       }
-      if (typeof callback !== "function") {
-        throw new TypeError("module() callback must be a function");
+      if (!$isCallable(callback)) {
+        throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
       }
 
       // Store the virtual module
@@ -425,6 +425,11 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     if (virtualModules && virtualModules.$has(inputPath)) {
       // Return the virtual module with file namespace (empty string means file)
       this.onResolveAsync(internalID, inputPath, "", false);
+      return null;
+    }
+
+    if (!onResolve) {
+      this.onResolveAsync(internalID, null, null, null);
       return null;
     }
 
@@ -558,22 +563,22 @@ export function runOnLoadPlugins(
 
         try {
           if (!result || !$isObject(result)) {
-            throw new TypeError('Virtual module must return an object with "contents" property');
+            throw new TypeError(`Virtual module "${path}" must return an object with "contents" property`);
           }
 
           var { contents, loader = "js" } = result;
 
           if (!(typeof contents === "string")) {
-            throw new TypeError('Virtual module must return an object with "contents" as a string');
+            throw new TypeError(`Virtual module "${path}" must return an object with "contents" as a string`);
           }
 
           if (!(typeof loader === "string")) {
-            throw new TypeError('Virtual module "loader" must be a string if provided');
+            throw new TypeError(`Virtual module "${path}" "loader" must be a string if provided`);
           }
 
           const chosenLoader = LOADERS_MAP[loader];
           if (chosenLoader === undefined) {
-            throw new TypeError(`Loader ${loader} is not supported.`);
+            throw new TypeError(`Virtual module "${path}": Loader ${loader} is not supported.`);
           }
 
           this.onLoadAsync(internalID, contents, chosenLoader);

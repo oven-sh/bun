@@ -287,7 +287,7 @@ $> bun-after test hook-timeouts
 
 # Test failures:
 
-- [ ] test/regression/issue/18159/18159.test.ts
+- [x] test/regression/issue/18159/18159.test.ts
 - [ ] test/js/node/process/process-nexttick.test.js
 - [ ] test/js/bun/test/describe2.test.ts
 - [ ] test/js/bun/net/tcp-server.test.ts

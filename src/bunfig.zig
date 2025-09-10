@@ -609,6 +609,17 @@ pub const Bunfig = struct {
                             install.link_workspace_packages = value;
                         }
                     }
+
+                    if (install_obj.get("security")) |security_obj| {
+                        if (security_obj.data == .e_object) {
+                            if (security_obj.get("scanner")) |scanner| {
+                                try this.expectString(scanner);
+                                install.security_scanner = try scanner.asStringCloned(allocator);
+                            }
+                        } else {
+                            try this.addError(security_obj.loc, "Invalid security config, expected an object");
+                        }
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {
@@ -740,7 +751,7 @@ pub const Bunfig = struct {
                             .values = values,
                         };
                     }
-                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+                    this.bunfig.bunfig_path = bun.handleOom(bun.default_allocator.dupe(u8, this.source.path.text));
 
                     if (serve_obj.get("publicPath")) |public_path| {
                         if (public_path.asString(allocator)) |value| {

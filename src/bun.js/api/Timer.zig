@@ -31,6 +31,9 @@ pub const All = struct {
     immediate_ref_count: i32 = 0,
     uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
 
+    // Event loop delay monitoring (not exposed to JS)
+    event_loop_delay: EventLoopDelayMonitor = .{},
+
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
         setTimeout: TimeoutMap = .{},
@@ -315,7 +318,7 @@ pub const All = struct {
                 bun.String.createFormat(
                     "{d} does not fit into a 32-bit signed integer" ++ suffix,
                     .{countdown},
-                ) catch bun.outOfMemory()
+                ) catch |err| bun.handleOom(err)
             else
                 // -Infinity is handled by TimeoutNegativeWarning
                 bun.String.ascii("Infinity does not fit into a 32-bit signed integer" ++ suffix),
@@ -323,7 +326,7 @@ pub const All = struct {
                 bun.String.createFormat(
                     "{d} is a negative number" ++ suffix,
                     .{countdown},
-                ) catch bun.outOfMemory()
+                ) catch |err| bun.handleOom(err)
             else
                 bun.String.ascii("-Infinity is a negative number" ++ suffix),
             // std.fmt gives us "nan" but Node.js wants "NaN".
@@ -596,6 +599,8 @@ pub const ID = extern struct {
 pub const WTFTimer = @import("./Timer/WTFTimer.zig");
 
 pub const DateHeaderTimer = @import("./Timer/DateHeaderTimer.zig");
+
+pub const EventLoopDelayMonitor = @import("./Timer/EventLoopDelayMonitor.zig");
 
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this

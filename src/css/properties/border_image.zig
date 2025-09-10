@@ -503,7 +503,7 @@ pub const BorderImageHandler = struct {
 
                     context.addUnparsedFallbacks(&unparsed_clone);
                     bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.tryFromPropertyId(unparsed_clone.property_id).?);
-                    dest.append(allocator, Property{ .unparsed = unparsed_clone }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(allocator, Property{ .unparsed = unparsed_clone }));
                 } else return false;
             },
             else => return false,
@@ -577,7 +577,7 @@ pub const BorderImageHandler = struct {
                         if (p.isEmpty()) {
                             p = prefix;
                         }
-                        dest.append(allocator, css.Property{ .@"border-image" = .{ fallback, p } }) catch bun.outOfMemory();
+                        bun.handleOom(dest.append(allocator, css.Property{ .@"border-image" = .{ fallback, p } }));
                     }
                 }
             }
@@ -587,37 +587,37 @@ pub const BorderImageHandler = struct {
                 prefix = p;
             }
 
-            dest.append(allocator, Property{ .@"border-image" = .{ border_image, prefix } }) catch bun.outOfMemory();
+            bun.handleOom(dest.append(allocator, Property{ .@"border-image" = .{ border_image, prefix } }));
             bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image");
         } else {
             if (source) |*mut_source| {
                 if (!bun.bits.contains(BorderImageProperty, this.flushed_properties, BorderImageProperty.@"border-image-source")) {
                     for (mut_source.getFallbacks(allocator, context.targets).slice()) |fallback| {
-                        dest.append(allocator, Property{ .@"border-image-source" = fallback }) catch bun.outOfMemory();
+                        bun.handleOom(dest.append(allocator, Property{ .@"border-image-source" = fallback }));
                     }
                 }
 
-                dest.append(allocator, Property{ .@"border-image-source" = mut_source.* }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(allocator, Property{ .@"border-image-source" = mut_source.* }));
                 bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-source");
             }
 
             if (slice) |s| {
-                dest.append(allocator, Property{ .@"border-image-slice" = s }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(allocator, Property{ .@"border-image-slice" = s }));
                 bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-slice");
             }
 
             if (width) |w| {
-                dest.append(allocator, Property{ .@"border-image-width" = w }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(allocator, Property{ .@"border-image-width" = w }));
                 bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-width");
             }
 
             if (outset) |o| {
-                dest.append(allocator, Property{ .@"border-image-outset" = o }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(allocator, Property{ .@"border-image-outset" = o }));
                 bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-outset");
             }
 
             if (repeat) |r| {
-                dest.append(allocator, Property{ .@"border-image-repeat" = r }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(allocator, Property{ .@"border-image-repeat" = r }));
                 bun.bits.insert(BorderImageProperty, &this.flushed_properties, BorderImageProperty.@"border-image-repeat");
             }
         }

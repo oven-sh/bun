@@ -63,11 +63,10 @@ pub fn getContextSwitches(this: *ResourceUsage, globalObject: *JSGlobalObject) J
 }
 
 pub fn finalize(this: *ResourceUsage) callconv(.C) void {
-    bun.default_allocator.destroy(this);
+    bun.destroy(this);
 }
 
 const bun = @import("bun");
-const default_allocator = bun.default_allocator;
 const Rusage = bun.spawn.Rusage;
 
 const jsc = bun.jsc;

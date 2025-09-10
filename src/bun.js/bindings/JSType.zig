@@ -178,7 +178,7 @@ pub const JSType = enum(u8) {
     /// Compiled bytecode block ready for execution.
     CodeBlock = 18,
 
-    JSImmutableButterfly = 19,
+    JSCellButterfly = 19,
     JSSourceCode = 20,
     JSScriptFetcher = 21,
     JSScriptFetchParameters = 22,
@@ -681,7 +681,7 @@ pub const JSType = enum(u8) {
             .UnlinkedEvalCodeBlock,
             .UnlinkedFunctionCodeBlock,
             .CodeBlock,
-            .JSImmutableButterfly,
+            .JSCellButterfly,
             .JSSourceCode,
             .JSScriptFetcher,
             .JSScriptFetchParameters,

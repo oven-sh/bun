@@ -122,7 +122,7 @@ if (typeof window !== "undefined") {
   exports.test18 = "window-missing";
 }
 
-// ============ Const patterns (now fully working with typeof evaluation!) ============
+// ============ Const patterns (now fully working with const inlining!) ============
 const isBun = typeof Bun !== "undefined";
 if (!isBun) {
   exports.test19 = "const-not-bun";
@@ -196,11 +196,7 @@ var require_HASH = __commonJS((exports) => {
   else
     exports.test17 = "node-version-missing";
   exports.test18 = "window-missing";
-  var isBun = !0;
-  if (!isBun)
-    exports.test19 = "const-not-bun";
-  else
-    exports.test19 = "const-is-bun";
+  exports.test19 = "const-is-bun";
 });
 export default require_HASH();"
 `);
@@ -234,11 +230,11 @@ export default require_HASH();"
   // typeof window check is eliminated since window is undefined for bun target
   expect(bundled).not.toContain("typeof window");
   
-  // Const patterns: typeof is evaluated to true/false, but the variable still exists
-  // The if statement optimization could be improved with better constant propagation
-  expect(bundled).toContain("var isBun = !0");  // const becomes true
-  expect(bundled).toContain("const-not-bun");  // both branches still present
-  expect(bundled).toContain("const-is-bun");
+  // Const patterns: Now fully optimized with proper const inlining!
+  // The const is evaluated and the if statement is completely eliminated
+  expect(bundled).not.toContain("var isBun");  // const is inlined and removed
+  expect(bundled).not.toContain("const-not-bun");  // false branch eliminated
+  expect(bundled).toContain("const-is-bun");  // only true branch remains
 });
 
 test("--target=bun vs --target=node comparison", async () => {
@@ -455,8 +451,8 @@ exports.isBunValue = isBun;
   expect(bunBundle).toContain('exports.test3 = "global-is-object"');
   expect(bunBundle).not.toContain('exports.test3 = "global-not-object"');
   
-  // Const isBun should be evaluated to true (minified as !0)
-  expect(bunBundle).toContain("var isBun = !0");
+  // Const isBun is fully inlined now, so the assignment is direct
+  expect(bunBundle).toContain("exports.isBunValue = !0");
 
   // Test for --target=browser
   using browserDir = tempDir("typeof-browser", { "index.js": code });
@@ -481,6 +477,6 @@ exports.isBunValue = isBun;
   expect(browserBundle).toContain('exports.test3 = "global-not-object"');
   expect(browserBundle).not.toContain('exports.test3 = "global-is-object"');
   
-  // Const isBun should be evaluated to false (minified as !1)
-  expect(browserBundle).toContain("var isBun = !1");
+  // Const isBun is fully inlined now, so the assignment is direct
+  expect(browserBundle).toContain("exports.isBunValue = !1");
 });

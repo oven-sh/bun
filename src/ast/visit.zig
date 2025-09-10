@@ -237,7 +237,7 @@ pub fn Visit(
                     p.visitDecl(
                         decl,
                         was_anonymous_named_expr,
-                        was_const and !p.current_scope.is_after_const_local_prefix,
+                        was_const, // Always allow const inlining for actual const declarations
                         if (comptime allow_macros)
                             prev_macro_call_count != p.macro_call_count
                         else
@@ -249,7 +249,7 @@ pub fn Visit(
                             if (!p.replaceDeclAndPossiblyRemove(decl, ptr)) {
                                 p.visitDecl(
                                     decl,
-                                    was_const and !p.current_scope.is_after_const_local_prefix,
+                                    was_const, // Always allow const inlining for actual const declarations
                                     false,
                                     false,
                                 );
@@ -337,9 +337,9 @@ pub fn Visit(
                                 p.const_values.put(p.allocator, id.ref, val) catch unreachable;
                             }
                         }
-                    } else {
-                        p.current_scope.is_after_const_local_prefix = true;
                     }
+                    // Removed the else clause that sets is_after_const_local_prefix = true
+                    // We want to allow const inlining throughout the file
                     decl.value = p.maybeKeepExprSymbolName(
                         decl.value.?,
                         p.symbols.items[id.ref.innerIndex()].original_name,

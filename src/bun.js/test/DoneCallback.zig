@@ -5,6 +5,7 @@ called: bool = false,
 const DoneCallbackTask = struct {
     ref: *describe2.BunTest.RefData,
     globalThis: *JSGlobalObject,
+    was_error: bool,
 
     pub fn call(this: *DoneCallbackTask) void {
         defer bun.destroy(this);
@@ -12,7 +13,7 @@ const DoneCallbackTask = struct {
         const has_one_ref = this.ref.ref_count.hasOneRef();
         var strong = this.ref.buntest_weak.upgrade() orelse return;
         defer strong.deinit();
-        BunTest.bunTestDoneCallback(strong, this.globalThis, this.ref.phase, has_one_ref) catch |e| {
+        BunTest.bunTestDoneCallback(strong, this.globalThis, this.ref.phase, has_one_ref, this.was_error) catch |e| {
             strong.get().onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.ref.phase);
         };
     }
@@ -26,13 +27,14 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 
     const value = callFrame.argumentsAsArray(1)[0];
 
+    const was_error = !value.isEmptyOrUndefinedOrNull();
     if (this.called) {
         // in Bun 1.2.20, this is a no-op
         // in Jest, this is "Expected done to be called once, but it was called multiple times."
         // Vitest does not support done callbacks
     } else {
         // error is only reported for the first done() call
-        if (!value.isEmptyOrUndefinedOrNull()) {
+        if (was_error) {
             globalThis.reportUncaughtExceptionFromError(globalThis.throwValue(value));
         }
     }
@@ -45,7 +47,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
     const ref_clone = ref.dupe();
     errdefer ref_clone.deref();
-    const done_callback_test = bun.new(DoneCallbackTask, .{ .ref = ref_clone, .globalThis = globalThis });
+    const done_callback_test = bun.new(DoneCallbackTask, .{ .ref = ref_clone, .globalThis = globalThis, .was_error = was_error });
     errdefer bun.destroy(done_callback_test);
     const task = jsc.ManagedTask.New(DoneCallbackTask, DoneCallbackTask.call).init(done_callback_test);
     jsc.VirtualMachine.get().enqueueTask(task);

@@ -277,8 +277,22 @@ pub const Jest = struct {
 
 pub const on_unhandled_rejection = struct {
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
-        if (bun.jsc.Jest.describe2.getActive()) |buntest| {
-            return buntest.onUncaughtException(globalObject, rejection, true, .start);
+        if (bun.jsc.Jest.describe2.getActiveStrong()) |buntest_strong| {
+            const buntest = buntest_strong.get();
+            var current_state_data = buntest.getCurrentStateData(); // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
+            if (current_state_data.entry(buntest)) |entry| {
+                if (current_state_data.sequence(buntest)) |sequence| {
+                    if (entry != sequence.test_entry) {
+                        current_state_data = .start; // mark errors in hooks as 'unhandled error between tests'
+                    }
+                }
+            }
+            buntest.onUncaughtException(globalObject, rejection, true, current_state_data);
+            buntest.addResult(current_state_data);
+            describe2.BunTest.run(buntest_strong, globalObject) catch |e| {
+                globalObject.reportUncaughtExceptionFromError(e);
+            };
+            return;
         }
 
         jsc_vm.last_reported_error_for_dedupe = .zero;

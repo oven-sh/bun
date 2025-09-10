@@ -337,7 +337,7 @@ pub const BunTest = struct {
         if (is_catch) {
             this.onUncaughtException(globalThis, result, true, refdata.phase);
         }
-        if (!has_one_ref) {
+        if (!has_one_ref and !is_catch) {
             return group.log("bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref", .{});
         }
 
@@ -352,12 +352,12 @@ pub const BunTest = struct {
         try bunTestThenOrCatch(globalThis, callframe, true);
         return .js_undefined;
     }
-    pub fn bunTestDoneCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, data: RefDataValue, has_one_ref: bool) bun.JSError!void {
+    pub fn bunTestDoneCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, data: RefDataValue, has_one_ref: bool, was_error: bool) bun.JSError!void {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
 
-        if (!has_one_ref) {
+        if (!has_one_ref and !was_error) {
             return group.log("bunTestDoneCallback -> refdata has multiple refs; don't add result until the last ref", .{});
         }
 

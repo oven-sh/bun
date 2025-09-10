@@ -4,7 +4,7 @@
 import { expect, test } from "bun:test";
 
 test("setTimeout() without delay should not emit TimeoutNaNWarning", done => {
-  process.once("warning", warning => {
+  process.on("warning", warning => {
     try {
       expect(warning).toBeInstanceOf(Error);
       expect(warning).not.toHaveProperty("name", "TimeoutNaNWarning");
@@ -24,7 +24,7 @@ test("setTimeout() without delay should not emit TimeoutNaNWarning", done => {
 });
 
 test("setTimeout() with number delay should not emit TimeoutNaNWarning", done => {
-  process.once("warning", warning => {
+  process.on("warning", warning => {
     try {
       expect(warning).toBeInstanceOf(Error);
       expect(warning).not.toHaveProperty("name", "TimeoutNaNWarning");
@@ -44,7 +44,7 @@ test("setTimeout() with number delay should not emit TimeoutNaNWarning", done =>
 });
 
 test("setTimeout() with NaN delay should emit TimeoutNaNWarning", done => {
-  process.once("warning", warning => {
+  process.on("warning", warning => {
     try {
       expect(warning).toBeInstanceOf(Error);
       expect(warning).toHaveProperty("name", "TimeoutNaNWarning");

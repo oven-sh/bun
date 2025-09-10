@@ -3,6 +3,7 @@ mode: Mode,
 cfg: describe2.BaseScopeCfg,
 /// typically `.zero`. not Strong.Optional because codegen adds it to the visit function.
 each: jsc.JSValue,
+line_no: u32 = std.math.maxInt(u32),
 
 pub fn getSkip(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     return genericExtend(this, globalThis, .{ .self_mode = .skip }, "get .skip");
@@ -46,7 +47,15 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
-    return create(globalThis, this.mode, array, this.cfg);
+    return create(globalThis, this.mode, array, this.cfg, this.maybeCaptureLineNumber(globalThis, callFrame));
+}
+
+pub fn maybeCaptureLineNumber(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) u32 {
+    var line_no = this.line_no;
+    if (line_no == std.math.maxInt(u32)) {
+        line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
+    }
+    return line_no;
 }
 
 pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -69,10 +78,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     var args = try parseArguments(globalThis, callFrame, .{ .scope_functions = this }, bunTest.gpa, .{ .callback = callback_mode });
     defer args.deinit(bunTest.gpa);
 
-    const line_no = switch (this.mode) {
-        .@"test" => jsc.Jest.captureTestLineNumber(callFrame, globalThis),
-        else => 0,
-    };
+    const line_no = this.maybeCaptureLineNumber(globalThis, callFrame);
 
     const callback_length = if (args.callback) |callback| try callback.getLength(globalThis) else 0;
 
@@ -204,7 +210,7 @@ fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Cal
     if (cond != invert) {
         return genericExtend(this, globalThis, cfg, name);
     } else {
-        return create(globalThis, this.mode, this.each, this.cfg);
+        return create(globalThis, this.mode, this.each, this.cfg, this.maybeCaptureLineNumber(globalThis, callFrame));
     }
 }
 fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: describe2.BaseScopeCfg, name: []const u8) bun.JSError!JSValue {
@@ -214,7 +220,7 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: descri
     if (cfg.self_mode == .failing and this.mode == .describe) return globalThis.throw("Cannot {s} on {f}", .{ name, this });
     if (cfg.self_only) try errorInCI(globalThis, ".only");
     const extended = this.cfg.extend(cfg) orelse return globalThis.throw("Cannot {s} on {f}", .{ name, this });
-    return create(globalThis, this.mode, this.each, extended);
+    return create(globalThis, this.mode, this.each, extended, this.line_no);
 }
 
 fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
@@ -364,12 +370,12 @@ pub fn finalize(
     VirtualMachine.get().allocator.destroy(this);
 }
 
-pub fn create(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: describe2.BaseScopeCfg) JSValue {
+pub fn create(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: describe2.BaseScopeCfg, line_no: ?u32) JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
     var scope_functions = globalThis.bunVM().allocator.create(ScopeFunctions) catch bun.outOfMemory();
-    scope_functions.* = .{ .mode = mode, .cfg = cfg, .each = each };
+    scope_functions.* = .{ .mode = mode, .cfg = cfg, .each = each, .line_no = line_no orelse std.math.maxInt(u32) };
 
     const value = scope_functions.toJS(globalThis);
     value.ensureStillAlive();

@@ -2695,7 +2695,9 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSC::MarkedArgumentBuffer argList;
     argList.ensureCapacity(argumentCount);
     for (size_t i = 0; i < argumentCount; i++) {
+
 #if ASSERT_ENABLED
+        ASSERT_WITH_MESSAGE(!JSValue::decode(arguments[i]).isEmpty(), "Argument #%lu is JSValue.zero. This will cause a crash.", i);
         if (JSC::JSValue::decode(arguments[i]).isCell()) {
             JSC::Integrity::auditCellFully(vm, JSC::JSValue::decode(arguments[i]).asCell());
         }

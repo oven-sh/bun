@@ -29,12 +29,32 @@
 #include "EventNames.h"
 #include "HTTPParsers.h"
 #include "ScriptExecutionContext.h"
+#include "JSDOMGlobalObject.h"
 // #include "URLSearchParams.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/CString.h>
+
+// External Zig functions for XMLHttpRequest implementation
+extern "C" {
+    void* Bun__XMLHttpRequest_create(JSC::JSGlobalObject* globalThis);
+    JSC::EncodedJSValue Bun__XMLHttpRequest_send(
+        void* xhr_ptr,
+        JSC::JSGlobalObject* globalThis,
+        const char* method,
+        const char* url,
+        JSC::EncodedJSValue headers,
+        JSC::EncodedJSValue body,
+        uint32_t timeout_ms,
+        bool with_credentials
+    );
+    void Bun__XMLHttpRequest_abort(void* xhr_ptr);
+    uint16_t Bun__XMLHttpRequest_getStatus(void* xhr_ptr);
+    JSC::EncodedJSValue Bun__XMLHttpRequest_getResponseHeaders(void* xhr_ptr, JSC::JSGlobalObject* globalThis);
+    void Bun__XMLHttpRequest_destroy(void* xhr_ptr);
+}
 
 namespace WebCore {
 
@@ -73,10 +93,21 @@ private:
 XMLHttpRequest::XMLHttpRequest(ScriptExecutionContext& context)
     : ContextDestructionObserver(&context)
     , m_upload(XMLHttpRequestUpload::create(this))
+    , m_tasklet(nullptr)
 {
+    // Get the global object from the context to create Zig tasklet
+    if (auto* globalObject = context.globalObject()) {
+        m_tasklet = Bun__XMLHttpRequest_create(globalObject);
+    }
 }
 
-XMLHttpRequest::~XMLHttpRequest() = default;
+XMLHttpRequest::~XMLHttpRequest()
+{
+    if (m_tasklet) {
+        Bun__XMLHttpRequest_destroy(m_tasklet);
+        m_tasklet = nullptr;
+    }
+}
 
 ExceptionOr<Ref<XMLHttpRequest>> XMLHttpRequest::create(ScriptExecutionContext& context)
 {
@@ -192,9 +223,8 @@ ExceptionOr<void> XMLHttpRequest::sendInternal()
 
 void XMLHttpRequest::abort()
 {
-    if (m_fetchTask) {
-        // TODO: Cancel the fetch task
-        m_fetchTask = nullptr;
+    if (m_tasklet) {
+        Bun__XMLHttpRequest_abort(m_tasklet);
     }
     
     if (m_readyState == OPENED || m_readyState == HEADERS_RECEIVED || m_readyState == LOADING) {
@@ -214,7 +244,7 @@ ExceptionOr<void> XMLHttpRequest::overrideMimeType(const String& mime)
 
 ExceptionOr<void> XMLHttpRequest::setTimeout(unsigned timeout)
 {
-    if (m_readyState != OPENED || m_fetchTask)
+    if (m_readyState != OPENED || m_tasklet)
         return Exception { ExceptionCode::InvalidStateError };
         
     m_timeout = timeout;

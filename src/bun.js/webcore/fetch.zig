@@ -2755,40 +2755,85 @@ const Blob = jsc.WebCore.Blob;
 const AnyBlob = jsc.WebCore.Blob.Any;
 
 // XMLHttpRequest support - creates a FetchTasklet similar to Bun__fetch
+pub const XMLHttpRequestTasklet = struct {
+    fetch_tasklet: *FetchTasklet,
+    ready_state: u8 = 0, // UNSENT = 0
+    status: u16 = 0,
+    status_text: []const u8 = "",
+    response_headers: bun.String = bun.String.empty,
+    response_url: bun.String = bun.String.empty,
+    
+    pub fn create(
+        allocator: std.mem.Allocator,
+    ) !*XMLHttpRequestTasklet {
+        const xhr = try allocator.create(XMLHttpRequestTasklet);
+        xhr.* = .{
+            .fetch_tasklet = undefined,
+        };
+        return xhr;
+    }
+    
+    pub fn deinit(this: *XMLHttpRequestTasklet, allocator: std.mem.Allocator) void {
+        this.response_headers.deref();
+        this.response_url.deref();
+        allocator.destroy(this);
+    }
+};
+
 export fn Bun__XMLHttpRequest_create(
-    ctx: *jsc.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
+) ?*anyopaque {
+    _ = globalThis;
+    const allocator = VirtualMachine.get().allocator;
+    const xhr = XMLHttpRequestTasklet.create(allocator) catch return null;
+    return @ptrCast(xhr);
+}
+
+export fn Bun__XMLHttpRequest_send(
+    xhr_ptr: ?*anyopaque,
+    globalThis: *jsc.JSGlobalObject,
     method_str: [*:0]const u8,
     url_str: [*:0]const u8,
-    headers_ptr: ?*anyopaque,
-    body_ptr: ?*anyopaque,
-    body_len: usize,
-) ?*anyopaque {
-    // This is a simplified version - full implementation would create FetchTasklet
-    // and handle the request similar to Bun__fetch
-    _ = ctx;
+    headers_jsvalue: jsc.JSValue,
+    body_jsvalue: jsc.JSValue,
+    timeout_ms: u32,
+    with_credentials: bool,
+) jsc.JSValue {
+    _ = xhr_ptr;
+    _ = globalThis;
     _ = method_str;
     _ = url_str;
-    _ = headers_ptr;
-    _ = body_ptr;
-    _ = body_len;
+    _ = headers_jsvalue;
+    _ = body_jsvalue;
+    _ = timeout_ms;
+    _ = with_credentials;
     
-    // TODO: Implement actual XMLHttpRequest fetch logic
-    return null;
+    // TODO: Implement actual XMLHttpRequest send logic
+    // For now, return undefined
+    return .zero;
 }
 
-export fn Bun__XMLHttpRequest_cancel(task: ?*anyopaque) void {
-    // TODO: Cancel the fetch task
-    _ = task;
+export fn Bun__XMLHttpRequest_abort(xhr_ptr: ?*anyopaque) void {
+    const xhr = @as(*XMLHttpRequestTasklet, @ptrCast(@alignCast(xhr_ptr orelse return)));
+    // TODO: Implement abort for fetch tasklet
+    if (xhr.fetch_tasklet.http) |_| {
+        // http_ptr.cancel();
+    }
+    xhr.ready_state = 4; // DONE
 }
 
-export fn Bun__XMLHttpRequest_getStatus(task: ?*anyopaque) u16 {
-    // TODO: Get status from fetch task
-    _ = task;
-    return 0;
+export fn Bun__XMLHttpRequest_getStatus(xhr_ptr: ?*anyopaque) u16 {
+    const xhr = @as(*XMLHttpRequestTasklet, @ptrCast(@alignCast(xhr_ptr orelse return 0)));
+    return xhr.status;
 }
 
-export fn Bun__XMLHttpRequest_getResponseHeaders(task: ?*anyopaque) [*:0]const u8 {
-    // TODO: Get response headers from fetch task
-    _ = task;
-    return "";
+export fn Bun__XMLHttpRequest_getResponseHeaders(xhr_ptr: ?*anyopaque, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    const xhr = @as(*XMLHttpRequestTasklet, @ptrCast(@alignCast(xhr_ptr orelse return .zero)));
+    return xhr.response_headers.toJS(globalThis);
+}
+
+export fn Bun__XMLHttpRequest_destroy(xhr_ptr: ?*anyopaque) void {
+    const xhr = @as(*XMLHttpRequestTasklet, @ptrCast(@alignCast(xhr_ptr orelse return)));
+    const allocator = VirtualMachine.get().allocator;
+    xhr.deinit(allocator);
 }

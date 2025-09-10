@@ -98,6 +98,9 @@ public:
     String responseText() const;
     RefPtr<JSC::ArrayBuffer> responseArrayBuffer() const;
     
+    // Tasklet for Zig integration
+    void* tasklet() const { return m_tasklet; }
+    
     String responseURL() const { return m_responseURL; }
     
     unsigned timeout() const { return m_timeout; }
@@ -163,8 +166,8 @@ private:
     // Upload object
     RefPtr<XMLHttpRequestUpload> m_upload;
     
-    // Fetch task handle
-    void* m_fetchTask { nullptr };
+    // Zig tasklet handle
+    void* m_tasklet { nullptr };
 };
 
 } // namespace WebCore

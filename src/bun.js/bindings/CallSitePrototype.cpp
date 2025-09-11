@@ -15,6 +15,9 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/AsyncFunctionPrototype.h>
+#include <JavaScriptCore/FunctionExecutable.h>
+#include <JavaScriptCore/ParserModes.h>
 using namespace JSC;
 
 namespace Zig {
@@ -100,11 +103,45 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetThis, (JSGlobalObject * globalObjec
     return JSC::JSValue::encode(callSite->thisValue());
 }
 
-// TODO: doesn't get class name
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(JSC::jsTypeStringForValue(globalObject, callSite->thisValue()));
+    JSValue thisValue = callSite->thisValue();
+    
+    // Return null for undefined to match V8 behavior
+    if (thisValue.isUndefinedOrNull()) {
+        return JSC::JSValue::encode(jsNull());
+    }
+    
+    // For objects, try to get the constructor name or class name
+    if (thisValue.isObject()) {
+        JSObject* obj = asObject(thisValue);
+        
+        // Try to get the class name
+        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        String className = obj->calculatedClassName(obj);
+        if (catchScope.exception()) {
+            catchScope.clearException();
+            return JSC::JSValue::encode(jsNull());
+        }
+        
+        if (!className.isEmpty()) {
+            return JSC::JSValue::encode(jsString(vm, className));
+        }
+    }
+    
+    // Fallback to type string
+    JSString* typeString = jsTypeStringForValue(globalObject, thisValue);
+    
+    // Return null if the type string is "undefined"
+    if (typeString) {
+        String typeStr = typeString->tryGetValue();
+        if (typeStr == "undefined"_s) {
+            return JSC::JSValue::encode(jsNull());
+        }
+    }
+    
+    return JSC::JSValue::encode(typeString);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunction, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -116,13 +153,25 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunction, (JSGlobalObject * globalO
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunctionName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(callSite->functionName());
+    JSValue functionName = callSite->functionName();
+    // Return null instead of empty string to match V8 behavior
+    if (functionName.isString() && asString(functionName)->length() == 0) {
+        return JSC::JSValue::encode(jsNull());
+    }
+    return JSC::JSValue::encode(functionName);
 }
 
-// TODO
+// TODO: Implement proper method name detection
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return callSiteProtoFuncGetFunctionName(globalObject, callFrame);
+    ENTER_PROTO_FUNC();
+    // For now, return the function name or null
+    JSValue functionName = callSite->functionName();
+    // Return null instead of empty string to match V8 behavior
+    if (functionName.isString() && asString(functionName)->length() == 0) {
+        return JSC::JSValue::encode(jsNull());
+    }
+    return JSC::JSValue::encode(functionName);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFileName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -220,12 +269,48 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsConstructor, (JSGlobalObject * globa
     return JSC::JSValue::encode(JSC::jsBoolean(isConstructor));
 }
 
-// TODO:
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsAsync, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
 
-    return JSC::JSValue::encode(JSC::jsBoolean(false));
+    JSValue functionValue = callSite->function();
+    if (!functionValue.isCell()) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+    }
+    
+    auto* function = jsDynamicCast<JSFunction*>(functionValue);
+    if (!function || function->isHostFunction()) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+    }
+
+    auto* executable = function->jsExecutable();
+    if (!executable) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+    }
+
+    // Cast to FunctionExecutable to access parseMode
+    if (auto* funcExecutable = jsDynamicCast<FunctionExecutable*>(executable)) {
+        SourceParseMode mode = funcExecutable->parseMode();
+        
+        // Check if it's any kind of async function
+        bool isAsync = isAsyncFunctionWrapperParseMode(mode) || 
+                      isAsyncGeneratorWrapperParseMode(mode) ||
+                      isAsyncFunctionParseMode(mode) ||
+                      funcExecutable->isAsyncGenerator();
+        
+        if (isAsync) {
+            return JSC::JSValue::encode(JSC::jsBoolean(true));
+        }
+    }
+
+    // Fallback: Check if the function's prototype inherits from AsyncFunctionPrototype
+    auto proto = function->getPrototype(globalObject);
+    if (!proto.isCell()) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+    }
+
+    auto* protoCell = proto.asCell();
+    return JSC::JSValue::encode(jsBoolean(protoCell->inherits<AsyncFunctionPrototype>()));
 }
 
 // TODO:

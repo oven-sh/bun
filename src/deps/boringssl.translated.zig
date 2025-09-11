@@ -115,13 +115,7 @@ pub const struct_Netscape_spki_st = extern struct {
     signature: [*c]ASN1_BIT_STRING,
 };
 pub const NETSCAPE_SPKI = struct_Netscape_spki_st;
-pub const struct_RIPEMD160state_st = extern struct {
-    h: [5]u32,
-    Nl: u32,
-    Nh: u32,
-    data: [64]u8,
-    num: c_uint,
-};
+pub const struct_RIPEMD160state_st = opaque {};
 pub const RIPEMD160_CTX = struct_RIPEMD160state_st;
 pub const struct_X509_VERIFY_PARAM_st = opaque {};
 pub const X509_VERIFY_PARAM = struct_X509_VERIFY_PARAM_st;
@@ -278,13 +272,7 @@ pub const struct_bio_method_st = extern struct {
     destroy: ?*const fn ([*c]BIO) callconv(.C) c_int,
     callback_ctrl: ?*const fn ([*c]BIO, c_int, bio_info_cb) callconv(.C) c_long,
 };
-pub const struct_blake2b_state_st = extern struct {
-    h: [8]u64,
-    t_low: u64,
-    t_high: u32,
-    block_used: u32,
-    block: [128]u8,
-};
+pub const struct_blake2b_state_st = opaque {};
 pub const BLAKE2B_CTX = struct_blake2b_state_st;
 pub const struct_bn_gencb_st = extern struct {
     arg: ?*anyopaque,
@@ -421,21 +409,9 @@ pub const struct_hmac_ctx_st = extern struct {
     o_ctx: EVP_MD_CTX,
 };
 pub const HMAC_CTX = struct_hmac_ctx_st;
-pub const struct_md4_state_st = extern struct {
-    h: [4]u32,
-    Nl: u32,
-    Nh: u32,
-    data: [64]u8,
-    num: c_uint,
-};
+pub const struct_md4_state_st = opaque {};
 pub const MD4_CTX = struct_md4_state_st;
-pub const struct_md5_state_st = extern struct {
-    h: [4]u32,
-    Nl: u32,
-    Nh: u32,
-    data: [64]u8,
-    num: c_uint,
-};
+pub const struct_md5_state_st = opaque {};
 pub const MD5_CTX = struct_md5_state_st;
 pub const struct_ossl_init_settings_st = opaque {};
 pub const OPENSSL_INIT_SETTINGS = struct_ossl_init_settings_st;

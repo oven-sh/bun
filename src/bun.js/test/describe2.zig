@@ -75,7 +75,7 @@ pub const js_fns = struct {
                         return .js_undefined;
                     },
                     .execution => {
-                        return globalThis.throw("Cannot call {s}() inside a test", .{@tagName(tag)});
+                        return globalThis.throw("Cannot call {s}() inside a test. Call it inside describe() instead.", .{@tagName(tag)});
                     },
                     .done => return globalThis.throw("Cannot call {s}() after the test run has completed", .{@tagName(tag)}),
                 }

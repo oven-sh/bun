@@ -287,6 +287,12 @@ $> bun-after test hook-timeouts
 
 # Test failures:
 
+Problematic:
+
+- [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
+
+Regular:
+
 - [x] test/regression/issue/18159/18159.test.ts
 - [ ] test/js/node/process/process-nexttick.test.js
 - [ ] test/js/bun/test/describe2.test.ts
@@ -329,7 +335,6 @@ $> bun-after test hook-timeouts
 - [ ] (flaky) test/cli/inspect/BunFrontendDevServer.test.ts
 - [ ] (flaky) test/js/node/child_process/child_process_ipc.test.js
 - [ ] (flaky) test/js/node/test/parallel/test-worker-heap-snapshot.js
-- [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
 - [ ] test/js/bun/spawn/spawn-noread-leak.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
 - [ ] test/js/bun/bun-object/write.spec.ts
@@ -340,7 +345,16 @@ $> bun-after test hook-timeouts
 # Add features:
 
 - [x] `done` is missing `.call()`/`.apply()`
+- [ ] switch to a memory pool instead of individually-tracked scope allocations
 - [ ] for supporting inserting tests while running tests, we should consider changing Execution.zig to be based on linked lists. all memory can be pool-allocated and is owned by BunTest.
+  - linked list:
+    - afterEach inside test: insert after execution entry after the test item
+      - this is problematic if we run the test multiple times because it will insert multiple times
+    - afterAll inside test: insert after the test in the sequence
+    - beforeAll/beforeEach inside test: not supported
+  - alternative:
+    - add a seperate queue of during-test items
+    - add a seperate queue of
 - [ ] `describe.skip()` is not displaying the tests it skipped; fix
 - [ ] drain microtasks / tick? between callback calls? tickImmediateTasks()? use a Task to queue callback execution? for "unhandled errors between tests are reported"
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690

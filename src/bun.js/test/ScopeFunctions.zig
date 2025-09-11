@@ -143,7 +143,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunT
     // only allow in collection phase
     switch (bunTest.phase) {
         .collection => {}, // ok
-        .execution => return globalThis.throw("TODO: support calling {}() inside a test", .{this}),
+        .execution => return globalThis.throw("Cannot call {}() inside a test. Call it inside describe() instead.", .{this}),
         .done => return globalThis.throw("Cannot call {}() after the test run has completed", .{this}),
     }
 

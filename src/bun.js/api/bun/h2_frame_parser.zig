@@ -4465,13 +4465,9 @@ pub const H2FrameParser = struct {
         this.detachNativeSocket();
 
         this.readBuffer.deinit();
-
-        {
-            var writeBuffer = this.writeBuffer;
-            this.writeBuffer = .{};
-            writeBuffer.deinitWithAllocator(this.allocator);
-        }
+        this.writeBuffer.clearAndFree(this.allocator);
         this.writeBufferOffset = 0;
+
         if (this.hpack) |hpack| {
             hpack.deinit();
             this.hpack = null;

@@ -8,12 +8,11 @@
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { ChildProcess, fork } from "child_process";
+import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import { execSync } from "child_process";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -31,7 +30,7 @@ export const libcFamily: "glibc" | "musl" =
   process.platform !== "linux"
     ? "glibc"
     : // process.report.getReport() has incorrect type definitions.
-      (process.report.getReport() as any).header.glibcVersionRuntime
+      (process.report.getReport() as { header: { glibcVersionRuntime: boolean } }).header.glibcVersionRuntime
       ? "glibc"
       : "musl";
 

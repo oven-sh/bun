@@ -281,7 +281,7 @@ pub fn ParseFn(
                 }
 
                 args.append(p.allocator, G.Arg{
-                    .ts_decorators = ExprNodeList.init(ts_decorators),
+                    .ts_decorators = ExprNodeList.fromOwnedSlice(ts_decorators),
                     .binding = arg,
                     .default = default_value,
 

@@ -119,7 +119,7 @@ pub fn ParseProperty(
             }
 
             return G.Property{
-                .ts_decorators = ExprNodeList.init(opts.ts_decorators),
+                .ts_decorators = try ExprNodeList.fromSlice(p.allocator, opts.ts_decorators),
                 .kind = kind,
                 .flags = Flags.Property.init(.{
                     .is_computed = is_computed,
@@ -333,7 +333,7 @@ pub fn ParseProperty(
                                 ) catch unreachable;
 
                                 block.* = G.ClassStaticBlock{
-                                    .stmts = js_ast.BabyList(Stmt).init(stmts),
+                                    .stmts = js_ast.BabyList(Stmt).fromOwnedSlice(stmts),
                                     .loc = loc,
                                 };
 
@@ -506,7 +506,7 @@ pub fn ParseProperty(
                     try p.lexer.expectOrInsertSemicolon();
 
                     return G.Property{
-                        .ts_decorators = ExprNodeList.init(opts.ts_decorators),
+                        .ts_decorators = try ExprNodeList.fromSlice(p.allocator, opts.ts_decorators),
                         .kind = kind,
                         .flags = Flags.Property.init(.{
                             .is_computed = is_computed,

@@ -148,7 +148,7 @@ pub fn ParseJSXElement(
 
                 const is_key_after_spread = key_prop_i > -1 and first_spread_prop_i > -1 and key_prop_i > first_spread_prop_i;
                 flags.setPresent(.is_key_after_spread, is_key_after_spread);
-                properties = G.Property.List.fromList(props);
+                properties = G.Property.List.moveFromList(&props);
                 if (is_key_after_spread and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
                     try p.log.addWarning(p.source, spread_loc, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.");
                     p.has_classic_runtime_warned = true;
@@ -268,7 +268,7 @@ pub fn ParseJSXElement(
 
                         return p.newExpr(E.JSXElement{
                             .tag = end_tag.data.asExpr(),
-                            .children = ExprNodeList.fromList(children),
+                            .children = ExprNodeList.moveFromList(&children),
                             .properties = properties,
                             .key_prop_index = key_prop_i,
                             .flags = flags,

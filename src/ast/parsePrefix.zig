@@ -516,7 +516,7 @@ pub fn ParsePrefix(
                 self_errors.mergeInto(errors.?);
             }
             return p.newExpr(E.Array{
-                .items = ExprNodeList.fromList(items),
+                .items = ExprNodeList.moveFromList(&items),
                 .comma_after_spread = comma_after_spread.toNullable(),
                 .is_single_line = is_single_line,
                 .close_bracket_loc = close_bracket_loc,
@@ -600,7 +600,7 @@ pub fn ParsePrefix(
             }
 
             return p.newExpr(E.Object{
-                .properties = G.Property.List.fromList(properties),
+                .properties = G.Property.List.moveFromList(&properties),
                 .comma_after_spread = if (comma_after_spread.start > 0)
                     comma_after_spread
                 else

@@ -369,18 +369,31 @@ ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     auto* task = new EventLoopTask(WTFMove(lambda));
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     auto* task = new EventLoopTask(WTFMove(lambda));
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
-    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+}
+
+extern "C" void Bun__queueImmediateCppTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
+
+void ScriptExecutionContext::queueImmediateCppTask(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTFMove(lambda));
+    queueImmediateCppTask(task);
+}
+
+void ScriptExecutionContext::queueImmediateCppTask(EventLoopTask* task)
+{
+    Bun__queueImmediateCppTask(m_globalObject, task);
 }
 
 // Zig bindings

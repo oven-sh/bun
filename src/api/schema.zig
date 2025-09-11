@@ -2902,8 +2902,13 @@ pub const api = struct {
 
                     registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
                 } else {
-                    // Do not include a trailing slash. There might be parameters at the end.
-                    registry.url = url.href;
+                    // Ensure registry URL ends with a trailing slash for proper URL construction
+                    // when building package tarball URLs
+                    if (!bun.strings.endsWithChar(url.href, '/')) {
+                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}/", .{url.href});
+                    } else {
+                        registry.url = url.href;
+                    }
                 }
 
                 return registry;

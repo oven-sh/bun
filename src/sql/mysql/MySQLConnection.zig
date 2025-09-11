@@ -1160,8 +1160,13 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
 
         // Read packet header
         const header = PacketHeader.decode(reader.peek()) orelse return AnyMySQLError.Error.ShortRead;
-        const header_length = header.length;
-        const packet_length: usize = header_length + PacketHeader.size;
+        const header_length: usize = header.length;
+        // MySQL packets have a maximum length of 16MB (0xFFFFFF bytes)
+        // Reject obviously invalid packet lengths to prevent resource exhaustion
+        if (header_length >= 0xFFFFFF) {
+            return AnyMySQLError.Error.UnexpectedPacket;
+        }
+        const packet_length: usize = header_length +| PacketHeader.size;
         debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header_length });
         // Ensure we have the full packet
         reader.ensureCapacity(packet_length) catch return AnyMySQLError.Error.ShortRead;
@@ -1175,8 +1180,8 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         // Process packet based on connection state
         switch (this.status) {
             .handshaking => try this.handleHandshake(Context, reader),
-            .authenticating, .authentication_awaiting_pk => try this.handleAuth(Context, reader, header_length),
-            .connected => try this.handleCommand(Context, reader, header_length),
+            .authenticating, .authentication_awaiting_pk => try this.handleAuth(Context, reader, @truncate(header_length)),
+            .connected => try this.handleCommand(Context, reader, @truncate(header_length)),
             else => {
                 debug("Unexpected packet in state {s}", .{@tagName(this.status)});
                 return error.UnexpectedPacket;

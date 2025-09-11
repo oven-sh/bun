@@ -59,7 +59,8 @@ private:
     {
     }
 
-    ~DevServerSourceProvider() {
+    ~DevServerSourceProvider()
+    {
         if (m_globalObject) {
             Bun__removeDevServerSourceProvider(m_globalObject->bunVM(), this, &m_specifier);
         }

@@ -1088,9 +1088,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
 
-    // FIXME: delete this
-    BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING: "1",
-
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
     ...(typeof remapPort == "number"

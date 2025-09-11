@@ -290,6 +290,11 @@ $> bun-after test hook-timeouts
 Problematic:
 
 - [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
+  - Execution: first: \*ConcurrentGroup, current: \*ConcurrentGroup
+  - ConcurrentGroup: next: \*ConcurrentGroup, memory-pool
+  - ExecutionSequence: first: \*ExecutionEntry, current: \*ExecutionEntry
+  - ExecutionEntry: next_orig: \*ExecutionEntry, next: \*ExecutionEntry (on reset, set it back to next_orig)
+  - or use indices?
 
 Regular:
 

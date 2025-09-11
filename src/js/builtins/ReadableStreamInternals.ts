@@ -683,10 +683,10 @@ export function readDirectStream(stream, sink, underlyingSource) {
   $putByIdDirectPrivate(stream, "underlyingSource", null); // doing this causes isReadableStreamDefaultController to return false
   $putByIdDirectPrivate(stream, "start", undefined);
   function close(stream, reason) {
-    // Check if the stream is already closing/closed naturally
-    // If so, don't call cancel as this is a normal completion
+    // Check if this is a normal close (controller.close() was called)
+    // Normal close: reason is undefined AND stream is in closing state
     const streamState = stream ? $getByIdDirectPrivate(stream, "state") : null;
-    const isNormalClose = streamState === $streamClosing || streamState === $streamClosed;
+    const isNormalClose = reason === undefined && streamState === $streamClosing;
     
     // Only call cancel if there's a cancellation (not a normal close)
     if (!isNormalClose) {

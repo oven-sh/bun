@@ -96,7 +96,7 @@ server_exports = {
       });
 
       if (!(response instanceof Response)) {
-        throw new Error(`Server-side request handler was expected to return a Response object.`);
+        throw $ERR_SSR_RESPONSE_EXPECTED(`Server-side request handler was expected to return a Response object.`);
       }
 
       return response;

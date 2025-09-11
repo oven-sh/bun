@@ -14,6 +14,11 @@ pub const T = enum {
 
     t_numeric_literal,
 
+    t_local_date,
+    // t_local_time,
+    // t_offset_date_time,
+    // t_local_date_time,
+
     t_comma,
 
     t_string_literal,
@@ -46,6 +51,7 @@ pub const Lexer = struct {
     code_point: CodePoint = -1,
     identifier: []const u8 = "",
     number: f64 = 0.0,
+    date: string = "",
     prev_error_loc: logger.Loc = logger.Loc.Empty,
     string_literal_slice: string = "",
     string_literal_is_ascii: bool = true,
@@ -190,6 +196,7 @@ pub const Lexer = struct {
     fn parseNumericLiteralOrDot(lexer: *Lexer) !void {
         // Number or dot;
         const first = lexer.code_point;
+        const start_idx = lexer.current;
         lexer.step();
 
         // Dot without a digit after it;
@@ -344,23 +351,34 @@ pub const Lexer = struct {
 
             // Initial digits;
             while (true) {
-                if (lexer.code_point < '0' or lexer.code_point > '9') {
+                if (!is_digit(lexer.code_point)) {
                     switch (lexer.code_point) {
-                        // '-' => {
-                        //     if (lexer.raw().len == 5) {
-                        //         // Is this possibly a datetime literal that begins with a 4 digit year?
-                        //         lexer.step();
-                        //         while (!lexer.has_newline_before) {
-                        //             switch (lexer.code_point) {
-                        //                 ',' => {
-                        //                     lexer.string_literal_slice = lexer.raw();
-                        //                     lexer.token = T.t_string_literal;
-                        //                     break;
-                        //                 },
-                        //             }
-                        //         }
-                        //     }
-                        // },
+                        '-' => {
+                            // According to the spec, at this point, if we're seeing a '-' not
+                            // preceeded by an 'E' (or e), it MUST be a date. Dates ALWAYS have a
+                            // '-' in position 4. Ex: 2025-08-10
+                            if (!(lexer.current - start_idx == 4)) {
+                                try lexer.syntaxError();
+                            }
+
+                            try lexer.parseDateTime();
+
+                            // early exit
+                            return;
+                        },
+                        ':' => {
+                            // A colon is only valid at this point if the current value is a time --
+                            // all times have a colon at index 2. Ex: 00:32:00.999999
+                            if (!(lexer.current - start_idx == 2)) {
+                                try lexer.syntaxError();
+                            }
+
+                            lexer.step();
+                            try lexer.parseTime();
+
+                            // early exit
+                            return;
+                        },
                         '_' => {},
                         else => break,
                     }
@@ -398,7 +416,7 @@ pub const Lexer = struct {
                     try lexer.syntaxError();
                 }
                 while (true) {
-                    if (lexer.code_point < '0' or lexer.code_point > '9') {
+                    if (!is_digit(lexer.code_point)) {
                         if (lexer.code_point != '_') {
                             break;
                         }
@@ -428,11 +446,11 @@ pub const Lexer = struct {
                 if (lexer.code_point == '+' or lexer.code_point == '-') {
                     lexer.step();
                 }
-                if (lexer.code_point < '0' or lexer.code_point > '9') {
+                if (!is_digit(lexer.code_point)) {
                     try lexer.syntaxError();
                 }
                 while (true) {
-                    if (lexer.code_point < '0' or lexer.code_point > '9') {
+                    if (!is_digit(lexer.code_point)) {
                         if (lexer.code_point != '_') {
                             break;
                         }
@@ -488,6 +506,10 @@ pub const Lexer = struct {
 
         // if it's a space, it might be a date timestamp
         if (isIdentifierPart(lexer.code_point) or lexer.code_point == ' ') {}
+    }
+
+    inline fn is_digit(code_point: CodePoint) bool {
+        return code_point >= '0' and code_point <= '9';
     }
 
     pub inline fn expect(self: *Lexer, comptime token: T) !void {
@@ -1117,6 +1139,143 @@ pub const Lexer = struct {
                 },
             }
         }
+    }
+
+    /// Valid times:
+    /// * HH:MM:SS
+    /// * HH:MM:SS.FRACTION, where the fractional portion must account for ms at minimum.
+    pub fn parseTime(_: Lexer) !void {}
+
+    /// The TOML v1.0.0 spec allows three possible date configurations:
+    /// * local date
+    /// * local date-time
+    /// * offset date-time
+    pub fn parseDateTime(lexer: *Lexer) !void {
+        // As all of the possiblilites are prefixed 'XXXX-', for now, we assume the lexer enters
+        // in this state, with '-' as the current `code_point`.  TODO (jcromer): Remove this hack.
+        if (lexer.raw().len != 4) {
+            std.log.debug("Unexpected lexer state when parsing date!", .{});
+            std.debug.assert(false);
+        }
+
+        // Number of digits for each portion (year has already been parsed if we're here).
+        var month: i8 = 2;
+        var mday: i8 = 2;
+        var hour: i8 = 2;
+        var minute: i8 = 2;
+        var second: i8 = 2;
+        // var offset_hour: i8 = 2;
+        // var offset_minute: i8 = 2;
+
+        // non-numerics
+        var expect_colon: bool = false;
+        var expect_dash: bool = true;
+        var expect_maybe_dot: bool = false;
+        var expect_maybe_offset: bool = false;
+        var expect_maybe_space_or_t: bool = false;
+
+        while (true) {
+            const current = lexer.code_point;
+            lexer.step();
+
+            switch (current) {
+                '0'...'9' => {
+                    if (expect_dash or expect_maybe_space_or_t or expect_maybe_offset or expect_colon) {
+                        std.log.debug("Got an unexpected number while parsing datetime.", .{});
+                        try lexer.syntaxError();
+                    }
+
+                    // date
+                    if (month > 0) {
+                        month -= 1;
+                        if (month == 0) {
+                            expect_dash = true;
+                        }
+                        continue;
+                    }
+
+                    if (mday > 0) {
+                        mday -= 1;
+                        if (mday == 0) {
+                            expect_maybe_space_or_t = true;
+                        }
+                        continue;
+                    }
+
+                    // time
+                    if (hour > 0) {
+                        hour -= 1;
+                        if (hour == 0) {
+                            expect_colon = true;
+                        }
+                        continue;
+                    }
+
+                    if (minute > 0) {
+                        minute -= 1;
+                        if (minute == 0) {
+                            expect_colon = true;
+                        }
+                        continue;
+                    }
+
+                    if (second > 0) {
+                        second -= 1;
+                        if (second == 0) {
+                            expect_maybe_dot = true;
+                        }
+                        continue;
+                    }
+
+                },
+                '-' => {
+                    // '-' is overloaded as a date separator as well as an offset +/-
+                    if (!expect_dash and !expect_maybe_offset) {
+                        std.log.debug("Got an unexpected dash while parsing datetime.", .{});
+                        std.log.debug("got date: {any}", .{lexer.raw()});
+                        try lexer.syntaxError();
+                    }
+                    expect_dash = false;
+                    expect_maybe_offset = false;
+                },
+                'z', 'Z' => {
+                    if (!expect_maybe_offset) {
+                        std.log.debug("Got an unexpected 'Z' while parsing datetime.", .{});
+                        try lexer.syntaxError();
+                    }
+                    expect_maybe_offset = false;
+                },
+                ':' => {
+                    if (!expect_colon) {
+                        std.log.debug("Got an unexpected ':' while parsing datetime.", .{});
+                        try lexer.syntaxError();
+                    }
+                    expect_colon = false;
+                },
+                ' ', 't', 'T' => {
+                    if (!expect_maybe_space_or_t) {
+                        std.log.debug("Got an unexpected ' ' or 'T' while parsing datetime.", .{});
+                        try lexer.syntaxError();
+                    }
+                    expect_maybe_space_or_t = false;
+                    continue;
+                },
+                '\n' => {
+                    if (!expect_maybe_offset and !expect_maybe_space_or_t) {
+                        std.log.debug("Got an unexpected newline while parsing datetime.", .{});
+                        try lexer.syntaxError();
+                    }
+                    break;
+                },
+                else => {
+                    std.log.debug("Got an invalid character while parsing datetime.", .{});
+                    try lexer.syntaxError();
+                },
+            }
+        }
+
+        lexer.date = lexer.raw();
+        lexer.token = T.t_local_date;
     }
 
     pub fn expected(self: *Lexer, token: T) !void {

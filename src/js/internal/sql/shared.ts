@@ -677,6 +677,8 @@ function parseOptions(
     prepare = false;
   }
 
+  const log = options.log ?? false;
+
   onconnect ??= options.onconnect;
   onclose ??= options.onclose;
 
@@ -763,6 +765,7 @@ function parseOptions(
     tls,
     prepare,
     bigint,
+    log,
     sslMode,
     query,
     max: max || 10,

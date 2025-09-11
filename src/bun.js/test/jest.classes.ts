@@ -809,18 +809,23 @@ export default [
     proto: {
       skip: {
         getter: "getSkip",
+        cache: true,
       },
       todo: {
         getter: "getTodo",
+        cache: true,
       },
       failing: {
         getter: "getFailing",
+        cache: true,
       },
       concurrent: {
         getter: "getConcurrent",
+        cache: true,
       },
       only: {
         getter: "getOnly",
+        cache: true,
       },
       if: {
         fn: "fnIf",

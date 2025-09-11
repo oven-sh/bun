@@ -319,12 +319,12 @@ $> bun-after test hook-timeouts
 - [x] test/internal/ban-words.test.ts (format.yml isn't running?)
 - [ ] (maybe flaky) test/bake/dev/hot.test.ts
 - [ ] (maybe flaky) test/js/node/test/parallel/test-file-write-stream4.js
-- [ ] test/js/bun/util/inspect-error.test.js
+- [x] test/js/bun/util/inspect-error.test.js
 - [x] test/js/bun/test/done-async.test.ts
 - [x] test/cli/test/bun-test.test.ts
 - [x] test/integration/bun-types/bun-types.test.ts
 - [ ] test/js/web/fetch/abort-signal-leak.test.ts
-- [ ] test/js/bun/test/test-failing.test.ts
+- [x] test/js/bun/test/test-failing.test.ts
 - [ ] (flaky) test/bake/dev/stress.test.ts
 - [ ] (flaky) test/cli/inspect/BunFrontendDevServer.test.ts
 - [ ] (flaky) test/js/node/child_process/child_process_ipc.test.js

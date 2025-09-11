@@ -492,8 +492,8 @@ pub const BunTest = struct {
         var dcb_ref: ?*RefData = null;
         if (done_callback) |dcb| {
             if (DoneCallback.fromJS(dcb)) |dcb_data| {
-                if (dcb_data.called) {
-                    // done callback already called; add result immediately
+                if (dcb_data.called or result == null) {
+                    // done callback already called or the callback errored; add result immediately
                 } else {
                     dcb_ref = ref(this_strong, cfg.data);
                     dcb_data.ref = dcb_ref;

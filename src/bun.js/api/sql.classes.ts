@@ -1,6 +1,6 @@
 import { define } from "../../codegen/class-definitions";
 
-const types = ["PostgresSQL", "MySQL"];
+const types = ["PostgresSQL", "MySQL"] as const;
 const classes = [];
 for (const type of types) {
   classes.push(
@@ -9,7 +9,7 @@ for (const type of types) {
       construct: true,
       finalize: true,
       configurable: false,
-      hasPendingActivity: true,
+      hasPendingActivity: type === "PostgresSQL",
       klass: {
         //   escapeString: {
         //     fn: "escapeString",

@@ -3471,9 +3471,9 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
 
 #if ASSERT_ENABLED
         ASSERT_WITH_MESSAGE(microtaskFunction, "Invalid microtask function");
-        ASSERT_WITH_MESSAGE(asyncContext.isEmpty(), "Invalid microtask context");
+        ASSERT_WITH_MESSAGE(!asyncContext.isEmpty(), "Invalid microtask context");
         ASSERT_WITH_MESSAGE(rejectPromiseFunction, "Invalid microtask callback");
-        ASSERT_WITH_MESSAGE(value.isEmpty(), "Invalid microtask value");
+        ASSERT_WITH_MESSAGE(!value.isEmpty(), "Invalid microtask value");
 #endif
 
         if (asyncContext.isEmpty()) {

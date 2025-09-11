@@ -518,7 +518,6 @@ pub const ValkeyClient = struct {
                 // Without auto pipelining, wait for in-flight to empty before draining
                 _ = this.drain();
             }
-
         }
 
         _ = this.flushData();

@@ -1,5 +1,5 @@
 import { randomUUIDv7, RedisClient, sleep } from "bun";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   ConnectionType,
   createClient,

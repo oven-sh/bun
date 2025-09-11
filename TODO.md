@@ -297,7 +297,7 @@ Regular:
 - [ ] test/js/node/process/process-nexttick.test.js
 - [ ] test/js/bun/test/describe2.test.ts
 - [x] test/js/bun/net/tcp-server.test.ts
-- [ ] test/js/node/test_runner/node-test.test.ts
+- [x] test/js/node/test_runner/node-test.test.ts
 - [ ] (flaky) test/bundler/bundler_compile.test.ts
 - [ ] (flaky) test/js/bun/http/serve.test.ts
 - [ ] (flaky) test/js/web/fetch/fetch-leak.test.ts

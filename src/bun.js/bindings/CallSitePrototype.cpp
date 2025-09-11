@@ -234,15 +234,15 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
     // TODO: Fix Function constructor detection
     // =====================================
     // KNOWN BUG: Code created with `new Function()` is not detected as eval by JSCStackFrame.
-    // 
+    //
     // In Node.js/V8, Function constructor code is treated as eval code, which means:
     //   - isEval() should return true
     //   - isToplevel() should return false
     //   - getFunctionName() should return "eval" (not the displayName)
-    // 
+    //
     // Currently in Bun:
     //   - isEval() returns false (WRONG - should be true)
-    //   - isToplevel() returns true (WRONG - should be false)  
+    //   - isToplevel() returns true (WRONG - should be false)
     //   - getFunctionName() returns the displayName (partially wrong - should be "eval" in some contexts)
     //
     // This is a deeper issue in how JSCStackFrame detects eval contexts. The Function
@@ -254,7 +254,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
     // 2. Check the FunctionExecutable's source provider type for Function constructor origin
     // 3. Or add a special flag when code is created via Function constructor in JSC
     //
-    // Failing test: test/js/node/v8/capture-stack-trace.test.js 
+    // Failing test: test/js/node/v8/capture-stack-trace.test.js
     //   "CallFrame isTopLevel returns false for Function constructor"
     //
     // Example code that fails:

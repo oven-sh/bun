@@ -1871,7 +1871,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     .bigint = request.flags.bigint,
                 };
                 var structure: JSValue = .js_undefined;
-                var cached_structure: ?CachedStructure = null;
+                var cached_structure: ?*CachedStructure = null;
                 switch (request.flags.result_mode) {
                     .objects => {
                         cached_structure = statement.structure(this.js_value, this.globalObject);

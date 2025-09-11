@@ -103,9 +103,9 @@ pub fn checkForDuplicateFields(this: *@This()) void {
     this.fields_flags = flags;
 }
 
-pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlobalObject) CachedStructure {
+pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlobalObject) *CachedStructure {
     if (this.cached_structure.has()) {
-        return this.cached_structure;
+        return &this.cached_structure;
     }
     this.checkForDuplicateFields();
 
@@ -155,7 +155,7 @@ pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlo
         ), null);
     }
 
-    return this.cached_structure;
+    return &this.cached_structure;
 }
 pub const Param = struct {
     type: types.FieldType,

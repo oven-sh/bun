@@ -441,13 +441,19 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
         if (name.isNamedColumn()) {
             propertyNames.add(Identifier::fromString(vm, name.name.toWTFString()));
         }
+        if (name.isIndexedColumn()) {
+            return encodedJSValue();
+        }
+
         nonDuplicateCount += !name.isDuplicateColumn();
         if (nonDuplicateCount == JSFinalObject::maxInlineCapacity) {
             break;
         }
     }
 
-    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), nonDuplicateCount);
+    ASSERT_WITH_MESSAGE(nonDuplicateCount < JSFinalObject::maxInlineCapacity, "expected nonDuplicateCount %u to be less than maxInlineCapacity %u", nonDuplicateCount, JSFinalObject::maxInlineCapacity);
+    Structure* structure = Structure::create(vm, globalObject, globalObject->objectPrototype(), JSFinalObject::typeInfo(), JSFinalObject::info(), NonArray, nonDuplicateCount);
+
     if (owner) {
         vm.writeBarrier(owner, structure);
     } else {

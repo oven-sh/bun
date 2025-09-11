@@ -902,7 +902,7 @@ pub const Putter = struct {
     count: usize = 0,
     globalObject: *jsc.JSGlobalObject,
 
-    pub fn toJS(this: *Putter, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
+    pub fn toJS(this: *Putter, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?*PostgresCachedStructure) JSValue {
         var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
         var names_count: u32 = 0;
         if (cached_structure) |c| {

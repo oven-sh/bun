@@ -1362,7 +1362,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 
             var statement = request.statement orelse return error.ExpectedStatement;
             var structure: JSValue = .js_undefined;
-            var cached_structure: ?PostgresCachedStructure = null;
+            var cached_structure: ?*PostgresCachedStructure = null;
             // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
             switch (request.flags.result_mode) {
                 .objects => {

@@ -107,9 +107,9 @@ pub fn deinit(this: *PostgresSQLStatement) void {
     bun.default_allocator.destroy(this);
 }
 
-pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc.JSGlobalObject) PostgresCachedStructure {
+pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc.JSGlobalObject) *PostgresCachedStructure {
     if (this.cached_structure.has()) {
-        return this.cached_structure;
+        return &this.cached_structure;
     }
     this.checkForDuplicateFields();
 
@@ -157,7 +157,7 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
         ), null);
     }
 
-    return this.cached_structure;
+    return &this.cached_structure;
 }
 
 const debug = bun.Output.scoped(.Postgres, .visible);

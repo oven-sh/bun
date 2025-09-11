@@ -370,7 +370,7 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     this.ref();
     defer this.deref();
     // we defer the refAndClose so the on_close will be called first before we reject the pending requests
-    defer this.refAndClose(value);
+
     const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
 
     const loop = this.vm.eventLoop();
@@ -384,6 +384,7 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
             this.getQueriesArray(),
         },
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
+    this.closeWithReason(value);
 }
 
 pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Error) void {
@@ -393,23 +394,12 @@ pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Erro
 }
 
 pub fn onClose(this: *MySQLConnection) void {
-    var vm = this.vm;
-    defer vm.drainMicrotasks();
     this.fail("Connection closed", error.ConnectionClosed);
 }
 
-fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
-    // refAndClose is always called when we wanna to disconnect or when we are closed
-
-    if (!this.socket.isClosed()) {
-        // event loop need to be alive to close the socket
-        this.poll_ref.ref(this.vm);
-        // will unref on socket close
-        this.socket.close();
-    }
-
-    // cleanup requests
+fn closeWithReason(this: *@This(), js_reason: ?jsc.JSValue) void {
     this.cleanUpRequests(js_reason);
+    this.socket.close();
 }
 
 pub fn disconnect(this: *@This()) void {
@@ -418,22 +408,9 @@ pub fn disconnect(this: *@This()) void {
 
     if (this.status == .connected) {
         this.setStatus(.disconnected);
-
-        const requests = this.requests.readableSlice(0);
-        this.requests.head = 0;
-        this.requests.count = 0;
-
-        // Fail any pending requests
-        for (requests) |request| {
-            this.finishRequest(request);
-            request.onError(.{
-                .error_code = 2013, // CR_SERVER_LOST
-                .error_message = .{ .temporary = "Lost connection to MySQL server" },
-            }, this.globalObject);
-        }
-
-        this.socket.close();
     }
+
+    this.socket.close();
 }
 
 fn finishRequest(this: *@This(), item: *MySQLQuery) void {
@@ -706,6 +683,7 @@ fn SocketHandler(comptime ssl: bool) type {
             return Socket{ .SocketTCP = s };
         }
         pub fn onOpen(this: *MySQLConnection, socket: SocketType) void {
+            this.socket = _socket(socket);
             this.onOpen(_socket(socket));
         }
 
@@ -716,32 +694,32 @@ fn SocketHandler(comptime ssl: bool) type {
         pub const onHandshake = if (ssl) onHandshake_ else null;
 
         pub fn onClose(this: *MySQLConnection, socket: SocketType, _: i32, _: ?*anyopaque) void {
-            _ = socket;
+            this.socket = _socket(socket);
             this.onClose();
         }
 
         pub fn onEnd(this: *MySQLConnection, socket: SocketType) void {
-            _ = socket;
-            this.onClose();
+            this.socket = _socket(socket);
+            socket.close(.normal);
         }
 
         pub fn onConnectError(this: *MySQLConnection, socket: SocketType, _: i32) void {
-            _ = socket;
+            this.socket = _socket(socket);
             this.onClose();
         }
 
         pub fn onTimeout(this: *MySQLConnection, socket: SocketType) void {
-            _ = socket;
+            this.socket = _socket(socket);
             this.onTimeout();
         }
 
         pub fn onData(this: *MySQLConnection, socket: SocketType, data: []const u8) void {
-            _ = socket;
+            this.socket = _socket(socket);
             this.onData(data);
         }
 
         pub fn onWritable(this: *MySQLConnection, socket: SocketType) void {
-            _ = socket;
+            this.socket = _socket(socket);
             this.onDrain();
         }
     };
@@ -1308,6 +1286,7 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
         .disconnected, .failed => {
             this.poll_ref.disable();
         },
+        else => {},
     }
 }
 

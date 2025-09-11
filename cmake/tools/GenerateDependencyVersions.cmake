@@ -51,6 +51,16 @@ function(generate_dependency_versions_header)
   
   # Read versions from generated_versions_list.zig if it exists
   set(GENERATED_VERSIONS_FILE "${CMAKE_SOURCE_DIR}/src/generated_versions_list.zig")
+  
+  # Track input files so CMake reconfigures when they change
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${GENERATED_VERSIONS_FILE}"
+    "${CMAKE_SOURCE_DIR}/package.json"
+    "${VENDOR_PATH}/libdeflate/libdeflate.h"
+    "${VENDOR_PATH}/zlib/zlib.h"
+    "${DEPS_PATH}/zstd/lib/zstd.h"
+  )
+  
   if(EXISTS "${GENERATED_VERSIONS_FILE}")
     file(READ "${GENERATED_VERSIONS_FILE}" VERSIONS_CONTENT)
     
@@ -249,7 +259,10 @@ function(generate_dependency_versions_header)
     math(EXPR value_idx "${i} + 1")
     if(value_idx LESS num_versions)
       list(GET DEPENDENCY_VERSIONS ${value_idx} value)
-      string(APPEND HEADER_CONTENT "#define BUN_DEP_${name} \"${value}\"\n")
+      # Only emit #define if value is not "unknown"
+      if(NOT "${value}" STREQUAL "unknown")
+        string(APPEND HEADER_CONTENT "#define BUN_DEP_${name} \"${value}\"\n")
+      endif()
     endif()
     math(EXPR i "${i} + 2")
   endwhile()
@@ -264,8 +277,10 @@ function(generate_dependency_versions_header)
     math(EXPR value_idx "${i} + 1")
     if(value_idx LESS num_versions)
       list(GET DEPENDENCY_VERSIONS ${value_idx} value)
-      string(TOLOWER "${name}" name_lower)
-      string(APPEND HEADER_CONTENT "static const char* const BUN_VERSION_${name} = \"${value}\";\n")
+      # Only emit constant if value is not "unknown"
+      if(NOT "${value}" STREQUAL "unknown")
+        string(APPEND HEADER_CONTENT "static const char* const BUN_VERSION_${name} = \"${value}\";\n")
+      endif()
     endif()
     math(EXPR i "${i} + 2")
   endwhile()

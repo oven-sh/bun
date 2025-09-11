@@ -44,6 +44,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
 
       // Test native hget method - single value return
       const result = await ctx.redis.hget(key, "username");
+      expectType<string>(result, "string");
       expect(result).toBe("johndoe");
 
       // HGET non-existent field should return null

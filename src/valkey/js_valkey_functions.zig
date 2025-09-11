@@ -377,32 +377,6 @@ pub fn sismember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
     return promise.toJS();
 }
 
-// Implement hget (get single value from hash)
-pub fn hget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
-        return globalObject.throwInvalidArgumentType("hget", "key", "string or buffer");
-    };
-    defer key.deinit();
-
-    const field = (try fromJS(globalObject, callframe.argument(1))) orelse {
-        return globalObject.throwInvalidArgumentType("hget", "field", "string or buffer");
-    };
-    defer field.deinit();
-
-    // Send HGET command
-    const promise = this.send(
-        globalObject,
-        callframe.this(),
-        &.{
-            .command = "HGET",
-            .args = .{ .args = &.{ key, field } },
-        },
-    ) catch |err| {
-        return protocol.valkeyErrorToJS(globalObject, "Failed to send HGET command", err);
-    };
-    return promise.toJS();
-}
-
 // Implement hmget (get multiple values from hash)
 pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
@@ -630,6 +604,7 @@ pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER",
 
 pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call;
 pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call;
+pub const hget = compile.@"(key: RedisKey, value: RedisValue)"("hget", "HGET", "key", "field").call;
 pub const lpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH").call;
 pub const lpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpushx", "LPUSHX").call;
 pub const pfadd = compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD", "key", "value").call;

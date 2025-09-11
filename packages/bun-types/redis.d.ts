@@ -276,7 +276,7 @@ declare module "bun" {
      * @param field The field to get
      * @returns Promise that resolves with the field value or null if the field doesn't exist
      */
-    hget(key: RedisClient.KeyLike, field: string): Promise<string | null>;
+    hget(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Get the values of all the given hash fields

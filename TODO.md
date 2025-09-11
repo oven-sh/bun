@@ -311,7 +311,7 @@ $> bun-after test hook-timeouts
 - [ ] test/js/node/test/parallel/test-util-inspect-long-running.js
 - [ ] test/js/bun/glob/scan.test.ts
 - [ ] test/js/bun/util/v8-heap-snapshot.test.ts
-- [ ] test/js/junit-reporter/junit.test.js
+- [x] test/js/junit-reporter/junit.test.js
 - [x] test/js/bun/net/socket.test.ts
 - [ ] (maybe flaky) test/bake/dev/bundle.test.ts
 - [ ] (flaky) test/js/web/websocket/autobahn.test.ts

@@ -151,12 +151,15 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
-extern "C" X509_STORE *us_get_default_ca_store() {
+// Create a template store with all certificates loaded
+// This is called only once and the result is cached
+static X509_STORE* us_create_template_ca_store() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
   }
 
+  // Load system certificates from disk (expensive, but done only once)
   if (!X509_STORE_set_default_paths(store)) {
     X509_STORE_free(store);
     return NULL;
@@ -166,7 +169,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   X509** root_cert_instances = default_ca_certificates->root_cert_instances;
   STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
 
-  // load all root_cert_instances on the default ca store
+  // Add our embedded root certificates
   for (size_t i = 0; i < root_certs_size; i++) {
     X509 *cert = root_cert_instances[i];
     if (cert == NULL)
@@ -175,6 +178,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     X509_STORE_add_cert(store, cert);
   }
 
+  // Add NODE_EXTRA_CA_CERTS certificates
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
       X509 *cert = sk_X509_value(root_extra_cert_instances, i);
@@ -184,6 +188,62 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   }
 
   return store;
+}
+
+// Get the cached template store (created only once)
+static X509_STORE* us_get_template_ca_store() {
+  static X509_STORE* template_store = us_create_template_ca_store();
+  return template_store;
+}
+
+// Duplicate the template store to create a new independent store
+static X509_STORE* us_duplicate_ca_store_from_template() {
+  X509_STORE *template_store = us_get_template_ca_store();
+  if (template_store == NULL) {
+    return NULL;
+  }
+
+  X509_STORE *new_store = X509_STORE_new();
+  if (new_store == NULL) {
+    return NULL;
+  }
+
+  // Get all objects from the template store
+  STACK_OF(X509_OBJECT) *objs = X509_STORE_get1_objects(template_store);
+  if (objs == NULL) {
+    X509_STORE_free(new_store);
+    return NULL;
+  }
+
+  // Add each certificate to the new store
+  for (int i = 0; i < sk_X509_OBJECT_num(objs); i++) {
+    X509_OBJECT *obj = sk_X509_OBJECT_value(objs, i);
+    if (X509_OBJECT_get_type(obj) == X509_LU_X509) {
+      X509 *cert = X509_OBJECT_get0_X509(obj);
+      if (cert != NULL) {
+        X509_up_ref(cert);
+        X509_STORE_add_cert(new_store, cert);
+      }
+    }
+  }
+
+  // Copy verification parameters from template
+  X509_VERIFY_PARAM *param = X509_STORE_get0_param(template_store);
+  if (param != NULL) {
+    X509_STORE_set1_param(new_store, param);
+  }
+
+  // Clean up
+  sk_X509_OBJECT_pop_free(objs, X509_OBJECT_free);
+
+  return new_store;
+}
+
+extern "C" X509_STORE *us_get_default_ca_store() {
+  // Return a duplicate of the template store
+  // This ensures each SSL_CTX gets its own independent store
+  // while avoiding repeated calls to X509_STORE_set_default_paths()
+  return us_duplicate_ca_store_from_template();
 }
 extern "C" const char *us_get_default_ciphers() {
   return DEFAULT_CIPHER_LIST;

@@ -230,7 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL, (JSGlobalObj
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    
+
     // Eval and Function constructor code is never top-level
     if (callSite->isEval()) {
         return JSC::JSValue::encode(JSC::jsBoolean(false));

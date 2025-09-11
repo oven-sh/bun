@@ -493,3 +493,9 @@ ALWAYS_INLINE void BunString::deref()
 #else
 #define ASSERT_PENDING_EXCEPTION(globalObject) void()
 #endif
+
+#if ASSERT_ENABLED
+#define ASSERT_NOT_IN_GC(vm) ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Garbage collection is running! Can't do this here.")
+#else
+#define ASSERT_NOT_IN_GC(vm) void()
+#endif

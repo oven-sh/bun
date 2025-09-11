@@ -103,6 +103,7 @@ using namespace WTF;
 
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
 {
+    ASSERT_NOT_IN_GC(vm);
     JSC::JSObject* prototype;
 
     switch (type) {
@@ -160,6 +161,7 @@ Structure* ErrorCodeCache::createStructure(JSC::VM& vm, JSC::JSGlobalObject* glo
 
 ErrorCodeCache* ErrorCodeCache::create(VM& vm, Structure* structure)
 {
+    ASSERT_NOT_IN_GC(vm);
     ErrorCodeCache* object = new (NotNull, allocateCell<ErrorCodeCache>(vm)) ErrorCodeCache(vm, structure);
     object->finishCreation(vm);
     return object;
@@ -189,6 +191,7 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
 
 JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
+    ASSERT_NOT_IN_GC(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];

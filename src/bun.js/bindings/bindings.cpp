@@ -2296,6 +2296,7 @@ JSC::EncodedJSValue JSC__JSValue__createEmptyObjectWithNullPrototype(JSC::JSGlob
 JSC::EncodedJSValue JSC__JSValue__createEmptyObject(JSC::JSGlobalObject* globalObject,
     size_t initialCapacity)
 {
+
     return JSC::JSValue::encode(
         JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity)));
 }
@@ -2895,6 +2896,7 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
@@ -2903,6 +2905,7 @@ JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
 JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
@@ -2911,6 +2914,7 @@ JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
     JSC::JSGlobalObject* globalObject)
 {
+    ASSERT_NOT_IN_GC(vm);
     auto& vm = JSC::getVM(globalObject);
     ZigString code = *arg1;
     JSC::JSObject* rangeError = Zig::getRangeErrorInstance(message, globalObject).asCell()->getObject();
@@ -2975,7 +2979,7 @@ JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject,
 JSC::EncodedJSValue JSC__JSValue__keys(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue objectValue)
 {
     auto& vm = JSC::getVM(globalObject);
-
+    ASSERT_NOT_IN_GC(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
@@ -2987,6 +2991,7 @@ JSC::EncodedJSValue JSC__JSValue__keys(JSC::JSGlobalObject* globalObject, JSC::E
 JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue objectValue)
 {
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     JSValue value = JSValue::decode(objectValue);
 
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
@@ -2996,6 +3001,7 @@ bool JSC__JSValue__asArrayBuffer_(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObj
     Bun__ArrayBuffer* arg2)
 {
     ASSERT_NO_PENDING_EXCEPTION(arg1);
+    ASSERT_NOT_IN_GC(arg1->vm());
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     if (!value || !value.isCell()) [[unlikely]] {
         return false;
@@ -3079,6 +3085,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject*
 }
 CPP_DECL void JSC__JSValue__putIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, uint32_t arg2, JSC::EncodedJSValue JSValue3)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
     JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
@@ -3087,6 +3094,7 @@ CPP_DECL void JSC__JSValue__putIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
 
 CPP_DECL void JSC__JSValue__push(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue3)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
     JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
@@ -3099,7 +3107,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
+    ASSERT_NOT_IN_GC(vm);
     JSC::JSValue message = JSC::jsOwnedString(vm, Zig::toString(*arg3));
     JSC::JSValue options = JSC::jsUndefined();
     JSC::JSArray* array = nullptr;
@@ -3127,6 +3135,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
 JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, BunString message, JSValue options)
 {
     auto& vm = JSC::getVM(global);
+    ASSERT_NOT_IN_GC(vm);
     JSC::Structure* errorStructure = global->errorStructure(JSC::ErrorType::AggregateError);
     WTF::String messageString = message.toWTFString();
     return JSC::JSValue::encode(JSC::createAggregateError(global, vm, errorStructure, array, JSC::jsString(vm, messageString), options, nullptr, JSC::TypeNothing, false));
@@ -3134,6 +3143,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGl
 
 JSC::EncodedJSValue ZigString__toAtomicValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     if (arg0->len == 0) {
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
     }
@@ -3153,12 +3163,14 @@ JSC::EncodedJSValue ZigString__toAtomicValue(const ZigString* arg0, JSC::JSGloba
 
 JSC::EncodedJSValue ZigString__to16BitValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     auto str = WTF::String::fromUTF8(std::span { arg0->ptr, arg0->len });
     return JSC::JSValue::encode(JSC::jsString(arg1->vm(), str));
 }
 
 JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC::JSGlobalObject* global)
 {
+    ASSERT_NOT_IN_GC(global->vm());
     if (len == 0) {
         return JSC::JSValue::encode(JSC::jsEmptyString(global->vm()));
     }
@@ -3170,7 +3182,7 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
 // This must be a globally allocated string
 JSC::EncodedJSValue ZigString__toExternalValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
 {
-
+    ASSERT_NOT_IN_GC(arg1->vm());
     ZigString str = *arg0;
     if (str.len == 0) {
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
@@ -3387,6 +3399,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue value = JSC::JSValue::decode(JSValue2);
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "Promise.reject cannot be called with a empty JSValue");
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(vm) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
 
@@ -3402,6 +3415,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1,
     JSC::EncodedJSValue JSValue2)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
 
@@ -3417,7 +3431,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::
     JSC::EncodedJSValue JSValue2)
 {
     JSValue target = JSValue::decode(JSValue2);
-
+    ASSERT_NOT_IN_GC(arg1->vm());
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
     ASSERT(!target.isEmpty());
@@ -3431,6 +3445,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::
 void JSC__JSPromise__resolveOnNextTick(JSC::JSPromise* promise, JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::EncodedJSValue encoedValue)
 {
+    ASSERT_NOT_IN_GC(lexicalGlobalObject->vm());
     return JSC__JSPromise__resolve(promise, lexicalGlobalObject, encoedValue);
 }
 
@@ -3454,6 +3469,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
 {
     JSC::JSValue value = JSC::JSValue::decode(encoedValue);
     auto& vm = JSC::getVM(lexicalGlobalObject);
+    ASSERT_NOT_IN_GC(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
     if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
@@ -3477,6 +3493,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
 JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
 {
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
     promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::JSValue::decode(JSValue1));
@@ -3534,6 +3551,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 JSC::JSInternalPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     return JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
 }
 
@@ -3542,6 +3560,7 @@ void JSC__JSInternalPromise__reject(JSC::JSInternalPromise* arg0, JSC::JSGlobalO
 {
     JSValue value = JSC::JSValue::decode(JSValue2);
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     JSC::Exception* exception = nullptr;
     if (!value.inherits<JSC::Exception>()) {
         exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::CaptureStack);
@@ -3554,12 +3573,14 @@ void JSC__JSInternalPromise__reject(JSC::JSInternalPromise* arg0, JSC::JSGlobalO
 void JSC__JSInternalPromise__rejectAsHandled(JSC::JSInternalPromise* arg0,
     JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     arg0->rejectAsHandled(arg1, JSC::JSValue::decode(JSValue2));
 }
 void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSInternalPromise* arg0,
     JSC::JSGlobalObject* arg1,
     JSC::Exception* arg2)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     arg0->rejectAsHandled(arg1, arg2);
 }
 
@@ -3573,6 +3594,7 @@ JSC::JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObj
 void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1,
     JSC::EncodedJSValue JSValue2)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
 
@@ -3585,10 +3607,12 @@ JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObj
 
 JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
 {
+    ASSERT_NOT_IN_GC((*arg1));
     return JSC::JSValue::encode(arg0->result(*arg1));
 }
 uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
 {
+    ASSERT_NOT_IN_GC((*arg1));
     switch (arg0->status(*arg1)) {
     case JSC::JSInternalPromise::Status::Pending:
         return 0;
@@ -3602,11 +3626,13 @@ uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0, JSC:
 }
 bool JSC__JSInternalPromise__isHandled(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
 {
+    ASSERT_NOT_IN_GC((*arg1));
     return arg0->isHandled(*arg1);
 }
 void JSC__JSInternalPromise__setHandled(JSC::JSInternalPromise* promise, JSC::VM* arg1)
 {
     auto& vm = *arg1;
+    ASSERT_NOT_IN_GC(vm);
     auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
     promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
 }
@@ -3616,7 +3642,7 @@ void JSC__JSInternalPromise__setHandled(JSC::JSInternalPromise* promise, JSC::VM
 JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-
+    ASSERT_NOT_IN_GC(vm);
     JSC::JSLockHolder lock(vm);
     // JSC::DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3690,6 +3716,7 @@ void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, 
 void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3)
 {
     auto& vm = JSC::getVM(arg1);
+    ASSERT_NOT_IN_GC(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto obj = JSValue::decode(JSValue0);
     auto key = JSValue::decode(arg2);
@@ -3703,6 +3730,7 @@ void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
 extern "C" void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
     WTF::String keyStr = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
@@ -3715,6 +3743,7 @@ extern "C" void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSG
 
 bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
+    ASSERT_NOT_IN_GC(arg1->vm());
     JSValue value = JSValue::decode(JSValue0);
     auto callData = getCallData(value);
 
@@ -4024,6 +4053,7 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "get() must not be called on empty value");
 
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     JSC::JSObject* object = value.getObject();
     if (!object) [[unlikely]] {
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
@@ -4050,6 +4080,7 @@ JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedVa
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "getPropertyValue() must not be called on empty value");
 
     auto& vm = JSC::getVM(globalObject);
+    ASSERT_NOT_IN_GC(vm);
     JSC::JSObject* object = value.getObject();
     if (!object) [[unlikely]] {
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
@@ -4079,6 +4110,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
 
     VM& vm = globalObject->vm();
+    ASSERT_NOT_IN_GC(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSC::JSValue::decode(JSValue0);
     WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
@@ -4095,6 +4127,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     VM& vm = globalObject->vm();
+    ASSERT_NOT_IN_GC(vm);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(JSValue0);
     JSValue path = JSValue::decode(arg1);
@@ -4756,6 +4789,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 {
     JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
     auto& vm = JSC::getVM(global);
+    ASSERT_NOT_IN_GC(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     bool getFromSourceURL = false;
@@ -6100,6 +6134,7 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC::VM* vm)
 
 extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, JSC::EncodedJSValue JSValue3, JSC::EncodedJSValue JSValue4)
 {
+    ASSERT_NOT_IN_GC(arg0->vm());
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSValue microtaskArgs[] = {
         JSValue::decode(JSValue1),
@@ -6512,6 +6547,7 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
     NativeFunction constructorOrNull)
 {
     VM& vm = global->vm();
+    ASSERT_NOT_IN_GC(global->vm());
     auto name = fn_name.toWTFString();
     return JSValue::encode(JSFunction::create(
         vm,
@@ -6530,6 +6566,7 @@ extern "C" EncodedJSValue JSArray__constructArray(
     const JSValue* values,
     size_t values_len)
 {
+    ASSERT_NOT_IN_GC(global->vm());
     return JSValue::encode(
         JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
 }
@@ -6538,6 +6575,7 @@ extern "C" EncodedJSValue JSArray__constructEmptyArray(
     JSC::JSGlobalObject* global,
     size_t len)
 {
+    ASSERT_NOT_IN_GC(global->vm());
     return JSValue::encode(JSC::constructEmptyArray(global, (ArrayAllocationProfile*)nullptr, len));
 }
 

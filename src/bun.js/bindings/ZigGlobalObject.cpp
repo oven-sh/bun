@@ -4146,7 +4146,7 @@ extern "C" void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
 extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* globalObject, void* ptr, MicrotaskCallback callback)
 {
     JSFunction* function = globalObject->nativeMicrotaskTrampoline();
-
+    ASSERT_NOT_IN_GC(globalObject->vm());
     // Do not use JSCell* here because the GC will try to visit it.
     globalObject->queueMicrotask(function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
 }

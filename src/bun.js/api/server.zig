@@ -1426,7 +1426,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn finalize(this: *ThisServer) void {
             httplog("finalize", .{});
-            this.js_value.deinit();
+            this.js_value.finalize();
             this.flags.has_js_deinited = true;
             this.deinitIfWeCan();
         }

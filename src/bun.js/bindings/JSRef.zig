@@ -100,6 +100,11 @@ pub const JSRef = union(enum) {
             .finalized => {},
         }
     }
+
+    pub fn finalize(this: *@This()) void {
+        this.deinit();
+        this.* = .{ .finalized = {} };
+    }
 };
 
 const bun = @import("bun");

@@ -43,7 +43,6 @@ pub const Status = enum(u8) {
 };
 
 pub fn deinit(this: *@This()) void {
-    this.thisValue.deinit();
     if (this.statement) |statement| {
         statement.deref();
     }
@@ -62,7 +61,7 @@ pub fn finalize(this: *@This()) void {
         this.statement = null;
     }
 
-    this.thisValue.deinit();
+    this.thisValue.finalize();
     this.deref();
 }
 
@@ -74,18 +73,23 @@ pub fn onWriteFail(
 ) void {
     this.status = .fail;
     const thisValue = this.thisValue.tryGet() orelse return;
-    defer this.thisValue.deinit();
+    defer this.thisValue.downgrade();
     const targetValue = this.getTarget(globalObject, true) orelse return;
 
     const instance = AnyMySQLError.mysqlErrorToJS(globalObject, "Failed to bind query", err);
-
+    const js_err = instance.toError() orelse instance;
+    bun.assertf(js_err != .zero, "js_err is zero", .{});
+    js_err.ensureStillAlive();
     const vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
+    const function = vm.rareData().mysql_context.onQueryRejectFn.get() orelse return;
+    bun.assertf(function.isCallable(), "onQueryRejectFn is not callable");
     const event_loop = vm.eventLoop();
+    const js_array = if (queries_array == .zero) .js_undefined else queries_array;
+    js_array.ensureStillAlive();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
-        instance.toError() orelse instance,
-        queries_array,
+        js_err,
+        js_array,
     });
 }
 
@@ -155,11 +159,12 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     defer this.deref();
     this.status = .fail;
     const thisValue = this.thisValue.tryGet() orelse return;
-    defer this.thisValue.deinit();
+    defer this.thisValue.downgrade();
     const targetValue = this.getTarget(globalObject, true) orelse return;
 
     var vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
+    const function = vm.rareData().mysql_context.onQueryRejectFn.get() orelse return;
+    bun.assertf(function.isCallable(), "onQueryRejectFn is not callable", .{});
     const event_loop = vm.eventLoop();
     var js_error = err.toError() orelse err;
     if (js_error == .zero) {
@@ -217,12 +222,14 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
 
     defer if (is_last) {
         allowGC(thisValue, globalObject);
-        this.thisValue.deinit();
+        this.thisValue.downgrade();
     };
     const targetValue = this.getTarget(globalObject, is_last) orelse return;
 
     const vm = jsc.VirtualMachine.get();
-    const function = vm.rareData().mysql_context.onQueryResolveFn.get().?;
+    const function = vm.rareData().mysql_context.onQueryResolveFn.get() orelse return;
+    bun.assertf(function.isCallable(), "onQueryResolveFn is not callable", .{});
+
     const event_loop = vm.eventLoop();
     const tag: CommandTag = .{ .SELECT = result_count };
     var queries_array = if (connection == .zero) .js_undefined else MySQLConnection.js.queriesGetCached(connection) orelse .js_undefined;

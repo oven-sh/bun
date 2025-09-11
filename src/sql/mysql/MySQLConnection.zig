@@ -269,7 +269,7 @@ pub fn finalize(this: *MySQLConnection) void {
     this.stopTimers();
     debug("MySQLConnection finalize", .{});
 
-    this.js_value.deinit();
+    this.js_value.finalize();
     this.deref();
 }
 

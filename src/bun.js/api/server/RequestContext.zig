@@ -1,3 +1,18 @@
+/// Q: Why is this needed?
+/// A: The dev server needs to attach its own callback when the request is
+///    aborted.
+///
+/// Q: Why can't the dev server just call `.setAbortHandler(...)` then?
+/// A: It can't, because that is *already* called by the RequestContext, setting
+///    the callback and the user data context pointer.
+///
+///    If it did, it would *overwrite* the user data context pointer (this
+///    is what it did before), causing segfaults.
+pub const AdditionalOnAbortCallback = struct {
+    cb: *const fn (this: *anyopaque) void,
+    data: *anyopaque,
+};
+
 pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
         const RequestContext = @This();
@@ -55,8 +70,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         /// Defer finalization until after the request handler task is completed?
         defer_deinit_until_callback_completes: ?*bool = null,
 
-        onAbortCb: ?*const fn (this: *anyopaque) void = null,
-        onAbortData: ?*anyopaque = null,
+        additional_on_abort: ?AdditionalOnAbortCallback = null,
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
@@ -584,8 +598,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             assert(this.server != null);
             // mark request as aborted
             this.flags.aborted = true;
-            if (this.onAbortData != null and this.onAbortCb != null) {
-                this.onAbortCb.?(this.onAbortData.?);
+            if (this.additional_on_abort) |abort| {
+                abort.cb(abort.data);
             }
 
             this.detachResponse();

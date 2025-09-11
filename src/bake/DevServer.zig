@@ -1116,7 +1116,7 @@ fn deferRequest(
                     },
                     .saved => |saved| saved,
                 };
-                server_handler.ctx.setAbortCallback(DeferredRequest.onAbortWrapper, &deferred.data);
+                server_handler.ctx.setAdditionalOnAbortCallback(.{ .cb = DeferredRequest.onAbortWrapper, .data = &deferred.data });
                 break :brk .{
                     .server_handler = server_handler,
                 };

@@ -64,6 +64,21 @@ pub const JSRef = union(enum) {
         }
     }
 
+    pub fn downgrade(this: *@This()) void {
+        switch (this.*) {
+            .weak => {},
+            .strong => {
+                if (this.strong.trySwap()) |strong| {
+                    bun.debugAssert(strong != .zero);
+                    this.* = .{ .weak = strong };
+                }
+            },
+            .finalized => {},
+        }
+    }
+
+    pub const finalize = deinit;
+
     pub fn deinit(this: *@This()) void {
         switch (this.*) {
             .weak => {

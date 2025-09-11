@@ -205,13 +205,16 @@ function ReadStream(this: FSStream, path, options): void {
     }
   }
 
-  this[kReadStreamFastPath] =
-    start === 0 &&
-    end === Infinity &&
-    autoClose &&
-    !customFs &&
-    // is it an encoding which we don't need to decode?
-    (encoding === "buffer" || encoding === "binary" || encoding == null || encoding === "utf-8" || encoding === "utf8");
+  // TODO: Fast path is disabled to fix issue #16037 - premature stream end events
+  // The fast path needs proper implementation in the pipe() method
+  // Original conditions:
+  // this[kReadStreamFastPath] =
+  //   start === 0 &&
+  //   end === Infinity &&
+  //   autoClose &&
+  //   !customFs &&
+  //   (encoding === "buffer" || encoding === "binary" || encoding == null || encoding === "utf-8" || encoding === "utf8");
+  this[kReadStreamFastPath] = false;
   Readable.$call(this, options);
   return this as unknown as void;
 }
@@ -340,11 +343,9 @@ readStreamPrototype._destroy = function (this: FSStream, err, cb) {
   // running in a thread pool. Therefore, file descriptors are not safe
   // to close while used in a pending read or write operation. Wait for
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
-  if (this[kReadStreamFastPath]) {
-    this.once(kReadStreamFastPath, er => close(this, err || er, cb));
-  } else {
-    close(this, err, cb);
-  }
+  // TODO: When fast path is properly implemented, handle it here
+  // For now, always use the normal close path to fix issue #16037
+  close(this, err, cb);
 };
 
 readStreamPrototype.close = function (cb) {

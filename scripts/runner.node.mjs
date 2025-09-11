@@ -201,12 +201,12 @@ if (isBuildkite) {
       const doc = await res.json();
       console.log(`-> page ${i}, found ${doc.length} items`);
       if (doc.length === 0) break;
-      if (doc.length < per_page) break;
       for (const { filename, status } of doc) {
         prFileCount += 1;
         if (status !== "added") continue;
         newFiles.push(filename);
       }
+      if (doc.length < per_page) break;
     }
     console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
   } catch (e) {

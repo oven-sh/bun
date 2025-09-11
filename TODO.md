@@ -391,7 +391,7 @@ Regular:
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
 - [x] test/js/bun/bun-object/write.spec.ts
 - [ ] test/js/bun/test/describe.test.ts
-- [ ] test/cli/test/test-filter-lifecycle-snapshot.test.ts
+- [x] test/cli/test/test-filter-lifecycle-snapshot.test.ts
 - [ ] test/js/web/fetch/fetch.upgrade.test.ts
 
 # Add features:

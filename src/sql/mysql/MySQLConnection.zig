@@ -438,6 +438,7 @@ pub fn onClose(this: *MySQLConnection) void {
     }
 
     this.fail("Connection closed", error.ConnectionClosed);
+    this.updateHasPendingActivity();
 }
 
 fn closeWithReason(this: *@This(), js_reason: ?jsc.JSValue) void {
@@ -955,13 +956,16 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             };
         }
     }
-    ptr.setStatus(.connecting);
-    ptr.updateHasPendingActivity();
-    ptr.resetConnectionTimeout();
+
     ptr.poll_ref.ref(vm);
     const js_value = ptr.toJS(globalObject);
     js_value.ensureStillAlive();
     ptr.js_value.setStrong(js_value, globalObject);
+
+    ptr.setStatus(.connecting);
+    ptr.updateHasPendingActivity();
+    ptr.resetConnectionTimeout();
+
     js.onconnectSetCached(js_value, globalObject, on_connect);
     js.oncloseSetCached(js_value, globalObject, on_close);
 

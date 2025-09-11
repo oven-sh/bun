@@ -67,11 +67,7 @@ pub fn deinit(this: *@This()) void {
 
 pub fn finalize(this: *@This()) void {
     debug("PostgresSQLQuery finalize", .{});
-    if (this.thisValue == .weak) {
-        // clean up if is a weak reference, if is a strong reference we need to wait until the query is done
-        // if we are a strong reference, here is probably a bug because GC'd should not happen
-        this.thisValue.weak = .zero;
-    }
+    this.thisValue.finalize();
     this.deref();
 }
 
@@ -85,7 +81,7 @@ pub fn onWriteFail(
     defer this.deref();
     this.status = .fail;
     const thisValue = this.thisValue.get();
-    defer this.thisValue.deinit();
+    defer this.thisValue.downgrade();
     const targetValue = this.getTarget(globalObject, true);
     if (thisValue == .zero or targetValue == .zero) {
         return;
@@ -106,7 +102,7 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     defer this.deref();
     this.status = .fail;
     const thisValue = this.thisValue.get();
-    defer this.thisValue.deinit();
+    defer this.thisValue.downgrade();
     const targetValue = this.getTarget(globalObject, true);
     if (thisValue == .zero or targetValue == .zero) {
         return;
@@ -154,8 +150,7 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
         this.status = .partial_response;
     }
     defer if (is_last) {
-        allowGC(thisValue, globalObject);
-        this.thisValue.deinit();
+        this.thisValue.downgrade();
     };
     if (thisValue == .zero or targetValue == .zero) {
         return;

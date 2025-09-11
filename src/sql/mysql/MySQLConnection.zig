@@ -122,6 +122,7 @@ pub const AuthState = union(enum) {
 };
 
 fn updateHasPendingActivity(this: *MySQLConnection) void {
+    if (this.js_value == .finalized) return;
     const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
     const b: u32 = if (this.status != .disconnected) 1 else 0;
     const c: u32 = if (this.socket.isClosed()) 0 else 1;
@@ -430,10 +431,12 @@ pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Erro
 }
 
 pub fn onClose(this: *MySQLConnection) void {
+    this.poll_ref.disable();
+
     if (this.status == .connected) {
         this.setStatus(.disconnected);
     }
-    this.poll_ref.disable();
+
     this.fail("Connection closed", error.ConnectionClosed);
 }
 
@@ -444,7 +447,9 @@ fn closeWithReason(this: *@This(), js_reason: ?jsc.JSValue) void {
 
 pub fn disconnect(this: *@This()) void {
     this.stopTimers();
+    this.cleanUpRequests(null);
     this.socket.close();
+    this.updateRef();
 }
 
 fn finishRequest(this: *@This(), item: *MySQLQuery) void {

@@ -84,6 +84,8 @@ pub const Optional = struct {
         const impl = strong.impl orelse return .zero;
         const result = impl.get();
         if (result == .zero) {
+            strong.impl = null;
+            impl.deinit();
             return .zero;
         }
         impl.clear();

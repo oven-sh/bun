@@ -298,7 +298,7 @@ registry = http://localhost:${registry.port}/contents/release/npm
 `;
 
     await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    
+
     const result = loadNpmrc(ini);
     // Should add trailing slash automatically
     expect(result.default_registry_url).toEqual(`http://localhost:${registry.port}/contents/release/npm/`);
@@ -321,7 +321,7 @@ registry = http://localhost:${registry.port}/contents/release/npm
         "@myorg/test-pkg": "1.0.0",
       },
     })} > package.json`.cwd(packageDir);
-    
+
     // This test ensures the URL is properly constructed even without trailing slash
     // The actual install would fail because the package doesn't exist, but URL construction should work
   });

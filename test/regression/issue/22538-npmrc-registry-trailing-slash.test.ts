@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { tempDir, bunExe, bunEnv } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
 
@@ -65,25 +65,25 @@ registry=https://example.com/contents/release/npm
 
 test("build tarball URL with registry without trailing slash", async () => {
   using dir = tempDir("test-npmrc-registry", {});
-  
+
   // Create a simple .npmrc with registry URL without trailing slash
   const npmrc = `
 registry=https://example.com/contents/release/npm
 `;
-  
+
   await Bun.write(`${dir}/.npmrc`, npmrc);
-  
+
   // Create a package.json that would require building tarball URLs
   const packageJson = {
     name: "test-pkg",
     version: "1.0.0",
     dependencies: {
-      "fake-package": "1.0.0"
-    }
+      "fake-package": "1.0.0",
+    },
   };
-  
+
   await Bun.write(`${dir}/package.json`, JSON.stringify(packageJson));
-  
+
   // Try to install (it will fail because the registry doesn't exist, but we can check the error)
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install"],
@@ -92,12 +92,9 @@ registry=https://example.com/contents/release/npm
     stderr: "pipe",
     stdout: "pipe",
   });
-  
-  const [stdout, stderr] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-  ]);
-  
+
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+
   // The key is that we shouldn't get a malformed URL error
   // Instead we should get a network/connection error
   expect(stderr).not.toContain("npm/@fake-package/-/fake-package");

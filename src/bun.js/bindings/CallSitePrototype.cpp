@@ -164,22 +164,22 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunctionName, (JSGlobalObject * glo
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    
+
     // getMethodName() should only return a name if this is actually a method call
     // (i.e., when 'this' is an object and not the global object or undefined)
     JSValue thisValue = callSite->thisValue();
     JSValue functionName = callSite->functionName();
-    
+
     // If there's no function name, return null
     if (!functionName.isString() || asString(functionName)->length() == 0) {
         return JSC::JSValue::encode(jsNull());
     }
-    
+
     // If 'this' is undefined or null (strict mode, top-level), it's not a method
     if (thisValue.isUndefinedOrNull()) {
         return JSC::JSValue::encode(jsNull());
     }
-    
+
     // If 'this' is an object (but not global object), it's likely a method call
     if (thisValue.isObject()) {
         JSObject* obj = asObject(thisValue);
@@ -190,7 +190,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globa
         // It's a method call on a regular object
         return JSC::JSValue::encode(functionName);
     }
-    
+
     // For all other cases, return null
     return JSC::JSValue::encode(jsNull());
 }
@@ -230,14 +230,14 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL, (JSGlobalObj
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    
+
     // Constructor calls are never top-level
     if (callSite->isConstructor()) {
         return JSC::JSValue::encode(JSC::jsBoolean(false));
     }
 
     JSC::JSValue thisValue = callSite->thisValue();
-    
+
     // Method calls (where 'this' is a regular object, not global) are not top-level
     if (thisValue.isObject()) {
         JSC::JSObject* thisObject = asObject(thisValue);
@@ -274,8 +274,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
     }
 
     // Default: If 'this' is undefined/null or global object, it's top-level
-    if (thisValue.isUndefinedOrNull() || 
-        (thisValue.isObject() && asObject(thisValue)->isGlobalObject())) {
+    if (thisValue.isUndefinedOrNull() || (thisValue.isObject() && asObject(thisValue)->isGlobalObject())) {
         return JSC::JSValue::encode(JSC::jsBoolean(true));
     }
 

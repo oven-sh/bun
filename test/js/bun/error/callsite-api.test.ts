@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("CallSite API", () => {
   describe("getFunctionName", () => {
@@ -11,16 +11,16 @@ describe("CallSite API", () => {
         return "";
       };
 
-      const anonymousFunc = function() {
+      const anonymousFunc = function () {
         return new Error().stack;
       };
-      
+
       anonymousFunc();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       // Should return null, not empty string
       expect(firstCallSite.getFunctionName()).toBe(null);
     });
@@ -37,13 +37,13 @@ describe("CallSite API", () => {
       function namedFunction() {
         return new Error().stack;
       }
-      
+
       namedFunction();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       expect(firstCallSite.getFunctionName()).toBe("namedFunction");
     });
   });
@@ -59,17 +59,17 @@ describe("CallSite API", () => {
       };
 
       const obj = {
-        method: function() {
+        method: function () {
           return new Error().stack;
-        }
+        },
       };
-      
+
       obj.method();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       // For now, getMethodName should return null for empty names
       const methodName = firstCallSite.getMethodName();
       expect(methodName === null || methodName === "method").toBe(true);
@@ -87,17 +87,17 @@ describe("CallSite API", () => {
       };
 
       // In strict mode, 'this' is undefined
-      "use strict";
+      ("use strict");
       function strictFunction() {
         return new Error().stack;
       }
-      
+
       strictFunction();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       // Should return null, not "undefined"
       expect(firstCallSite.getTypeName()).toBe(null);
     });
@@ -114,15 +114,15 @@ describe("CallSite API", () => {
       const obj = {
         method() {
           return new Error().stack;
-        }
+        },
       };
-      
+
       obj.method();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       // In strict mode (which tests run in), 'this' might be undefined
       // So getTypeName() could return null or "Object" depending on context
       const typeName = firstCallSite.getTypeName();
@@ -143,13 +143,13 @@ describe("CallSite API", () => {
       async function asyncFunc() {
         return new Error().stack;
       }
-      
+
       await asyncFunc();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       // NOTE: Even Node.js/V8 returns false for async functions
       // This is a known limitation in the V8 implementation
       // For now, we match Node.js behavior
@@ -168,13 +168,13 @@ describe("CallSite API", () => {
       function regularFunc() {
         return new Error().stack;
       }
-      
+
       regularFunc();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       // Should return false for regular functions
       expect(firstCallSite.isAsync()).toBe(false);
     });
@@ -192,7 +192,7 @@ describe("CallSite API", () => {
         new Error().stack;
         yield 1;
       }
-      
+
       const gen = asyncGenFunc();
       await gen.next();
       Error.prepareStackTrace = originalPrepare;
@@ -226,13 +226,13 @@ describe("CallSite API", () => {
       function outerFunc() {
         return innerFunc();
       }
-      
+
       outerFunc();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(1);
       const innerCallSite = callSites[0];
-      
+
       // In Node.js, regular function calls are considered top-level
       // even when nested (because 'this' is the global object)
       expect(innerCallSite.isToplevel()).toBe(true);
@@ -249,13 +249,13 @@ describe("CallSite API", () => {
 
       // This runs at module level
       new Error().stack;
-      
+
       Error.prepareStackTrace = originalPrepare;
 
       if (callSites.length > 0) {
         // Find the top-most frame (module level)
         const topFrame = callSites[callSites.length - 1];
-        
+
         // Module-level code should be considered top-level
         // Though in test context this might not always be true
         expect(typeof topFrame.isToplevel()).toBe("boolean");
@@ -266,7 +266,7 @@ describe("CallSite API", () => {
       // Note: In strict mode (which test files use), 'this' may be undefined
       // even for method calls, making them appear as top-level.
       // This test checks the behavior when we can actually detect the object context.
-      
+
       // Create a test that runs in sloppy mode
       const testFunc = new Function(`
         const originalPrepare = Error.prepareStackTrace;
@@ -292,9 +292,9 @@ describe("CallSite API", () => {
           typeName: stack[0].getTypeName()
         };
       `);
-      
+
       const result = testFunc();
-      
+
       // If we can detect 'this' (non-strict context), isToplevel should be false
       // Otherwise, it will be true (which matches Node.js behavior in strict mode)
       if (result.hasThis && result.typeName === "Object") {
@@ -319,19 +319,19 @@ describe("CallSite API", () => {
       function testFunc() {
         return new Error().stack;
       }
-      
+
       testFunc();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       // Get original toString result
       const originalToString = firstCallSite.toString();
-      
+
       // Try to override getFunctionName (shouldn't affect toString)
       firstCallSite.getFunctionName = () => "overridden";
-      
+
       // toString should still return the original result
       expect(firstCallSite.toString()).toBe(originalToString);
     });
@@ -350,13 +350,13 @@ describe("CallSite API", () => {
       function testFunc() {
         return new Error().stack;
       }
-      
+
       testFunc();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const cs = callSites[0];
-      
+
       // Check that all V8 CallSite methods exist
       expect(typeof cs.getThis).toBe("function");
       expect(typeof cs.getTypeName).toBe("function");
@@ -387,17 +387,17 @@ describe("CallSite API", () => {
         return "";
       };
 
-      "use strict";
+      ("use strict");
       function strictFunc() {
         return new Error().stack;
       }
-      
+
       strictFunc();
       Error.prepareStackTrace = originalPrepare;
 
       expect(callSites.length).toBeGreaterThan(0);
       const firstCallSite = callSites[0];
-      
+
       // In strict mode, getThis and getFunction should return undefined
       expect(firstCallSite.getThis()).toBe(undefined);
       expect(firstCallSite.getFunction()).toBe(undefined);

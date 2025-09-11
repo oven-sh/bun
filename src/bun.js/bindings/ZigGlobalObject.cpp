@@ -1560,7 +1560,7 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
 
     // This is a JSC builtin function
     lexicalGlobalObject->queueMicrotask(function, callback, asyncContext,
-        JSC::jsUndefined(), JSC::jsUndefined());
+        JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

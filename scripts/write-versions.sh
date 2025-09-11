@@ -14,22 +14,5 @@ ZSTD=$(git rev-parse HEAD:./src/deps/zstd)
 LSHPACK=$(git rev-parse HEAD:./src/deps/ls-hpack)
 LIBDEFLATE=$(git rev-parse HEAD:./src/deps/libdeflate)
 
-rm -rf src/generated_versions_list.zig
-echo "// AUTO-GENERATED FILE. Created via .scripts/write-versions.sh" >src/generated_versions_list.zig
-echo "" >>src/generated_versions_list.zig
-echo "pub const boringssl = \"$BORINGSSL_VERSION\";" >>src/generated_versions_list.zig
-echo "pub const libarchive = \"$LIBARCHIVE_VERSION\";" >>src/generated_versions_list.zig
-echo "pub const mimalloc = \"$MIMALLOC_VERSION\";" >>src/generated_versions_list.zig
-echo "pub const picohttpparser = \"$PICOHTTPPARSER_VERSION\";" >>src/generated_versions_list.zig
-echo "pub const webkit = \"$WEBKIT_VERSION\";" >>src/generated_versions_list.zig
-echo "pub const zig = @import(\"std\").fmt.comptimePrint(\"{}\", .{@import(\"builtin\").zig_version});" >>src/generated_versions_list.zig
-echo "pub const zlib = \"$ZLIB_VERSION\";" >>src/generated_versions_list.zig
-echo "pub const tinycc = \"$TINYCC\";" >>src/generated_versions_list.zig
-echo "pub const lolhtml = \"$LOLHTML\";" >>src/generated_versions_list.zig
-echo "pub const c_ares = \"$C_ARES\";" >>src/generated_versions_list.zig
-echo "pub const libdeflate = \"$LIBDEFLATE\";" >>src/generated_versions_list.zig
-echo "pub const zstd = \"$ZSTD\";" >>src/generated_versions_list.zig
-echo "pub const lshpack = \"$LSHPACK\";" >>src/generated_versions_list.zig
-echo "" >>src/generated_versions_list.zig
-
-zig fmt src/generated_versions_list.zig
+# generated_versions_list.zig is no longer needed - versions are handled by CMake-generated header
+# This script is kept for reference but the file generation has been removed

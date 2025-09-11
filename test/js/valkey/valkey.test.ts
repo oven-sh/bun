@@ -11,17 +11,17 @@ import {
 } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
-  beforeEach(async () => {
-    if (ctx.redis?.connected) {
-      ctx.redis.close?.();
-    }
-    ctx.redis = createClient(ConnectionType.TCP);
+  //beforeEach(async () => {
+  //  if (ctx.redis?.connected) {
+  //    ctx.redis.close?.();
+  //  }
+  //  ctx.redis = createClient(ConnectionType.TCP);
 
-    await ctx.redis.send("FLUSHALL", ["SYNC"]);
-  });
+  //  await ctx.redis.send("FLUSHALL", ["SYNC"]);
+  //});
 
   const connectedRedis = async () => {
-    const redis = new RedisClient(DEFAULT_REDIS_URL);
+    const redis = new RedisClient("redis://localhost:6379");
     await redis.connect();
     return redis;
   };
@@ -595,6 +595,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(messageCount1).toBe(1);
       expect(messageCount2).toBe(1);
 
+      console.log("Unsubscribing listener2");
       await subscriber.unsubscribe(channel, listener2);
 
       await redis.publish(channel, "message1");

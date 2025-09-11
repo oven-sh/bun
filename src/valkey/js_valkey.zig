@@ -25,14 +25,14 @@ pub const SubscriptionCtx = struct {
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
-    pub fn subscriptionCount(this: *Self, globalObject: *jsc.JSGlobalObject) usize {
+    pub fn channelsSubscribedToCount(this: *Self, globalObject: *jsc.JSGlobalObject) usize {
         return this.subscriptionCallbackMap().size(globalObject);
     }
 
     /// Test whether this context has any subscriptions. It is mandatory to
     /// guard deinit with this function.
     pub fn hasSubscriptions(this: *Self, globalObject: *jsc.JSGlobalObject) bool {
-        return this.subscriptionCount(globalObject) > 0;
+        return this.channelsSubscribedToCount(globalObject) > 0;
     }
 
     pub fn clearReceiveHandlers(
@@ -43,7 +43,6 @@ pub const SubscriptionCtx = struct {
         const map = this.subscriptionCallbackMap();
         if (map.remove(globalObject, channelName)) {
             this._parent.channel_subscription_count -= 1;
-            this._parent.updateHasPendingActivity();
         }
     }
 
@@ -102,7 +101,6 @@ pub const SubscriptionCtx = struct {
             map.set(globalObject, channelName, updated_array);
         } else {
             this._parent.channel_subscription_count -= 1;
-            this._parent.updateHasPendingActivity();
         }
 
         return new_length;
@@ -144,7 +142,6 @@ pub const SubscriptionCtx = struct {
         // Update subscription count if this is a new channel
         if (is_new_channel) {
             this._parent.channel_subscription_count += 1;
-            this._parent.updateHasPendingActivity();
         }
     }
 
@@ -195,7 +192,6 @@ pub const SubscriptionCtx = struct {
 
     pub fn deinit(this: *Self) void {
         this._parent.channel_subscription_count = 0;
-        this._parent.updateHasPendingActivity();
 
         ParentJS.gc.set(
             .subscriptionCallbackMap,
@@ -215,7 +211,6 @@ pub const JSValkeyClient = struct {
 
     _subscription_ctx: ?SubscriptionCtx,
     channel_subscription_count: u32 = 0,
-    has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
@@ -544,7 +539,6 @@ pub const JSValkeyClient = struct {
             },
             .failed => {
                 this.client.status = .disconnected;
-                this.updateHasPendingActivity();
                 this.client.flags.is_reconnecting = true;
                 this.client.retry_attempts = 0;
                 this.reconnect();
@@ -715,7 +709,6 @@ pub const JSValkeyClient = struct {
         defer this.deref();
 
         this.client.status = .connecting;
-        this.updateHasPendingActivity();
 
         // Ref the poll to keep event loop alive during connection
         this.poll_ref.disable();
@@ -927,33 +920,6 @@ pub const JSValkeyClient = struct {
         }
     }
 
-    pub fn hasPendingActivity(this: *JSValkeyClient) bool {
-        // TODO(markovejnovic): Could this be .monotonic? My intuition says
-        // yes, because none of the things that may be freed will actually be
-        // read. The pointers don't move, so it should be safe, but I've
-        // decided here to be conservative.
-        return this.has_pending_activity.load(.acquire);
-    }
-
-    pub fn updateHasPendingActivity(this: *JSValkeyClient) void {
-        if (this.client.hasAnyPendingCommands()) {
-            this.has_pending_activity.store(true, .release);
-            return;
-        }
-
-        if (this.channel_subscription_count > 0) {
-            this.has_pending_activity.store(true, .release);
-            return;
-        }
-
-        if (this.client.status != .connected and this.client.status != .disconnected) {
-            this.has_pending_activity.store(true, .release);
-            return;
-        }
-
-        this.has_pending_activity.store(false, .release);
-    }
-
     pub fn finalize(this: *JSValkeyClient) void {
         // Since this.stopTimers impacts the reference count potentially, we
         // need to ref/unref here as well.
@@ -1083,13 +1049,17 @@ pub const JSValkeyClient = struct {
 
     /// Keep the event loop alive, or don't keep it alive
     pub fn updatePollRef(this: *JSValkeyClient) void {
-        if (!this.client.hasAnyPendingCommands() and this.client.status == .connected) {
+        const pending_commands = this.client.hasAnyPendingCommands();
+        const have_subs = if (this._subscription_ctx) |*ctx| ctx.hasSubscriptions(this.globalObject) else false;
+        const has_activity = pending_commands or have_subs;
+
+        if (!has_activity and this.client.status == .connected) {
             this.poll_ref.unref(this.client.vm);
             // If we don't have any pending commands and we're connected, we don't need to keep the object alive.
             if (this.this_value.tryGet()) |value| {
                 this.this_value.setWeak(value);
             }
-        } else if (this.client.hasAnyPendingCommands()) {
+        } else if (has_activity) {
             this.poll_ref.ref(this.client.vm);
             // If we have pending commands, we need to keep the object alive.
             if (this.this_value == .weak) {
@@ -1207,7 +1177,6 @@ fn SocketHandler(comptime ssl: bool) type {
                                 loop.enter();
                                 defer loop.exit();
                                 this.client.status = .failed;
-                                this.updateHasPendingActivity();
                                 this.client.flags.is_manually_closed = true;
                                 this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
                                 this.client.close();

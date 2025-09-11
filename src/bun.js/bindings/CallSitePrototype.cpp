@@ -231,6 +231,44 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
 {
     ENTER_PROTO_FUNC();
 
+    // TODO: Fix Function constructor detection
+    // =====================================
+    // KNOWN BUG: Code created with `new Function()` is not detected as eval by JSCStackFrame.
+    // 
+    // In Node.js/V8, Function constructor code is treated as eval code, which means:
+    //   - isEval() should return true
+    //   - isToplevel() should return false
+    //   - getFunctionName() should return "eval" (not the displayName)
+    // 
+    // Currently in Bun:
+    //   - isEval() returns false (WRONG - should be true)
+    //   - isToplevel() returns true (WRONG - should be false)  
+    //   - getFunctionName() returns the displayName (partially wrong - should be "eval" in some contexts)
+    //
+    // This is a deeper issue in how JSCStackFrame detects eval contexts. The Function
+    // constructor creates code that should be marked as eval, but JSC doesn't provide
+    // this information in the same way V8 does.
+    //
+    // To fix this properly, we need to:
+    // 1. Update JSCStackFrame::isEval() in ErrorStackTrace.cpp to detect Function constructor code
+    // 2. Check the FunctionExecutable's source provider type for Function constructor origin
+    // 3. Or add a special flag when code is created via Function constructor in JSC
+    //
+    // Failing test: test/js/node/v8/capture-stack-trace.test.js 
+    //   "CallFrame isTopLevel returns false for Function constructor"
+    //
+    // Example code that fails:
+    //   const fn = new Function("return new Error().stack");
+    //   // In prepareStackTrace callback:
+    //   // - stack[0].isEval() returns false (should be true)
+    //   // - stack[0].isToplevel() returns true (should be false)
+    //
+    // Workaround attempts that don't work:
+    // - Checking if function name is "eval" (it uses displayName instead)
+    // - Checking executable types (Function constructor code looks like regular functions)
+    // - Checking parseMode (doesn't distinguish Function constructor from regular functions)
+    // =====================================
+
     // Eval and Function constructor code is never top-level
     if (callSite->isEval()) {
         return JSC::JSValue::encode(JSC::jsBoolean(false));

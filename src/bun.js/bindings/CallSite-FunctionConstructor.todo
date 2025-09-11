@@ -1,0 +1,64 @@
+# TODO: Fix Function Constructor Detection in CallSite API
+
+## Problem
+Code created with `new Function()` is not properly detected as eval code in Bun's CallSite implementation, causing incompatibility with Node.js/V8 behavior.
+
+## Current Behavior (WRONG)
+```javascript
+const fn = new Function("return new Error().stack");
+// When fn() is called and Error.prepareStackTrace is set:
+// - callSite.isEval() returns false ❌
+// - callSite.isToplevel() returns true ❌  
+// - callSite.getFunctionName() returns displayName (e.g. "sloppyFnWow") ⚠️
+```
+
+## Expected Behavior (Node.js/V8)
+```javascript
+const fn = new Function("return new Error().stack");
+// When fn() is called and Error.prepareStackTrace is set:
+// - callSite.isEval() should return true ✅
+// - callSite.isToplevel() should return false ✅
+// - callSite.getFunctionName() should return "eval" ✅
+```
+
+## Root Cause
+The issue is in `JSCStackFrame::isEval()` (ErrorStackTrace.cpp) which doesn't detect Function constructor code as eval. JavaScriptCore (JSC) doesn't mark Function constructor code the same way V8 does.
+
+## Files to Fix
+1. `src/bun.js/bindings/ErrorStackTrace.cpp` - JSCStackFrame::isEval() needs to detect Function constructor
+2. `src/bun.js/bindings/CallSite.cpp` - May need to check source provider type during initialization
+3. Possibly JSC internals if we need to mark Function constructor code specially
+
+## Failing Test
+`test/js/node/v8/capture-stack-trace.test.js` - "CallFrame isTopLevel returns false for Function constructor"
+
+## Potential Solutions
+
+### Option 1: Check Source Provider Type
+Check if the FunctionExecutable's source provider is from Function constructor:
+- Investigate `executable->source().provider()` 
+- Look for special markers or types that indicate Function constructor origin
+
+### Option 2: Check Code Generation Context
+When Function constructor creates code, it might use a specific JSC API:
+- Track down where `new Function()` is implemented in Bun
+- Add a flag or marker when creating the executable
+
+### Option 3: Heuristic Detection
+Less ideal but possible workarounds:
+- Check if the source starts/ends with specific patterns
+- Check if there's no associated source file
+- Look for other distinguishing characteristics
+
+## Impact
+- Affects stack trace accuracy for dynamically generated functions
+- Breaks compatibility with Node.js debugging tools that rely on proper eval detection
+- Makes it harder to distinguish between regular functions and dynamically generated code
+
+## Priority
+Medium - This is an edge case but affects Node.js compatibility for debugging scenarios
+
+## Related Issues
+- V8 Stack Trace API compatibility
+- Error.captureStackTrace behavior
+- prepareStackTrace callback accuracy

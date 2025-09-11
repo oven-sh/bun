@@ -330,18 +330,18 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
         throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Failed to set signature message digest"_s);
         return nullptr;
     }
-    
+
     // Set RSA padding mode and salt length if applicable
     if (pkey.isRsaVariant()) {
         std::optional<int> effective_salt_len = salt_len;
-        
+
         // For PSS padding without explicit salt length, use RSA_PSS_SALTLEN_AUTO
         // BoringSSL changed the default from AUTO to DIGEST in commit b01d7bbf7 (June 2025)
         // for FIPS compliance, but Node.js expects the old AUTO behavior
         if (padding == RSA_PKCS1_PSS_PADDING && !salt_len.has_value()) {
             effective_salt_len = RSA_PSS_SALTLEN_AUTO;
         }
-        
+
         if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, effective_salt_len)) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_peek_error(), "Failed to set RSA padding"_s);
             return nullptr;

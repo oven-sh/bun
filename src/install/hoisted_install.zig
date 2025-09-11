@@ -4,13 +4,14 @@ pub fn installHoistedPackages(
     workspace_filters: []const WorkspaceFilter,
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
+    packages_to_install: ?[]const PackageID,
 ) !PackageInstall.Summary {
     bun.analytics.Features.hoisted_bun_install += 1;
 
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
-    try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters);
+    try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters, packages_to_install);
 
     defer {
         this.lockfile.buffers.trees = original_trees;
@@ -176,7 +177,7 @@ pub fn installHoistedPackages(
                 .tree_ids_to_trees_the_id_depends_on = tree_ids_to_trees_the_id_depends_on,
                 .completed_trees = completed_trees,
                 .trees = trees: {
-                    const trees = this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len) catch bun.outOfMemory();
+                    const trees = bun.handleOom(this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len));
                     for (0..this.lockfile.buffers.trees.items.len) |i| {
                         trees[i] = .{
                             .binaries = Bin.PriorityQueue.init(this.allocator, .{
@@ -328,6 +329,7 @@ pub fn installHoistedPackages(
             installer.installAvailablePackages(log_level, force);
         }
 
+        // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, .monotonic);
         if (log_level.showProgress()) {
             scripts_node.activate();
@@ -342,6 +344,7 @@ pub fn installHoistedPackages(
         installer.linkRemainingBins(log_level);
         installer.completeRemainingScripts(log_level);
 
+        // .monotonic is okay because this value is only accessed on this thread.
         while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
             this.reportSlowLifecycleScripts();
 

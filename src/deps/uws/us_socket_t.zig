@@ -1,4 +1,4 @@
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
 const max_i32 = std.math.maxInt(i32);
 
 /// Zig bindings for `us_socket_t`

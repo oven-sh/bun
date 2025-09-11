@@ -55,8 +55,8 @@ pub fn order(
     const right = right_string.toSlice(globalThis, allocator);
     defer right.deinit();
 
-    if (!strings.isAllASCII(left.slice())) return jsc.jsNumber(0);
-    if (!strings.isAllASCII(right.slice())) return jsc.jsNumber(0);
+    if (!strings.isAllASCII(left.slice())) return .jsNumber(0);
+    if (!strings.isAllASCII(right.slice())) return .jsNumber(0);
 
     const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
     const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
@@ -73,9 +73,9 @@ pub fn order(
     const right_version = right_result.version.max();
 
     return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
-        .eq => jsc.jsNumber(0),
-        .gt => jsc.jsNumber(1),
-        .lt => jsc.jsNumber(-1),
+        .eq => .jsNumber(0),
+        .gt => .jsNumber(1),
+        .lt => .jsNumber(-1),
     };
 }
 
@@ -121,10 +121,10 @@ pub fn satisfies(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun
     const right_version = right_group.getExactVersion();
 
     if (right_version != null) {
-        return jsc.jsBoolean(left_version.eql(right_version.?));
+        return .jsBoolean(left_version.eql(right_version.?));
     }
 
-    return jsc.jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
+    return .jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
 }
 
 const std = @import("std");

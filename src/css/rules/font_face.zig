@@ -186,13 +186,13 @@ pub const UnicodeRange = struct {
                     .result => |vv| vv,
                     .err => {
                         input.reset(&after_number);
-                        return .{ .result = {} };
+                        return .success;
                     },
                 };
 
                 if (token.* == .delim and token.delim == '?') return parseQuestionMarks(input);
-                if (token.* == .delim or token.* == .number) return .{ .result = {} };
-                return .{ .result = {} };
+                if (token.* == .delim or token.* == .number) return .success;
+                return .success;
             },
             .delim => |c| {
                 if (c == '+') {
@@ -217,7 +217,7 @@ pub const UnicodeRange = struct {
             const start = input.state();
             if (input.nextIncludingWhitespace().asValue()) |tok| if (tok.* == .delim and tok.delim == '?') continue;
             input.reset(&start);
-            return .{ .result = {} };
+            return .success;
         }
     }
 

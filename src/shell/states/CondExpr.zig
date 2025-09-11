@@ -100,7 +100,7 @@ pub fn next(this: *CondExpr) Yield {
                     return this.commandImplStart();
                 }
 
-                this.args.ensureUnusedCapacity(1) catch bun.outOfMemory();
+                bun.handleOom(this.args.ensureUnusedCapacity(1));
                 Expansion.init(
                     this.base.interpreter,
                     this.base.shell,
@@ -271,9 +271,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const assert = bun.assert;
-
 const jsc = bun.jsc;
-const Maybe = jsc.Maybe;
+const Maybe = bun.sys.Maybe;
 
 const shell = bun.shell;
 const ExitCode = bun.shell.ExitCode;

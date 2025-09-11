@@ -884,6 +884,9 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
 
     if (byteLength == 0) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
+    } else if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
+        throwRangeError(lexicalGlobalObject, throwScope, makeString("JavaScriptCore typed arrays are currently limited to "_s, MAX_ARRAY_BUFFER_SIZE, " bytes. To use an array this large, use an ArrayBuffer instead. If this is causing issues for you, please file an issue in Bun's GitHub repository."_s));
+        return {};
     }
 
     JSC::JSUint8Array* outBuffer = byteLength <= availableLength
@@ -896,21 +899,17 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
         allocBuffer(lexicalGlobalObject, byteLength);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    size_t remain = byteLength;
-    auto* head = outBuffer->typedVector();
-    const int arrayLengthI = args.size();
-    for (int i = 0; i < arrayLengthI && remain > 0; i++) {
+    auto output = outBuffer->typedSpan();
+    const size_t arrayLengthI = args.size();
+    for (size_t i = 0; i < arrayLengthI && output.size() > 0; i++) {
         auto* bufferView = JSC::jsCast<JSC::JSArrayBufferView*>(args.at(i));
-        size_t length = std::min(remain, bufferView->byteLength());
+        auto source = bufferView->span();
+        size_t length = std::min(output.size(), source.size());
 
         ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
 
-        auto* source = bufferView->vector();
-        ASSERT(source);
-        memcpy(head, source, length);
-
-        remain -= length;
-        head += length;
+        WTF::memcpySpan(output.first(length), source.first(length));
+        output = output.subspan(length);
     }
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(outBuffer));

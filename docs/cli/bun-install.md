@@ -230,15 +230,14 @@ $ bun install --backend copyfile
 
 **`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
 
-If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
+If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
 ```bash
 $ rm -rf node_modules
 $ bun install --backend symlink
+$ bun --preserve-symlinks ./my-file.js
 $ node --preserve-symlinks ./my-file.js # https://nodejs.org/api/cli.html#--preserve-symlinks
 ```
-
-Bun's runtime does not currently expose an equivalent of `--preserve-symlinks`, though the code for it does exist.
 
 ## npm registry metadata
 

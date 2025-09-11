@@ -56,7 +56,7 @@ fn diffListToJS(global: *jsc.JSGlobalObject, diff_list: StrDiffList) bun.JSError
         var obj = jsc.JSValue.createEmptyObjectWithNullPrototype(global);
         if (obj == .zero) return global.throwOutOfMemory();
         obj.put(global, bun.String.static("kind"), jsc.JSValue.jsNumber(@as(u32, @intFromEnum(line.kind))));
-        obj.put(global, bun.String.static("value"), jsc.toJS(global, []const u8, line.value));
+        obj.put(global, bun.String.static("value"), .fromAny(global, []const u8, line.value));
         array.putIndex(global, @truncate(i), obj);
     }
     return array;

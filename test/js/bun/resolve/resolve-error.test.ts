@@ -52,4 +52,11 @@ describe("ResolveMessage", () => {
       await import("data:Hello%2C%20World!");
     }).toThrow("Cannot resolve invalid data URL");
   });
+
+  it("doesn't crash", async () => {
+    expect(async () => {
+      // @ts-ignore
+      await import(":://filesystem");
+    }).toThrow("Cannot find module");
+  });
 });

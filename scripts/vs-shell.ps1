@@ -40,7 +40,25 @@ if ($args.Count -gt 0) {
     $commandArgs = @($args[1..($args.Count - 1)] | % {$_})
   }
 
-  Write-Host "$ $command $commandArgs"
+  # Don't print the full command as it may contain sensitive information like certificates
+  # Just show the command name and basic info
+  $displayArgs = @()
+  foreach ($arg in $commandArgs) {
+    if ($arg -match "^-") {
+      # Include flags
+      $displayArgs += $arg
+    } elseif ($arg -match "\.(mjs|js|ts|cmake|zig|cpp|c|h|exe)$") {
+      # Include file names
+      $displayArgs += $arg
+    } elseif ($arg.Length -gt 100) {
+      # Truncate long arguments (likely certificates or encoded data)
+      $displayArgs += "[REDACTED]"
+    } else {
+      $displayArgs += $arg
+    }
+  }
+  
+  Write-Host "$ $command $displayArgs"
   & $command $commandArgs
   exit $LASTEXITCODE
 }

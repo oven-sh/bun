@@ -31,7 +31,7 @@ pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncForm
     var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch bun.outOfMemory();
+    return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
 }
 
 pub fn estimatedSize(this: *Response) callconv(.C) usize {
@@ -142,38 +142,38 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
         try writer.writeAll("\"");
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.init.status_text});
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
         try writer.writeAll("\n");
 
         formatter.resetLine();
@@ -426,6 +426,17 @@ pub fn constructJSON(
     did_succeed = true;
     return bun.new(Response, response).toJS(globalThis);
 }
+
+fn validateRedirectStatusCode(globalThis: *jsc.JSGlobalObject, status_code: i32) bun.JSError!u16 {
+    switch (status_code) {
+        301, 302, 303, 307, 308 => return @intCast(status_code),
+        else => {
+            const err = globalThis.createRangeErrorInstance("Failed to execute 'redirect' on 'Response': Invalid status code", .{});
+            return globalThis.throwValue(err);
+        },
+    }
+}
+
 pub fn constructRedirect(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
@@ -464,16 +475,17 @@ pub fn constructRedirect(
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
-            } else {
-                if (Response.Init.init(globalThis, init) catch |err|
-                    if (err == error.JSError) return .zero else null) |_init|
-                {
-                    response.init = _init;
-                    response.init.status_code = 302;
+                response.init.status_code = try validateRedirectStatusCode(globalThis, init.toInt32());
+            } else if (try Response.Init.init(globalThis, init)) |_init| {
+                errdefer response.init.deinit(bun.default_allocator);
+                response.init = _init;
+
+                if (_init.status_code != 200) {
+                    response.init.status_code = try validateRedirectStatusCode(globalThis, _init.status_code);
                 }
             }
         }
+
         if (globalThis.hasException()) {
             return .zero;
         }
@@ -622,7 +634,13 @@ pub const Init = struct {
         if (!response_init.isCell())
             return null;
 
-        if (response_init.jsType() == .DOMWrapper) {
+        const js_type = response_init.jsType();
+
+        if (!js_type.isObject()) {
+            return null;
+        }
+
+        if (js_type == .DOMWrapper) {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
             if (response_init.asDirect(Request)) |req| {
@@ -674,11 +692,11 @@ pub const Init = struct {
             return error.JSError;
         }
 
-        if (try response_init.fastGet(globalThis, .statusText)) |status_text| {
+        if (try response_init.getTruthy(globalThis, "statusText")) |status_text| {
             result.status_text = try bun.String.fromJS(status_text, globalThis);
         }
 
-        if (try response_init.fastGet(globalThis, .method)) |method_value| {
+        if (try response_init.getTruthy(globalThis, "method")) |method_value| {
             if (try Method.fromJS(globalThis, method_value)) |method| {
                 result.method = method;
             }

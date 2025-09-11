@@ -23,7 +23,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var arena = try Arena.init();
+        const arena = Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
@@ -36,7 +36,6 @@ pub const Run = struct {
                 .args = ctx.args,
                 .graph = graph_ptr,
                 .is_main_thread = true,
-                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             }),
             .arena = arena,
             .ctx = ctx,
@@ -160,7 +159,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var arena = try Arena.init();
+        const arena = Arena.init();
 
         run = .{
             .vm = try VirtualMachine.init(
@@ -174,7 +173,6 @@ pub const Run = struct {
                     .debugger = ctx.runtime_options.debugger,
                     .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
-                    .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
                 },
             ),
             .arena = arena,
@@ -468,6 +466,7 @@ pub const Run = struct {
 
         bun.api.napi.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
+        @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();
     }
 

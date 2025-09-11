@@ -93,7 +93,7 @@ pub const StringRefList = struct {
     pub const empty: StringRefList = .{ .strings = .{} };
 
     pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
-        al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
+        bun.handleOom(al.strings.append(bun.default_allocator, str));
         return str.slice();
     }
 
@@ -261,7 +261,7 @@ pub const Framework = struct {
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/server.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/ssr.tsx") },
-            }) catch bun.outOfMemory(),
+            }) catch |err| bun.handleOom(err),
         };
     }
 
@@ -721,7 +721,12 @@ pub const Framework = struct {
         out.options.react_fast_refresh = mode == .development and renderer == .client and framework.react_fast_refresh != null;
         out.options.server_components = framework.server_components != null;
 
-        out.options.conditions = try bun.options.ESMConditions.init(arena, out.options.target.defaultConditions());
+        out.options.conditions = try bun.options.ESMConditions.init(
+            arena,
+            out.options.target.defaultConditions(),
+            out.options.target.isServerSide(),
+            bundler_options.conditions.keys(),
+        );
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
@@ -733,9 +738,6 @@ pub const Framework = struct {
         // This helps with package.json imports field resolution
         if (renderer == .server or renderer == .ssr) {
             try out.options.conditions.appendSlice(&.{"node"});
-        }
-        if (bundler_options.conditions.count() > 0) {
-            try out.options.conditions.appendSlice(bundler_options.conditions.keys());
         }
 
         out.options.production = mode != .development;

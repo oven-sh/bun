@@ -426,6 +426,54 @@ test("exactly two assertions", () => {
 
 This helps ensure all your assertions run, especially in complex async code with multiple code paths.
 
+## Type Testing
+
+Bun includes `expectTypeOf` for testing typescript types, compatible with Vitest.
+
+### expectTypeOf
+
+{% callout %}
+
+**Note** — These functions are no-ops at runtime - you need to run TypeScript separately to verify the type checks.
+
+{% endcallout %}
+
+The `expectTypeOf` function provides type-level assertions that are checked by TypeScript's type checker. **Important**:
+
+To test your types:
+
+1. Write your type assertions using `expectTypeOf`
+2. Run `bunx tsc --noEmit` to check that your types are correct
+
+```ts
+import { expectTypeOf } from "bun:test";
+
+// Basic type assertions
+expectTypeOf<string>().toEqualTypeOf<string>();
+expectTypeOf(123).toBeNumber();
+expectTypeOf("hello").toBeString();
+
+// Object type matching
+expectTypeOf({ a: 1, b: "hello" }).toMatchObjectType<{ a: number }>();
+
+// Function types
+function greet(name: string): string {
+  return `Hello ${name}`;
+}
+
+expectTypeOf(greet).toBeFunction();
+expectTypeOf(greet).parameters.toEqualTypeOf<[string]>();
+expectTypeOf(greet).returns.toEqualTypeOf<string>();
+
+// Array types
+expectTypeOf([1, 2, 3]).items.toBeNumber();
+
+// Promise types
+expectTypeOf(Promise.resolve(42)).resolves.toBeNumber();
+```
+
+For full documentation on expectTypeOf matchers, see the [API Reference](/reference/bun/test/expectTypeOf)
+
 ## Matchers
 
 Bun implements the following matchers. Full Jest compatibility is on the roadmap; track progress [here](https://github.com/oven-sh/bun/issues/1825).
@@ -629,17 +677,17 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveReturnedWith()`](https://jestjs.io/docs/expect#tohavereturnedwithvalue)
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveLastReturnedWith()`](https://jestjs.io/docs/expect#tohavelastreturnedwithvalue)
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveNthReturnedWith()`](https://jestjs.io/docs/expect#tohaventhreturnedwithnthcall-value)
 
 ---
@@ -708,3 +756,76 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 - [`.toThrowErrorMatchingInlineSnapshot()`](https://jestjs.io/docs/expect#tothrowerrormatchinginlinesnapshotinlinesnapshot)
 
 {% /table %}
+
+## TypeScript Type Safety
+
+Bun's test runner provides enhanced TypeScript support with intelligent type checking for your test assertions. The type system helps catch potential bugs at compile time while still allowing flexibility when needed.
+
+### Strict Type Checking by Default
+
+By default, Bun's test matchers enforce strict type checking between the actual value and expected value:
+
+```ts
+import { expect, test } from "bun:test";
+
+test("strict typing", () => {
+  const str = "hello";
+  const num = 42;
+
+  expect(str).toBe("hello"); // ✅ OK: string to string
+  expect(num).toBe(42); // ✅ OK: number to number
+  expect(str).toBe(42); // ❌ TypeScript error: string vs number
+});
+```
+
+This helps catch common mistakes where you might accidentally compare values of different types.
+
+### Relaxed Type Checking with Type Parameters
+
+Sometimes you need more flexibility in your tests, especially when working with:
+
+- Dynamic data from APIs
+- Polymorphic functions that can return multiple types
+- Generic utility functions
+- Migration of existing test suites
+
+For these cases, you can "opt out" of strict type checking by providing an explicit type parameter to matcher methods:
+
+```ts
+import { expect, test } from "bun:test";
+
+test("relaxed typing with type parameters", () => {
+  const value: unknown = getSomeValue();
+
+  // These would normally cause TypeScript errors, but type parameters allow them:
+  expect(value).toBe<number>(42); // No TS error, runtime check still works
+  expect(value).toEqual<string>("hello"); // No TS error, runtime check still works
+  expect(value).toStrictEqual<boolean>(true); // No TS error, runtime check still works
+});
+
+test("useful for dynamic data", () => {
+  const apiResponse: any = { status: "success" };
+
+  // Without type parameter: TypeScript error (any vs string)
+  // expect(apiResponse.status).toBe("success");
+
+  // With type parameter: No TypeScript error, runtime assertion still enforced
+  expect(apiResponse.status).toBe<string>("success"); // ✅ OK
+});
+```
+
+### Migration from Looser Type Systems
+
+If migrating from a test framework with looser TypeScript integration, you can use type parameters as a stepping stone:
+
+```ts
+// Old Jest test that worked but wasn't type-safe
+expect(response.data).toBe(200); // No type error in some setups
+
+// Bun equivalent with explicit typing during migration
+expect(response.data).toBe<number>(200); // Explicit about expected type
+
+// Ideal Bun test after refactoring
+const statusCode: number = response.data;
+expect(statusCode).toBe(200); // Type-safe without explicit parameter
+```

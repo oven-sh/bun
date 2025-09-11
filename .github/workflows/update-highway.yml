@@ -50,14 +50,33 @@ jobs:
             exit 1
           fi
 
-          LATEST_TAG_SHA=$(curl -sL "https://api.github.com/repos/google/highway/git/refs/tags/$LATEST_TAG" | jq -r '.object.sha')
-          if [ -z "$LATEST_TAG_SHA" ] || [ "$LATEST_TAG_SHA" = "null" ]; then
+          TAG_REF=$(curl -sL "https://api.github.com/repos/google/highway/git/refs/tags/$LATEST_TAG")
+          if [ -z "$TAG_REF" ]; then
+            echo "Error: Could not fetch tag reference for $LATEST_TAG"
+            exit 1
+          fi
+
+          TAG_OBJECT_SHA=$(echo "$TAG_REF" | jq -r '.object.sha')
+          TAG_OBJECT_TYPE=$(echo "$TAG_REF" | jq -r '.object.type')
+          
+          if [ -z "$TAG_OBJECT_SHA" ] || [ "$TAG_OBJECT_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
           fi
-          LATEST_SHA=$(curl -sL "https://api.github.com/repos/google/highway/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
-          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
-            echo "Error: Could not fetch SHA for tag $LATEST_TAG @ $LATEST_TAG_SHA"
+
+          # Handle both lightweight tags (type: commit) and annotated tags (type: tag)
+          if [ "$TAG_OBJECT_TYPE" = "commit" ]; then
+            # Lightweight tag - object.sha is already the commit SHA
+            LATEST_SHA="$TAG_OBJECT_SHA"
+          elif [ "$TAG_OBJECT_TYPE" = "tag" ]; then
+            # Annotated tag - need to fetch the tag object to get the commit SHA
+            LATEST_SHA=$(curl -sL "https://api.github.com/repos/google/highway/git/tags/$TAG_OBJECT_SHA" | jq -r '.object.sha')
+            if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+              echo "Error: Could not fetch commit SHA for annotated tag $LATEST_TAG @ $TAG_OBJECT_SHA"
+              exit 1
+            fi
+          else
+            echo "Error: Unexpected tag object type: $TAG_OBJECT_TYPE"
             exit 1
           fi
 
@@ -88,7 +107,7 @@ jobs:
           commit-message: "deps: update highway to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update highway to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-cares-${{ github.run_number }}
+          branch: deps/update-highway-${{ github.run_number }}
           body: |
             ## What does this PR do?
 
@@ -96,4 +115,4 @@ jobs:
 
             Compare: https://github.com/google/highway/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
 
-            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-cares.yml)
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-highway.yml)

@@ -26,7 +26,7 @@ pub const Report = struct {
     total_lines: u32 = 0,
 
     pub fn linesCoverageFraction(this: *const Report) f64 {
-        var intersected = this.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
+        var intersected = bun.handleOom(this.executable_lines.clone(bun.default_allocator));
         defer intersected.deinit(bun.default_allocator);
         intersected.setIntersection(this.lines_which_have_executed);
 
@@ -153,7 +153,7 @@ pub const Report = struct {
 
             try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
 
-            var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
+            var executable_lines_that_havent_been_executed = bun.handleOom(report.lines_which_have_executed.clone(bun.default_allocator));
             defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
             executable_lines_that_havent_been_executed.toggleAll();
 
@@ -237,7 +237,7 @@ pub const Report = struct {
 
             // ** Track all executable lines **
             // Executable lines that were not hit should be marked as 0
-            var executable_lines = report.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
+            var executable_lines = bun.handleOom(report.executable_lines.clone(bun.default_allocator));
             defer executable_lines.deinit(bun.default_allocator);
             var iter = executable_lines.iterator(.{});
 
@@ -264,7 +264,7 @@ pub const Report = struct {
     pub fn deinit(this: *Report, allocator: std.mem.Allocator) void {
         this.executable_lines.deinit(allocator);
         this.lines_which_have_executed.deinit(allocator);
-        this.line_hits.deinitWithAllocator(allocator);
+        this.line_hits.deinit(allocator);
         this.functions.deinit(allocator);
         this.stmts.deinit(allocator);
         this.functions_which_have_executed.deinit(allocator);
@@ -373,13 +373,13 @@ pub const ByteRangeMapping = struct {
     pub threadlocal var map: ?*HashMap = null;
     pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.C) void {
         var _map = map orelse brk: {
-            map = bun.jsc.VirtualMachine.get().allocator.create(HashMap) catch bun.outOfMemory();
+            map = bun.handleOom(bun.jsc.VirtualMachine.get().allocator.create(HashMap));
             map.?.* = HashMap.init(bun.jsc.VirtualMachine.get().allocator);
             break :brk map.?;
         };
         var slice = str.toUTF8(bun.default_allocator);
         const hash = bun.hash(slice.slice());
-        var entry = _map.getOrPut(hash) catch bun.outOfMemory();
+        var entry = bun.handleOom(_map.getOrPut(hash));
         if (entry.found_existing) {
             entry.value_ptr.deinit();
         }
@@ -445,7 +445,7 @@ pub const ByteRangeMapping = struct {
             const line_hits_slice = line_hits.slice();
             @memset(line_hits_slice, 0);
 
-            errdefer line_hits.deinitWithAllocator(allocator);
+            errdefer line_hits.deinit(allocator);
 
             for (blocks, 0..) |block, i| {
                 if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
@@ -535,7 +535,7 @@ pub const ByteRangeMapping = struct {
             line_hits.len = line_count;
             const line_hits_slice = line_hits.slice();
             @memset(line_hits_slice, 0);
-            errdefer line_hits.deinitWithAllocator(allocator);
+            errdefer line_hits.deinit(allocator);
 
             for (blocks, 0..) |block, i| {
                 if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
@@ -555,9 +555,9 @@ pub const ByteRangeMapping = struct {
                     const column_position = byte_offset -| line_start_byte_offset;
 
                     if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |*point| {
-                        if (point.original.lines < 0) continue;
+                        if (point.original.lines.zeroBased() < 0) continue;
 
-                        const line: u32 = @as(u32, @intCast(point.original.lines));
+                        const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
 
                         executable_lines.set(line);
                         if (has_executed) {
@@ -599,9 +599,9 @@ pub const ByteRangeMapping = struct {
                     const column_position = byte_offset -| line_start_byte_offset;
 
                     if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |point| {
-                        if (point.original.lines < 0) continue;
+                        if (point.original.lines.zeroBased() < 0) continue;
 
-                        const line: u32 = @as(u32, @intCast(point.original.lines));
+                        const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
                         min_line = @min(min_line, line);
                         max_line = @max(max_line, line);
                     }

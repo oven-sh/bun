@@ -154,7 +154,7 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [1] => write end
 pub const Pipe = [2]bun.FileDescriptor;
 
-const log = bun.Output.scoped(.SHELL, true);
+const log = bun.Output.scoped(.SHELL, .hidden);
 
 pub const GlobalJS = struct {
     globalThis: *jsc.JSGlobalObject,
@@ -175,13 +175,13 @@ pub const GlobalJS = struct {
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory() },
+            .invalid_arguments = .{ .val = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args)) },
         };
     }
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg}) catch bun.outOfMemory(),
+            .todo = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg})),
         };
     }
 
@@ -190,14 +190,14 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
         return .{
             .custom = str,
         };
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args));
         return .{
             .custom = str,
         };
@@ -258,18 +258,18 @@ pub const GlobalMini = struct {
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg}) catch bun.outOfMemory(),
+            .todo = bun.handleOom(std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg})),
         };
     }
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory() },
+            .invalid_arguments = .{ .val = bun.handleOom(std.fmt.allocPrint(this.allocator(), fmt, args)) },
         };
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}));
         return .{
             .custom = str,
         };
@@ -284,7 +284,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: anytype) void {
-        var anytask = bun.default_allocator.create(jsc.AnyTaskWithExtraContext) catch bun.outOfMemory();
+        var anytask = bun.handleOom(bun.default_allocator.create(jsc.AnyTaskWithExtraContext));
         _ = anytask.from(task, "runFromMainThreadMini");
         this.mini.enqueueTaskConcurrent(anytask);
     }
@@ -294,7 +294,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.allocator(), fmt, args));
         return .{
             .custom = str,
         };
@@ -1937,7 +1937,7 @@ pub const Parser = struct {
                 }
                 break :size i;
             };
-            var buf = self.alloc.alloc(u8, size) catch bun.outOfMemory();
+            var buf = bun.handleOom(self.alloc.alloc(u8, size));
             var i: usize = 0;
             for (errors) |e| {
                 @memcpy(buf[i .. i + e.msg.len], e.msg);
@@ -2056,6 +2056,10 @@ pub const Token = union(TokenTag) {
             if (bun.Environment.allow_assert) assert(range.start <= range.end);
             return range.end - range.start;
         }
+
+        pub fn slice(range: TextRange, buf: []const u8) []const u8 {
+            return buf[range.start..range.end];
+        }
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
@@ -2076,7 +2080,7 @@ pub const Token = union(TokenTag) {
             .Dollar => "`$`",
             .Asterisk => "`*`",
             .DoubleAsterisk => "`**`",
-            .Eq => "`+`",
+            .Eq => "`=`",
             .Semicolon => "`;`",
             .Newline => "`\\n`",
             // Comment,
@@ -2115,15 +2119,15 @@ pub const LexResult = struct {
             const size = size: {
                 var i: usize = 0;
                 for (errors) |e| {
-                    i += e.msg.len;
+                    i += e.msg.len();
                 }
                 break :size i;
             };
-            var buf = arena.alloc(u8, size) catch bun.outOfMemory();
+            var buf = bun.handleOom(arena.alloc(u8, size));
             var i: usize = 0;
             for (errors) |e| {
-                @memcpy(buf[i .. i + e.msg.len], e.msg);
-                i += e.msg.len;
+                @memcpy(buf[i .. i + e.msg.len()], e.msg.slice(this.strpool));
+                i += e.msg.len();
             }
             break :str buf;
         };
@@ -2132,7 +2136,7 @@ pub const LexResult = struct {
 };
 pub const LexError = struct {
     /// Allocated with lexer arena
-    msg: []const u8,
+    msg: Token.TextRange,
 };
 
 /// A special char used to denote the beginning of a special token
@@ -2209,17 +2213,17 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         pub fn get_result(self: @This()) LexResult {
             return .{
-                .tokens = self.tokens.items[0..],
-                .strpool = self.strpool.items[0..],
-                .errors = self.errors.items[0..],
+                .tokens = self.tokens.items,
+                .strpool = self.strpool.items,
+                .errors = self.errors.items,
             };
         }
 
         pub fn add_error(self: *@This(), msg: []const u8) void {
             const start = self.strpool.items.len;
-            self.strpool.appendSlice(msg) catch bun.outOfMemory();
+            bun.handleOom(self.strpool.appendSlice(msg));
             const end = self.strpool.items.len;
-            self.errors.append(.{ .msg = self.strpool.items[start..end] }) catch bun.outOfMemory();
+            bun.handleOom(self.errors.append(.{ .msg = .{ .start = @intCast(start), .end = @intCast(end) } }));
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
@@ -4068,7 +4072,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 return this;
             }
             var this: @This() = .{
-                .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch bun.outOfMemory(),
+                .heap = bun.handleOom(ByteList.initCapacity(bun.default_allocator, vals.len)),
             };
             this.heap.appendSliceAssumeCapacity(vals);
             return this;
@@ -4093,9 +4097,9 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             len: u32 = 0,
 
             pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
-                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
-                list.push(bun.default_allocator, new) catch bun.outOfMemory();
+                var list = bun.handleOom(bun.BabyList(T).initCapacity(bun.default_allocator, n));
+                bun.handleOom(list.appendSlice(bun.default_allocator, this.items[0..INLINED_MAX]));
+                bun.handleOom(list.append(bun.default_allocator, new));
                 return list;
             }
 
@@ -4240,7 +4244,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                     this.inlined.len += 1;
                 },
                 .heap => {
-                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
+                    bun.handleOom(this.heap.append(bun.default_allocator, new));
                 },
             }
         }
@@ -4274,7 +4278,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const TestingAPIs = struct {
     pub fn disabledOnThisPlatform(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        if (comptime bun.Environment.isWindows) return JSValue.false;
+        if (comptime bun.Environment.isWindows) return .false;
 
         const arguments_ = callframe.arguments_old(1);
         var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -4289,10 +4293,10 @@ pub const TestingAPIs = struct {
 
         inline for (Interpreter.Builtin.Kind.DISABLED_ON_POSIX) |disabled| {
             if (bun.strings.eqlComptime(utf8str.byteSlice(), @tagName(disabled))) {
-                return JSValue.true;
+                return .true;
             }
         }
-        return JSValue.false;
+        return .false;
     }
 
     pub fn shellLex(

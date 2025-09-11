@@ -1,3 +1,6 @@
+import fact from "./file.json";
+console.log(fact);
+
 import * as test from "bun:test";
 test.describe;
 test.it;
@@ -181,7 +184,7 @@ for await (const chunk of Bun.stdin.stream()) {
   // this converts it to text (assumes ASCII encoding)
   const chunkText = Buffer.from(chunk).toString();
   console.log(`Chunk: ${chunkText}`);
-  expectType(chunk).is<Uint8Array>();
+  expectType(chunk).is<Uint8Array<ArrayBuffer>>();
   expectType(chunkText).is<string>();
 }
 
@@ -401,7 +404,7 @@ Bun.serve({
 
     return new Response(body, {
       headers,
-      status: statuses[Math.floor(Math.random() * statuses.length)],
+      status: statuses[Math.floor(Math.random() * statuses.length)] ?? 200,
     });
   },
 });
@@ -435,7 +438,7 @@ serve({
 
     return new Response(body, {
       headers,
-      status: statuses[Math.floor(Math.random() * statuses.length)],
+      status: statuses[Math.floor(Math.random() * statuses.length)] ?? 200,
     });
   },
 });
@@ -455,3 +458,9 @@ Bun.serve({
     cert,
   },
 });
+
+const signal = AbortSignal.timeout(1000);
+expectType(signal).is<AbortSignal>();
+expectType(signal.aborted).is<boolean>();
+
+expectType(RegExp.escape("foo.bar")).is<string>();

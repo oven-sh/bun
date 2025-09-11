@@ -10,7 +10,7 @@ pub fn ResumableSink(
     comptime onEnd: fn (context: *Context, err: ?jsc.JSValue) void,
 ) type {
     return struct {
-        const log = bun.Output.scoped(.ResumableSink, false);
+        const log = bun.Output.scoped(.ResumableSink, .visible);
         pub const toJS = js.toJS;
         pub const fromJS = js.fromJS;
         pub const fromJSDirect = js.fromJSDirect;
@@ -91,23 +91,23 @@ pub fn ResumableSink(
                             break :brk_err null;
                         };
 
-                        const bytes = byte_stream.drain().listManaged(bun.default_allocator);
-                        defer bytes.deinit();
-                        log("onWrite {}", .{bytes.items.len});
-                        _ = onWrite(this.context, bytes.items);
+                        var bytes = byte_stream.drain();
+                        defer bytes.deinit(bun.default_allocator);
+                        log("onWrite {}", .{bytes.len});
+                        _ = onWrite(this.context, bytes.slice());
                         onEnd(this.context, err);
                         this.deref();
                         return this;
                     }
                     // We can pipe but we also wanna to drain as much as possible first
-                    const bytes = byte_stream.drain().listManaged(bun.default_allocator);
-                    defer bytes.deinit();
+                    var bytes = byte_stream.drain();
+                    defer bytes.deinit(bun.default_allocator);
                     // lets write and see if we can still pipe or if we have backpressure
-                    if (bytes.items.len > 0) {
-                        log("onWrite {}", .{bytes.items.len});
+                    if (bytes.len > 0) {
+                        log("onWrite {}", .{bytes.len});
                         // we ignore the return value here because we dont want to pause the stream
                         // if we pause will just buffer in the pipe and we can do the buffer in one place
-                        _ = onWrite(this.context, bytes.items);
+                        _ = onWrite(this.context, bytes.slice());
                     }
                     this.status = .piped;
                     byte_stream.pipe = jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this);
@@ -182,7 +182,7 @@ pub fn ResumableSink(
                     log("paused", .{});
                     this.status = .paused;
                 }
-                return jsc.jsBoolean(should_continue);
+                return .jsBoolean(should_continue);
             }
 
             return globalThis.throwInvalidArguments("ResumableSink.write requires a string or buffer", .{});
@@ -284,14 +284,15 @@ pub fn ResumableSink(
             stream: bun.webcore.streams.Result,
             allocator: std.mem.Allocator,
         ) void {
+            var stream_ = stream;
             const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
 
             defer {
                 if (stream_needs_deinit) {
-                    if (stream == .owned_and_done) {
-                        stream.owned_and_done.listManaged(allocator).deinit();
-                    } else {
-                        stream.owned.listManaged(allocator).deinit();
+                    switch (stream_) {
+                        .owned_and_done => |*owned| owned.deinit(allocator),
+                        .owned => |*owned| owned.deinit(allocator),
+                        else => unreachable,
                     }
                 }
             }

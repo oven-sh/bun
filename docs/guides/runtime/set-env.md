@@ -17,7 +17,7 @@ Bun reads the following files automatically (listed in order of increasing prece
 
 - `.env`
 - `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
-- `.env.local`
+- `.env.local` (not loaded when `NODE_ENV=test`)
 
 ```txt#.env
 FOO=hello

@@ -89,7 +89,7 @@ pub const String = extern struct {
                     }
                 }
 
-                return .{ @constCast((try utf8_slice.clone(allocator)).slice()), true };
+                return .{ @constCast((try utf8_slice.cloneIfNeeded(allocator)).slice()), true };
             },
             .StaticZigString => return .{ try this.value.StaticZigString.toOwnedSlice(allocator), false },
             else => return .{ &[_]u8{}, false },
@@ -754,17 +754,16 @@ pub const String = extern struct {
         };
     }
 
-    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) bun.OOM!SliceWithUnderlyingString {
         if (this.tag == .WTFStringImpl) {
             if (!this.value.WTFStringImpl.isThreadSafe()) {
                 const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
 
                 if (slice.allocator.isNull()) {
-                    // this was a WTF-allocated string
-                    // We're going to need to clone it across the threads
-                    // so let's just do that now instead of creating another copy.
+                    // This is an ASCII latin1 string with the same reference as the original.
                     return .{
-                        .utf8 = ZigString.Slice.init(allocator, allocator.dupe(u8, slice.slice()) catch bun.outOfMemory()),
+                        .utf8 = ZigString.Slice.init(allocator, try allocator.dupe(u8, slice.slice())),
+                        .underlying = empty,
                     };
                 }
 
@@ -827,7 +826,7 @@ pub const String = extern struct {
         jsc.markBinding(@src());
         var builder = std.ArrayList(u8).init(bun.default_allocator);
         defer builder.deinit();
-        builder.writer().print(fmt, args) catch bun.outOfMemory();
+        bun.handleOom(builder.writer().print(fmt, args));
         return bun.cpp.BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
     }
 
@@ -867,19 +866,8 @@ pub const String = extern struct {
             bun.assert(index < this.length());
         }
         return switch (this.tag) {
-            .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) @intCast(this.value.WTFStringImpl.utf8Slice()[index]) else this.value.WTFStringImpl.utf16Slice()[index],
-            .ZigString, .StaticZigString => if (!this.value.ZigString.is16Bit()) @intCast(this.value.ZigString.slice()[index]) else this.value.ZigString.utf16Slice()[index],
-            else => 0,
-        };
-    }
-
-    pub fn charAtU8(this: String, index: usize) u8 {
-        if (comptime bun.Environment.allow_assert) {
-            bun.assert(index < this.length());
-        }
-        return switch (this.tag) {
-            .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) this.value.WTFStringImpl.utf8Slice()[index] else @truncate(this.value.WTFStringImpl.utf16Slice()[index]),
-            .ZigString, .StaticZigString => if (!this.value.ZigString.is16Bit()) this.value.ZigString.slice()[index] else @truncate(this.value.ZigString.utf16SliceAligned()[index]),
+            .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) this.value.WTFStringImpl.latin1Slice()[index] else this.value.WTFStringImpl.utf16Slice()[index],
+            .ZigString, .StaticZigString => if (!this.value.ZigString.is16Bit()) this.value.ZigString.slice()[index] else this.value.ZigString.utf16Slice()[index],
             else => 0,
         };
     }
@@ -1069,18 +1057,18 @@ pub const String = extern struct {
         const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
-            return jsc.jsNumber(@as(i32, 0));
+            return .jsNumber(@as(i32, 0));
         }
 
         const str = try args[0].toBunString(globalObject);
         defer str.deref();
 
         if (str.isEmpty()) {
-            return jsc.jsNumber(@as(i32, 0));
+            return .jsNumber(@as(i32, 0));
         }
 
         const width = str.visibleWidth(false);
-        return jsc.jsNumber(width);
+        return .jsNumber(width);
     }
 
     /// Reports owned allocation size, not the actual size of the string.
@@ -1177,10 +1165,6 @@ pub const SliceWithUnderlyingString = struct {
 
     pub fn slice(this: SliceWithUnderlyingString) []const u8 {
         return this.utf8.slice();
-    }
-
-    pub fn sliceZ(this: SliceWithUnderlyingString) [:0]const u8 {
-        return this.utf8.sliceZ();
     }
 
     pub fn format(self: SliceWithUnderlyingString, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {

@@ -60,8 +60,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         flags: Flags = .{},
         ref_count: RefCount,
         wrapped: WrappedType = .none,
-        // TODO: make this optional
-        handlers: *Handlers,
+        handlers: ?*Handlers,
         this_value: jsc.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         ref_pollref_on_connect: bool = true,
@@ -208,7 +207,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn handleError(this: *This, err_value: jsc.JSValue) void {
             log("handleError", .{});
-            const handlers = this.handlers;
+            const handlers = this.getHandlers();
             var vm = handlers.vm;
             if (vm.isShuttingDown()) {
                 return;
@@ -226,7 +225,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
             if (this.native_callback.onWritable()) return;
-            const handlers = this.handlers;
+            const handlers = this.getHandlers();
             const callback = handlers.onWritable;
             if (callback == .zero) return;
 
@@ -256,8 +255,8 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn onTimeout(this: *This, _: Socket) void {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
-            log("onTimeout {s}", .{if (this.handlers.is_server) "S" else "C"});
-            const handlers = this.handlers;
+            const handlers = this.getHandlers();
+            log("onTimeout {s}", .{if (handlers.is_server) "S" else "C"});
             const callback = handlers.onTimeout;
             if (callback == .zero or this.flags.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
@@ -276,19 +275,23 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
         }
 
+        pub fn getHandlers(this: *const This) *Handlers {
+            return this.handlers orelse @panic("No handlers set on Socket");
+        }
+
         pub fn handleConnectError(this: *This, errno: c_int) void {
-            log("onConnectError {s} ({d}, {d})", .{ if (this.handlers.is_server) "S" else "C", errno, this.ref_count.active_counts });
+            const handlers = this.getHandlers();
+            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.get() });
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
 
             const needs_deref = !this.socket.isDetached();
             this.socket = Socket.detached;
             defer this.markInactive();
             defer if (needs_deref) this.deref();
 
-            const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
             if (vm.isShuttingDown()) {
@@ -357,7 +360,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn markActive(this: *This) void {
             if (!this.flags.is_active) {
-                this.handlers.markActive();
+                this.getHandlers().markActive();
                 this.flags.is_active = true;
                 this.has_pending_activity.store(true, .release);
             }
@@ -365,7 +368,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn closeAndDetach(this: *This, code: uws.Socket.CloseCode) void {
             const socket = this.socket;
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
 
             this.socket.detach();
             this.detachNativeCallback();
@@ -385,15 +388,20 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
 
                 this.flags.is_active = false;
-                const vm = this.handlers.vm;
-                this.handlers.markInactive();
+                const handlers = this.getHandlers();
+                const vm = handlers.vm;
+                handlers.markInactive();
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .release);
             }
         }
 
+        pub fn isServer(this: *const This) bool {
+            return this.getHandlers().is_server;
+        }
+
         pub fn onOpen(this: *This, socket: Socket) void {
-            log("onOpen {s} {*} {} {}", .{ if (this.handlers.is_server) "S" else "C", this, this.socket.isDetached(), this.ref_count.active_counts });
+            log("onOpen {s} {*} {} {}", .{ if (this.isServer()) "S" else "C", this, this.socket.isDetached(), this.ref_count.get() });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
@@ -410,7 +418,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         if (this.server_name) |server_name| {
                             const host = server_name;
                             if (host.len > 0) {
-                                const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                                const host__ = bun.handleOom(default_allocator.dupeZ(u8, host));
                                 defer default_allocator.free(host__);
                                 ssl_ptr.setHostname(host__);
                             }
@@ -418,14 +426,14 @@ pub fn NewSocket(comptime ssl: bool) type {
                             if (connection == .host) {
                                 const host = connection.host.host;
                                 if (host.len > 0) {
-                                    const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                                    const host__ = bun.handleOom(default_allocator.dupeZ(u8, host));
                                     defer default_allocator.free(host__);
                                     ssl_ptr.setHostname(host__);
                                 }
                             }
                         }
                         if (this.protos) |protos| {
-                            if (this.handlers.is_server) {
+                            if (this.isServer()) {
                                 BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
                             } else {
                                 _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
@@ -441,7 +449,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            const handlers = this.handlers;
+            const handlers = this.getHandlers();
             const callback = handlers.onOpen;
             const handshake_callback = handlers.onHandshake;
 
@@ -493,12 +501,11 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn onEnd(this: *This, _: Socket) void {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
-            log("onEnd {s}", .{if (this.handlers.is_server) "S" else "C"});
+            const handlers = this.getHandlers();
+            log("onEnd {s}", .{if (handlers.is_server) "S" else "C"});
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
-
-            const handlers = this.handlers;
 
             const callback = handlers.onEnd;
             if (callback == .zero or handlers.vm.isShuttingDown()) {
@@ -525,13 +532,13 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             this.flags.handshake_complete = true;
             if (this.socket.isDetached()) return;
-            log("onHandshake {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", success });
+            const handlers = this.getHandlers();
+            log("onHandshake {s} ({d})", .{ if (handlers.is_server) "S" else "C", success });
 
             const authorized = if (success == 1) true else false;
 
             this.flags.authorized = authorized;
 
-            const handlers = this.handlers;
             var callback = handlers.onHandshake;
             var is_open = false;
 
@@ -567,8 +574,8 @@ pub fn NewSocket(comptime ssl: bool) type {
                     // clean onOpen callback so only called in the first handshake and not in every renegotiation
                     // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
                     // servers don't support renegotiation
-                    this.handlers.onOpen.unprotect();
-                    this.handlers.onOpen = .zero;
+                    this.handlers.?.onOpen.unprotect();
+                    this.handlers.?.onOpen = .zero;
                 }
             } else {
                 // call handhsake callback with authorized and authorization error if has one
@@ -591,7 +598,8 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             jsc.markBinding(@src());
-            log("onClose {s}", .{if (this.handlers.is_server) "S" else "C"});
+            const handlers = this.getHandlers();
+            log("onClose {s}", .{if (handlers.is_server) "S" else "C"});
             this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
@@ -601,7 +609,6 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return;
             }
 
-            const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unref(vm);
 
@@ -638,10 +645,10 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
-            log("onData {s} ({d})", .{ if (this.handlers.is_server) "S" else "C", data.len });
+            const handlers = this.getHandlers();
+            log("onData {s} ({d})", .{ if (handlers.is_server) "S" else "C", data.len });
             if (this.native_callback.onData(data)) return;
 
-            const handlers = this.handlers;
             const callback = handlers.onData;
             if (callback == .zero or this.flags.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
@@ -680,11 +687,13 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn getListener(this: *This, _: *jsc.JSGlobalObject) JSValue {
-            if (!this.handlers.is_server or this.socket.isDetached()) {
+            const handlers = this.getHandlers();
+
+            if (!handlers.is_server or this.socket.isDetached()) {
                 return .js_undefined;
             }
 
-            const l: *Listener = @fieldParentPtr("handlers", this.handlers);
+            const l: *Listener = @fieldParentPtr("handlers", handlers);
             return l.strong_self.get() orelse .js_undefined;
         }
 
@@ -874,7 +883,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn writeBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                 // TODO: should we separate unattached and detached? unattached shouldn't throw here
                 const err: jsc.SystemError = .{
                     .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
@@ -895,8 +904,8 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn endBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                return JSValue.jsBoolean(false);
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
+                return .false;
             }
 
             const args = callframe.argumentsUndef(2);
@@ -978,8 +987,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
-                            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                            this.buffered_data_for_node_net = .{};
+                            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                             break :brk rc;
                         }
 
@@ -995,7 +1003,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                         }
 
                         if (remaining_in_input_data.len > 0) {
-                            this.buffered_data_for_node_net.append(bun.default_allocator, remaining_in_input_data) catch bun.outOfMemory();
+                            bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                                bun.default_allocator,
+                                remaining_in_input_data,
+                            ));
                         }
 
                         break :brk rc;
@@ -1003,15 +1014,17 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
 
                 // slower-path: clone the data, do one write.
-                this.buffered_data_for_node_net.append(bun.default_allocator, buffer.slice()) catch bun.outOfMemory();
+                bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                    bun.default_allocator,
+                    buffer.slice(),
+                ));
                 const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice());
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
                     // did we write everything?
                     // we can free this temporary buffer.
                     if (wrote == this.buffered_data_for_node_net.len) {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                        this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                     } else {
                         // Otherwise, let's move the temporary buffer back.
                         const len = @as(usize, @intCast(this.buffered_data_for_node_net.len)) - wrote;
@@ -1157,7 +1170,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
                 if (remaining.len > 0) {
-                    this.buffered_data_for_node_net.append(bun.default_allocator, remaining) catch bun.outOfMemory();
+                    bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                        bun.default_allocator,
+                        remaining,
+                    ));
                 }
             }
 
@@ -1194,8 +1210,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
                         this.buffered_data_for_node_net.len = @truncate(remaining.len);
                     } else {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                        this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                     }
                 }
             }
@@ -1284,7 +1299,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.markInactive();
             this.detachNativeCallback();
 
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.deinit(bun.default_allocator);
 
             this.poll_ref.unref(jsc.VirtualMachine.get());
             // need to deinit event without being attached
@@ -1341,13 +1356,14 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throw("Expected \"socket\" option", .{});
             };
 
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+            var prev_handlers = this.getHandlers();
 
-            var prev_handlers = this.handlers;
+            const handlers = try Handlers.fromJS(globalObject, socket_obj, prev_handlers.is_server);
+
             prev_handlers.unprotect();
-            this.handlers.* = handlers; // TODO: this is a memory leak
-            this.handlers.withAsyncContextIfNeeded(globalObject);
-            this.handlers.protect();
+            this.handlers.?.* = handlers; // TODO: this is a memory leak
+            this.handlers.?.withAsyncContextIfNeeded(globalObject);
+            this.handlers.?.protect();
 
             return .js_undefined;
         }
@@ -1389,7 +1405,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            var handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+            var handlers = try Handlers.fromJS(globalObject, socket_obj, this.isServer());
 
             if (globalObject.hasException()) {
                 return .zero;
@@ -1443,7 +1459,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const ext_size = @sizeOf(WrappedSocket);
 
-            var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
             handlers.withAsyncContextIfNeeded(globalObject);
             handlers_ptr.* = handlers;
             handlers_ptr.protect();
@@ -1454,8 +1470,8 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .socket = TLSSocket.Socket.detached,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
-                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
-                .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+                .protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p[0..protos_len])) else null,
+                .server_name = if (socket_config.server_name) |server_name| bun.handleOom(bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)])) else null,
                 .socket_context = null, // only set after the wrapTLS
                 .flags = .{
                     .is_active = false,
@@ -1518,21 +1534,24 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.ref();
             const vm = handlers.vm;
 
-            var raw_handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
-            raw_handlers_ptr.* = .{
-                .vm = vm,
-                .globalObject = globalObject,
-                .onOpen = this.handlers.onOpen,
-                .onClose = this.handlers.onClose,
-                .onData = this.handlers.onData,
-                .onWritable = this.handlers.onWritable,
-                .onTimeout = this.handlers.onTimeout,
-                .onConnectError = this.handlers.onConnectError,
-                .onEnd = this.handlers.onEnd,
-                .onError = this.handlers.onError,
-                .onHandshake = this.handlers.onHandshake,
-                .binary_type = this.handlers.binary_type,
-                .is_server = this.handlers.is_server,
+            var raw_handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
+            raw_handlers_ptr.* = blk: {
+                const this_handlers = this.getHandlers();
+                break :blk .{
+                    .vm = vm,
+                    .globalObject = globalObject,
+                    .onOpen = this_handlers.onOpen,
+                    .onClose = this_handlers.onClose,
+                    .onData = this_handlers.onData,
+                    .onWritable = this_handlers.onWritable,
+                    .onTimeout = this_handlers.onTimeout,
+                    .onConnectError = this_handlers.onConnectError,
+                    .onEnd = this_handlers.onEnd,
+                    .onError = this_handlers.onError,
+                    .onHandshake = this_handlers.onHandshake,
+                    .binary_type = this_handlers.binary_type,
+                    .is_server = this_handlers.is_server,
+                };
             };
 
             raw_handlers_ptr.protect();
@@ -1562,7 +1581,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.markActive();
 
             // we're unrefing the original instance and refing the TLS instance
-            tls.poll_ref.ref(this.handlers.vm);
+            tls.poll_ref.ref(this.getHandlers().vm);
 
             // mark both instances on socket data
             if (new_socket.ext(WrappedSocket)) |ctx| {
@@ -1574,7 +1593,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 this.flags.is_active = false;
                 // will free handlers when hits 0 active connections
                 // the connection can be upgraded inside a handler call so we need to guarantee that it will be still alive
-                this.handlers.markInactive();
+                this.getHandlers().markInactive();
 
                 this.has_pending_activity.store(false, .release);
             }
@@ -1664,7 +1683,7 @@ const NativeCallbacks = union(enum) {
     }
 };
 
-const log = Output.scoped(.Socket, false);
+const log = Output.scoped(.Socket, .visible);
 
 const WriteResult = union(enum) {
     fail: void,
@@ -1963,7 +1982,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 
     const is_server = false; // A duplex socket is always handled as a client
 
-    var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
+    var handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
     handlers_ptr.* = handlers;
     handlers_ptr.is_server = is_server;
     handlers_ptr.withAsyncContextIfNeeded(globalObject);
@@ -1975,8 +1994,8 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .socket = TLSSocket.Socket.detached,
         .connection = null,
         .wrapped = .tls,
-        .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
-        .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+        .protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p[0..protos_len])) else null,
+        .server_name = if (socket_config.server_name) |server_name| bun.handleOom(bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)])) else null,
         .socket_context = null, // only set after the wrapTLS
     });
     const tls_js_value = tls.getThisValue(globalObject);
@@ -2031,7 +2050,7 @@ pub fn jsIsNamedPipeSocket(global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     } else if (socket.as(TLSSocket)) |this| {
         return jsc.JSValue.jsBoolean(this.socket.isNamedPipe());
     }
-    return jsc.JSValue.jsBoolean(false);
+    return .false;
 }
 
 pub fn jsGetBufferedAmount(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -2068,8 +2087,8 @@ pub fn jsCreateSocketPair(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JS
     _ = bun.FD.fromNative(fds_[1]).updateNonblocking(true);
 
     const array = try jsc.JSValue.createEmptyArray(global, 2);
-    try array.putIndex(global, 0, jsc.jsNumber(fds_[0]));
-    try array.putIndex(global, 1, jsc.jsNumber(fds_[1]));
+    try array.putIndex(global, 0, .jsNumber(fds_[0]));
+    try array.putIndex(global, 1, .jsNumber(fds_[1]));
     return array;
 }
 

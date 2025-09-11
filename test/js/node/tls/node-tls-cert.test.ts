@@ -1,11 +1,11 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
-
 const clientTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
@@ -567,4 +567,44 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
     const stderr = await proc.stderr.text();
     expect(stderr).toContain("ignoring extra certs");
   }
+});
+describe("tls ciphers should work", () => {
+  [
+    "", // when using BoringSSL we cannot set the cipher suites directly in this case, but we can set empty ciphers
+    "ECDHE-RSA-AES128-GCM-SHA256",
+    "ECDHE-ECDSA-AES128-GCM-SHA256",
+    "ECDHE-RSA-AES256-GCM-SHA384",
+    "ECDHE-ECDSA-AES256-GCM-SHA384",
+    "ECDHE-RSA-AES128-SHA256",
+  ].forEach(cipher_name => {
+    it(`tls.connect should use ${cipher_name || "empty"}`, async () => {
+      const server = tls.createServer({
+        key: serverTls.key,
+        cert: serverTls.cert,
+        passphrase: "123123123",
+        ciphers: cipher_name,
+      });
+      let socket: TLSSocket | null = null;
+      try {
+        await once(server.listen(0, "127.0.0.1"), "listening");
+
+        socket = tls.connect({
+          port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          ca: serverTls.ca,
+          ciphers: cipher_name,
+        });
+        await once(socket, "secureConnect");
+      } finally {
+        socket?.end();
+        server.close();
+      }
+    });
+  });
+
+  it("default ciphers should match expected", () => {
+    expect(tls.DEFAULT_CIPHERS).toBe(
+      "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA",
+    );
+  });
 });

@@ -94,7 +94,7 @@ pub fn internalErrorName(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     if (err_int == -bun.sys.UV_E.UNATCH) return bun.String.static("EUNATCH").toJS(globalThis);
     if (err_int == -bun.sys.UV_E.NOEXEC) return bun.String.static("ENOEXEC").toJS(globalThis);
 
-    var fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch bun.outOfMemory();
+    var fmtstring = bun.handleOom(bun.String.createFormat("Unknown system error {d}", .{err_int}));
     return fmtstring.transferToJS(globalThis);
 }
 
@@ -216,7 +216,7 @@ pub fn parseEnv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
 
     var map = envloader.Map.init(allocator);
     var p = envloader.Loader.init(&map, allocator);
-    p.loadFromString(str.slice(), true, false);
+    try p.loadFromString(str.slice(), true, false);
 
     var obj = jsc.JSValue.createEmptyObject(globalThis, map.map.count());
     for (map.map.keys(), map.map.values()) |k, v| {

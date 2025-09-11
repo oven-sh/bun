@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isCI } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -138,7 +138,9 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
 
       const first = rss[0];
       const last = rss[rss.length - 1];
-      console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
+      if (!isCI || !(last < first * 10)) {
+        console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
+      }
       expect(last).toBeLessThan(first * 10);
     },
     20 * 1000,

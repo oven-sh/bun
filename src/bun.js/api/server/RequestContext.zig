@@ -1235,7 +1235,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.renderMissing();
         }
 
-        const streamLog = Output.scoped(.ReadableStream, false);
+        const streamLog = Output.scoped(.ReadableStream, .visible);
 
         pub fn didUpgradeWebSocket(this: *RequestContext) bool {
             return @intFromPtr(this.upgrade_context) == std.math.maxInt(usize);
@@ -1760,7 +1760,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
-                                    this.blob = .fromArrayList(byte_stream.drain().listManaged(bun.default_allocator));
+                                    var byte_list = byte_stream.drain();
+                                    this.blob = .fromArrayList(byte_list.moveToListManaged(bun.default_allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
@@ -1770,7 +1771,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;
-                                this.response_buf_owned = byte_stream.drain().list();
+                                var response_buf = byte_stream.drain();
+                                this.response_buf_owned = response_buf.moveToList();
 
                                 // we don't set size here because even if we have a hint
                                 // uWebSockets won't let us partially write streaming content
@@ -1809,15 +1811,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn onPipe(this: *RequestContext, stream: jsc.WebCore.streams.Result, allocator: std.mem.Allocator) void {
+            var stream_ = stream;
             const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
             const is_done = stream.isDone();
             defer {
                 if (is_done) this.deref();
                 if (stream_needs_deinit) {
-                    if (is_done) {
-                        stream.owned_and_done.listManaged(allocator).deinit();
-                    } else {
-                        stream.owned.listManaged(allocator).deinit();
+                    switch (stream_) {
+                        .owned_and_done => |*owned| owned.deinit(allocator),
+                        .owned => |*owned| owned.deinit(allocator),
+                        else => unreachable,
                     }
                 }
             }
@@ -1978,7 +1981,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.flags.has_called_error_handler = true;
                     const result = server.config.onError.call(
                         server.globalThis,
-                        server.js_value.get() orelse .js_undefined,
+                        server.js_value.get(),
                         &.{value},
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();
@@ -2238,7 +2241,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (!last) {
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary = bun.ByteList.initConst(chunk),
+                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -2254,7 +2257,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     readable.value.ensureStillAlive();
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary_and_done = bun.ByteList.initConst(chunk),
+                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -2517,7 +2520,7 @@ fn writeHeaders(
     }
 }
 
-const ctxLog = Output.scoped(.RequestContext, false);
+const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
 
 const std = @import("std");

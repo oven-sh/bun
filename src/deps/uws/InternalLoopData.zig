@@ -2,6 +2,7 @@ pub const InternalLoopData = extern struct {
     pub const us_internal_async = opaque {};
 
     sweep_timer: ?*Timer,
+    sweep_timer_count: i32,
     wakeup_async: ?*us_internal_async,
     last_write_failed: i32,
     head: ?*SocketContext,
@@ -26,6 +27,10 @@ pub const InternalLoopData = extern struct {
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
+    }
+
+    pub fn shouldEnableDateHeaderTimer(this: *const InternalLoopData) bool {
+        return this.sweep_timer_count > 0;
     }
 
     pub fn setParentEventLoop(this: *InternalLoopData, parent: jsc.EventLoopHandle) void {

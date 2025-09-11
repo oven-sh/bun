@@ -1,6 +1,6 @@
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
-    const log = Output.scoped(.URL, false);
+    const log = Output.scoped(.URL, .visible);
 
     hash: string = "",
     /// hostname, but with a port
@@ -875,7 +875,7 @@ pub const PercentEncoding = struct {
 pub const FormData = struct {
     fields: Map,
     buffer: []const u8,
-    const log = Output.scoped(.FormData, false);
+    const log = Output.scoped(.FormData, .visible);
 
     pub const Map = std.ArrayHashMapUnmanaged(
         bun.Semver.String,

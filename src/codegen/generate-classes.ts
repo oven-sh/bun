@@ -431,7 +431,7 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(
         typeName,
         "onStructuredCloneDeserialize",
-      )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);` + "\n";
+      )}(JSC::JSGlobalObject*, uint8_t**, const uint8_t*);` + "\n";
   }
   if (obj.finalize) {
     externs +=
@@ -1090,6 +1090,11 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
+#if ASSERT_ENABLED
+    if (!result.isEmpty() && result.isCell()) {
+      JSC::Integrity::auditCellFully(vm, result.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }`.trim(),
           );
@@ -1131,6 +1136,11 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
+#if ASSERT_ENABLED
+    if (!result.isEmpty() && result.isCell()) {
+      JSC::Integrity::auditCellFully(vm, result.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 `.trim(),
@@ -1152,6 +1162,12 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
       !!proto[name].this ? " encodedThisValue, " : ""
     } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, result);
 }
         `);
@@ -1171,6 +1187,12 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
       !!proto[name].this ? " encodedThisValue, " : ""
     } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, result);
 }
               `);
@@ -1186,10 +1208,9 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    auto result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
+    bool result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
     } lexicalGlobalObject, encodedValue);
-
     RELEASE_AND_RETURN(throwScope, result);
 }
 `,
@@ -1269,6 +1290,13 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
         : std::optional<JSC::JSType>(std::nullopt);
     }`
     }
+
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
 
     return result;
 #endif
@@ -1868,11 +1896,50 @@ function generateZig(
     ...proto,
   };
 
-  const externs = Object.entries({
+  const gc_fields = Object.entries({
     ...proto,
     ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
-  })
-    .filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal)
+  }).filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal);
+
+  const cached_values_string =
+    gc_fields.length > 0
+      ? `
+    pub const gc = enum (u8) {
+      ${gc_fields.map(([name]) => `${name},`).join("\n")}
+
+        pub fn get(comptime field: gc, thisValue: jsc.JSValue) ?jsc.JSValue {
+          const value = switch (field) {
+            ${gc_fields
+              .map(([name]) => `    .${name} => ${protoSymbolName(typeName, name)}GetCachedValue(thisValue),`)
+              .join("\n        ")}
+          };
+
+          if (value == .zero) {
+            return null;
+          }
+
+          return value;
+        }
+
+        pub fn clear(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
+          field.set(thisValue, globalObject, .zero);
+        }
+
+        pub fn set(comptime field: gc, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
+          switch (field) {
+            ${gc_fields
+              .map(
+                ([name]) =>
+                  `    .${name} => ${protoSymbolName(typeName, name)}SetCachedValue(thisValue, globalObject, value),`,
+              )
+              .join("\n")}
+          }
+        }
+    };
+  `
+      : "";
+
+  const externs = gc_fields
     .map(
       ([name]) =>
         `extern fn ${protoSymbolName(typeName, name)}SetCachedValue(jsc.JSValue, *jsc.JSGlobalObject, jsc.JSValue) callconv(jsc.conv) void;
@@ -2142,7 +2209,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("structuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
 
       output += `
-      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
+      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
         if (comptime Environment.enable_logs) log_zig_structured_clone_deserialize("${typeName}");
         return @call(.always_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end} });
       }
@@ -2191,6 +2258,7 @@ pub const ${className(typeName)} = struct {
     }
 
     ${externs}
+    ${cached_values_string}
 
     ${
       !noConstructor
@@ -2345,6 +2413,9 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #define JSC_CALLCONV "C" SYSV_ABI
 #endif
 
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
+#endif
 
 `;
 
@@ -2455,7 +2526,7 @@ const jsc = bun.jsc;
 const Classes = jsc.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
-const zig = bun.Output.scoped(.zig, true);
+const zig = bun.Output.scoped(.zig, .hidden);
 
 const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
 const wrapMethod = bun.gen_classes_lib.wrapMethod;
@@ -2527,10 +2598,13 @@ class StructuredCloneableSerialize {
     CppStructuredCloneableSerializeFunction cppWriteBytes;
     ZigStructuredCloneableSerializeFunction zigFunction;
 
-    uint8_t tag;
+    uint8_t tag = 0;
 
     // the type from zig
-    void* impl;
+    void* impl = nullptr;
+
+    bool isForTransfer = false;
+    bool isForStorage = false;
 
     static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
     void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
@@ -2541,7 +2615,7 @@ class StructuredCloneableSerialize {
 
 class StructuredCloneableDeserialize {
   public:
-    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);
+    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*&, const uint8_t*);
 };
 
 }
@@ -2561,7 +2635,7 @@ function writeCppSerializers() {
       return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
         klass.name,
         "onStructuredCloneSerialize",
-      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped() };
+      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped(), .isForTransfer = ${!!klass.structuredClone.transferable}, .isForStorage = ${!!klass.structuredClone.storable} };
     }
     `;
   }
@@ -2569,7 +2643,7 @@ function writeCppSerializers() {
   function fromTagDeserializeForEachClass(klass) {
     return `
     if (tag == ${klass.structuredClone.tag}) {
-      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, ptr, end);
+      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, (uint8_t**)&ptr, end);
     }
     `;
   }
@@ -2583,7 +2657,7 @@ function writeCppSerializers() {
   `;
 
   output += `
-  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t* ptr, const uint8_t* end)
+  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t*& ptr, const uint8_t* end)
   {
     ${structuredClonable.map(fromTagDeserializeForEachClass).join("\n").trim()}
     return std::nullopt;
@@ -2620,7 +2694,7 @@ fn log_zig_getter(typename: []const u8, property_name: []const u8) callconv(bun.
 
 fn log_zig_setter(typename: []const u8, property_name: []const u8, value: jsc.JSValue) callconv(bun.callconv_inline) void {
   if (comptime Environment.enable_logs) {
-    zig("<r><blue>set<r> {s}<d>.<r>{s} = {}", .{typename, property_name, value});
+    zig("<r><blue>set<r> {s}<d>.<r>{s} = {?s}", .{typename, property_name, bun.tagName(jsc.JSValue, value)});
   }
 }
 

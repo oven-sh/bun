@@ -1,7 +1,7 @@
 const PostgresSQLStatement = @This();
-
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 cached_structure: PostgresCachedStructure = .{},
-ref_count: u32 = 1,
+ref_count: RefCount = RefCount.init(),
 fields: []protocol.FieldDescription = &[_]protocol.FieldDescription{},
 parameters: []const int4 = &[_]int4{},
 signature: Signature,
@@ -9,6 +9,8 @@ status: Status = Status.pending,
 error_response: ?Error = null,
 needs_duplicate_check: bool = true,
 fields_flags: DataCell.Flags = .{},
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
 pub const Error = union(enum) {
     protocol: protocol.ErrorResponse,
@@ -21,13 +23,14 @@ pub const Error = union(enum) {
         }
     }
 
-    pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) JSError!JSValue {
         return switch (this.*) {
             .protocol => |err| err.toJS(globalObject),
             .postgres_error => |err| postgresErrorToJS(globalObject, null, err),
         };
     }
 };
+
 pub const Status = enum {
     pending,
     parsing,
@@ -38,19 +41,6 @@ pub const Status = enum {
         return this == .parsing;
     }
 };
-pub fn ref(this: *@This()) void {
-    bun.assert(this.ref_count > 0);
-    this.ref_count += 1;
-}
-
-pub fn deref(this: *@This()) void {
-    const ref_count = this.ref_count;
-    this.ref_count -= 1;
-
-    if (ref_count == 1) {
-        this.deinit();
-    }
-}
 
 pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
     if (!this.needs_duplicate_check) return;
@@ -59,7 +49,7 @@ pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
     var seen_numbers = std.ArrayList(u32).init(bun.default_allocator);
     defer seen_numbers.deinit();
     var seen_fields = bun.StringHashMap(void).init(bun.default_allocator);
-    seen_fields.ensureUnusedCapacity(@intCast(this.fields.len)) catch bun.outOfMemory();
+    bun.handleOom(seen_fields.ensureUnusedCapacity(@intCast(this.fields.len)));
     defer seen_fields.deinit();
 
     // iterate backwards
@@ -83,7 +73,7 @@ pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
                     field.name_or_index = .duplicate;
                     flags.has_duplicate_columns = true;
                 } else {
-                    seen_numbers.append(index) catch bun.outOfMemory();
+                    bun.handleOom(seen_numbers.append(index));
                 }
 
                 flags.has_indexed_columns = true;
@@ -100,7 +90,7 @@ pub fn checkForDuplicateFields(this: *PostgresSQLStatement) void {
 pub fn deinit(this: *PostgresSQLStatement) void {
     debug("PostgresSQLStatement deinit", .{});
 
-    bun.assert(this.ref_count == 0);
+    this.ref_count.assertNoRefs();
 
     for (this.fields) |*field| {
         field.deinit();
@@ -132,7 +122,7 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
             nonDuplicatedCount -= 1;
         }
     }
-    const ids = if (nonDuplicatedCount <= jsc.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(jsc.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+    const ids = if (nonDuplicatedCount <= jsc.JSObject.maxInlineCapacity()) stack_ids[0..nonDuplicatedCount] else bun.handleOom(bun.default_allocator.alloc(jsc.JSObject.ExternColumnIdentifier, nonDuplicatedCount));
 
     var i: usize = 0;
     for (this.fields) |*field| {
@@ -170,13 +160,13 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
     return this.cached_structure;
 }
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
-const PostgresCachedStructure = @import("./PostgresCachedStructure.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const Signature = @import("./Signature.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
-const DataCell = @import("./DataCell.zig").DataCell;
+const DataCell = @import("./DataCell.zig").SQLDataCell;
 
 const AnyPostgresError = @import("./AnyPostgresError.zig").AnyPostgresError;
 const postgresErrorToJS = @import("./AnyPostgresError.zig").postgresErrorToJS;
@@ -185,6 +175,7 @@ const types = @import("./PostgresTypes.zig");
 const int4 = types.int4;
 
 const bun = @import("bun");
+const JSError = bun.JSError;
 const String = bun.String;
 
 const jsc = bun.jsc;

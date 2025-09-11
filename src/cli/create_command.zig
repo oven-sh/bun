@@ -213,7 +213,7 @@ pub const CreateCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         const dirname: string = brk: {
             if (positionals.len == 1) {
@@ -327,8 +327,8 @@ pub const CreateCommand = struct {
 
                 var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
                 var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
-                try gunzip.readAll();
-                gunzip.deinit();
+                defer gunzip.deinit();
+                try gunzip.readAll(true);
 
                 node.name = try ProgressBuf.print("Extracting {s}", .{template});
                 node.setCompletedItems(0);
@@ -666,7 +666,7 @@ pub const CreateCommand = struct {
                     break :process_package_json;
                 }
 
-                const properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
+                var properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
                     try ctx.log.print(Output.errorWriter());
@@ -744,7 +744,7 @@ pub const CreateCommand = struct {
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
 
-                        // property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
+                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
                             dev_dependencies = q.expr;
@@ -765,8 +765,7 @@ pub const CreateCommand = struct {
 
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
-                        property.data.e_object.properties = js_ast.G.Property.List.init(property.data.e_object.properties.slice());
+                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
 
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
@@ -1052,9 +1051,12 @@ pub const CreateCommand = struct {
                     pub const bun_bun_for_nextjs_task: string = "bun bun --use next";
                 };
 
-                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List.init(InjectionPrefill.bun_macro_relay_properties[0..]);
-                InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_object_properties);
-                InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_only_object_properties);
+                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(InjectionPrefill.bun_macro_relay_properties[0..]);
+                InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(&InjectionPrefill.bun_macros_relay_object_properties);
+                InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(&InjectionPrefill.bun_macros_relay_only_object_properties);
 
                 // if (needs_to_inject_dev_dependency and dev_dependencies == null) {
                 //     var e_object = try ctx.allocator.create(E.Object);
@@ -1264,7 +1266,7 @@ pub const CreateCommand = struct {
 
                 package_json_expr.data.e_object.is_single_line = false;
 
-                package_json_expr.data.e_object.properties = js_ast.G.Property.List.fromList(properties_list);
+                package_json_expr.data.e_object.properties = js_ast.G.Property.List.moveFromList(&properties_list);
                 {
                     var i: usize = 0;
                     var property_i: usize = 0;
@@ -1303,7 +1305,9 @@ pub const CreateCommand = struct {
                                     script_property_out_i += 1;
                                 }
 
-                                property.value.?.data.e_object.properties = js_ast.G.Property.List.init(scripts_properties[0..script_property_out_i]);
+                                property.value.?.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(
+                                    scripts_properties[0..script_property_out_i],
+                                );
                             }
                         }
 
@@ -1382,7 +1386,7 @@ pub const CreateCommand = struct {
                             }
                         }
                     }
-                    package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
+                    package_json_expr.data.e_object.properties.shrinkRetainingCapacity(property_i);
                 }
 
                 const file: bun.FD = .fromStdFile(package_json_file.?);
@@ -1683,7 +1687,7 @@ pub const CreateCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         // var unsupported_packages = UnsupportedPackages{};
         const template = brk: {
@@ -1701,7 +1705,7 @@ pub const CreateCommand = struct {
                         const extension = std.fs.path.extension(positional);
                         if (Example.Tag.fromFileExtension(extension)) |tag| {
                             example_tag = tag;
-                            break :brk bun.default_allocator.dupe(u8, outdir_path) catch bun.outOfMemory();
+                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, outdir_path));
                         }
                         // Show a warning when the local file exists and it's not a .js file
                         // A lot of create-* npm packages have .js in the name, so you could end up with that warning.
@@ -2282,7 +2286,7 @@ pub const CreateListExamplesCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         var progress = Progress{};
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;

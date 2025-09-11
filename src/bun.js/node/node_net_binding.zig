@@ -8,7 +8,7 @@ pub fn getDefaultAutoSelectFamily(global: *jsc.JSGlobalObject) jsc.JSValue {
         fn getter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             _ = globalThis;
             _ = callframe;
-            return jsc.jsBoolean(autoSelectFamilyDefault);
+            return .jsBoolean(autoSelectFamilyDefault);
         }
     }).getter, 0, .{});
 }
@@ -26,7 +26,7 @@ pub fn setDefaultAutoSelectFamily(global: *jsc.JSGlobalObject) jsc.JSValue {
             }
             const value = arg.toBoolean();
             autoSelectFamilyDefault = value;
-            return jsc.jsBoolean(value);
+            return .jsBoolean(value);
         }
     }).setter, 1, .{});
 }
@@ -45,7 +45,7 @@ pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *jsc.JSGlobalObject) jsc
         fn getter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             _ = globalThis;
             _ = callframe;
-            return jsc.jsNumber(autoSelectFamilyAttemptTimeoutDefault);
+            return .jsNumber(autoSelectFamilyAttemptTimeoutDefault);
         }
     }).getter, 0, .{});
 }
@@ -61,7 +61,7 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *jsc.JSGlobalObject) jsc
             var value = try validators.validateInt32(globalThis, arg, "value", .{}, 1, null);
             if (value < 10) value = 10;
             autoSelectFamilyAttemptTimeoutDefault = @intCast(value);
-            return jsc.jsNumber(value);
+            return .jsNumber(value);
         }
     }).setter, 1, .{});
 }
@@ -80,7 +80,7 @@ pub fn newDetachedSocket(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
             .socket_context = null,
             .ref_count = .init(),
             .protos = null,
-            .handlers = undefined,
+            .handlers = null,
         });
         return socket.getThisValue(globalThis);
     } else {
@@ -89,7 +89,7 @@ pub fn newDetachedSocket(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
             .socket_context = null,
             .ref_count = .init(),
             .protos = null,
-            .handlers = undefined,
+            .handlers = null,
         });
         return socket.getThisValue(globalThis);
     }

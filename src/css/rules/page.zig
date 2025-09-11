@@ -32,7 +32,7 @@ pub const PageSelector = struct {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else {
                 input.reset(&state);
                 break;
@@ -355,8 +355,8 @@ pub const PageRuleParser = struct {
                     .line = loc.line,
                     .column = loc.column,
                 },
-            }) catch bun.outOfMemory();
-            return Result(AtRuleParser.AtRule).success;
+            }) catch |err| bun.handleOom(err);
+            return .success;
         }
 
         pub fn ruleWithoutBlock(_: *This, _: AtRuleParser.Prelude, _: *const css.ParserState) css.Maybe(AtRuleParser.AtRule, void) {

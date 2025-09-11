@@ -55,10 +55,13 @@ jobs:
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
           fi
-          LATEST_SHA=$(curl -sL "https://api.github.com/repos/HdrHistogram/HdrHistogram_c/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
-          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
-            echo "Error: Could not fetch SHA for tag $LATEST_TAG @ $LATEST_TAG_SHA"
-            exit 1
+          
+          # Try to get commit SHA from tag object (for annotated tags)
+          # If it fails, assume it's a lightweight tag pointing directly to commit
+          LATEST_SHA=$(curl -sL "https://api.github.com/repos/HdrHistogram/HdrHistogram_c/git/tags/$LATEST_TAG_SHA" 2>/dev/null | jq -r '.object.sha // empty')
+          if [ -z "$LATEST_SHA" ]; then
+            # Lightweight tag - SHA points directly to commit
+            LATEST_SHA="$LATEST_TAG_SHA"
           fi
 
           if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then
@@ -88,7 +91,7 @@ jobs:
           commit-message: "deps: update hdrhistogram to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update hdrhistogram to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-cares-${{ github.run_number }}
+          branch: deps/update-hdrhistogram-${{ github.run_number }}
           body: |
             ## What does this PR do?
 
@@ -96,4 +99,4 @@ jobs:
 
             Compare: https://github.com/HdrHistogram/HdrHistogram_c/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
 
-            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-cares.yml)
+            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-hdrhistogram.yml)

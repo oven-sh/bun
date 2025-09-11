@@ -82,12 +82,12 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
     // PATH = "";
 
     while (try object_iter.next()) |key| {
-        const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+        const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
         var value = object_iter.value;
         if (value.isUndefined()) continue;
 
         const value_str = try value.getZigString(globalThis);
-        const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+        const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
         const keyref = EnvStr.initRefCounted(keyslice);
         defer keyref.deref();
         const valueref = EnvStr.initRefCounted(slice);

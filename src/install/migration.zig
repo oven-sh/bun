@@ -1,4 +1,4 @@
-const debug = Output.scoped(.migrate, false);
+const debug = Output.scoped(.migrate, .visible);
 
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,
@@ -46,6 +46,38 @@ pub fn detectAndLoadOtherLockfile(
             Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
             Output.prettyError(" ", .{});
             Output.prettyErrorln("<d>migrated lockfile from <r><green>package-lock.json<r>", .{});
+            Output.flush();
+        }
+
+        return migrate_result;
+    }
+
+    yarn: {
+        var timer = std.time.Timer.start() catch unreachable;
+        const lockfile = File.openat(dir, "yarn.lock", bun.O.RDONLY, 0).unwrap() catch break :yarn;
+        defer lockfile.close();
+        const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
+        const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
+            if (Environment.isDebug) {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
+                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
+                log.print(Output.errorWriter()) catch {};
+                Output.prettyErrorln("Invalid yarn.lock\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
+                Global.exit(1);
+            }
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "yarn.lock",
+                .format = .binary,
+            } };
+        };
+
+        if (migrate_result == .ok) {
+            Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
+            Output.prettyError(" ", .{});
+            Output.prettyErrorln("<d>migrated lockfile from <r><green>yarn.lock<r>", .{});
             Output.flush();
         }
 
@@ -347,7 +379,7 @@ pub fn migrateNPMLockfile(
                             const pkg_name = packageNameFromPath(pkg_path);
                             if (!strings.eqlLong(wksp_entry.name, pkg_name, true)) {
                                 const pkg_name_hash = stringHash(pkg_name);
-                                const path_entry = this.workspace_paths.getOrPut(allocator, pkg_name_hash) catch bun.outOfMemory();
+                                const path_entry = bun.handleOom(this.workspace_paths.getOrPut(allocator, pkg_name_hash));
                                 if (!path_entry.found_existing) {
                                     // Package resolve path is an entry in the workspace map, but
                                     // the package name is different. This package doesn't exist
@@ -359,7 +391,7 @@ pub fn migrateNPMLockfile(
                                         const sliced_version = Semver.SlicedString.init(version_string, version_string);
                                         const result = Semver.Version.parse(sliced_version);
                                         if (result.valid and result.wildcard == .none) {
-                                            this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()) catch bun.outOfMemory();
+                                            bun.handleOom(this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()));
                                         }
                                     }
                                 }

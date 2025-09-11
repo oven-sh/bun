@@ -50,5 +50,9 @@ pub fn init(self: *Self, allocator: std.mem.Allocator) std.mem.Allocator {
     };
 }
 
+pub fn isInstance(allocator: std.mem.Allocator) bool {
+    return allocator.vtable == &vtable;
+}
+
 const bun = @import("bun");
 const std = @import("std");

@@ -105,12 +105,12 @@ pub const MissingSourceMapNoteInfo = struct {
 };
 
 pub fn putBakeSourceProvider(this: *SavedSourceMap, opaque_source_provider: *BakeSourceProvider, path: []const u8) void {
-    this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
+    bun.handleOom(this.putValue(path, Value.init(opaque_source_provider)));
 }
 
 pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
     const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
-    this.putValue(path, Value.init(source_provider)) catch bun.outOfMemory();
+    bun.handleOom(this.putValue(path, Value.init(source_provider)));
 }
 
 pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
@@ -166,7 +166,7 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
-    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
+    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, try bun.default_allocator.dupe(u8, mappings.list.items))));
 }
 
 pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
@@ -235,7 +235,7 @@ fn getWithContent(
                 if (parse.map) |map| {
                     map.ref();
                     // The mutex is not locked. We have to check the hash table again.
-                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+                    bun.handleOom(this.putValue(path, Value.init(map)));
 
                     return parse;
                 }
@@ -262,7 +262,7 @@ fn getWithContent(
                 if (parse.map) |map| {
                     map.ref();
                     // The mutex is not locked. We have to check the hash table again.
-                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+                    bun.handleOom(this.putValue(path, Value.init(map)));
 
                     return parse;
                 }

@@ -104,6 +104,7 @@ pub fn isExiting() bool {
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
+    _ = @atomicRmw(usize, &bun.analytics.Features.exited, .Add, 1, .monotonic);
 
     // If we are crashing, allow the crash handler to finish it's work.
     bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
@@ -164,13 +165,7 @@ pub const versions = @import("./generated_versions_list.zig");
 // Keeping this code for:
 // 1. documentation that an attempt was made
 // 2. if I want to configure allocator later
-pub inline fn configureAllocator(_: AllocatorConfiguration) void {
-    // if (comptime !use_mimalloc) return;
-    // const mimalloc = bun.mimalloc;
-    // mimalloc.mi_option_set_enabled(mimalloc.mi_option_verbose, config.verbose);
-    // mimalloc.mi_option_set_enabled(mimalloc.mi_option_large_os_pages, config.long_running);
-    // if (!config.long_running) mimalloc.mi_option_set(mimalloc.mi_option_reset_delay, 0);
-}
+pub inline fn configureAllocator(_: AllocatorConfiguration) void {}
 
 pub fn notimpl() noreturn {
     @branchHint(.cold);

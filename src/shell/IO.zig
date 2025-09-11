@@ -138,7 +138,21 @@ pub const OutKind = union(enum) {
         return switch (this) {
             .fd => |val| brk: {
                 shellio.* = val.writer.refSelf();
-                break :brk if (val.captured) |cap| .{ .capture = .{ .buf = cap, .fd = val.writer.fd } } else .{ .fd = val.writer.fd };
+                break :brk if (val.captured) |cap| .{
+                    .capture = .{
+                        .buf = cap,
+                    },
+                } else .{
+                    // Windows notes:
+                    // Since `val.writer.fd` is `MovableFD`, it could
+                    // technically be moved to libuv for ownership.
+                    //
+                    // But since this file descriptor never going to be touched by this
+                    // process, except to hand off to the subprocess when we
+                    // spawn it, we don't really care if the file descriptor
+                    // ends up being invalid.
+                    .fd = val.writer.fd.get().?,
+                };
             },
             .pipe => .pipe,
             .ignore => .ignore,

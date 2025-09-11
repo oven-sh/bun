@@ -57,7 +57,7 @@ pub fn initDupeShellState(
     node: *const ast.Subshell,
     parent: ParentPtr,
     io: IO,
-) bun.jsc.Maybe(*Subshell) {
+) bun.sys.Maybe(*Subshell) {
     const subshell = parent.create(Subshell);
     subshell.* = .{
         .base = State.initWithNewAllocScope(.subshell, interpreter, shell_state),

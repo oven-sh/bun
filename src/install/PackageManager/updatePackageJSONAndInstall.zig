@@ -3,7 +3,7 @@ pub fn updatePackageJSONAndInstallWithManager(
     ctx: Command.Context,
     original_cwd: string,
 ) !void {
-    var update_requests = UpdateRequest.Array.initCapacity(manager.allocator, 64) catch bun.outOfMemory();
+    var update_requests = bun.handleOom(UpdateRequest.Array.initCapacity(manager.allocator, 64));
     defer update_requests.deinit(manager.allocator);
 
     if (manager.options.positionals.len <= 1) {
@@ -22,6 +22,7 @@ pub fn updatePackageJSONAndInstallWithManager(
 
                 Global.exit(0);
             },
+            .update => {},
             else => {},
         }
     }
@@ -54,6 +55,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
         original_cwd,
     );
 }
+
 fn updatePackageJSONAndInstallWithManagerWithUpdates(
     manager: *PackageManager,
     ctx: Command.Context,
@@ -163,9 +165,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                 // If the dependencies list is now empty, remove it from the package.json
                                 // since we're swapRemove, we have to re-sort it
                                 if (query.expr.data.e_object.properties.len == 0) {
-                                    var arraylist = current_package_json.root.data.e_object.properties.list();
-                                    _ = arraylist.swapRemove(query.i);
-                                    current_package_json.root.data.e_object.properties.update(arraylist);
+                                    // TODO: Theoretically we could change these two lines to
+                                    // `.orderedRemove(query.i)`, but would that change user-facing
+                                    // behavior?
+                                    _ = current_package_json.root.data.e_object.properties.swapRemove(query.i);
                                     current_package_json.root.data.e_object.packageJSONSort();
                                 } else {
                                     var obj = query.expr.data.e_object;
@@ -687,7 +690,7 @@ pub fn updatePackageJSONAndInstall(
                 result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result,
             ) anyerror!void {
                 // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-                var positionals = bun.default_allocator.alloc(string, result.dependencies.keys().len + 1) catch bun.outOfMemory();
+                var positionals = bun.handleOom(bun.default_allocator.alloc(string, result.dependencies.keys().len + 1));
                 positionals[0] = "add";
                 bun.copy(string, positionals[1..], result.dependencies.keys());
                 this.cli.positionals = positionals;

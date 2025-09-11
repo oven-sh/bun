@@ -24,7 +24,7 @@ const ScanOpts = struct {
         const cwd_str = cwd_str: {
             // If its absolute return as is
             if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
-                const cwd_str = try cwd_str_raw.clone(allocator);
+                const cwd_str = try cwd_str_raw.cloneIfNeeded(allocator);
                 break :cwd_str cwd_str.ptr[0..cwd_str.len];
             }
 
@@ -274,7 +274,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
 
-    const glob = alloc.create(Glob) catch bun.outOfMemory();
+    const glob = bun.handleOom(alloc.create(Glob));
     glob.* = .{ .pattern = pat_str };
 
     return glob;

@@ -343,10 +343,13 @@ pub const Define = struct {
 
     pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray, drop_debugger: bool, omit_unused_global_calls: bool) bun.OOM!*@This() {
         const define = try allocator.create(Define);
-        define.allocator = allocator;
-        define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
-        define.dots = bun.StringHashMap([]DotDefine).init(allocator);
-        define.drop_debugger = drop_debugger;
+        errdefer allocator.destroy(define);
+        define.* = .{
+            .allocator = allocator,
+            .identifiers = bun.StringHashMap(IdentifierDefine).init(allocator),
+            .dots = bun.StringHashMap([]DotDefine).init(allocator),
+            .drop_debugger = drop_debugger,
+        };
         try define.dots.ensureTotalCapacity(124);
 
         const value_define = &DefineData{

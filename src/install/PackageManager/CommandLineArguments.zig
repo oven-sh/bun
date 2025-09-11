@@ -22,6 +22,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
     clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
     clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
+    clap.parseParam("-P, --prod") catch unreachable,
     clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
     clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
     clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
@@ -67,7 +68,9 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
 pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
     clap.parseParam("-i, --interactive                     Show an interactive list of outdated packages to select for update") catch unreachable,
-    clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
+    clap.parseParam("--filter <STR>...                     Update packages for the matching workspaces") catch unreachable,
+    clap.parseParam("-r, --recursive                       Update packages in all workspaces") catch unreachable,
+    clap.parseParam("<POS> ...                             \"name\" of packages to update") catch unreachable,
 });
 
 pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -123,13 +126,16 @@ const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
     // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
-    clap.parseParam("-F, --filter <STR>...                        Display outdated dependencies for each matching workspace") catch unreachable,
+    clap.parseParam("-F, --filter <STR>...                  Display outdated dependencies for each matching workspace") catch unreachable,
+    clap.parseParam("-r, --recursive                        Check outdated packages in all workspaces") catch unreachable,
     clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
 });
 
 const audit_params: []const ParamType = &([_]ParamType{
     clap.parseParam("<POS> ...                              Check installed packages for vulnerabilities") catch unreachable,
     clap.parseParam("--json                                 Output in JSON format") catch unreachable,
+    clap.parseParam("--audit-level <STR>                    Only print advisories with severity greater than or equal to <level> (low, moderate, high, critical)") catch unreachable,
+    clap.parseParam("--ignore <STR>...                      Ignore specific CVE IDs from audit") catch unreachable,
 });
 
 const info_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -189,6 +195,7 @@ no_summary: bool = false,
 latest: bool = false,
 interactive: bool = false,
 json_output: bool = false,
+recursive: bool = false,
 filters: []const string = &.{},
 
 pack_destination: string = "",
@@ -229,6 +236,33 @@ message: ?string = null,
 // `bun pm why` options
 top_only: bool = false,
 depth: ?usize = null,
+
+// `bun audit` options
+audit_level: ?AuditLevel = null,
+audit_ignore_list: []const string = &.{},
+
+pub const AuditLevel = enum {
+    low,
+    moderate,
+    high,
+    critical,
+
+    const Map = bun.ComptimeStringMap(AuditLevel, .{
+        .{ "low", .low },
+        .{ "moderate", .moderate },
+        .{ "high", .high },
+        .{ "critical", .critical },
+    });
+
+    pub fn fromString(str: []const u8) ?AuditLevel {
+        return Map.get(str);
+    }
+
+    pub fn shouldIncludeSeverity(self: AuditLevel, severity: []const u8) bool {
+        const severity_level = AuditLevel.fromString(severity) orelse .moderate;
+        return @intFromEnum(severity_level) >= @intFromEnum(self);
+    }
+};
 
 const PatchOpts = union(enum) {
     nothing: struct {},
@@ -668,6 +702,35 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .scan => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun pm scan<r> <cyan>[flags]<r>
+                \\
+                \\  Scan all packages in lockfile for security vulnerabilities.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Scan all packages for vulnerabilities<r>
+                \\  <b><green>bun pm scan<r>
+                \\
+                \\  <d>Output results as JSON<r>
+                \\  <b><green>bun pm scan<r> <cyan>--json<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
+                \\
+            ;
+
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(pm_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
     }
 }
 
@@ -693,6 +756,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         // are not included in the help text
         .audit => shared_params ++ audit_params,
         .info => info_params,
+        .scan => pm_params, // scan uses the same params as pm command
     };
 
     var diag = clap.Diagnostic{};
@@ -714,7 +778,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     var cli = CommandLineArguments{};
     cli.positionals = args.positionals();
     cli.yarn = args.flag("--yarn");
-    cli.production = args.flag("--production");
+    cli.production = args.flag("--production") or args.flag("--prod");
     cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
@@ -785,6 +849,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (comptime subcommand == .outdated) {
         // fake --dry-run, we don't actually resolve+clean the lockfile
         cli.dry_run = true;
+        cli.recursive = args.flag("--recursive");
         // cli.json_output = args.flag("--json");
     }
 
@@ -857,6 +922,17 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         };
     }
 
+    if (comptime subcommand == .audit) {
+        if (args.option("--audit-level")) |level| {
+            cli.audit_level = AuditLevel.fromString(level) orelse {
+                Output.errGeneric("invalid `--audit-level` value: '{s}'. Valid values are: low, moderate, high, critical", .{level});
+                Global.crash();
+            };
+        }
+
+        cli.audit_ignore_list = args.options("--ignore");
+    }
+
     if (args.option("--config")) |opt| {
         cli.config = opt;
     }
@@ -898,6 +974,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (comptime subcommand == .update) {
         cli.latest = args.flag("--latest");
         cli.interactive = args.flag("--interactive");
+        cli.recursive = args.flag("--recursive");
     }
 
     const specified_backend: ?PackageInstall.Method = brk: {

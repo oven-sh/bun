@@ -82,6 +82,7 @@ pub const Exception = @import("./bindings/Exception.zig").Exception;
 pub const SourceProvider = @import("./bindings/SourceProvider.zig").SourceProvider;
 pub const CatchScope = @import("./bindings/CatchScope.zig").CatchScope;
 pub const ExceptionValidationScope = @import("./bindings/CatchScope.zig").ExceptionValidationScope;
+pub const MarkedArgumentBuffer = @import("./bindings/MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
 
 // JavaScript-related
 pub const Errorable = @import("./bindings/Errorable.zig").Errorable;
@@ -150,16 +151,6 @@ pub const WorkPool = EventLoop.WorkPool;
 pub const WorkPoolTask = EventLoop.WorkPoolTask;
 pub const WorkTask = EventLoop.WorkTask;
 
-/// Deprecated: Use `bun.sys.Maybe`
-pub const Maybe = bun.sys.Maybe;
-/// Deprecated: Use the .fromAny() decl literal
-pub const toJS = JSValue.fromAny;
-/// Deprecated: Use the .jsBoolean() decl literal
-pub const jsBoolean = JSValue.jsBoolean;
-/// Deprecated: Use the .jsEmptyString() decl literal
-pub const jsEmptyString = JSValue.jsEmptyString;
-/// Deprecated: Use the .jsNumber() decl literal
-pub const jsNumber = JSValue.jsNumber;
 /// Deprecated: Avoid using this in new code.
 pub const C = @import("./javascript_core_c_api.zig");
 /// Deprecated: Remove all of these please.
@@ -172,10 +163,8 @@ pub const WebCore = bun.webcore;
 pub const API = bun.api;
 /// Deprecated: Use `bun.api.node`
 pub const Node = bun.api.node;
-/// Deprecated: use `bun.api.HTMLRewriter`
-pub const Cloudflare = bun.api.HTMLRewriter;
 
-const log = bun.Output.scoped(.JSC, true);
+const log = bun.Output.scoped(.JSC, .hidden);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }

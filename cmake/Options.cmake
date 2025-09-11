@@ -57,6 +57,23 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+# Windows Code Signing Option
+if(WIN32)
+  optionx(ENABLE_WINDOWS_CODESIGNING BOOL "Enable Windows code signing with DigiCert KeyLocker" DEFAULT OFF)
+  
+  if(ENABLE_WINDOWS_CODESIGNING)
+    message(STATUS "Windows code signing: ENABLED")
+    
+    # Check for required environment variables
+    if(NOT DEFINED ENV{SM_API_KEY})
+      message(WARNING "SM_API_KEY not set - code signing may fail")
+    endif()
+    if(NOT DEFINED ENV{SM_CLIENT_CERT_FILE})
+      message(WARNING "SM_CLIENT_CERT_FILE not set - code signing may fail")
+    endif()
+  endif()
+endif()
+
 if(LINUX)
   if(EXISTS "/etc/alpine-release")
     set(DEFAULT_ABI "musl")
@@ -102,6 +119,11 @@ else()
 endif()
 
 optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})
+optionx(ENABLE_ZIG_ASAN BOOL "If Zig ASAN support should be enabled" DEFAULT ${ENABLE_ASAN})
+
+if (NOT ENABLE_ASAN)
+  set(ENABLE_ZIG_ASAN OFF)
+endif()
 
 if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)

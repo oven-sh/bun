@@ -14,7 +14,7 @@ const usage = String.raw`
  /_____ \____/|__|   |__|   /_____ \__|__|_|  /   __/ \____/|__|   |__| /____  >
        \/                         \/        \/|__|                           \/
 
-Usage: bun scripts/sortImports [options] <files...>
+Usage: bun scripts/sort-imports [options] <files...>
 
 Options:
   --help         Show this help message
@@ -22,7 +22,7 @@ Options:
   --keep-unused  Don't remove unused imports
 
 Examples:
-  bun scripts/sortImports src
+  bun scripts/sort-imports src
 `.slice(1);
 if (args.includes("--help")) {
   console.log(usage);
@@ -102,6 +102,10 @@ function parseDeclarations(
       continue;
     }
 
+    if (declarations.has(name)) {
+      unusedLineIndices.push(i);
+      continue;
+    }
     declarations.set(name, {
       whole: line,
       index: i,
@@ -341,20 +345,33 @@ async function processFile(filePath: string): Promise<void> {
       }
     }
     if (thisDeclaration) {
-      sortedLines[thisDeclaration.index] = DELETED_LINE;
-    }
-    if (thisDeclaration) {
-      let firstNonFileCommentLine = 0;
-      for (const line of sortedLines) {
-        if (line.startsWith("//!")) {
-          firstNonFileCommentLine++;
-        } else {
+      var onlyCommentsBeforeThis = true;
+      for (const [i, line] of sortedLines.entries()) {
+        if (i >= thisDeclaration.index) {
+          break;
+        }
+        if (line === "" || line === DELETED_LINE) {
+          continue;
+        }
+        if (!line.startsWith("//")) {
+          onlyCommentsBeforeThis = false;
           break;
         }
       }
-      const insert = [thisDeclaration.whole, ""];
-      if (firstNonFileCommentLine > 0) insert.unshift("");
-      sortedLines.splice(firstNonFileCommentLine, 0, ...insert);
+      if (!onlyCommentsBeforeThis) {
+        sortedLines[thisDeclaration.index] = DELETED_LINE;
+        let firstNonFileCommentLine = 0;
+        for (const line of sortedLines) {
+          if (line.startsWith("//!")) {
+            firstNonFileCommentLine++;
+          } else {
+            break;
+          }
+        }
+        const insert = [thisDeclaration.whole, ""];
+        if (firstNonFileCommentLine > 0) insert.unshift("");
+        sortedLines.splice(firstNonFileCommentLine, 0, ...insert);
+      }
     }
     fileContents = sortedLines.join("\n");
   }

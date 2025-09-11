@@ -121,3 +121,37 @@ test("throwing inside an error suppresses the error and continues printing prope
 `);
   expect(exitCode).toBe(1);
 });
+
+test("Async functions frame should be included in stack trace", async () => {
+  async function foo() {
+    return await bar();
+  }
+  async function bar() {
+    return await baz();
+  }
+  async function baz() {
+    await 1;
+    return await qux();
+  }
+  async function qux() {
+    return new Error("error from qux");
+  }
+
+  const error = await foo();
+  const stack = error.stack!;
+
+  const quxIdx = stack.indexOf("at qux (")!;
+  expect(quxIdx > -1).toBe(true);
+
+  const bazIdx = stack.indexOf("at baz (")!;
+  expect(bazIdx > -1).toBe(true);
+  expect(bazIdx > quxIdx).toBe(true);
+
+  const barIdx = stack.indexOf("at async bar (")!;
+  expect(barIdx > -1).toBe(true);
+  expect(barIdx > quxIdx).toBe(true);
+
+  const fooIdx = stack.indexOf("at async foo (")!;
+  expect(fooIdx > -1).toBe(true);
+  expect(fooIdx > barIdx).toBe(true);
+});

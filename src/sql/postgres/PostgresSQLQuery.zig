@@ -62,7 +62,7 @@ pub fn deinit(this: *@This()) void {
 
 pub fn finalize(this: *@This()) void {
     debug("PostgresSQLQuery finalize", .{});
-    this.finalize();
+    this.thisValue.finalize();
     this.deref();
 }
 

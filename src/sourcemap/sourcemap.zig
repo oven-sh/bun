@@ -1085,11 +1085,6 @@ pub fn getSourceMapImpl(
             const found_url = maybe_found_url orelse break :try_inline;
             defer found_url.deinit();
 
-            if (bun.strings.hasPrefixComptime(
-                found_url.slice(),
-                "bake://server.map",
-            )) {}
-
             const parsed = parseUrl(
                 bun.default_allocator,
                 allocator,

@@ -171,11 +171,14 @@ pub fn NewParser_(
         import_meta_ref: Ref = Ref.None,
         hmr_api_ref: Ref = Ref.None,
 
-        /// For SSR we rewrite `Response` -> `SSRResponse`
+        /// For SSR we rewrite `Response` -> `Bun.SSRResponse` so it can go
+        /// through our JSBakeResponse subclass in-case it uses syntax like
+        /// `return Response(<jsx />, {...})` or `return Response.render("/my-page")`
+        /// or `return Response.redirect("/other")`
         ///
-        /// We create a `Response` symbol upfront so we don't accidentally
-        /// collide with variables declared by the user, i.e. we want to avoid
-        /// rewriting `Response` in this scenario:
+        /// We don't want to do this transformation if it would break semantics
+        /// (e.g. the code bound `Response` to some value in a scope), for
+        /// example:
         ///
         /// ```js
         /// export function MyPage() {
@@ -183,8 +186,13 @@ pub fn NewParser_(
         ///   return new Response(<h1>uh oh</h1>, { status: 200 });
         /// }
         /// ```
+        ///
+        /// We *don't* want to rewite the `new Response(...)` call here to `new SSRResponse(...)`
+        /// because it would make this code succeed when it was supposed to
+        /// fail.
+        ///
+        /// We do this by declaring a `response_ref` upfront
         response_ref: Ref = Ref.None,
-        ssr_response_ref: Ref = Ref.None,
 
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
@@ -2031,13 +2039,12 @@ pub fn NewParser_(
             }
 
             // Server-side components:
-            // Declare upfront the symbols for "Response" and "SSRResponse",
-            // later we'll link "Response" -> "SSRResponse"
+            // Declare upfront the symbols for "Response",
+            // later we'll rewrite "Response" -> "Bun.SSRResponse"
             switch (p.options.features.server_components) {
                 .none, .client_side => {},
                 else => {
                     p.response_ref = try p.declareGeneratedSymbol(.class, "Response");
-                    p.ssr_response_ref = try p.declareGeneratedSymbol(.class, "SSRResponse");
                 },
             }
 
@@ -6161,16 +6168,6 @@ pub fn NewParser_(
 
             const bundling = p.options.bundle;
             var parts_end: usize = @as(usize, @intFromBool(bundling));
-
-            if (!p.response_ref.isNull() and !p.ssr_response_ref.isNull()) {
-                const response_symbol = &p.symbols.items[p.response_ref.innerIndex()];
-                // If it has a link it means that the user somehow declared a
-                // variable named `Response` in the top-level scope, don't link
-                // it to SSRResponse
-                if (!response_symbol.hasLink()) {
-                    response_symbol.link = p.ssr_response_ref;
-                }
-            }
 
             // When bundling with HMR, we need every module to be just a
             // single part, as we later wrap each module into a function,

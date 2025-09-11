@@ -99,11 +99,13 @@ pub fn VisitExpr(
 
                 // Transform Response -> Bun.SSRResponse in bake contexts
                 if (!p.response_ref.isNull() and
-                    !p.ssr_response_ref.isNull() and
                     result.ref.eql(p.response_ref) and
-                    // if `response_ref` already has a link then it means the
-                    // code bound `Response` to something else
-                    !p.symbols.items[p.response_ref.innerIndex()].hasLink())
+                    // If `response_ref` already has a link then it means some
+                    // code bound `Response` to some other value
+                    is_used_and_has_no_links: {
+                        const symbol: *const Symbol = &p.symbols.items[p.response_ref.innerIndex()];
+                        break :is_used_and_has_no_links !symbol.hasLink() and symbol.use_count_estimate > 0;
+                    })
                 {
 
                     // Create Bun identifier

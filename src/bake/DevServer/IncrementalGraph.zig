@@ -691,8 +691,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                         .source_map = packed_map,
                                         .file_index = file_index,
                                     });
+                                    return;
                                 }
-                                return;
                             }
 
                             // Must precompute this. Otherwise, source maps won't have

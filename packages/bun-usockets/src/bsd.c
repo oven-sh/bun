@@ -25,7 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#if ASSERT_ENABLED
+#if BUN_DEBUG
 // Debug network traffic logging
 static FILE *debug_recv_file = NULL;
 static FILE *debug_send_file = NULL;
@@ -738,7 +738,7 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
             continue;
         }
 
-#if ASSERT_ENABLED
+#if BUN_DEBUG
         // Debug logging for received data
         if (ret > 0) {
             init_debug_logging();
@@ -816,7 +816,7 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
             continue;
         }
 
-#if ASSERT_ENABLED
+#if BUN_DEBUG
         // Debug logging for sent data
         if (rc > 0) {
             init_debug_logging();

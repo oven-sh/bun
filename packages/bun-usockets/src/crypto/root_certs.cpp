@@ -151,26 +151,18 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
-extern "C" X509_STORE *us_get_default_ca_store() {
+// Create the default CA store with all certificates
+// This is only called once to create the cached store
+static X509_STORE* us_create_default_ca_store() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
   }
 
-  // OPTIMIZATION: We skip X509_STORE_set_default_paths() here!
-  // That function loads certificates from disk and parses them, which is
-  // extremely expensive as shown in the callstack. Since we already have
-  // all the certificates parsed and loaded in memory, we just add them
-  // directly without calling X509_STORE_set_default_paths().
-  //
-  // X509_STORE_set_default_paths() does two things:
-  // 1. Adds a file lookup (X509_LOOKUP_file) for loading certs from files
-  // 2. Adds a hash_dir lookup (X509_LOOKUP_hash_dir) for loading from directories
-  // 
-  // We don't need either because:
-  // - We embed Mozilla's NSS root certificates directly in the binary (root_certs.h)
-  // - We add all these embedded certificates to the store below
-  // - Custom CA certificates are added later via SSL_CTX_load_verify_locations()
+  if (!X509_STORE_set_default_paths(store)) {
+    X509_STORE_free(store);
+    return NULL;
+  }
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
   X509** root_cert_instances = default_ca_certificates->root_cert_instances;
@@ -193,6 +185,44 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
+  return store;
+}
+
+extern "C" X509_STORE *us_get_default_ca_store() {
+  // Similar to Node.js's GetOrCreateRootCertStore(), we cache the store
+  // and reuse it across all calls, using reference counting for thread safety
+  static std::atomic<X509_STORE*> cached_store = NULL;
+  static std::atomic_flag store_lock = ATOMIC_FLAG_INIT;
+  
+  // Fast path: if store exists, just increment ref count and return
+  X509_STORE *store = std::atomic_load(&cached_store);
+  if (store != NULL) {
+    // X509_STORE_up_ref is thread-safe according to BoringSSL docs
+    X509_STORE_up_ref(store);
+    return store;
+  }
+  
+  // Slow path: need to create the store (only happens once)
+  while (atomic_flag_test_and_set_explicit(&store_lock, std::memory_order_acquire))
+    ;
+  
+  // Double-check after acquiring lock
+  store = std::atomic_load(&cached_store);
+  if (store == NULL) {
+    store = us_create_default_ca_store();
+    if (store != NULL) {
+      // Store keeps one reference for the cache
+      // Caller gets another reference via up_ref below
+      X509_STORE_up_ref(store);
+      std::atomic_store(&cached_store, store);
+    }
+  } else {
+    // Someone else created it while we waited
+    X509_STORE_up_ref(store);
+  }
+  
+  atomic_flag_clear_explicit(&store_lock, std::memory_order_release);
+  
   return store;
 }
 extern "C" const char *us_get_default_ciphers() {

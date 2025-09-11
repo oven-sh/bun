@@ -1790,7 +1790,7 @@ fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *M
     request.onResult(
         statement.result_count,
         this.globalObject,
-        this.js_value.tryGet() orelse .js_undefined,
+        this.getQueriesArray(),
         this.flags.is_ready_for_query,
         last_insert_id,
         affected_rows,

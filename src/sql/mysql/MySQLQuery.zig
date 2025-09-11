@@ -198,7 +198,7 @@ fn u64ToJSValue(value: u64) JSValue {
     return JSValue.jsBigInt(value);
 }
 
-pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalObject, connection: jsc.JSValue, is_last: bool, last_insert_id: u64, affected_rows: u64) void {
+pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalObject, queries_array: jsc.JSValue, is_last: bool, last_insert_id: u64, affected_rows: u64) void {
     this.ref();
     defer this.deref();
 
@@ -220,12 +220,6 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
 
     const event_loop = vm.eventLoop();
     const tag: CommandTag = .{ .SELECT = result_count };
-    var queries_array = if (connection == .zero) .js_undefined else MySQLConnection.js.queriesGetCached(connection) orelse .js_undefined;
-    if (queries_array == .zero) {
-        queries_array = .js_undefined;
-    } else {
-        queries_array.ensureStillAlive();
-    }
 
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,

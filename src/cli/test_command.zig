@@ -644,6 +644,10 @@ pub const CommandLineReporter = struct {
                         Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
                         Output.flush();
                     },
+                    .fail_because_timeout, .fail_because_hook_timeout, .fail_because_timeout_with_done_callback, .fail_because_hook_timeout_with_done_callback => if (Output.is_github_action) {
+                        Output.printError("::error title=error: Test \"{s}\" timed out after {d}ms::\n", .{ display_label, test_entry.timeout });
+                        Output.flush();
+                    },
                     else => {},
                 },
             }

@@ -14,6 +14,9 @@ pub const T = enum {
 
     t_numeric_literal,
 
+    t_date,
+    t_time,
+
     t_comma,
 
     t_string_literal,
@@ -46,6 +49,8 @@ pub const Lexer = struct {
     code_point: CodePoint = -1,
     identifier: []const u8 = "",
     number: f64 = 0.0,
+    date: string = "",
+    time: string = "",
     prev_error_loc: logger.Loc = logger.Loc.Empty,
     string_literal_slice: string = "",
     string_literal_is_ascii: bool = true,
@@ -70,6 +75,17 @@ pub const Lexer = struct {
             self.addError(self.start, "Syntax Error", .{});
 
         return Error.SyntaxError;
+    }
+
+    pub fn invalidValueError(self: *Lexer, kind: Error, comptime format: []const u8, args: anytype) !void {
+        @branchHint(.cold);
+
+        // Only add this if there is not already an error.
+        // It is possible that there is a more descriptive error already emitted.
+        if (!self.log.hasErrors())
+            try self.addRangeError(self.range(), format, args);
+
+        return kind;
     }
 
     pub fn addError(self: *Lexer, _loc: usize, comptime format: []const u8, args: anytype) void {
@@ -185,6 +201,8 @@ pub const Lexer = struct {
         UnexpectedSyntax,
         JSONStringsMustUseDoubleQuotes,
         ParserError,
+        InvalidDate,
+        InvalidTime,
     };
 
     fn parseNumericLiteralOrDot(lexer: *Lexer) !void {
@@ -193,7 +211,7 @@ pub const Lexer = struct {
         lexer.step();
 
         // Dot without a digit after it;
-        if (first == '.' and (lexer.code_point < '0' or lexer.code_point > '9')) {
+        if (first == '.' and !isDigit(lexer.code_point)) {
 
             // "."
             lexer.token = T.t_dot;
@@ -207,7 +225,6 @@ pub const Lexer = struct {
 
         var is_legacy_octal_literal = false;
 
-        // Assume this is a number, but potentially change to a date/time later;
         lexer.token = T.t_numeric_literal;
 
         // Check for binary, octal, or hexadecimal literal;
@@ -344,26 +361,7 @@ pub const Lexer = struct {
 
             // Initial digits;
             while (true) {
-                if (lexer.code_point < '0' or lexer.code_point > '9') {
-                    switch (lexer.code_point) {
-                        // '-' => {
-                        //     if (lexer.raw().len == 5) {
-                        //         // Is this possibly a datetime literal that begins with a 4 digit year?
-                        //         lexer.step();
-                        //         while (!lexer.has_newline_before) {
-                        //             switch (lexer.code_point) {
-                        //                 ',' => {
-                        //                     lexer.string_literal_slice = lexer.raw();
-                        //                     lexer.token = T.t_string_literal;
-                        //                     break;
-                        //                 },
-                        //             }
-                        //         }
-                        //     }
-                        // },
-                        '_' => {},
-                        else => break,
-                    }
+                if (!isDigit(lexer.code_point)) {
                     if (lexer.code_point != '_') {
                         break;
                     }
@@ -398,7 +396,7 @@ pub const Lexer = struct {
                     try lexer.syntaxError();
                 }
                 while (true) {
-                    if (lexer.code_point < '0' or lexer.code_point > '9') {
+                    if (!isDigit(lexer.code_point)) {
                         if (lexer.code_point != '_') {
                             break;
                         }
@@ -428,11 +426,11 @@ pub const Lexer = struct {
                 if (lexer.code_point == '+' or lexer.code_point == '-') {
                     lexer.step();
                 }
-                if (lexer.code_point < '0' or lexer.code_point > '9') {
+                if (!isDigit(lexer.code_point)) {
                     try lexer.syntaxError();
                 }
                 while (true) {
-                    if (lexer.code_point < '0' or lexer.code_point > '9') {
+                    if (!isDigit(lexer.code_point)) {
                         if (lexer.code_point != '_') {
                             break;
                         }
@@ -586,41 +584,15 @@ pub const Lexer = struct {
                     lexer.token = T.t_comma;
                 },
                 ';' => {
-                    if (lexer.has_newline_before) {
-                        lexer.step();
-
-                        singleLineComment: while (true) {
-                            lexer.step();
-                            switch (lexer.code_point) {
-                                '\r', '\n', 0x2028, 0x2029 => {
-                                    break :singleLineComment;
-                                },
-                                -1 => {
-                                    break :singleLineComment;
-                                },
-                                else => {},
-                            }
-                        }
-                        continue;
+                    if (!lexer.has_newline_before) {
+                        try lexer.addDefaultError("Unexpected semicolon");
                     }
 
-                    try lexer.addDefaultError("Unexpected semicolon");
+                    lexer.discardTilEndOfLine();
+                    continue;
                 },
                 '#' => {
-                    lexer.step();
-
-                    singleLineComment: while (true) {
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '\r', '\n', 0x2028, 0x2029 => {
-                                break :singleLineComment;
-                            },
-                            -1 => {
-                                break :singleLineComment;
-                            },
-                            else => {},
-                        }
-                    }
+                    lexer.discardTilEndOfLine();
                     continue;
                 },
 
@@ -787,7 +759,26 @@ pub const Lexer = struct {
                 },
 
                 '.', '0'...'9' => {
-                    try lexer.parseNumericLiteralOrDot();
+                    const start_idx = lexer.current - 1;
+                    const content_left = lexer.source.contents.len - start_idx;
+                    const min_time_length = 8;
+                    const min_date_length = 10;
+                    if (content_left > min_time_length) {
+                        if (content_left > min_date_length) {
+                            // If the 5th code point is '-' and it's not preceeded by an E/e,
+                            // it must be a date or an error.
+                            if (isMaybeDate(lexer.source.contents[start_idx .. start_idx + 5])) {
+                                return parseDateTime(lexer);
+                            }
+                        }
+
+                        // If the 3rd code point is ':', it must be a time or an error.
+                        if (lexer.source.contents[start_idx + 2] == ':') {
+                            return parseTime(lexer);
+                        }
+                    }
+
+                    return lexer.parseNumericLiteralOrDot();
                 },
 
                 '@', 'a'...'z', 'A'...'Z', '$', '_' => {
@@ -1119,6 +1110,403 @@ pub const Lexer = struct {
         }
     }
 
+    pub fn discardTilEndOfLine(lexer: *Lexer) void {
+        while (true) {
+            lexer.step();
+            switch (lexer.code_point) {
+                '\r', '\n', 0x2028, 0x2029, -1 => {
+                    return;
+                },
+                else => {},
+            }
+        }
+    }
+
+    /// After parsing the necessary 3 digits of fractional precision, call this function to ignore any remaining
+    /// consecutive numeric digits.
+    ///
+    /// From the TOML v1.0.0 spec:
+    /// > Millisecond precision is required. Further precision of fractional seconds is implementation-specific.
+    /// > If the value contains greater precision than the implementation can support, the additional precision
+    /// > must be truncated, not rounded.
+    ///
+    /// _NOTE: NodeJS stops at ms precision._
+    pub fn drainTimeFraction(lexer: *Lexer) void {
+        while (true) {
+            lexer.step();
+            switch (lexer.code_point) {
+                '0'...'9' => continue,
+                else => break,
+            }
+        }
+    }
+
+    /// Parse a standalone time.
+    ///
+    /// _NOTE: While datetimes can contain time, the logic is much simpler when the two functions remain separate._
+    pub fn parseTime(lexer: *Lexer) !void {
+        // Expected number of digits per component.
+        var hour: u8 = 2;
+        var minute: u8 = 2;
+        var second: u8 = 2;
+        var fractional: u8 = 3;
+
+        // Used for validation.
+        var hour_found: u8 = 0;
+        var minute_found: u8 = 0;
+        var second_found: u8 = 0;
+
+        // State machine variables.
+        var expect_numeric: bool = true;
+        var expect_colon: bool = false;
+        var expect_maybe_dot: bool = false;
+        var expect_fractional: bool = false;
+        var maybe_complete: bool = false;
+        var fractional_end: ?usize = null;
+
+        while (true) : (lexer.step()) {
+            switch (lexer.code_point) {
+                '0'...'9' => {
+                    if (!expect_numeric) {
+                        try lexer.invalidValueError(Error.InvalidTime, "Got an unexpected number while parsing time.", .{});
+                    }
+
+                    if (hour > 0) {
+                        hour -= 1;
+                        hour_found += shiftLeftBase10(u8, lexer.code_point, hour);
+
+                        if (hour == 0) {
+                            if (hour_found > 23 or hour_found < 0) {
+                                try lexer.invalidValueError(Error.InvalidTime, "Expected hour to be in the range [00,23].", .{});
+                            }
+                            expect_numeric = false;
+                            expect_colon = true;
+                        }
+                        continue;
+                    }
+
+                    if (minute > 0) {
+                        minute -= 1;
+                        minute_found += shiftLeftBase10(u8, lexer.code_point, minute);
+
+                        if (minute == 0) {
+                            if (minute_found > 59 or minute_found < 0) {
+                                try lexer.invalidValueError(Error.InvalidTime, "Expected minutes to be in the range [00,59].", .{});
+                            }
+
+                            expect_numeric = false;
+                            expect_colon = true;
+                        }
+                        continue;
+                    }
+
+                    if (second > 0) {
+                        second -= 1;
+                        second_found += shiftLeftBase10(u8, lexer.code_point, second);
+
+                        if (second == 0) {
+                            // RFC3339 calls out leap second rules, but at this layer, we should allow flexibility for
+                            // applications to decide the level of strictness they require.
+                            if (second_found > 60 or second_found < 0) {
+                                try lexer.invalidValueError(Error.InvalidTime, "Expected seconds to be in the range [00,60].", .{});
+                            }
+
+                            expect_numeric = false;
+                            expect_maybe_dot = true;
+                            maybe_complete = true;
+                        }
+                        continue;
+                    }
+
+                    if (expect_fractional) {
+                        if (fractional > 0) {
+                            fractional -= 1;
+                            maybe_complete = true;
+                            fractional_end = lexer.current;
+                            continue;
+                        }
+
+                        // Truncate any digits beyond ms.
+                        fractional_end = lexer.current - 1;
+                        lexer.drainTimeFraction();
+                        expect_fractional = false;
+                        continue;
+                    }
+
+                    // There's a logic error if we hit this spot.
+                    unreachable;
+                },
+                '.' => {
+                    if (!expect_maybe_dot) {
+                        try lexer.invalidValueError(Error.InvalidTime, "Got an unexpected '.' while parsing time.", .{});
+                    }
+                    expect_fractional = true;
+                    expect_numeric = true;
+                    maybe_complete = false;
+                },
+                ':' => {
+                    if (!expect_colon) {
+                        try lexer.invalidValueError(Error.InvalidTime, "Got an unexpected ':' while parsing time.", .{});
+                    }
+                    expect_colon = false;
+                    expect_numeric = true;
+                },
+                else => break,
+            }
+        }
+
+        if (!maybe_complete) {
+            try lexer.invalidValueError(Error.InvalidTime, "Expected more characters when parsing time.", .{});
+        }
+
+        if (fractional_end) |fend| {
+            lexer.time = lexer.source.contents[lexer.start..fend];
+        } else {
+            lexer.time = lexer.source.contents[lexer.start..lexer.end];
+        }
+        lexer.token = T.t_time;
+    }
+
+    /// The TOML v1.0.0 spec allows three possible date configurations:
+    /// * local date
+    /// * local date-time
+    /// * offset date-time
+    pub fn parseDateTime(lexer: *Lexer) !void {
+        // Expected numer of digits per component.
+        var year: u8 = 4;
+        var month: u8 = 2;
+        var mday: u8 = 2;
+        var hour: u8 = 2;
+        var minute: u8 = 2;
+        var second: u8 = 2;
+        var offset_hour: u8 = 2;
+        var offset_minute: u8 = 2;
+        var fractional: u8 = 3;
+
+        // Used for validation.
+        var year_found: u16 = 0;
+        var month_found: u8 = 0;
+        var day_found: u8 = 0;
+
+        // State machine variables
+        var expect_maybe_numeric = true;
+        var expect_colon = false;
+        var expect_dash = false;
+        var expect_maybe_dot = false;
+        var expect_maybe_offset = false;
+        var expect_maybe_space_or_t = false;
+        var expect_fractional = false;
+        var maybe_complete = false;
+
+        // Accounting for variable length fractional times with trunction, we might need to drop some chars.
+        var fractional_end: ?usize = null;
+        var offset_start: ?usize = null;
+
+        // Iterate over a date/datetime until complete or an invalid format is detected.
+        while (true) : (lexer.step()) {
+            switch (lexer.code_point) {
+                '0'...'9' => {
+                    if (!expect_maybe_numeric) {
+                        try lexer.invalidValueError(Error.InvalidDate, "Got an unexpected numeric digit while parsing datetime.", .{});
+                    }
+
+                    // date
+                    if (year > 0) {
+                        year -= 1;
+                        year_found += shiftLeftBase10(u16, lexer.code_point, year);
+
+                        if (year == 0) {
+                            expect_maybe_numeric = false;
+                            expect_dash = true;
+                        }
+                        continue;
+                    }
+
+                    if (month > 0) {
+                        month -= 1;
+                        month_found += shiftLeftBase10(u8, lexer.code_point, month);
+
+                        if (month == 0) {
+                            expect_maybe_numeric = false;
+                            expect_dash = true;
+                        }
+                        continue;
+                    }
+
+                    if (mday > 0) {
+                        mday -= 1;
+                        day_found += shiftLeftBase10(u8, lexer.code_point, mday);
+
+                        if (mday == 0) {
+                            if (!isValidDate(year_found, month_found, day_found)) {
+                                try lexer.invalidValueError(Error.InvalidDate, "Invalid Date: {d:0>4}-{d:0>2}-{d:0>2}", .{ year_found, month_found, day_found });
+                            }
+                            expect_maybe_numeric = false;
+                            expect_maybe_space_or_t = true;
+                            maybe_complete = true;
+                        }
+                        continue;
+                    }
+
+                    // time
+                    if (hour > 0) {
+                        hour -= 1;
+                        if (hour == 0) {
+                            expect_maybe_numeric = false;
+                            expect_colon = true;
+                        }
+                        continue;
+                    }
+
+                    if (minute > 0) {
+                        minute -= 1;
+                        if (minute == 0) {
+                            expect_maybe_numeric = false;
+                            expect_colon = true;
+                        }
+                        continue;
+                    }
+
+                    if (second > 0) {
+                        second -= 1;
+                        if (second == 0) {
+                            expect_maybe_numeric = true;
+                            expect_maybe_dot = true;
+                            expect_maybe_offset = true;
+                            maybe_complete = true;
+                        }
+                        continue;
+                    }
+
+                    if (expect_fractional) {
+                        if (fractional > 0) {
+                            fractional -= 1;
+                            maybe_complete = true;
+                            continue;
+                        }
+
+                        // Truncate any digits beyond ms, while still accounting for a possible offset.
+                        fractional_end = lexer.current - 1;
+                        lexer.drainTimeFraction();
+                        expect_fractional = false;
+                        expect_maybe_offset = true;
+                        continue;
+                    }
+
+                    if (expect_maybe_offset) {
+                        if (offset_hour == 2) {
+                            // Track the offset start, in the event a time contains a fractional portion that must be
+                            // truncated. The offset starts at the separator before the number, hence '- 2'.
+                            offset_start = lexer.current - 2;
+                        }
+
+                        if (offset_hour > 0) {
+                            offset_hour -= 1;
+                            if (offset_hour == 0) {
+                                expect_maybe_numeric = false;
+                                expect_colon = true;
+                            }
+                            continue;
+                        }
+
+                        if (offset_minute > 0) {
+                            offset_minute -= 1;
+                            if (offset_minute == 0) {
+                                maybe_complete = true;
+                            }
+                            continue;
+                        }
+                    }
+
+                    // There's a logic error if we hit this spot.
+                    unreachable;
+                },
+                '-' => {
+                    // '-' is overloaded as a date separator as well as an offset +/-
+                    if (!expect_dash and !expect_maybe_offset) {
+                        try lexer.invalidValueError(Error.InvalidDate, "Got an unexpected '-' while parsing datetime.", .{});
+                    }
+                    expect_dash = false;
+                    expect_maybe_numeric = true;
+                    expect_fractional = false;
+                    maybe_complete = false;
+
+                    // Offsets must be preceeded by a complete time.
+                    expect_maybe_offset = second == 0;
+                },
+                '+' => {
+                    if (!expect_maybe_offset) {
+                        try lexer.invalidValueError(Error.InvalidDate, "Got an unexpected '+' while parsing datetime.", .{});
+                    }
+                    expect_maybe_offset = true;
+                    expect_maybe_numeric = true;
+                    maybe_complete = false;
+                },
+                '.' => {
+                    if (!expect_maybe_dot) {
+                        try lexer.invalidValueError(Error.InvalidDate, "Got an unexpected '.' while parsing datetime.", .{});
+                    }
+                    expect_fractional = true;
+                    expect_maybe_numeric = true;
+                    maybe_complete = false;
+                },
+                'z', 'Z' => {
+                    if (!expect_maybe_offset and !expect_maybe_dot) {
+                        try lexer.invalidValueError(Error.InvalidDate, "Got an unexpected 'Z' while parsing datetime.", .{});
+                    }
+
+                    if (offset_hour < 2) {
+                        try lexer.invalidValueError(Error.InvalidDate, "Cannot specify both 'Z' (no offset) and a specific offset", .{});
+                    }
+                    expect_maybe_offset = false;
+                    expect_maybe_numeric = true;
+                    maybe_complete = true;
+                },
+                ':' => {
+                    if (!expect_colon) {
+                        try lexer.invalidValueError(Error.InvalidDate, "Got an unexpected ':' while parsing datetime.", .{});
+                    }
+                    expect_colon = false;
+                    expect_maybe_numeric = true;
+                },
+                ' ', 't', 'T' => {
+                    if (!expect_maybe_space_or_t and maybe_complete) {
+                        break;
+                    }
+                    if (!expect_maybe_space_or_t and !maybe_complete) {
+                        try lexer.invalidValueError(Error.InvalidDate, "Got an unexpected ' ' or 'T' while parsing datetime.", .{});
+                    }
+                    expect_maybe_space_or_t = false;
+                    expect_maybe_numeric = true;
+                },
+                else => break,
+            }
+        }
+
+        if (!maybe_complete) {
+            try lexer.invalidValueError(Error.InvalidDate, "Datetime doesn't have enough characters.", .{});
+        }
+
+        if (fractional_end) |fend| {
+            if (offset_start) |ostart| {
+                const first = fend - lexer.start;
+                const needed = first + lexer.end - ostart;
+                var buf = lexer.allocator.alloc(u8, needed) catch {
+                    try lexer.addSyntaxError(lexer.start, "Out of Memory Wah Wah Wah", .{});
+                    return;
+                };
+                @memcpy(buf[0..first], lexer.source.contents[lexer.start..fend]);
+                @memcpy(buf[first..], lexer.source.contents[ostart..lexer.end]);
+                lexer.date = buf;
+            } else {
+                lexer.date = lexer.source.contents[lexer.start..fend];
+            }
+        } else {
+            lexer.date = lexer.source.contents[lexer.start..lexer.end];
+        }
+        lexer.token = T.t_date;
+    }
+
     pub fn expected(self: *Lexer, token: T) !void {
         try self.expectedString(@as(string, @tagName(token)));
     }
@@ -1186,6 +1574,36 @@ pub const Lexer = struct {
         return self.source.contents[self.start..self.end];
     }
 };
+
+pub inline fn isDigit(code_point: CodePoint) bool {
+    return code_point >= '0' and code_point <= '9';
+}
+
+// SAFETY: CodePoints passed here are assumed to be in the range ['0', '9'].
+pub inline fn shiftLeftBase10(comptime P: type, code_point: CodePoint, shift_by: u8) P {
+    const found = @as(u8, @intCast(code_point)) - '0';
+    const multiplier = std.math.pow(P, 10, shift_by);
+    return found * multiplier;
+}
+
+pub inline fn isLeapYear(year: u16) bool {
+    return (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0);
+}
+
+pub inline fn isMaybeDate(input: []const u8) bool {
+    if (input.len < 5) return false;
+    return input[4] == '-' and !(input[3] == 'e' or input[3] == 'E');
+}
+
+pub inline fn isValidDate(year: u16, month: u8, day: u8) bool {
+    if (month > 12 or month < 1) {
+        return false;
+    }
+
+    const days_per_month = [_]u8{ 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    const max_day = if (month == 2 and isLeapYear(year)) 29 else days_per_month[month];
+    return day <= max_day;
+}
 
 pub fn isIdentifierPart(code_point: CodePoint) bool {
     return switch (code_point) {

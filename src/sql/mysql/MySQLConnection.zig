@@ -1920,7 +1920,19 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 defer row.deinit(allocator);
                 try row.decode(allocator, reader);
 
-                const pending_value = (if (request.thisValue.tryGet()) |value| MySQLQuery.js.pendingValueGetCached(value) else .js_undefined) orelse .js_undefined;
+                // Get the request's thisValue - if it's invalid, the connection is corrupted
+                const this_value = request.thisValue.tryGet() orelse {
+                    this.fail("Invalid request state: thisValue is null", error.InvalidState);
+                    return error.InvalidState;
+                };
+                
+                // Validate the thisValue is still a valid cell
+                if (this_value.isEmptyOrUndefinedOrNull() or !this_value.isCell()) {
+                    this.fail("Invalid request state: thisValue is not a valid cell", error.InvalidState);
+                    return error.InvalidState;
+                }
+
+                const pending_value = MySQLQuery.js.pendingValueGetCached(this_value) orelse .js_undefined;
 
                 // Process row data
                 const row_value = row.toJS(
@@ -1939,9 +1951,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 statement.result_count += 1;
 
                 if (pending_value.isEmptyOrUndefinedOrNull()) {
-                    if (request.thisValue.tryGet()) |value| {
-                        MySQLQuery.js.pendingValueSetCached(value, this.globalObject, row_value);
-                    }
+                    MySQLQuery.js.pendingValueSetCached(this_value, this.globalObject, row_value);
                 }
             }
         },

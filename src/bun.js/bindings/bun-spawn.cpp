@@ -206,6 +206,10 @@ static int setup_cgroup(const char* cgroup_path, pid_t child_pid,
             // Cgroup already exists, that's fine
         } else {
             // Cgroup creation failed - return error
+            // Common reasons:
+            // - EACCES: Need root or proper cgroup delegation
+            // - ENOENT: /sys/fs/cgroup doesn't exist (cgroup v2 not mounted)
+            // - EROFS: cgroup filesystem is read-only
             return errno;
         }
     }
@@ -218,7 +222,12 @@ static int setup_cgroup(const char* cgroup_path, pid_t child_pid,
     // Add child PID to cgroup
     snprintf(path, sizeof(path), "%s/cgroup.procs", base_path);
     fd = open(path, O_WRONLY | O_CLOEXEC);
-    if (fd < 0) return errno;
+    if (fd < 0) {
+        // Failed to open cgroup.procs
+        // EACCES: Permission denied - need root or proper delegation
+        // ENOENT: cgroup doesn't exist or cgroup v2 not properly set up
+        return errno;
+    }
 
     char pid_str[32];
     int len = snprintf(pid_str, sizeof(pid_str), "%d\n", child_pid);
@@ -226,6 +235,9 @@ static int setup_cgroup(const char* cgroup_path, pid_t child_pid,
     if (written != len) {
         int err = errno;
         close(fd);
+        // Failed to add process to cgroup
+        // EACCES: Permission denied - need proper delegation
+        // EINVAL: Invalid PID or cgroup configuration
         return err;
     }
     close(fd);
@@ -297,7 +309,11 @@ static int setup_container_parent(pid_t child_pid, bun_container_setup_t* setup)
         int cgroup_res = setup_cgroup(setup->cgroup_path, child_pid,
             setup->memory_limit, setup->cpu_limit_pct);
         if (cgroup_res != 0) {
-            // Cgroups setup failed - return error
+            // Cgroups setup failed - return error with specific errno
+            // Common errors:
+            // EACCES (13): Permission denied - need root or proper cgroup delegation
+            // ENOENT (2): cgroup v2 not mounted or not available
+            // EROFS (30): cgroup filesystem is read-only
             return cgroup_res;
         }
     }
@@ -557,7 +573,7 @@ static int setup_overlayfs_mount(const bun_mount_config_t* mnt)
     }
 
     // Create target directory
-    if (mkdir(mnt->target, 0755) != 0 && errno != EEXIST) {
+    if (mkdir_recursive(mnt->target, 0755) != 0) {
         return -1;
     }
 
@@ -571,8 +587,12 @@ static int setup_overlayfs_mount(const bun_mount_config_t* mnt)
     // Add upper dir if provided (makes it read-write)
     if (mnt->overlay.upper && mnt->overlay.work) {
         // Create upper and work directories if they don't exist
-        mkdir_recursive(mnt->overlay.upper, 0755);
-        mkdir_recursive(mnt->overlay.work, 0755);
+        if (mkdir_recursive(mnt->overlay.upper, 0755) != 0) {
+            return -1;
+        }
+        if (mkdir_recursive(mnt->overlay.work, 0755) != 0) {
+            return -1;
+        }
 
         offset += snprintf(options + offset, sizeof(options) - offset,
             ",upperdir=%s,workdir=%s",

@@ -108,9 +108,9 @@ describe("container overlayfs functionality", () => {
           user: true,
           mount: true,
         },
-        mounts: [
+        fs: [
           {
-            from: null,
+            type: "overlayfs",
             to: "/data",
             options: {
               overlayfs: {
@@ -163,9 +163,9 @@ describe("container overlayfs functionality", () => {
           user: true,
           mount: true,
         },
-        mounts: [
+        fs: [
           {
-            from: null,
+            type: "overlayfs",
             to: "/mnt",
             options: {
               overlayfs: {
@@ -230,9 +230,9 @@ describe("container overlayfs functionality", () => {
           user: true,
           mount: true,
         },
-        mounts: [
+        fs: [
           {
-            from: null,
+            type: "overlayfs",
             to: "/overlay",
             options: {
               overlayfs: {
@@ -278,9 +278,9 @@ describe("container overlayfs functionality", () => {
           user: true,
           mount: true,
         },
-        mounts: [
+        fs: [
           {
-            from: null,
+            type: "overlayfs",
             to: "/work",
             options: {
               overlayfs: {
@@ -332,9 +332,9 @@ describe("container overlayfs functionality", () => {
           user: true,
           mount: true,
         },
-        mounts: [
+        fs: [
           {
-            from: null,
+            type: "overlayfs",
             to: "/storage",
             options: {
               overlayfs: {

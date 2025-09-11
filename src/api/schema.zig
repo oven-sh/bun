@@ -2889,7 +2889,18 @@ pub const api = struct {
             }
 
             pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!api.NpmRegistry {
-                const url = bun.URL.parse(str);
+                // Handle protocol-relative URLs by adding https:// prefix
+                const url_str = if (bun.strings.hasPrefixComptime(str, "//"))
+                    try std.fmt.allocPrint(this.allocator, "https:{s}", .{str})
+                else
+                    str;
+                defer {
+                    if (bun.strings.hasPrefixComptime(str, "//")) {
+                        this.allocator.free(url_str);
+                    }
+                }
+                
+                const url = bun.URL.parse(url_str);
                 var registry = std.mem.zeroes(api.NpmRegistry);
 
                 // Token
@@ -2902,8 +2913,9 @@ pub const api = struct {
 
                     registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
                 } else {
-                    // Ensure registry URL ends with a trailing slash for proper URL construction
-                    // when building package tarball URLs
+                    // Ensure trailing slash so URL.join works correctly
+                    // Without this, URL.join("//example.com/npm", "package") -> "//example.com/package" (wrong!)
+                    // With slash, URL.join("//example.com/npm/", "package") -> "//example.com/npm/package" (correct!)
                     if (!bun.strings.endsWithChar(url.href, '/')) {
                         registry.url = try std.fmt.allocPrint(this.allocator, "{s}/", .{url.href});
                     } else {

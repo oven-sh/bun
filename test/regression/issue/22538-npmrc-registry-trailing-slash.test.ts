@@ -4,12 +4,12 @@ const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
 
 test("npmrc registry URL without trailing slash appends slash automatically", () => {
-  // Test case from the Twitter issue
+  // Test case from the issue - protocol-relative URLs are converted to https://
   const ini1 = `
 registry=//example.com/contents/release/npm
 `;
   const result1 = loadNpmrc(ini1);
-  expect(result1.default_registry_url).toBe("//example.com/contents/release/npm/");
+  expect(result1.default_registry_url).toBe("https://example.com/contents/release/npm/");
 
   // Test with https protocol
   const ini2 = `

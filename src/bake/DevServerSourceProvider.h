@@ -3,67 +3,11 @@
 #include "headers-handwritten.h"
 #include "JavaScriptCore/SourceOrigin.h"
 #include "ZigGlobalObject.h"
-#include <mimalloc.h>
+#include "MiString.h"
 
 namespace Bake {
 
 class DevServerSourceProvider;
-
-class SourceMapJSONString {
-public:
-    SourceMapJSONString(const char* ptr, size_t length)
-        : m_ptr(ptr)
-        , m_length(length)
-    {
-    }
-
-    ~SourceMapJSONString()
-    {
-        if (m_ptr) {
-            mi_free(const_cast<char*>(m_ptr));
-        }
-    }
-
-    // Delete copy constructor and assignment operator to prevent double free
-    SourceMapJSONString(const SourceMapJSONString&) = delete;
-    SourceMapJSONString& operator=(const SourceMapJSONString&) = delete;
-
-    // Move constructor and assignment
-    SourceMapJSONString(SourceMapJSONString&& other) noexcept
-        : m_ptr(other.m_ptr)
-        , m_length(other.m_length)
-    {
-        other.m_ptr = nullptr;
-        other.m_length = 0;
-    }
-
-    SourceMapJSONString& operator=(SourceMapJSONString&& other) noexcept
-    {
-        if (this != &other) {
-            if (m_ptr) {
-                mi_free(const_cast<char*>(m_ptr));
-            }
-            m_ptr = other.m_ptr;
-            m_length = other.m_length;
-            other.m_ptr = nullptr;
-            other.m_length = 0;
-        }
-        return *this;
-    }
-
-    const char* ptr() const { return m_ptr; }
-    size_t length() const { return m_length; }
-
-private:
-    const char* m_ptr;
-    size_t m_length;
-};
-
-// Struct to return source map data to Zig
-struct SourceMapData {
-    const char* ptr;
-    size_t length;
-};
 
 // Function to be implemented in Zig to register the source provider
 extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, BunString* specifier);
@@ -90,9 +34,9 @@ public:
         return provider;
     }
 
-    SourceMapData sourceMapJSON() const
+    MiCString sourceMapJSON() const
     {
-        return SourceMapData { m_sourceMapJSON.ptr(), m_sourceMapJSON.length() };
+        return m_sourceMapJSON.asCString();
     }
 
 private:
@@ -121,7 +65,7 @@ private:
         }
     }
 
-    SourceMapJSONString m_sourceMapJSON;
+    MiString m_sourceMapJSON;
     Zig::GlobalObject* m_globalObject;
     BunString m_specifier;
 };

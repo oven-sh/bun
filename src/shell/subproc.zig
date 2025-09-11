@@ -724,6 +724,9 @@ pub const ShellSubprocess = struct {
         event_loop: jsc.EventLoopHandle,
         shellio: *ShellIO,
         spawn_args_: SpawnArgs,
+        // We have to use an out pointer because this function may invoke callbacks that expect a
+        // fully initialized parent object. Writing to this out pointer may be the last step needed
+        // to initialize the object.
         out: **@This(),
         notify_caller_process_already_exited: *bool,
     ) bun.shell.Result(void) {
@@ -732,10 +735,7 @@ pub const ShellSubprocess = struct {
 
         var spawn_args = spawn_args_;
 
-        _ = switch (spawnMaybeSyncImpl(
-            .{
-                .is_sync = false,
-            },
+        return switch (spawnMaybeSyncImpl(
             event_loop,
             arena.allocator(),
             &spawn_args,
@@ -743,25 +743,23 @@ pub const ShellSubprocess = struct {
             out,
             notify_caller_process_already_exited,
         )) {
-            .result => |subproc| subproc,
+            .result => .success,
             .err => |err| return .{ .err = err },
         };
-
-        return .success;
     }
 
     fn spawnMaybeSyncImpl(
-        comptime config: struct {
-            is_sync: bool,
-        },
         event_loop: jsc.EventLoopHandle,
         allocator: Allocator,
         spawn_args: *SpawnArgs,
         shellio: *ShellIO,
+        // We have to use an out pointer because this function may invoke callbacks that expect a
+        // fully initialized parent object. Writing to this out pointer may be the last step needed
+        // to initialize the object.
         out_subproc: **@This(),
         notify_caller_process_already_exited: *bool,
-    ) bun.shell.Result(*@This()) {
-        const is_sync = config.is_sync;
+    ) bun.shell.Result(void) {
+        const is_sync = false;
 
         if (!spawn_args.override_env and spawn_args.env_array.items.len == 0) {
             // spawn_args.env_array.items = bun.handleOom(jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator));
@@ -873,14 +871,12 @@ pub const ShellSubprocess = struct {
             subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
         }
 
-        if (comptime !is_sync) {
-            switch (subprocess.process.watch()) {
-                .result => {},
-                .err => {
-                    notify_caller_process_already_exited.* = true;
-                    spawn_args.lazy = false;
-                },
-            }
+        switch (subprocess.process.watch()) {
+            .result => {},
+            .err => {
+                notify_caller_process_already_exited.* = true;
+                spawn_args.lazy = false;
+            },
         }
 
         if (subprocess.stdin == .buffer) {
@@ -889,7 +885,7 @@ pub const ShellSubprocess = struct {
 
         if (subprocess.stdout == .pipe) {
             subprocess.stdout.pipe.start(subprocess, event_loop).assert();
-            if ((is_sync or !spawn_args.lazy) and subprocess.stdout == .pipe) {
+            if (!spawn_args.lazy and subprocess.stdout == .pipe) {
                 subprocess.stdout.pipe.readAll();
             }
         }
@@ -897,7 +893,7 @@ pub const ShellSubprocess = struct {
         if (subprocess.stderr == .pipe) {
             subprocess.stderr.pipe.start(subprocess, event_loop).assert();
 
-            if ((is_sync or !spawn_args.lazy) and subprocess.stderr == .pipe) {
+            if (!spawn_args.lazy and subprocess.stderr == .pipe) {
                 subprocess.stderr.pipe.readAll();
             }
         }
@@ -906,7 +902,7 @@ pub const ShellSubprocess = struct {
 
         log("returning", .{});
 
-        return .{ .result = subprocess };
+        return .{ .result = {} };
     }
 
     pub fn wait(this: *@This(), sync: bool) void {
@@ -985,7 +981,7 @@ pub const PipeReader = struct {
         pub fn append(this: *BufferedOutput, bytes: []const u8) void {
             switch (this.*) {
                 .bytelist => {
-                    bun.handleOom(this.bytelist.append(bun.default_allocator, bytes));
+                    bun.handleOom(this.bytelist.appendSlice(bun.default_allocator, bytes));
                 },
                 .array_buffer => {
                     const array_buf_slice = this.array_buffer.buf.slice();
@@ -1001,7 +997,7 @@ pub const PipeReader = struct {
         pub fn deinit(this: *BufferedOutput) void {
             switch (this.*) {
                 .bytelist => {
-                    this.bytelist.deinitWithAllocator(bun.default_allocator);
+                    this.bytelist.deinit(bun.default_allocator);
                 },
                 .array_buffer => {
                     // FIXME: SHOULD THIS BE HERE?

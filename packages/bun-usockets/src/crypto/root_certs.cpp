@@ -157,10 +157,17 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
 
-  if (!X509_STORE_set_default_paths(store)) {
-    X509_STORE_free(store);
-    return NULL;
-  }
+  // OPTIMIZATION: We skip X509_STORE_set_default_paths() here!
+  // That function loads certificates from disk and parses them, which is
+  // extremely expensive as shown in the callstack. Since we already have
+  // all the certificates parsed and loaded in memory, we just add them
+  // directly without calling X509_STORE_set_default_paths().
+  //
+  // X509_STORE_set_default_paths() does two things:
+  // 1. Adds a file lookup (X509_LOOKUP_file) for loading certs from files
+  // 2. Adds a hash_dir lookup (X509_LOOKUP_hash_dir) for loading from directories
+  // 
+  // We don't need either because we're adding all certificates directly.
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
   X509** root_cert_instances = default_ca_certificates->root_cert_instances;

@@ -92,8 +92,14 @@ pub fn getEntriesConst(dirinfo: *const DirInfo) ?*const Fs.FileSystem.DirEntry {
 pub fn getParent(i: *const DirInfo) ?*DirInfo {
     return HashMap.instance.atIndex(i.parent);
 }
+
 pub fn getEnclosingBrowserScope(i: *const DirInfo) ?*DirInfo {
     return HashMap.instance.atIndex(i.enclosing_browser_scope);
+}
+
+pub fn deinit(i: *const DirInfo) void {
+    if (i.package_json) |p| p.deinit();
+    if (i.tsconfig_json) |t| t.deinit();
 }
 
 // Goal: Really fast, low allocation directory map exploiting cache locality where we don't worry about lifetimes much.

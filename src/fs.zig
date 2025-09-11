@@ -108,6 +108,11 @@ pub const FileSystem = struct {
         return &instance;
     }
 
+    pub fn deinit(this: *const FileSystem) void {
+        this.dirname_store.deinit();
+        this.filename_store.deinit();
+    }
+
     pub const DirEntry = struct {
         pub const EntryMap = bun.StringHashMapUnmanaged(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);

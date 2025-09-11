@@ -1,0 +1,14 @@
+leak:bunfig.Bunfig.parse__anon
+leak:resolver.package_json.PackageJSON.parse__anon
+leak:resolver.resolver.Resolver.parseTSConfig
+leak:JSC::Identifier::fromString
+leak:Zig__GlobalObject__create
+leak:_objc_msgSend_uncached
+leak:WTF::fastMalloc
+leak:WTF::AutomaticThread::start
+leak:CryptoObject__create
+leak:Bun__transpileFile
+leak:WTF::SymbolRegistry::symbolForKey
+leak:js_printer.printAst__anon
+leak:Bun__resolveSync
+leak:JSC::moduleLoaderParseModule

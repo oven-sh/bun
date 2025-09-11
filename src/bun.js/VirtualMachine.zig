@@ -1915,9 +1915,10 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
     }
 }
 
-// TODO:
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
+    this.transpiler.deinit();
+    this.gc_controller.deinit();
 
     if (source_code_printer) |print| {
         print.getMutableBuffer().deinit();

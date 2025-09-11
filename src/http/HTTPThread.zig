@@ -209,7 +209,9 @@ pub fn onStart(opts: InitOpts) void {
 
     bun.http.http_thread.loop = loop;
     bun.http.http_thread.http_context.init();
+    defer bun.http.http_thread.http_context.deinit();
     bun.http.http_thread.https_context.initWithThreadOpts(&opts) catch |err| opts.onInitError(err, opts);
+    defer bun.http.http_thread.https_context.deinit();
     bun.http.http_thread.has_awoken.store(true, .monotonic);
     bun.http.http_thread.processEvents();
 }

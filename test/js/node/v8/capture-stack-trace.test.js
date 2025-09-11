@@ -753,4 +753,4 @@ test("CallFrame.p.isAsync", async () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 
   expect(prepare).toHaveBeenCalledTimes(1);
-})
+});

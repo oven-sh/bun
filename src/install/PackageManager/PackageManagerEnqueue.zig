@@ -446,7 +446,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     if (dependency.behavior.isOptionalPeer()) return;
 
     var name = dependency.realname();
-
     var name_hash = switch (dependency.version.tag) {
         .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
         else => dependency.name_hash,

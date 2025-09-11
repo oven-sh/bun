@@ -21,8 +21,7 @@ poll_ref: bun.Async.KeepAlive = .{},
 globalObject: *jsc.JSGlobalObject,
 vm: *jsc.VirtualMachine,
 
-pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-js_value: JSValue = .js_undefined,
+js_value: jsc.JSRef = jsc.JSRef.empty(),
 
 server_version: bun.ByteList = .{},
 connection_id: u32 = 0,
@@ -122,14 +121,14 @@ pub const AuthState = union(enum) {
     };
 };
 
-pub fn hasPendingActivity(this: *MySQLConnection) bool {
-    return this.pending_activity_count.load(.acquire) > 0;
-}
-
-fn updateHasPendingActivity(this: *MySQLConnection) void {
-    const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-    const b: u32 = if (this.status != .disconnected) 1 else 0;
-    this.pending_activity_count.store(a + b, .release);
+fn updateReferenceType(this: *MySQLConnection) void {
+    if (this.js_value.isNotEmpty()) {
+        if (this.requests.readableLength() > 0 or (this.status != .disconnected and this.status != .failed)) {
+            this.js_value.upgrade(this.globalObject);
+            return;
+        }
+        this.js_value.downgrade();
+    }
 }
 
 fn hasDataToSend(this: *@This()) bool {
@@ -225,15 +224,16 @@ pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
         .connected => {
             this.failFmt(error.IdleTimeout, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
-        else => {
+        .connecting => {
             this.failFmt(error.ConnectionTimedOut, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .handshaking,
         .authenticating,
         .authentication_awaiting_pk,
         => {
-            this.failFmt(error.ConnectionTimedOut, "Connection timed out after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
+        .disconnected, .failed => {},
     }
     return .disarm;
 }
@@ -264,28 +264,24 @@ fn drainInternal(this: *@This()) void {
         }
     }
 }
+
 pub fn finalize(this: *MySQLConnection) void {
     this.stopTimers();
     debug("MySQLConnection finalize", .{});
 
-    // Ensure we disconnect before finalizing
-    if (this.status != .disconnected) {
-        this.disconnect();
-    }
-
-    this.js_value = .zero;
+    this.js_value.deinit();
     this.deref();
 }
 
 pub fn doRef(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.poll_ref.ref(this.vm);
-    this.updateHasPendingActivity();
+    this.updateReferenceType();
     return .js_undefined;
 }
 
 pub fn doUnref(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.poll_ref.unref(this.vm);
-    this.updateHasPendingActivity();
+    this.updateReferenceType();
     return .js_undefined;
 }
 
@@ -352,7 +348,10 @@ pub fn stopTimers(this: *@This()) void {
 }
 
 pub fn getQueriesArray(this: *const @This()) JSValue {
-    return js.queriesGetCached(this.js_value) orelse .js_undefined;
+    if (this.js_value.tryGet()) |value| {
+        return js.queriesGetCached(value) orelse .js_undefined;
+    }
+    return .js_undefined;
 }
 pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
     const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
@@ -362,26 +361,39 @@ pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:
     this.failWithJSValue(err);
 }
 pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
-    defer this.updateHasPendingActivity();
+    defer this.updateReferenceType();
     this.stopTimers();
     if (this.status == .failed) return;
-    this.setStatus(.failed);
 
     this.ref();
-    defer this.deref();
-    // we defer the refAndClose so the on_close will be called first before we reject the pending requests
-    defer this.refAndClose(value);
-    const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
+    defer {
+        // we defer the refAndClose so the on_close will be called first before we reject the pending requests
+        this.refAndClose(value);
+        this.deref();
+    }
 
+    this.status = .failed;
+
+    const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
+    on_close.ensureStillAlive();
     const loop = this.vm.eventLoop();
     loop.enter();
     defer loop.exit();
+
+    var js_error = value.toError() orelse value;
+    if (js_error == .zero) {
+        js_error = AnyMySQLError.mysqlErrorToJS(this.globalObject, "Connection closed", error.ConnectionClosed);
+    }
+    js_error.ensureStillAlive();
+
+    const queries_array = this.getQueriesArray();
+    queries_array.ensureStillAlive();
     _ = on_close.call(
         this.globalObject,
-        this.js_value,
+        .js_undefined,
         &[_]JSValue{
-            value,
-            this.getQueriesArray(),
+            js_error,
+            queries_array,
         },
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
 }
@@ -392,14 +404,22 @@ pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Erro
     this.failWithJSValue(instance);
 }
 
-pub fn onClose(this: *MySQLConnection) void {
-    var vm = this.vm;
-    defer vm.drainMicrotasks();
+pub fn onEnd(this: *MySQLConnection) void {
+    // no more socket
     this.fail("Connection closed", error.ConnectionClosed);
+}
+
+pub fn onClose(this: *MySQLConnection) void {
+    // no more socket
+    defer this.deref();
+    this.onEnd();
 }
 
 fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
     // refAndClose is always called when we wanna to disconnect or when we are closed
+
+    // cleanup requests
+    this.cleanUpRequests(js_reason);
 
     if (!this.socket.isClosed()) {
         // event loop need to be alive to close the socket
@@ -407,15 +427,13 @@ fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
         // will unref on socket close
         this.socket.close();
     }
-
-    // cleanup requests
-    this.cleanUpRequests(js_reason);
 }
 
 pub fn disconnect(this: *@This()) void {
     this.stopTimers();
     if (this.status == .connected) {
-        this.setStatus(.disconnected);
+        defer this.updateReferenceType();
+        this.status = .disconnected;
         this.poll_ref.disable();
 
         const requests = this.requests.readableSlice(0);
@@ -721,12 +739,12 @@ fn SocketHandler(comptime ssl: bool) type {
 
         pub fn onEnd(this: *MySQLConnection, socket: SocketType) void {
             _ = socket;
-            this.onClose();
+            this.onEnd();
         }
 
         pub fn onConnectError(this: *MySQLConnection, socket: SocketType, _: i32) void {
             _ = socket;
-            this.onClose();
+            this.onEnd();
         }
 
         pub fn onTimeout(this: *MySQLConnection, socket: SocketType) void {
@@ -747,7 +765,7 @@ fn SocketHandler(comptime ssl: bool) type {
 }
 
 pub fn onTimeout(this: *MySQLConnection) void {
-    this.fail("Connection timed out", error.ConnectionTimedOut);
+    this.fail("Connection timeout", error.ConnectionTimedOut);
 }
 
 pub fn onDrain(this: *MySQLConnection) void {
@@ -938,12 +956,11 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         }
     }
     ptr.setStatus(.connecting);
-    ptr.updateHasPendingActivity();
     ptr.resetConnectionTimeout();
     ptr.poll_ref.ref(vm);
     const js_value = ptr.toJS(globalObject);
     js_value.ensureStillAlive();
-    ptr.js_value = js_value;
+    ptr.js_value.setStrong(js_value, globalObject);
     js.onconnectSetCached(js_value, globalObject, on_connect);
     js.oncloseSetCached(js_value, globalObject, on_close);
 
@@ -1002,10 +1019,11 @@ pub fn onOpen(this: *MySQLConnection, socket: Socket) void {
     this.socket = socket;
     if (socket == .SocketTCP) {
         // when upgrading to TLS the onOpen callback will be called again and at this moment we dont wanna to change the status to handshaking
-        this.setStatus(.handshaking);
+        this.status = .handshaking;
+        this.ref(); // keep a ref for the socket
     }
     this.poll_ref.ref(this.vm);
-    this.updateHasPendingActivity();
+    this.updateReferenceType();
 }
 
 pub fn onHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
@@ -1143,11 +1161,12 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
         // Read packet header
         const header = PacketHeader.decode(reader.peek()) orelse return AnyMySQLError.Error.ShortRead;
         const header_length = header.length;
+        const packet_length: usize = header_length + PacketHeader.size;
         debug("sequence_id: {d} header: {d}", .{ this.sequence_id, header_length });
         // Ensure we have the full packet
-        reader.ensureCapacity(header_length + PacketHeader.size) catch return AnyMySQLError.Error.ShortRead;
+        reader.ensureCapacity(packet_length) catch return AnyMySQLError.Error.ShortRead;
         // always skip the full packet, we dont care about padding or unreaded bytes
-        defer reader.setOffsetFromStart(header_length + PacketHeader.size);
+        defer reader.setOffsetFromStart(packet_length);
         reader.skip(PacketHeader.size);
 
         // Update sequence id
@@ -1270,24 +1289,35 @@ fn handleHandshakeDecodePublicKey(this: *MySQLConnection, comptime Context: type
 
 pub fn consumeOnConnectCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnConnectCallback", .{});
-    const on_connect = js.onconnectGetCached(this.js_value) orelse return null;
-    debug("consumeOnConnectCallback exists", .{});
-
-    js.onconnectSetCached(this.js_value, globalObject, .zero);
-    return on_connect;
+    if (this.js_value.tryGet()) |value| {
+        const on_connect = js.onconnectGetCached(value) orelse return null;
+        debug("consumeOnConnectCallback exists", .{});
+        js.onconnectSetCached(value, globalObject, .zero);
+        if (on_connect == .zero) {
+            return null;
+        }
+        return on_connect;
+    }
+    return null;
 }
 
 pub fn consumeOnCloseCallback(this: *const @This(), globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     debug("consumeOnCloseCallback", .{});
-    const on_close = js.oncloseGetCached(this.js_value) orelse return null;
-    debug("consumeOnCloseCallback exists", .{});
-    js.oncloseSetCached(this.js_value, globalObject, .zero);
-    return on_close;
+    if (this.js_value.tryGet()) |value| {
+        const on_close = js.oncloseGetCached(value) orelse return null;
+        debug("consumeOnCloseCallback exists", .{});
+        js.oncloseSetCached(value, globalObject, .zero);
+        if (on_close == .zero) {
+            return null;
+        }
+        return on_close;
+    }
+    return null;
 }
 
 pub fn setStatus(this: *@This(), status: ConnectionState) void {
     if (this.status == status) return;
-    defer this.updateHasPendingActivity();
+    defer this.updateReferenceType();
 
     this.status = status;
     this.resetConnectionTimeout();
@@ -1296,7 +1326,8 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
     switch (status) {
         .connected => {
             const on_connect = this.consumeOnConnectCallback(this.globalObject) orelse return;
-            const js_value = this.js_value;
+            on_connect.ensureStillAlive();
+            var js_value = this.js_value.tryGet() orelse .js_undefined;
             js_value.ensureStillAlive();
             this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
             this.poll_ref.unref(this.vm);
@@ -1306,8 +1337,8 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
 }
 
 pub fn updateRef(this: *@This()) void {
-    this.updateHasPendingActivity();
-    if (this.pending_activity_count.raw > 0) {
+    this.updateReferenceType();
+    if (this.js_value == .strong) {
         this.poll_ref.ref(this.vm);
     } else {
         this.poll_ref.unref(this.vm);
@@ -1765,7 +1796,7 @@ fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *M
     request.onResult(
         statement.result_count,
         this.globalObject,
-        this.js_value,
+        this.js_value.tryGet() orelse .js_undefined,
         this.flags.is_ready_for_query,
         last_insert_id,
         affected_rows,
@@ -1874,7 +1905,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 var cached_structure: ?CachedStructure = null;
                 switch (request.flags.result_mode) {
                     .objects => {
-                        cached_structure = statement.structure(this.js_value, this.globalObject);
+                        cached_structure = if (this.js_value.tryGet()) |value| statement.structure(value, this.globalObject) else null;
                         structure = cached_structure.?.jsValue() orelse .js_undefined;
                     },
                     .raw, .values => {
@@ -1884,7 +1915,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 defer row.deinit(allocator);
                 try row.decode(allocator, reader);
 
-                const pending_value = MySQLQuery.js.pendingValueGetCached(request.thisValue.get()) orelse .zero;
+                const pending_value = (if (request.thisValue.tryGet()) |value| MySQLQuery.js.pendingValueGetCached(value) else .js_undefined) orelse .js_undefined;
 
                 // Process row data
                 const row_value = row.toJS(
@@ -1902,8 +1933,10 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 }
                 statement.result_count += 1;
 
-                if (pending_value == .zero) {
-                    MySQLQuery.js.pendingValueSetCached(request.thisValue.get(), this.globalObject, row_value);
+                if (pending_value.isEmptyOrUndefinedOrNull()) {
+                    if (request.thisValue.tryGet()) |value| {
+                        MySQLQuery.js.pendingValueSetCached(value, this.globalObject, row_value);
+                    }
                 }
             }
         },

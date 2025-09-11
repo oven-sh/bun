@@ -82,7 +82,7 @@ void auditEverything(JSGlobalObject* globalObject, JSValue value, JSValue thisVa
     }
 
     for (size_t i = 0; i < args.size(); i++) {
-        ASSERT_WITH_MESSAGE(!args.at(i).isEmpty(), "Argument #%lu is JSValue.zero. This will cause a crash.", i);
+        ASSERT_WITH_MESSAGE(!args.at(i).isEmpty(), "arguments[%lu] is JSValue.zero. This will cause a crash.", i);
         if (args.at(i).isCell()) {
             JSC::Integrity::auditCellFully(vm, args.at(i).asCell());
         }

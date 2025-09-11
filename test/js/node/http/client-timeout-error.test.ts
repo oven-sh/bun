@@ -40,7 +40,7 @@ describe("node:http client timeout", () => {
       expect(closeCalled).toBe(false);
       expect(req.destroyed).toBe(false);
     } finally {
-      server.closeAllConnections();
+      server.close();
     }
   });
 

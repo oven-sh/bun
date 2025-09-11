@@ -60,8 +60,10 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
         pub fn initOwned(data: []T, allocator: Allocator) Self {
-            if (AllocationScope.downcast(allocator)) |scope|
+            if (allocation_scope.isInstance(allocator)) {
+                const scope = AllocationScope.Borrowed.downcast(allocator);
                 scope.assertOwned(data);
+            }
 
             return .{
                 .ptr = data.ptr,
@@ -306,11 +308,12 @@ test CowSlice {
     try expectEqualStrings(borrow.slice(), "hello");
 }
 
+const bun = @import("bun");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("bun");
-const AllocationScope = bun.AllocationScope;
-
 const Environment = bun.Environment;
 const cow_str_assertions = Environment.isDebug;
+
+const allocation_scope = bun.allocators.allocation_scope;
+const AllocationScope = allocation_scope.AllocationScope;

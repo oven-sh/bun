@@ -169,7 +169,7 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
 
             const value: []const u8 = brk: {
                 if (size == 0) break :brk "";
-                var merged = this.base.allocator().alloc(u8, size) catch bun.outOfMemory();
+                var merged = bun.handleOom(this.base.allocator().alloc(u8, size));
                 var i: usize = 0;
                 const last = expanding.current_expansion_result.items.len -| 1;
                 for (expanding.current_expansion_result.items, 0..) |slice, j| {

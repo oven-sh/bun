@@ -100,7 +100,7 @@ pub fn next(this: *CondExpr) Yield {
                     return this.commandImplStart();
                 }
 
-                this.args.ensureUnusedCapacity(1) catch bun.outOfMemory();
+                bun.handleOom(this.args.ensureUnusedCapacity(1));
                 Expansion.init(
                     this.base.interpreter,
                     this.base.shell,

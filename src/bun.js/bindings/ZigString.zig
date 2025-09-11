@@ -392,28 +392,6 @@ pub const ZigString = extern struct {
             return this.ptr[0..this.len];
         }
 
-        pub fn sliceZ(this: Slice) [:0]const u8 {
-            return this.ptr[0..this.len :0];
-        }
-
-        pub fn toSliceZ(this: Slice, buf: []u8) [:0]const u8 {
-            if (this.len == 0) {
-                return "";
-            }
-
-            if (this.ptr[this.len] == 0) {
-                return this.sliceZ();
-            }
-
-            if (this.len >= buf.len) {
-                return "";
-            }
-
-            bun.copy(u8, buf, this.slice());
-            buf[this.len] = 0;
-            return buf[0..this.len :0];
-        }
-
         pub fn mut(this: Slice) []u8 {
             return @as([*]u8, @ptrFromInt(@intFromPtr(this.ptr)))[0..this.len];
         }

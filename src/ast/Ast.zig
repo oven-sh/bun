@@ -83,14 +83,14 @@ pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged
 
 pub fn fromParts(parts: []Part) Ast {
     return Ast{
-        .parts = Part.List.init(parts),
+        .parts = Part.List.fromOwnedSlice(parts),
         .runtime_imports = .{},
     };
 }
 
-pub fn initTest(parts: []Part) Ast {
+pub fn initTest(parts: []const Part) Ast {
     return Ast{
-        .parts = Part.List.init(parts),
+        .parts = Part.List.fromBorrowedSliceDangerous(parts),
         .runtime_imports = .{},
     };
 }
@@ -107,9 +107,9 @@ pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
 /// Do not call this if it wasn't globally allocated!
 pub fn deinit(this: *Ast) void {
     // TODO: assert mimalloc-owned memory
-    if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.default_allocator);
-    if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
-    if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
+    this.parts.deinit(bun.default_allocator);
+    this.symbols.deinit(bun.default_allocator);
+    this.import_records.deinit(bun.default_allocator);
 }
 
 pub const Class = G.Class;

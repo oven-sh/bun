@@ -94,6 +94,7 @@ Bun supports the following loaders:
 - `file`
 - `json`
 - `toml`
+- `yaml`
 - `wasm`
 - `napi`
 - `base64`

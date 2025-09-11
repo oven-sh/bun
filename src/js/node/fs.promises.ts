@@ -5,7 +5,7 @@ const fs = $zig("node_fs_binding.zig", "createBinding") as $ZigGeneratedClasses.
 const { glob } = require("internal/fs/glob");
 const constants = $processBindingConstants.fs;
 
-var PromisePrototypeFinally = Promise.prototype.finally; //TODO
+var PromisePrototypeFinally = $Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
 var ObjectFreeze = Object.freeze;
 
@@ -19,7 +19,7 @@ const kUnref = Symbol("kUnref");
 const kTransfer = Symbol("kTransfer");
 const kTransferList = Symbol("kTransferList");
 const kDeserialize = Symbol("kDeserialize");
-const kEmptyObject = ObjectFreeze({ __proto__: null });
+const kEmptyObject = ObjectFreeze(Object.create(null));
 const kFlag = Symbol("kFlag");
 
 const { validateInteger } = require("internal/validators");
@@ -516,7 +516,7 @@ function asyncWrap(fn: any, name: string) {
     close = () => {
       const fd = this[kFd];
       if (fd === -1) {
-        return Promise.resolve();
+        return Promise.$resolve();
       }
 
       if (this[kClosePromise]) {

@@ -246,6 +246,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
+        packages_to_install: if (method == .filter) ?[]const PackageID else void,
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -492,6 +493,22 @@ pub fn processSubtree(
             )) {
                 continue;
             }
+
+            if (builder.packages_to_install) |packages_to_install| {
+                if (parent_pkg_id == 0) {
+                    var found = false;
+                    for (packages_to_install) |package_to_install| {
+                        if (pkg_id == package_to_install) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        continue;
+                    }
+                }
+            }
         }
 
         const hoisted: HoistDependencyResult = hoisted: {
@@ -521,7 +538,7 @@ pub fn processSubtree(
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
             .placement => |dest| {
-                dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
+                bun.handleOom(dependency_lists[dest.id].append(builder.allocator, dep_id));
                 trees[dest.id].dependencies.len += 1;
                 if (builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{

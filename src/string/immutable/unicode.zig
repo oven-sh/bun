@@ -839,7 +839,7 @@ pub fn elementLengthLatin1IntoUTF8(slice: []const u8) usize {
     return bun.simdutf.length.utf8.from.latin1(slice);
 }
 
-pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
+pub fn copyCP1252IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
     var buf = buf_;
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
@@ -853,7 +853,7 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
         latin1 = latin1[to_write..];
         buf = buf[to_write..];
         if (latin1.len > 0 and buf.len >= 1) {
-            buf[0] = latin1ToCodepointBytesAssumeNotASCII16(latin1[0]);
+            buf[0] = cp1252ToCodepointBytesAssumeNotASCII16(latin1[0]);
             latin1 = latin1[1..];
             buf = buf[1..];
         }
@@ -865,13 +865,15 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
     };
 }
 
-pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
-    // latin1 is always at most 1 UTF-16 code unit long
-    if (comptime std.meta.Child([]const u16) == Type) {
-        return latin1_.len;
-    }
+pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
+    const len = @min(buf_.len, latin1_.len);
+    for (buf_[0..len], latin1_[0..len]) |*out, in| out.* = in;
+    return .{ .read = @as(u32, @truncate(len)), .written = @as(u32, @truncate(len)) };
+}
 
-    return bun.simdutf.length.utf16.from.latin1(latin1_);
+pub fn elementLengthCP1252IntoUTF16(comptime Type: type, cp1252_: Type) usize {
+    // cp1252 is always at most 1 UTF-16 code unit long
+    return cp1252_.len;
 }
 
 pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
@@ -1168,7 +1170,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             if (res.status == .success) {
                 if (comptime sentinel) {
                     out[out_length] = 0;
-                    return out[0 .. out_length + 1 :0];
+                    return out[0..out_length :0];
                 }
                 return out;
             }
@@ -1629,14 +1631,14 @@ pub fn convertUTF16toUTF8InBuffer(
     return buf[0..result];
 }
 
-pub fn latin1ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) CodePointType {
+pub fn cp1252ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) CodePointType {
     return @as(
         CodePointType,
-        @intCast(latin1ToCodepointBytesAssumeNotASCII16(char)),
+        @intCast(cp1252ToCodepointBytesAssumeNotASCII16(char)),
     );
 }
 
-const latin1_to_utf16_conversion_table = [256]u16{
+const cp1252_to_utf16_conversion_table = [256]u16{
     0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, // 00-07
     0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x000F, // 08-0F
     0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017, // 10-17
@@ -1677,8 +1679,8 @@ pub fn latin1ToCodepointBytesAssumeNotASCII(char: u32) [2]u8 {
     return bytes[0..2].*;
 }
 
-pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
-    return latin1_to_utf16_conversion_table[@as(u8, @truncate(char))];
+pub fn cp1252ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
+    return cp1252_to_utf16_conversion_table[@as(u8, @truncate(char))];
 }
 
 /// Copy a UTF-16 string as UTF-8 into `buf`

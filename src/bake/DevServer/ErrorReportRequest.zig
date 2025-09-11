@@ -22,7 +22,7 @@ body: uws.BodyReaderMixin(@This(), "body", runWithBody, finalize),
 pub fn run(dev: *DevServer, _: *Request, resp: anytype) void {
     const ctx = bun.new(ErrorReportRequest, .{
         .dev = dev,
-        .body = .init(dev.allocator),
+        .body = .init(dev.allocator()),
     });
     ctx.dev.server.?.onPendingRequest();
     ctx.body.readBody(resp);
@@ -41,8 +41,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
     var s = std.io.fixedBufferStream(body);
     const reader = s.reader();
 
-    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator);
-    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator);
+    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator());
+    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator());
     const temp_alloc = sfa_general.get();
     var arena = std.heap.ArenaAllocator.init(temp_alloc);
     defer arena.deinit();
@@ -169,8 +169,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
                 if (runtime_lines == null) {
                     const file = result.entry_files.get(@intCast(index - 1));
-                    if (file != .empty) {
-                        const json_encoded_source_code = file.ref.data.quotedContents();
+                    if (file.get()) |source_map| {
+                        const json_encoded_source_code = source_map.quotedContents();
                         // First line of interest is two above the target line.
                         const target_line = @as(usize, @intCast(frame.position.line.zeroBased()));
                         first_line_of_interest = target_line -| 2;
@@ -238,7 +238,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         ) catch {},
     }
 
-    var out: std.ArrayList(u8) = .init(ctx.dev.allocator);
+    var out: std.ArrayList(u8) = .init(ctx.dev.allocator());
     errdefer out.deinit();
     const w = out.writer();
 

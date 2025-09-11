@@ -182,7 +182,7 @@ pub fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: 
                                             allocator,
                                             E.TemplatePart,
                                             &.{ left.parts, right.parts },
-                                        ) catch bun.outOfMemory();
+                                        ) catch |err| bun.handleOom(err);
                                     return lhs;
                                 }
                             } else {

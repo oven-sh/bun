@@ -1260,7 +1260,7 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platf
     }
 
     if (count * 2 > temp_buf.len) {
-        temp_buf = bun.default_allocator.alloc(T, count * 2) catch bun.outOfMemory();
+        temp_buf = bun.handleOom(bun.default_allocator.alloc(T, count * 2));
         free_temp_buf = true;
     }
 

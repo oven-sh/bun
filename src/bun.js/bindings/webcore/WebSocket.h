@@ -116,6 +116,8 @@ public:
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();
 
+    void setProtocol(const String& protocol);
+
     const URL& url() const;
     State readyState() const;
     unsigned bufferedAmount() const;

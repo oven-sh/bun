@@ -27,7 +27,7 @@ pub fn cancel(this: *ManagedTask) void {
 pub fn New(comptime Type: type, comptime Callback: anytype) type {
     return struct {
         pub fn init(ctx: *Type) Task {
-            var managed = bun.default_allocator.create(ManagedTask) catch bun.outOfMemory();
+            var managed = bun.handleOom(bun.default_allocator.create(ManagedTask));
             managed.* = ManagedTask{
                 .callback = wrap,
                 .ctx = ctx,

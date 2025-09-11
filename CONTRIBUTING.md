@@ -223,8 +223,8 @@ $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 $ git -C vendor/WebKit checkout <commit_hash>
 
 # Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
-# Optionally, you can use `make jsc` for a release build
-$ make jsc-debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
+# Optionally, you can use `bun run jsc:build` for a release build
+$ bun run jsc:build:debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
 
 # After an initial run of `make jsc-debug`, you can rebuild JSC with:
 $ cmake --build vendor/WebKit/WebKitBuild/Debug --target jsc && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h

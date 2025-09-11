@@ -331,7 +331,7 @@ class Worker extends EventEmitter {
 
     const onExitPromise = this.#onExitPromise;
     if (onExitPromise) {
-      return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
+      return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(onExitPromise);
     }
 
     const { resolve, promise } = Promise.withResolvers();
@@ -387,6 +387,10 @@ class Worker extends EventEmitter {
 
   #onOpen() {
     this.emit("online");
+  }
+
+  async [Symbol.asyncDispose]() {
+    await this.terminate();
   }
 }
 

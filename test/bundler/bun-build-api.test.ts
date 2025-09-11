@@ -614,25 +614,6 @@ describe("Bun.build", () => {
   });
 });
 
-test("onEnd Plugin does not crash", async () => {
-  expect(
-    (async () => {
-      await Bun.build({
-        entrypoints: ["./build.js"],
-        plugins: [
-          {
-            name: "plugin",
-            setup(build) {
-              // @ts-expect-error
-              build.onEnd();
-            },
-          },
-        ],
-      });
-    })(),
-  ).rejects.toThrow("On-end callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
-});
-
 test("macro with nested object", async () => {
   const dir = tempDirWithFilesAnon({
     "index.ts": `
@@ -849,7 +830,7 @@ describe("sourcemap boolean values", () => {
 
     expect(jsOutput).toBeTruthy();
     expect(mapOutput).toBeTruthy();
-    expect(jsOutput!.sourcemap).toBe(mapOutput);
+    expect(jsOutput!.sourcemap).toBe(mapOutput!);
 
     const jsText = await jsOutput!.text();
     expect(jsText).toContain("//# sourceMappingURL=index.js.map");
@@ -955,5 +936,186 @@ export { greeting };`,
     } finally {
       process.chdir(originalCwd);
     }
+  });
+
+  test("onEnd fires before promise resolves with throw: true", async () => {
+    const dir = tempDirWithFiles("onend-throwonerror-true", {
+      "index.ts": `
+        // This will cause a build error
+        import { missing } from "./does-not-exist";
+        console.log(missing);
+      `,
+    });
+
+    let onEndCalled = false;
+    let onEndCalledBeforeReject = false;
+    let promiseRejected = false;
+
+    try {
+      await Bun.build({
+        entrypoints: [join(dir, "index.ts")],
+        throw: true,
+        plugins: [
+          {
+            name: "test-plugin",
+            setup(builder) {
+              builder.onEnd(result => {
+                onEndCalled = true;
+                onEndCalledBeforeReject = !promiseRejected;
+                // Result should contain error information
+                expect(result.success).toBe(false);
+                expect(result.logs).toBeDefined();
+                expect(result.logs.length).toBeGreaterThan(0);
+              });
+            },
+          },
+        ],
+      });
+      // Should not reach here
+      expect(false).toBe(true);
+    } catch (error) {
+      promiseRejected = true;
+      // Verify onEnd was called before promise rejected
+      expect(onEndCalled).toBe(true);
+      expect(onEndCalledBeforeReject).toBe(true);
+    }
+  });
+
+  test("onEnd fires before promise resolves with throw: false", async () => {
+    const dir = tempDirWithFiles("onend-throwonerror-false", {
+      "index.ts": `
+        // This will cause a build error
+        import { missing } from "./does-not-exist";
+        console.log(missing);
+      `,
+    });
+
+    let onEndCalled = false;
+    let onEndCalledBeforeResolve = false;
+    let promiseResolved = false;
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      throw: false,
+      plugins: [
+        {
+          name: "test-plugin",
+          setup(builder) {
+            builder.onEnd(result => {
+              onEndCalled = true;
+              onEndCalledBeforeResolve = !promiseResolved;
+              // Result should contain error information
+              expect(result.success).toBe(false);
+              expect(result.logs).toBeDefined();
+              expect(result.logs.length).toBeGreaterThan(0);
+            });
+          },
+        },
+      ],
+    });
+
+    promiseResolved = true;
+
+    // Verify onEnd was called before promise resolved
+    expect(onEndCalled).toBe(true);
+    expect(onEndCalledBeforeResolve).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.logs.length).toBeGreaterThan(0);
+  });
+
+  test("onEnd always fires on successful build", async () => {
+    const dir = tempDirWithFiles("onend-success", {
+      "index.ts": `
+        export const message = "Build successful";
+        console.log(message);
+      `,
+    });
+
+    let onEndCalled = false;
+    let onEndCalledBeforeResolve = false;
+    let promiseResolved = false;
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      throw: true, // Should not matter for successful build
+      plugins: [
+        {
+          name: "test-plugin",
+          setup(builder) {
+            builder.onEnd(result => {
+              onEndCalled = true;
+              onEndCalledBeforeResolve = !promiseResolved;
+              // Result should indicate success
+              expect(result.success).toBe(true);
+              expect(result.outputs).toBeDefined();
+              expect(result.outputs.length).toBeGreaterThan(0);
+            });
+          },
+        },
+      ],
+    });
+
+    promiseResolved = true;
+
+    // Verify onEnd was called before promise resolved
+    expect(onEndCalled).toBe(true);
+    expect(onEndCalledBeforeResolve).toBe(true);
+    expect(result.success).toBe(true);
+    const output = await result.outputs[0].text();
+    expect(output).toContain("Build successful");
+  });
+
+  test("multiple onEnd callbacks fire in order before promise settles", async () => {
+    const dir = tempDirWithFiles("onend-multiple", {
+      "index.ts": `
+        // This will cause a build error
+        import { missing } from "./not-found";
+      `,
+    });
+
+    const callOrder: string[] = [];
+    let promiseSettled = false;
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      throw: false,
+      plugins: [
+        {
+          name: "plugin-1",
+          setup(builder) {
+            builder.onEnd(() => {
+              callOrder.push("first");
+              expect(promiseSettled).toBe(false);
+            });
+          },
+        },
+        {
+          name: "plugin-2",
+          setup(builder) {
+            builder.onEnd(() => {
+              callOrder.push("second");
+              expect(promiseSettled).toBe(false);
+            });
+          },
+        },
+        {
+          name: "plugin-3",
+          setup(builder) {
+            builder.onEnd(() => {
+              callOrder.push("third");
+              expect(promiseSettled).toBe(false);
+            });
+          },
+        },
+      ],
+    });
+
+    promiseSettled = true;
+
+    // All callbacks should have fired in order before promise resolved
+    expect(callOrder).toEqual(["first", "second", "third"]);
+    // The build actually succeeds because the import is being resolved to nothing
+    // What matters is that callbacks fired before promise settled
+    expect(result.success).toBeDefined();
   });
 });

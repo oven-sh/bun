@@ -137,7 +137,7 @@ zig += `
       return toJS(this, globalThis, &message);
     }
 
-    var message = bun.String.createFormat(fmt_str, args) catch bun.outOfMemory();
+    var message = bun.handleOom(bun.String.createFormat(fmt_str, args));
     return toJS(this, globalThis, &message);
   }
 

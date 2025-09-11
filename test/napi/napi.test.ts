@@ -630,6 +630,61 @@ describe("cleanup hooks", () => {
     });
   });
 
+  describe("napi_strict_equals", () => {
+    it("should match JavaScript === operator behavior", async () => {
+      const output = await checkSameOutput("test_napi_strict_equals", []);
+      expect(output).toContain("PASS: NaN !== NaN");
+      expect(output).toContain("PASS: -0 === 0");
+      expect(output).toContain("PASS: 42 === 42");
+      expect(output).toContain("PASS: 42 !== 43");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_call_function", () => {
+    it("should handle null recv parameter consistently", async () => {
+      const output = await checkSameOutput("test_napi_call_function_recv_null", []);
+      expect(output).toContain("PASS");
+      expect(output).toContain("napi_call_function with valid recv succeeded");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_array_with_length", () => {
+    it("should handle boundary values consistently", async () => {
+      const output = await checkSameOutput("test_napi_create_array_boundary", []);
+      expect(output).toContain("PASS");
+      expect(output).toContain("napi_create_array_with_length(10) created array with correct length");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_dataview", () => {
+    it("should validate bounds and provide consistent error messages", async () => {
+      const output = await checkSameOutput("test_napi_dataview_bounds_errors", []);
+      expect(output).toContain("napi_create_dataview");
+      // Check for proper bounds validation
+    });
+  });
+
+  describe("napi_typeof", () => {
+    it("should handle empty/invalid values", async () => {
+      const output = await checkSameOutput("test_napi_typeof_empty_value", []);
+      // This test explores edge cases with empty/invalid napi_values
+      // Bun has special handling for isEmpty() that Node doesn't have
+      expect(output).toContain("napi_typeof");
+    });
+  });
+
+  describe("napi_object_freeze and napi_object_seal", () => {
+    it("should handle arrays with indexed properties", async () => {
+      const output = await checkSameOutput("test_napi_freeze_seal_indexed", []);
+      // Bun has a check for indexed properties that Node.js doesn't have
+      // This might cause different behavior when freezing/sealing arrays
+      expect(output).toContain("freeze");
+    });
+  });
+
   describe("error handling", () => {
     it("removing non-existent env cleanup hook should not crash", async () => {
       // Test that removing non-existent hooks doesn't crash the process

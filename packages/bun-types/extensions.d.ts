@@ -8,6 +8,16 @@ declare module "*.toml" {
   export = contents;
 }
 
+declare module "*.yaml" {
+  var contents: any;
+  export = contents;
+}
+
+declare module "*.yml" {
+  var contents: any;
+  export = contents;
+}
+
 declare module "*.jsonc" {
   var contents: any;
   export = contents;

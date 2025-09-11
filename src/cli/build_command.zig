@@ -75,6 +75,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
@@ -431,8 +432,7 @@ pub const BuildCommand = struct {
                     outfile,
                     this_transpiler.env,
                     this_transpiler.options.output_format,
-                    ctx.bundler_options.windows_hide_console,
-                    ctx.bundler_options.windows_icon,
+                    ctx.bundler_options.windows,
                     ctx.bundler_options.compile_exec_argv orelse "",
                     null,
                 ) catch |err| {

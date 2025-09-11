@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { normalizeBunSnapshot } from "harness";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -410,5 +411,388 @@ describe("bundler", () => {
     run: {
       stdout: `{\n  $$typeof: Symbol(hello_jsxDEV),\n  type: \"div\",\n  props: {\n    children: \"Hello World\",\n  },\n  key: undefined,\n}`,
     },
+  });
+
+  // Test for jsxSideEffects option - equivalent to esbuild's TestJSXSideEffects
+  describe("jsxSideEffects", () => {
+    itBundled("jsx/sideEffectsDefault", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "classic",
+        factory: "React.createElement",
+        fragment: "React.Fragment",
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // Default behavior: should include /* @__PURE__ */ comments
+        expect(file).toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // index.jsx
+          console.log(/* @__PURE__ */ React.createElement("a", null));
+          console.log(/* @__PURE__ */ React.createElement(React.Fragment, null));"
+        `);
+      },
+    });
+
+    itBundled("jsx/sideEffectsTrue", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "classic",
+        factory: "React.createElement",
+        fragment: "React.Fragment",
+        side_effects: true,
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // When jsxSideEffects is true: should NOT include /* @__PURE__ */ comments
+        expect(file).not.toContain("/* @__PURE__ */");
+        expect(file).toContain("React.createElement");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // index.jsx
+          console.log(React.createElement("a", null));
+          console.log(React.createElement(React.Fragment, null));"
+        `);
+      },
+    });
+
+    // Test automatic JSX runtime with side effects
+    itBundled("jsx/sideEffectsDefaultAutomatic", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "automatic",
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // Default behavior: should include /* @__PURE__ */ comments
+        expect(file).toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // node_modules/react/jsx-dev-runtime.js
+          var $$typeof = Symbol.for("jsxdev");
+          function jsxDEV(type, props, key, source, self) {
+            return {
+              $$typeof,
+              type,
+              props,
+              key,
+              source,
+              self
+            };
+          }
+          var Fragment = Symbol.for("jsxdev.fragment");
+
+          // index.jsx
+          console.log(/* @__PURE__ */ jsxDEV("a", {}, undefined, false, undefined, this));
+          console.log(/* @__PURE__ */ jsxDEV(Fragment, {}, undefined, false, undefined, this));"
+        `);
+      },
+    });
+
+    itBundled("jsx/sideEffectsTrueAutomatic", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "automatic",
+        side_effects: true,
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // When jsxSideEffects is true: should NOT include /* @__PURE__ */ comments
+        expect(file).not.toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // node_modules/react/jsx-dev-runtime.js
+          var $$typeof = Symbol.for("jsxdev");
+          function jsxDEV(type, props, key, source, self) {
+            return {
+              $$typeof,
+              type,
+              props,
+              key,
+              source,
+              self
+            };
+          }
+          var Fragment = Symbol.for("jsxdev.fragment");
+
+          // index.jsx
+          console.log(jsxDEV("a", {}, undefined, false, undefined, this));
+          console.log(jsxDEV(Fragment, {}, undefined, false, undefined, this));"
+        `);
+      },
+    });
+
+    // Test JSX production mode (non-development) with side effects
+    itBundled("jsx/sideEffectsDefaultProductionClassic", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "classic",
+        factory: "React.createElement",
+        fragment: "React.Fragment",
+      },
+      env: {
+        NODE_ENV: "production",
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // Default behavior in production: should include /* @__PURE__ */ comments
+        expect(file).toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // index.jsx
+          console.log(/* @__PURE__ */ React.createElement("a", null));
+          console.log(/* @__PURE__ */ React.createElement(React.Fragment, null));"
+        `);
+      },
+    });
+
+    itBundled("jsx/sideEffectsTrueProductionClassic", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "classic",
+        factory: "React.createElement",
+        fragment: "React.Fragment",
+        side_effects: true,
+      },
+      env: {
+        NODE_ENV: "production",
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // When jsxSideEffects is true in production: should NOT include /* @__PURE__ */ comments
+        expect(file).not.toContain("/* @__PURE__ */");
+        expect(file).toContain("React.createElement");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // index.jsx
+          console.log(React.createElement("a", null));
+          console.log(React.createElement(React.Fragment, null));"
+        `);
+      },
+    });
+
+    itBundled("jsx/sideEffectsDefaultProductionAutomatic", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "automatic",
+      },
+      env: {
+        NODE_ENV: "production",
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // Default behavior in production: should include /* @__PURE__ */ comments
+        expect(file).toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // node_modules/react/jsx-runtime.js
+          var $$typeof = Symbol.for("jsx");
+          function jsx(type, props, key) {
+            return {
+              $$typeof,
+              type,
+              props,
+              key
+            };
+          }
+          var Fragment = Symbol.for("jsx.fragment");
+
+          // index.jsx
+          console.log(/* @__PURE__ */ jsx("a", {}));
+          console.log(/* @__PURE__ */ jsx(Fragment, {}));"
+        `);
+      },
+    });
+
+    itBundled("jsx/sideEffectsTrueProductionAutomatic", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "automatic",
+        side_effects: true,
+      },
+      env: {
+        NODE_ENV: "production",
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // When jsxSideEffects is true in production: should NOT include /* @__PURE__ */ comments
+        expect(file).not.toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // node_modules/react/jsx-runtime.js
+          var $$typeof = Symbol.for("jsx");
+          function jsx(type, props, key) {
+            return {
+              $$typeof,
+              type,
+              props,
+              key
+            };
+          }
+          var Fragment = Symbol.for("jsx.fragment");
+
+          // index.jsx
+          console.log(jsx("a", {}));
+          console.log(jsx(Fragment, {}));"
+        `);
+      },
+    });
+
+    // Test tsconfig.json parsing for jsxSideEffects option
+    itBundled("jsx/sideEffectsDefaultTsconfig", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        "/tsconfig.json": /* json */ `{"compilerOptions": {}}`,
+        ...helpers,
+      },
+      target: "bun",
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // Default behavior via tsconfig: should include /* @__PURE__ */ comments
+        expect(file).toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // node_modules/react/jsx-dev-runtime.js
+          var $$typeof = Symbol.for("jsxdev");
+          function jsxDEV(type, props, key, source, self) {
+            return {
+              $$typeof,
+              type,
+              props,
+              key,
+              source,
+              self
+            };
+          }
+          var Fragment = Symbol.for("jsxdev.fragment");
+
+          // index.jsx
+          console.log(/* @__PURE__ */ jsxDEV("a", {}, undefined, false, undefined, this));
+          console.log(/* @__PURE__ */ jsxDEV(Fragment, {}, undefined, false, undefined, this));"
+        `);
+      },
+    });
+
+    itBundled("jsx/sideEffectsTrueTsconfig", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        "/tsconfig.json": /* json */ `{"compilerOptions": {"jsxSideEffects": true}}`,
+        ...helpers,
+      },
+      target: "bun",
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // When jsxSideEffects is true via tsconfig: should NOT include /* @__PURE__ */ comments
+        expect(file).not.toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // node_modules/react/jsx-dev-runtime.js
+          var $$typeof = Symbol.for("jsxdev");
+          function jsxDEV(type, props, key, source, self) {
+            return {
+              $$typeof,
+              type,
+              props,
+              key,
+              source,
+              self
+            };
+          }
+          var Fragment = Symbol.for("jsxdev.fragment");
+
+          // index.jsx
+          console.log(jsxDEV("a", {}, undefined, false, undefined, this));
+          console.log(jsxDEV(Fragment, {}, undefined, false, undefined, this));"
+        `);
+      },
+    });
+
+    itBundled("jsx/sideEffectsTrueTsconfigClassic", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        "/tsconfig.json": /* json */ `{"compilerOptions": {"jsx": "react", "jsxSideEffects": true}}`,
+        ...helpers,
+      },
+      target: "bun",
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // When jsxSideEffects is true via tsconfig with classic jsx: should NOT include /* @__PURE__ */ comments
+        expect(file).not.toContain("/* @__PURE__ */");
+        expect(file).toContain("React.createElement");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // index.jsx
+          console.log(React.createElement("a", null));
+          console.log(React.createElement(React.Fragment, null));"
+        `);
+      },
+    });
+
+    itBundled("jsx/sideEffectsTrueTsconfigAutomatic", {
+      files: {
+        "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
+        "/tsconfig.json": /* json */ `{"compilerOptions": {"jsx": "react-jsx", "jsxSideEffects": true}}`,
+        ...helpers,
+      },
+      target: "bun",
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        // When jsxSideEffects is true via tsconfig with automatic jsx: should NOT include /* @__PURE__ */ comments
+        expect(file).not.toContain("/* @__PURE__ */");
+        expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+          "// @bun
+          // node_modules/react/jsx-dev-runtime.js
+          var $$typeof = Symbol.for("jsxdev");
+          function jsxDEV(type, props, key, source, self) {
+            return {
+              $$typeof,
+              type,
+              props,
+              key,
+              source,
+              self
+            };
+          }
+          var Fragment = Symbol.for("jsxdev.fragment");
+
+          // index.jsx
+          console.log(jsxDEV("a", {}, undefined, false, undefined, this));
+          console.log(jsxDEV(Fragment, {}, undefined, false, undefined, this));"
+        `);
+      },
+    });
   });
 });

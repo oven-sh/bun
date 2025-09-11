@@ -152,7 +152,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return jsEmptyString(vm);
     }
     case DataCellTag::Double:
-        return jsDoubleNumber(cell.value.number);
+        return jsNumber(cell.value.number);
         break;
     case DataCellTag::Integer:
         return jsNumber(cell.value.integer);
@@ -486,4 +486,56 @@ extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, ui
     JSValue::decode(object).getObject()->putDirectOffset(*vm, offset, JSValue::decode(value));
 }
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
+
+// PostgreSQL time formatting helpers - following WebKit's pattern
+extern "C" size_t Postgres__formatTime(int64_t microseconds, char* buffer, size_t bufferSize)
+{
+    // Convert microseconds since midnight to time components
+    int64_t totalSeconds = microseconds / 1000000;
+
+    int hours = static_cast<int>(totalSeconds / 3600);
+    int minutes = static_cast<int>((totalSeconds % 3600) / 60);
+    int seconds = static_cast<int>(totalSeconds % 60);
+
+    // Format following SQL standard time format
+    int charactersWritten = snprintf(buffer, bufferSize, "%02d:%02d:%02d", hours, minutes, seconds);
+
+    // Add fractional seconds if present (PostgreSQL supports microsecond precision)
+    if (microseconds % 1000000 != 0) {
+        // PostgreSQL displays fractional seconds only when non-zero
+        int us = microseconds % 1000000;
+        charactersWritten = snprintf(buffer, bufferSize, "%02d:%02d:%02d.%06d",
+            hours, minutes, seconds, us);
+        // Trim trailing zeros for cleaner output
+        while (buffer[charactersWritten - 1] == '0')
+            charactersWritten--;
+        if (buffer[charactersWritten - 1] == '.')
+            charactersWritten--;
+        buffer[charactersWritten] = '\0';
+    }
+
+    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < bufferSize);
+    return charactersWritten;
+}
+
+extern "C" size_t Postgres__formatTimeTz(int64_t microseconds, int32_t tzOffsetSeconds, char* buffer, size_t bufferSize)
+{
+    // Format time part first
+    size_t timeLen = Postgres__formatTime(microseconds, buffer, bufferSize);
+
+    // PostgreSQL convention: negative offset means positive UTC offset
+    // Add timezone in ±HH or ±HH:MM format
+    int tzHours = abs(tzOffsetSeconds) / 3600;
+    int tzMinutes = (abs(tzOffsetSeconds) % 3600) / 60;
+
+    int tzLen = snprintf(buffer + timeLen, bufferSize - timeLen, "%c%02d",
+        tzOffsetSeconds <= 0 ? '+' : '-', tzHours);
+
+    if (tzMinutes != 0) {
+        tzLen = snprintf(buffer + timeLen, bufferSize - timeLen, "%c%02d:%02d",
+            tzOffsetSeconds <= 0 ? '+' : '-', tzHours, tzMinutes);
+    }
+
+    return timeLen + tzLen;
+}
 }

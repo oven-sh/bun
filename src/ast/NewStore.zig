@@ -78,7 +78,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         pub fn init() *Store {
             log("init", .{});
             // Avoid initializing the entire struct.
-            const prealloc = backing_allocator.create(PreAlloc) catch bun.outOfMemory();
+            const prealloc = bun.handleOom(backing_allocator.create(PreAlloc));
             prealloc.zero();
 
             return &prealloc.metadata;

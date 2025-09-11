@@ -324,7 +324,7 @@ class AsyncResource {
 function createWarning(message, isCreateHook?: boolean) {
   let warned = false;
   var wrapped = function (arg1?) {
-    if (warned) return;
+    if (warned || (!Bun.env.BUN_FEATURE_FLAG_VERBOSE_WARNINGS && (warned = true))) return;
 
     const known_supported_modules = [
       // the following do not actually need async_hooks to work properly

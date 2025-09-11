@@ -282,7 +282,7 @@ pub fn print(
             for (resolutions_list[0].begin()..resolutions_list[0].end()) |dep_id| {
                 const dep = dependencies_buffer[dep_id];
                 if (dep.behavior.isWorkspace()) {
-                    workspaces_to_print.append(allocator, @intCast(dep_id)) catch bun.outOfMemory();
+                    bun.handleOom(workspaces_to_print.append(allocator, @intCast(dep_id)));
                 }
             }
 
@@ -438,7 +438,7 @@ pub fn print(
                     if (manager.track_installed_bin == .pending) {
                         if (iterator.next() catch null) |bin_name| {
                             manager.track_installed_bin = .{
-                                .basename = bun.default_allocator.dupe(u8, bin_name) catch bun.outOfMemory(),
+                                .basename = bun.handleOom(bun.default_allocator.dupe(u8, bin_name)),
                             };
 
                             try writer.print(fmt, .{bin_name});

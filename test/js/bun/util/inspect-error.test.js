@@ -13,17 +13,17 @@ test("error.cause", () => {
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
 5 |   const err2 = new Error("error 2", { cause: err });
-                   ^
+                       ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:5:16)
+      at <anonymous> ([dir]/inspect-error.test.js:5:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
 2 | 
 3 | test("error.cause", () => {
 4 |   const err = new Error("error 1");
-                  ^
+                      ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:4:15)
+      at <anonymous> ([dir]/inspect-error.test.js:4:19)
 "
 `);
 });
@@ -41,9 +41,9 @@ test("Error", () => {
 30 | 
 31 | test("Error", () => {
 32 |   const err = new Error("my message");
-                   ^
+                       ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:32:15)
+      at <anonymous> ([dir]/inspect-error.test.js:32:19)
 "
 `);
 });
@@ -118,7 +118,7 @@ test("Error inside minified file (no color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
             at <anonymous> ([dir]/inspect-error.test.js:101:7)"
     `);
@@ -149,7 +149,7 @@ test("Error inside minified file (color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo | ... truncated 
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
             at <anonymous> ([dir]/inspect-error.test.js:129:7)"
     `);

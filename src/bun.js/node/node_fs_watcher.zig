@@ -275,7 +275,7 @@ pub const FSWatcher = struct {
             }
         }
 
-        const cloned = event.dupe() catch bun.outOfMemory();
+        const cloned = bun.handleOom(event.dupe());
         this.current_task.append(cloned, true);
     }
 

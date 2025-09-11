@@ -257,8 +257,6 @@ const random = struct {
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
 
         if (!callback.isUndefined()) {
-            callback = callback.withAsyncContextIfNeeded(global);
-
             try callback.callNextTick(global, [2]JSValue{ .js_undefined, JSValue.jsNumber(res) });
             return .js_undefined;
         }
@@ -488,7 +486,7 @@ pub fn setEngine(global: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {
 fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
     const from = maybe_from orelse return;
     const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @alignCast(@ptrCast(ctx));
-    hashes.put(bun.span(from), {}) catch bun.outOfMemory();
+    bun.handleOom(hashes.put(bun.span(from), {}));
 }
 
 fn getHashes(global: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {

@@ -132,12 +132,14 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
             } else if (attributeName == "expires"_s && !hasMaxAge && !attributeValue.isEmpty()) {
                 if (!attributeValue.is8Bit()) [[unlikely]] {
                     auto asLatin1 = attributeValue.latin1();
-                    if (auto parsed = WTF::parseDate({ reinterpret_cast<const LChar*>(asLatin1.data()), asLatin1.length() })) {
+                    double parsed = WTF::parseDate({ reinterpret_cast<const LChar*>(asLatin1.data()), asLatin1.length() });
+                    if (std::isfinite(parsed)) {
                         expires = static_cast<int64_t>(parsed);
                     }
                 } else {
                     auto nullTerminated = attributeValue.utf8();
-                    if (auto parsed = WTF::parseDate(std::span<const LChar>(reinterpret_cast<const LChar*>(nullTerminated.data()), nullTerminated.length()))) {
+                    double parsed = WTF::parseDate(std::span<const LChar>(reinterpret_cast<const LChar*>(nullTerminated.data()), nullTerminated.length()));
+                    if (std::isfinite(parsed)) {
                         expires = static_cast<int64_t>(parsed);
                     }
                 }
@@ -168,7 +170,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
 
 bool Cookie::isExpired() const
 {
-    if (m_expires == Cookie::emptyExpiresAtValue || m_expires < 1)
+    if (m_expires == Cookie::emptyExpiresAtValue)
         return false; // Session cookie
 
     auto currentTime = WTF::WallTime::now().secondsSinceEpoch().seconds() * 1000.0;

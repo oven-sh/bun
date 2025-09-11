@@ -1,7 +1,7 @@
 import { bunExe, tempDirWithFiles } from "harness";
 import * as path from "path";
 
-const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "text", "sqlite", "file"];
+const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
 const other_loaders_do_not_crash = ["webassembly", "does_not_exist"];
 
 async function testBunRunRequire(dir: string, loader: string | null, filename: string): Promise<unknown> {
@@ -206,6 +206,17 @@ async function compileAndTest_inner(
     expect(res.text).toEqual({ default: code });
     delete res.text;
   }
+  if (Object.hasOwn(res, "yaml")) {
+    const yaml_res = res.yaml as Record<string, unknown>;
+    delete (yaml_res as any).__esModule;
+
+    for (const key of Object.keys(yaml_res)) {
+      if (key.startsWith("//")) {
+        delete (yaml_res as any)[key];
+      }
+    }
+  }
+
   if (Object.hasOwn(res, "sqlite")) {
     const sqlite_res = res.sqlite;
     delete (sqlite_res as any).__esModule;
@@ -252,6 +263,9 @@ test("javascript", async () => {
     "a": "demo",
   },
   "json,jsonc,toml": "error",
+  "yaml": {
+    "default": "export const a = \"demo\";",
+  },
 }
 `);
 });
@@ -263,6 +277,9 @@ test("typescript", async () => {
   "ts": {
     "a": "() => {}",
   },
+  "yaml": {
+    "default": "export const a = (<T>() => {}).toString().replace(/\\n/g, '');",
+  },
 }
 `);
 });
@@ -271,7 +288,7 @@ test("json", async () => {
   expect(await compileAndTest(`{"key": "👩‍👧‍👧value"}`)).toMatchInlineSnapshot(`
 {
   "js,jsx,ts,tsx,toml": "error",
-  "json,jsonc": {
+  "json,jsonc,yaml": {
     "default": {
       "key": "👩‍👧‍👧value",
     },
@@ -286,16 +303,23 @@ test("jsonc", async () => {
       "key": "👩‍👧‍👧value", // my json
     }`),
   ).toMatchInlineSnapshot(`
-{
-  "js,jsx,ts,tsx,json,toml": "error",
-  "jsonc": {
-    "default": {
-      "key": "👩‍👧‍👧value",
-    },
-    "key": "👩‍👧‍👧value",
-  },
-}
-`);
+    {
+      "js,jsx,ts,tsx,json,toml": "error",
+      "jsonc": {
+        "default": {
+          "key": "👩‍👧‍👧value",
+        },
+        "key": "👩‍👧‍👧value",
+      },
+      "yaml": {
+        "default": {
+          "// my json ": null,
+          "key": "👩‍👧‍👧value",
+        },
+        "key": "👩‍👧‍👧value",
+      },
+    }
+  `);
 });
 test("toml", async () => {
   expect(
@@ -303,8 +327,30 @@ test("toml", async () => {
     key = "👩‍👧‍👧value"`),
   ).toMatchInlineSnapshot(`
 {
-  "js,jsx,ts,tsx,json,jsonc": "error",
+  "js,jsx,ts,tsx,json,jsonc,yaml": "error",
   "toml": {
+    "default": {
+      "section": {
+        "key": "👩‍👧‍👧value",
+      },
+    },
+    "section": {
+      "key": "👩‍👧‍👧value",
+    },
+  },
+}
+`);
+});
+
+test("yaml", async () => {
+  expect(
+    await compileAndTest(`section:
+  key: "👩‍👧‍👧value"`),
+  ).toMatchInlineSnapshot(`
+{
+  "js,jsx,ts,tsx": {},
+  "json,jsonc,toml": "error",
+  "yaml": {
     "default": {
       "section": {
         "key": "👩‍👧‍👧value",

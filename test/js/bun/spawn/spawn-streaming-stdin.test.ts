@@ -1,11 +1,11 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, getMaxFD } from "harness";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, getMaxFD, isASAN } from "harness";
 import { join } from "path";
 
 const N = 50;
 const concurrency = 16;
-const delay = 150;
+const delay = isASAN ? 500 : 150;
 
 test("spawn can write to stdin multiple chunks", async () => {
   const interval = setInterval(dumpStats, 1000).unref();

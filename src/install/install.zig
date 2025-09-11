@@ -10,7 +10,10 @@ pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
 pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
     @memcpy(buf[0..bun_hash_tag.len], bun_hash_tag);
-    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch bun.outOfMemory();
+    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch |err|
+        switch (err) {
+            error.NoSpaceLeft => unreachable,
+        };
     buf[bun_hash_tag.len + digits.len] = 0;
     const bunhashtag = buf[0 .. bun_hash_tag.len + digits.len :0];
     return bunhashtag;
@@ -69,7 +72,7 @@ pub fn initializeMiniStore() void {
         pub threadlocal var instance: ?*@This() = null;
     };
     if (MiniStore.instance == null) {
-        var mini_store = bun.default_allocator.create(MiniStore) catch bun.outOfMemory();
+        var mini_store = bun.handleOom(bun.default_allocator.create(MiniStore));
         mini_store.* = .{
             .heap = bun.MimallocArena.init(),
             .memory_allocator = undefined,

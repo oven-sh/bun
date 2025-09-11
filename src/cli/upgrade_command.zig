@@ -27,7 +27,7 @@ pub const Version = struct {
                             ),
                         ),
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return this.tag;
         }
@@ -820,7 +820,7 @@ pub const UpgradeCommand = struct {
                     "completions",
                 };
 
-                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
+                bun.handleOom(env_loader.map.put("IS_BUN_AUTO_UPDATE", "true"));
                 var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
                 defer std_map.deinit();
                 _ = std.process.Child.run(.{

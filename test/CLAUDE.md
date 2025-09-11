@@ -27,11 +27,11 @@ Use `bun:test` with files that end in `*.test.ts`.
 When spawning Bun processes, use `bunExe` and `bunEnv` from `harness`. This ensures the same build of Bun is used to run the test and ensures debug logging is silenced.
 
 ```ts
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { test, expect } from "bun:test";
 
 test("spawns a Bun process", async () => {
-  const dir = tempDirWithFiles("my-test-prefix", {
+  using dir = tempDir("my-test-prefix", {
     "my.fixture.ts": `
       console.log("Hello, world!");
     `,
@@ -40,7 +40,7 @@ test("spawns a Bun process", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "my.fixture.ts"],
     env: bunEnv,
-    cwd: dir,
+    cwd: String(dir),
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -94,15 +94,15 @@ Most APIs in Bun support `port: 0` to get a random port. Never hardcode ports. A
 Use `tempDirWithFiles` to create a temporary directory with files.
 
 ```ts
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import path from "node:path";
 
 test("creates a temporary directory with files", () => {
-  const dir = tempDirWithFiles("my-test-prefix", {
+  using dir = tempDir("my-test-prefix", {
     "file.txt": "Hello, world!",
   });
 
-  expect(await Bun.file(path.join(dir.path, "file.txt")).text()).toBe(
+  expect(await Bun.file(path.join(String(dir), "file.txt")).text()).toBe(
     "Hello, world!",
   );
 });

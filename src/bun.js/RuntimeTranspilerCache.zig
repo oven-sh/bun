@@ -12,7 +12,8 @@
 /// Version 13: Hoist `import.meta.require` definition, see #15738
 /// Version 14: Updated global defines table list.
 /// Version 15: Updated global defines table list.
-const expected_version = 15;
+/// Version 16: Added typeof undefined minification optimization.
+const expected_version = 16;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

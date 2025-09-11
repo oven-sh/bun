@@ -3,8 +3,9 @@ pub const JSGlobalObject = opaque {
         return this.bunVM().allocator;
     }
     extern fn JSGlobalObject__throwStackOverflow(this: *JSGlobalObject) void;
-    pub fn throwStackOverflow(this: *JSGlobalObject) void {
+    pub fn throwStackOverflow(this: *JSGlobalObject) bun.JSError {
         JSGlobalObject__throwStackOverflow(this);
+        return error.JSError;
     }
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
     pub fn throwOutOfMemory(this: *JSGlobalObject) bun.JSError {

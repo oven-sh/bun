@@ -90,7 +90,7 @@ pub const SyntaxString = union(enum) {
             components.append(
                 allocator,
                 component,
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
 
             trimmed_input = std.mem.trimLeft(u8, trimmed_input, SPACE_CHARACTERS);
             if (trimmed_input.len == 0) {
@@ -211,7 +211,7 @@ pub const SyntaxString = union(enum) {
                             switch (component.multiplier) {
                                 .none => return .{ .result = value },
                                 .space => {
-                                    parsed.append(input.allocator(), value) catch bun.outOfMemory();
+                                    bun.handleOom(parsed.append(input.allocator(), value));
                                     if (input.isExhausted()) {
                                         return .{ .result = ParsedComponent{ .repeated = .{
                                             .components = parsed,
@@ -220,7 +220,7 @@ pub const SyntaxString = union(enum) {
                                     }
                                 },
                                 .comma => {
-                                    parsed.append(input.allocator(), value) catch bun.outOfMemory();
+                                    bun.handleOom(parsed.append(input.allocator(), value));
                                     if (input.next().asValue()) |token| {
                                         if (token.* == .comma) continue;
                                         break;

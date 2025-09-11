@@ -75,7 +75,7 @@ describe.if(!isWindows)("uv stubs", () => {
   });
 
   for (const symbol of symbols_to_test) {
-    test(`should crash when calling unsupported uv functions: ${symbol}`, async () => {
+    test(`unsupported: ${symbol}`, async () => {
       const { stderr } = await Bun.$`BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB=1 ${bunExe()} run index.ts ${symbol}`
         .cwd(tempdir)
         .throws(false)

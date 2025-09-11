@@ -61,6 +61,7 @@ pub const BunObject = struct {
     pub const SHA384 = toJSLazyPropertyCallback(Crypto.SHA384.getter);
     pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
+    pub const SSRResponse = toJSLazyPropertyCallback(Bun.getSSRResponseConstructor);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
@@ -125,6 +126,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA384, .{ .name = lazyPropertyCallbackName("SHA384") });
         @export(&BunObject.SHA512, .{ .name = lazyPropertyCallbackName("SHA512") });
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
+        @export(&BunObject.SSRResponse, .{ .name = lazyPropertyCallbackName("SSRResponse") });
 
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
@@ -1275,6 +1277,11 @@ pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
+}
+
+pub fn getSSRResponseConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    const Bake__getSSRResponseConstructor = @extern(*const fn (*jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue, .{ .name = "Bake__getSSRResponseConstructor" });
+    return Bake__getSSRResponseConstructor(globalThis);
 }
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.WebCore.S3Client.js.getConstructor(globalThis);

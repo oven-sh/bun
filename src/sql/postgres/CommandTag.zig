@@ -39,7 +39,7 @@ pub const CommandTag = union(enum) {
             .MOVE => JSValue.jsNumber(6),
             .FETCH => JSValue.jsNumber(7),
             .COPY => JSValue.jsNumber(8),
-            .other => |tag| jsc.ZigString.init(tag).toJS(globalObject),
+            .other => |tag| bun.String.createUTF8ForJS(globalObject, tag),
         };
     }
 

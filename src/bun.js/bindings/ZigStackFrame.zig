@@ -157,8 +157,15 @@ pub const ZigStackFrame = extern struct {
                         }
                     } else {
                         if (this.enable_color) {
-                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                            if (this.is_async) {
+                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "async <anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                            } else {
+                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                            }
                         } else {
+                            if (this.is_async) {
+                                try writer.writeAll("async ");
+                            }
                             try writer.writeAll("<anonymous>");
                         }
                     }

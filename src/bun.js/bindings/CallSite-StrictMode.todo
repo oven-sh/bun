@@ -1,0 +1,75 @@
+# FUNDAMENTAL INCOMPATIBILITY: getThis() and getFunction() in Non-Strict Mode
+
+## The Problem
+Bun treats ALL JavaScript code as ES Modules, which are implicitly strict mode. This means `getThis()` and `getFunction()` ALWAYS return `undefined` after a strict frame is encountered, even for code that should be non-strict.
+
+## Impact on Node.js Compatibility
+This breaks 100% Node.js compatibility because:
+
+### Node.js Behavior:
+- CommonJS files (.js, .cjs) are NON-strict by default
+- `getThis()` returns the global object in non-strict functions
+- `getFunction()` returns the actual function in non-strict mode
+- Method calls have `getThis()` return the object
+
+### Bun Behavior:
+- ALL files are treated as ES Modules (implicitly strict)
+- `getThis()` ALWAYS returns `undefined` (except before any strict frame)
+- `getFunction()` ALWAYS returns `undefined` (after strict frames)
+- Method calls have `getThis()` return `undefined`
+
+## Example That Shows The Problem
+
+```javascript
+// In Node.js CommonJS file (non-strict):
+function test() {
+  Error.prepareStackTrace = (err, stack) => {
+    console.log(stack[0].getThis());     // Returns global object
+    console.log(stack[0].getFunction()); // Returns the function
+  };
+  new Error().stack;
+}
+test();
+
+// In Bun (always module/strict):
+function test() {
+  Error.prepareStackTrace = (err, stack) => {
+    console.log(stack[0].getThis());     // Returns undefined ❌
+    console.log(stack[0].getFunction()); // Returns undefined ❌
+  };
+  new Error().stack;
+}
+test();
+```
+
+## Why This Can't Be Fixed Without Major Changes
+
+1. **Bun's Architecture**: Bun fundamentally treats all code as ES Modules
+2. **No CommonJS Mode**: Bun doesn't have a true CommonJS non-strict mode
+3. **JSC Integration**: JavaScriptCore's `isInStrictContext()` reflects this module treatment
+
+## Workarounds (None Good)
+
+1. **Always return non-strict values** - Would break actual strict mode detection
+2. **Detect CommonJS files** - Bun doesn't distinguish between CommonJS and modules
+3. **Use heuristics** - Unreliable and would cause other issues
+
+## User Impact
+
+Users who need access to `getThis()` and `getFunction()` for debugging or introspection CANNOT get Node.js-compatible behavior in Bun. This includes:
+
+- Debugging tools that rely on `getThis()` to inspect context
+- Error reporting tools that use `getFunction()` to analyze code
+- Any code ported from Node.js that expects non-strict CommonJS behavior
+
+## Recommendation
+
+If 100% Node.js compatibility for `getThis()` and `getFunction()` is required, users must:
+1. Use Node.js instead of Bun
+2. Fork Bun and modify it to support non-strict CommonJS mode (major undertaking)
+3. Rewrite their code to not depend on these methods
+
+## Related Files
+- `src/bun.js/bindings/CallSite.cpp` - Where strict mode is detected
+- `src/bun.js/bindings/ErrorStackTrace.cpp` - Stack frame creation
+- The entire module system would need changes to support non-strict mode

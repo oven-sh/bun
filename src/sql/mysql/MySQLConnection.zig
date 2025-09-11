@@ -414,9 +414,10 @@ fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
 
 pub fn disconnect(this: *@This()) void {
     this.stopTimers();
+    this.poll_ref.disable();
+
     if (this.status == .connected) {
         this.setStatus(.disconnected);
-        this.poll_ref.disable();
 
         const requests = this.requests.readableSlice(0);
         this.requests.head = 0;

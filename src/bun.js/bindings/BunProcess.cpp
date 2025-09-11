@@ -197,7 +197,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)));
-    
+
     // Use CMake-generated versions
     object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_BORINGSSL))), 0);
     // https://github.com/oven-sh/bun/issues/7921
@@ -212,28 +212,28 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_WEBKIT)), 0);
     // Zig version still comes from the Zig-exported constant
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_zig)), 0);
-    
+
     // Use semantic version for zlib if available, otherwise use commit hash
 #ifdef BUN_DEP_ZLIB_VERSION
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_DEP_ZLIB_VERSION)), 0);
 #else
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZLIB_HASH)), 0);
 #endif
-    
+
     object->putDirect(vm, JSC::Identifier::fromString(vm, "tinycc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_TINYCC)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "lolhtml"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LOLHTML)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_C_ARES)), 0);
-    
+
     // Use semantic version for libdeflate if available, otherwise use commit hash
 #ifdef BUN_DEP_LIBDEFLATE_VERSION
     object->putDirect(vm, JSC::Identifier::fromString(vm, "libdeflate"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_DEP_LIBDEFLATE_VERSION)), 0);
 #else
     object->putDirect(vm, JSC::Identifier::fromString(vm, "libdeflate"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LIBDEFLATE_HASH)), 0);
 #endif
-    
+
     object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_USOCKETS)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LSHPACK)), 0);
-    
+
     // Use commit hash for zstd (semantic version extraction not working yet)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zstd"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZSTD_HASH)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsOwnedString(vm, String("13.6.233.10-node.18"_s))), 0);

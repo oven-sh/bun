@@ -281,6 +281,53 @@ $> bun-after test hook-timeouts
   ^ a beforeEach/afterEach hook timed out for this test.
 ```
 
+## Hook execution order
+
+beforeAll will now execute before the tests in the scope, rather than immediately when it is called.
+
+```ts
+describe("d1", () => {
+  beforeAll(() => {
+    console.log("<d1>");
+  });
+  test("test", () => {
+    console.log("  test");
+  });
+  afterAll(() => {
+    console.log("</d1>");
+  });
+});
+describe("d2", () => {
+  beforeAll(() => {
+    console.log("<d2>");
+  });
+  test("test", () => {
+    console.log("  test");
+  });
+  afterAll(() => {
+    console.log("</d2>");
+  });
+});
+```
+
+```
+$> bun-before test ./beforeall-ordering.test.ts
+<d1>
+<d2>
+  test
+</d1>
+  test
+</d2>
+
+$> bun-after test ./beforeall-ordering.test.ts
+<d1>
+  test
+</d1>
+<d2>
+  test
+</d2>
+```
+
 ## Only is not allowed in CI
 
 (TODO)
@@ -314,9 +361,9 @@ Regular:
 - [ ] (flaky) test/js/bun/s3/s3.test.ts
 - [ ] (flaky) test/napi/napi.test.ts
 - [ ] test/js/bun/test/test-test.test.ts
-- [ ] test/cli/install/bun-install-patch.test.ts
-- [ ] test/js/node/net/node-net-server.test.ts
-- [ ] test/cli/install/bun-install-registry.test.ts
+- [x] test/cli/install/bun-install-patch.test.ts
+- [x] test/js/node/net/node-net-server.test.ts
+- [x] (maybe flaky?) test/cli/install/bun-install-registry.test.ts
 - [x] test/js/node/test/parallel/test-child-process-fork-exec-path.js
 - [x] test/cli/install/bun-lock.test.ts
 - [x] test/js/node/test/parallel/test-util-inspect-long-running.js

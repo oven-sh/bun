@@ -62,6 +62,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     defer groupLog.end();
 
     const this = ScopeFunctions.fromJS(callFrame.callee()) orelse return globalThis.throw("Expected callee to be ScopeFunctions", .{});
+    const line_no = addLineNumberToCfg(this.cfg, globalThis, callFrame).line_no;
 
     const bunTest = try describe2.js_fns.getActive(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
 
@@ -109,19 +110,19 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, if (callback) |*c| c.args.get() else &.{}, test_idx, bunTest.gpa) else null;
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
-            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, formatted_label, args.options.timeout, callback_length);
+            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, formatted_label, args.options.timeout, callback_length, line_no);
         }
     } else {
         var callback: ?describe2.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
         defer if (callback) |*cb| cb.deinit(bunTest.gpa);
 
-        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, args.description, args.options.timeout, callback_length);
+        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, args.description, args.options.timeout, callback_length, line_no);
     }
 
     return .js_undefined;
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, timeout: u32, callback_length: usize) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, timeout: u32, callback_length: usize, line_no: u32) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -154,12 +155,12 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunT
     const has_done_parameter = if (callback) |*c| callback_length > c.args.get().len else false;
 
     var base = this.cfg;
-    base = addLineNumberToCfg(base, globalThis, callFrame);
+    base.line_no = line_no;
     base.test_id_for_debugger = test_id_for_debugger;
 
     switch (this.mode) {
         .describe => {
-            const new_scope = try bunTest.collection.active_scope.appendDescribe(bunTest.gpa, description, this.cfg);
+            const new_scope = try bunTest.collection.active_scope.appendDescribe(bunTest.gpa, description, base);
             try bunTest.collection.enqueueDescribeCallback(new_scope, callback);
         },
         .@"test" => {

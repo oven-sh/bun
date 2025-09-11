@@ -357,7 +357,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn renderDefaultError(
             this: *RequestContext,
-            arena_allocator: std.mem.Allocator,
+            arena_allocator: std.mem.Allocator, // used for to allocate memory to render the fallback
             log: *logger.Log,
             err: anyerror,
             exceptions: []Api.JsException,
@@ -1466,10 +1466,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
                 .Render => {
-                    // Render should have been handled elsewhere, this is unexpected
-                    this.renderMetadata();
-                    resp.writeHeaderInt("content-length", 0);
-                    this.endWithoutBody(this.shouldCloseConnection());
+                    @panic("Unexpected Render body value in HEAD response. This is a bug in Bun, please file a GitHub issue at https://github.com/oven-sh/bun/issues");
                 },
             }
         }

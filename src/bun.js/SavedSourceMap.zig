@@ -113,6 +113,27 @@ pub fn putDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider:
     this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
 }
 
+pub fn removeDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+    this.lock();
+    defer this.unlock();
+
+    const entry = this.map.getEntry(bun.hash(path)) orelse return;
+    const old_value = Value.from(entry.value_ptr.*);
+    if (old_value.get(DevServerSourceProvider)) |prov| {
+        if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+            // there is nothing to unref or deinit
+            this.map.removeByPtr(entry.key_ptr);
+        }
+    } else if (old_value.get(ParsedSourceMap)) |map| {
+        if (map.underlying_provider.provider()) |prov| {
+            if (@intFromPtr(prov.ptr()) == @intFromPtr(opaque_source_provider)) {
+                this.map.removeByPtr(entry.key_ptr);
+                map.deref();
+            }
+        }
+    }
+}
+
 pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
     const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
     bun.handleOom(this.putValue(path, Value.init(source_provider)));

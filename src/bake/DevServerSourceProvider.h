@@ -67,6 +67,7 @@ struct SourceMapData {
 
 // Function to be implemented in Zig to register the source provider
 extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, BunString* specifier);
+extern "C" void Bun__removeDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, BunString* specifier);
 
 class DevServerSourceProvider final : public JSC::StringSourceProvider {
 public:
@@ -83,6 +84,8 @@ public:
         auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType));
         auto* zigGlobalObject = jsCast<::Zig::GlobalObject*>(globalObject);
         auto specifier = Bun::toString(provider->sourceURL());
+        provider->m_globalObject = zigGlobalObject;
+        provider->m_specifier = specifier;
         Bun__addDevServerSourceProvider(zigGlobalObject->bunVM(), provider.ptr(), &specifier);
         return provider;
     }
@@ -112,7 +115,15 @@ private:
     {
     }
 
+    ~DevServerSourceProvider() {
+        if (m_globalObject) {
+            Bun__removeDevServerSourceProvider(m_globalObject->bunVM(), this, &m_specifier);
+        }
+    }
+
     SourceMapJSONString m_sourceMapJSON;
+    Zig::GlobalObject* m_globalObject;
+    BunString m_specifier;
 };
 
 } // namespace Bake

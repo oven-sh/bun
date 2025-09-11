@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
 import "harness";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -138,20 +138,17 @@ test("Async functions frame should be included in stack trace", async () => {
   }
 
   const error = await foo();
-  const stack = error.stack!;
 
-  const quxIdx = stack.indexOf("at qux (")!;
-  expect(quxIdx > -1).toBe(true);
+  console.log(error.stack);
 
-  const bazIdx = stack.indexOf("at baz (")!;
-  expect(bazIdx > -1).toBe(true);
-  expect(bazIdx > quxIdx).toBe(true);
-
-  const barIdx = stack.indexOf("at async bar (")!;
-  expect(barIdx > -1).toBe(true);
-  expect(barIdx > quxIdx).toBe(true);
-
-  const fooIdx = stack.indexOf("at async foo (")!;
-  expect(fooIdx > -1).toBe(true);
-  expect(fooIdx > barIdx).toBe(true);
+  expect(normalizeBunSnapshot(error.stack!)).toMatchInlineSnapshot(`
+    "Error: error from qux
+        at asyncFunctionResume (file:NN:NN)
+        at qux (file:NN:NN)
+        at baz (file:NN:NN)
+        at asyncFunctionResume (file:NN:NN)
+        at async bar (file:NN:NN)
+        at async foo (file:NN:NN)
+        at async <anonymous> (file:NN:NN)"
+  `);
 });

@@ -191,17 +191,6 @@ fn consumePendingValue(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject
     return pending_value;
 }
 
-pub fn allowGC(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
-    if (thisValue == .zero) {
-        return;
-    }
-
-    defer thisValue.ensureStillAlive();
-    js.bindingSetCached(thisValue, globalObject, .zero);
-    js.pendingValueSetCached(thisValue, globalObject, .zero);
-    js.targetSetCached(thisValue, globalObject, .zero);
-}
-
 fn u64ToJSValue(value: u64) JSValue {
     if (value <= jsc.MAX_SAFE_INTEGER) {
         return JSValue.jsNumber(value);
@@ -221,7 +210,6 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
     const thisValue = this.thisValue.tryGet() orelse return;
 
     defer if (is_last) {
-        allowGC(thisValue, globalObject);
         this.thisValue.downgrade();
     };
     const targetValue = this.getTarget(globalObject, is_last) orelse return;

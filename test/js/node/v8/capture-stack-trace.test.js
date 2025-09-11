@@ -350,11 +350,11 @@ test("sanity check", () => {
     Error.prepareStackTrace = (e, s) => {
       // getThis returns undefined in strict mode
       expect(s[0].getThis()).toBe(undefined);
-      expect(s[0].getTypeName()).toBe("undefined");
+      expect(s[0].getTypeName()).toBe(null);  // Should be null, not "undefined"
       // getFunction returns undefined in strict mode
       expect(s[0].getFunction()).toBe(undefined);
       expect(s[0].getFunctionName()).toBe("f3");
-      expect(s[0].getMethodName()).toBe("f3");
+      expect(s[0].getMethodName()).toBe(null);  // Should be null for regular functions
       expect(typeof s[0].getLineNumber()).toBe("number");
       expect(typeof s[0].getColumnNumber()).toBe("number");
       expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);

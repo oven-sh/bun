@@ -358,7 +358,6 @@ if (typeof Bun === "object") {
     Worker,
     onmessage,
     onerror,
-    SSRResponse,
   );
 }
 

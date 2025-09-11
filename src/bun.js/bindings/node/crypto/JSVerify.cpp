@@ -16,6 +16,7 @@
 #include "BunString.h"
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>
+#include <openssl/rsa.h>
 #include "ncrypto.h"
 #include "JSSign.h"
 #include "JsonWebKey.h"
@@ -390,7 +391,16 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     // Set RSA padding mode and salt length if applicable
     if (keyPtr.isRsaVariant()) {
-        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen)) {
+        std::optional<int> effective_salt_len = saltLen;
+        
+        // For PSS padding without explicit salt length for verification,
+        // we don't need to calculate - use RSA_PSS_SALTLEN_AUTO (-2) to auto-detect
+        // This matches Node.js behavior for verification
+        if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value()) {
+            effective_salt_len = RSA_PSS_SALTLEN_AUTO;
+        }
+        
+        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, effective_salt_len)) {
             throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set RSA padding"_s);
             return {};
         }

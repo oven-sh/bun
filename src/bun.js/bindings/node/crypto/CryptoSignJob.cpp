@@ -2,6 +2,7 @@
 #include "NodeValidator.h"
 #include "KeyObject.h"
 #include "JSVerify.h"
+#include <openssl/rsa.h>
 
 using namespace JSC;
 using namespace ncrypto;
@@ -114,9 +115,20 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 
     int32_t padding = m_padding.value_or(key.getDefaultSignPadding());
 
-    if (key.isRsaVariant() && !EVPKeyCtxPointer::setRsaPadding(*ctx, padding, m_saltLength)) {
-        m_opensslError = ERR_get_error();
-        return;
+    if (key.isRsaVariant()) {
+        std::optional<int> effective_salt_len = m_saltLength;
+        
+        // For PSS padding without explicit salt length, use RSA_PSS_SALTLEN_AUTO
+        // BoringSSL changed the default from AUTO to DIGEST in commit b01d7bbf7 (June 2025)
+        // for FIPS compliance, but Node.js expects the old AUTO behavior
+        if (padding == RSA_PKCS1_PSS_PADDING && !m_saltLength.has_value()) {
+            effective_salt_len = RSA_PSS_SALTLEN_AUTO;
+        }
+        
+        if (!EVPKeyCtxPointer::setRsaPadding(*ctx, padding, effective_salt_len)) {
+            m_opensslError = ERR_get_error();
+            return;
+        }
     }
 
     switch (m_mode) {

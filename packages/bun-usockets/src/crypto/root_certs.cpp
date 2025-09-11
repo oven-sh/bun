@@ -167,7 +167,10 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   // 1. Adds a file lookup (X509_LOOKUP_file) for loading certs from files
   // 2. Adds a hash_dir lookup (X509_LOOKUP_hash_dir) for loading from directories
   // 
-  // We don't need either because we're adding all certificates directly.
+  // We don't need either because:
+  // - We embed Mozilla's NSS root certificates directly in the binary (root_certs.h)
+  // - We add all these embedded certificates to the store below
+  // - Custom CA certificates are added later via SSL_CTX_load_verify_locations()
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
   X509** root_cert_instances = default_ca_certificates->root_cert_instances;

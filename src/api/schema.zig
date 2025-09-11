@@ -2899,7 +2899,7 @@ pub const api = struct {
                         this.allocator.free(url_str);
                     }
                 }
-                
+
                 const url = bun.URL.parse(url_str);
                 var registry = std.mem.zeroes(api.NpmRegistry);
 

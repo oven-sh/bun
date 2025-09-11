@@ -373,6 +373,7 @@ pub fn failWithJSValue(this: *MySQLConnection, value: JSValue) void {
     }
 
     this.status = .failed;
+    if (this.vm.isShuttingDown()) return;
 
     const on_close = this.consumeOnCloseCallback(this.globalObject) orelse return;
     on_close.ensureStillAlive();

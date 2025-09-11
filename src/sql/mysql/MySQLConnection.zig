@@ -1291,7 +1291,10 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
 
     this.status = status;
     this.resetConnectionTimeout();
-    if (this.vm.isShuttingDown()) return;
+    if (this.vm.isShuttingDown()) {
+        this.poll_ref.disable();
+        return;
+    }
 
     switch (status) {
         .connected => {
@@ -1301,7 +1304,9 @@ pub fn setStatus(this: *@This(), status: ConnectionState) void {
             this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
             this.poll_ref.unref(this.vm);
         },
-        else => {},
+        .disconnected, .failed => {
+            this.poll_ref.disable();
+        },
     }
 }
 

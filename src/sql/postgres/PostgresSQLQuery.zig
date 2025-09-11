@@ -135,6 +135,10 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
     } else {
         this.status = .partial_response;
     }
+    const tag = CommandTag.init(command_tag_str);
+    const js_tag = tag.toJSTag(globalObject) catch |e| return this.onJSError(globalObject.takeException(e), globalObject);
+    js_tag.ensureStillAlive();
+
     const thisValue = this.thisValue.tryGet() orelse return;
     defer if (is_last) {
         allowGC(thisValue, globalObject);
@@ -145,9 +149,7 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
     const event_loop = vm.eventLoop();
-    const tag = CommandTag.init(command_tag_str);
-    const js_tag = tag.toJSTag(globalObject) catch |e| return globalObject.reportActiveExceptionAsUnhandled(e);
-    js_tag.ensureStillAlive();
+
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
         consumePendingValue(thisValue, globalObject) orelse .js_undefined,

@@ -207,6 +207,11 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
     } else {
         this.status = .partial_response;
     }
+
+    const tag: CommandTag = .{ .SELECT = result_count };
+    const js_tag = tag.toJSTag(globalObject) catch |e| return this.onJSError(globalObject.takeException(e), globalObject);
+    js_tag.ensureStillAlive();
+
     const thisValue = this.thisValue.tryGet() orelse return;
 
     defer if (is_last) {
@@ -219,8 +224,7 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
     bun.assertf(function.isCallable(), "onQueryResolveFn is not callable", .{});
 
     const event_loop = vm.eventLoop();
-    const tag: CommandTag = .{ .SELECT = result_count };
-    const js_tag = tag.toJSTag(globalObject) catch |e| return globalObject.reportActiveExceptionAsUnhandled(e);
+
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
         consumePendingValue(thisValue, globalObject) orelse .js_undefined,

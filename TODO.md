@@ -306,11 +306,11 @@ $> bun-after test hook-timeouts
 - [ ] test/cli/install/bun-install-patch.test.ts
 - [ ] test/js/node/net/node-net-server.test.ts
 - [ ] test/cli/install/bun-install-registry.test.ts
-- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
-- [ ] test/cli/install/bun-lock.test.ts
-- [ ] test/js/node/test/parallel/test-util-inspect-long-running.js
-- [ ] test/js/bun/glob/scan.test.ts
-- [ ] test/js/bun/util/v8-heap-snapshot.test.ts
+- [x] test/js/node/test/parallel/test-child-process-fork-exec-path.js
+- [x] test/cli/install/bun-lock.test.ts
+- [x] test/js/node/test/parallel/test-util-inspect-long-running.js
+- [x] test/js/bun/glob/scan.test.ts
+- [x] test/js/bun/util/v8-heap-snapshot.test.ts
 - [x] test/js/junit-reporter/junit.test.js
 - [x] test/js/bun/net/socket.test.ts
 - [ ] (maybe flaky) test/bake/dev/bundle.test.ts

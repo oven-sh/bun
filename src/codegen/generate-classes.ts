@@ -1381,7 +1381,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     public:
         using Base = ${baseClass};
         static constexpr unsigned StructureFlags = ${structureFlags};
-        static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+        static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.instanceCallable ? `, unsigned int length, const String& name` : ``});
 
         DECLARE_EXPORT_INFO;
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -1447,7 +1447,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }`
         }
 
-        void finishCreation(JSC::VM&);
+        void finishCreation(JSC::VM&${obj.instanceCallable ? `, unsigned int length, const String& name` : ``});
 
         ${Object.entries(obj.custom ?? {})
           .map(([fieldName, field]) => {
@@ -1680,9 +1680,9 @@ void ${name}::destroy(JSCell* cell)
 
 const ClassInfo ${name}::s_info = { "${typeName}"_s, &Base::s_info, ${obj.hasOwnProperties() ? `&${typeName}Table` : "nullptr"}, nullptr, CREATE_METHOD_TABLE(${name}) };
 
-void ${name}::finishCreation(VM& vm)
+void ${name}::finishCreation(VM& vm${obj.instanceCallable ? `, unsigned int length, const String& name` : ``})
 {
-    Base::finishCreation(vm);
+    Base::finishCreation(vm${obj.instanceCallable ? `, length, name` : ``});
     ASSERT(inherits(info()));
 }
 
@@ -1699,9 +1699,9 @@ ${name}::${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
 }
 
 
-${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
+${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.instanceCallable ? `, unsigned int length, const String& name` : ``}) {
   ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx);
-  ptr->finishCreation(vm);
+  ptr->finishCreation(vm${obj.instanceCallable ? `, length, name` : ``});
   return ptr;
 }
 
@@ -1793,7 +1793,7 @@ JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
+  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.instanceCallable ? `, 1, "${name}"_s` : ``});
   ${
     obj.estimatedSize
       ? `

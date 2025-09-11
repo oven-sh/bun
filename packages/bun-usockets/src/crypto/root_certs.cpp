@@ -189,41 +189,18 @@ static X509_STORE* us_create_default_ca_store() {
 }
 
 extern "C" X509_STORE *us_get_default_ca_store() {
-  // Similar to Node.js's GetOrCreateRootCertStore(), we cache the store
-  // and reuse it across all calls, using reference counting for thread safety
-  static std::atomic<X509_STORE*> cached_store = NULL;
-  static std::atomic_flag store_lock = ATOMIC_FLAG_INIT;
+  // Create the store once using static initialization (thread-safe in C++11)
+  // This is similar to Node.js's approach but using a single global store
+  // instead of per-thread storage
+  static X509_STORE* cached_store = us_create_default_ca_store();
   
-  // Fast path: if store exists, just increment ref count and return
-  X509_STORE *store = std::atomic_load(&cached_store);
-  if (store != NULL) {
-    // X509_STORE_up_ref is thread-safe according to BoringSSL docs
-    X509_STORE_up_ref(store);
-    return store;
+  // Return a new reference to the cached store
+  // X509_STORE_up_ref is thread-safe according to BoringSSL docs
+  if (cached_store != NULL) {
+    X509_STORE_up_ref(cached_store);
   }
   
-  // Slow path: need to create the store (only happens once)
-  while (atomic_flag_test_and_set_explicit(&store_lock, std::memory_order_acquire))
-    ;
-  
-  // Double-check after acquiring lock
-  store = std::atomic_load(&cached_store);
-  if (store == NULL) {
-    store = us_create_default_ca_store();
-    if (store != NULL) {
-      // Store keeps one reference for the cache
-      // Caller gets another reference via up_ref below
-      X509_STORE_up_ref(store);
-      std::atomic_store(&cached_store, store);
-    }
-  } else {
-    // Someone else created it while we waited
-    X509_STORE_up_ref(store);
-  }
-  
-  atomic_flag_clear_explicit(&store_lock, std::memory_order_release);
-  
-  return store;
+  return cached_store;
 }
 extern "C" const char *us_get_default_ciphers() {
   return DEFAULT_CIPHER_LIST;

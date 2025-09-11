@@ -315,6 +315,10 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, us_socket_context_r
 struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, us_socket_context_r context,
     const char *path, size_t pathlen, int options, int socket_ext_size, int* error);
 
+/* Listen on an existing file descriptor (for systemd socket activation) */
+struct us_listen_socket_t *us_socket_context_listen_from_fd(int ssl, us_socket_context_r context,
+    LIBUS_SOCKET_DESCRIPTOR fd, int options, int socket_ext_size);
+
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_decl;
 

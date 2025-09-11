@@ -1596,6 +1596,15 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
                                            socket_ext_size, error);
 }
 
+struct us_listen_socket_t *us_internal_ssl_socket_context_listen_from_fd(
+    struct us_internal_ssl_socket_context_t *context, LIBUS_SOCKET_DESCRIPTOR fd,
+    int options, int socket_ext_size) {
+  return us_socket_context_listen_from_fd(0, &context->sc, fd, options,
+                                          sizeof(struct us_internal_ssl_socket_t) -
+                                              sizeof(struct us_socket_t) +
+                                              socket_ext_size);
+}
+
 // https://github.com/oven-sh/bun/issues/16995
 static void us_internal_zero_ssl_data_for_connected_socket_before_onopen(struct us_internal_ssl_socket_t *s) {
   s->ssl = NULL;

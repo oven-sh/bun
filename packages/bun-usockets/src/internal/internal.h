@@ -408,6 +408,10 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     us_internal_ssl_socket_context_r context, const char *path,
     size_t pathlen, int options, int socket_ext_size, int* error);
 
+struct us_listen_socket_t *us_internal_ssl_socket_context_listen_from_fd(
+    us_internal_ssl_socket_context_r context, LIBUS_SOCKET_DESCRIPTOR fd,
+    int options, int socket_ext_size);
+
 struct us_socket_t *us_internal_ssl_socket_context_connect(
     us_internal_ssl_socket_context_r context, const char *host,
     int port, int options, int socket_ext_size, int* is_resolved);

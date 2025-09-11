@@ -317,7 +317,7 @@ pub fn getConnected(this: *MySQLConnection, _: *jsc.JSGlobalObject) JSValue {
 pub fn doClose(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalObject;
     this.disconnect();
-    this.poll_ref.disable();
+
     this.write_buffer.clearAndFree(bun.default_allocator);
 
     return .js_undefined;
@@ -434,10 +434,7 @@ pub fn fail(this: *MySQLConnection, message: []const u8, err: AnyMySQLError.Erro
 pub fn onClose(this: *MySQLConnection) void {
     this.poll_ref.disable();
 
-    if (this.status == .connected) {
-        this.setStatus(.disconnected);
-    }
-
+    this.setStatus(.disconnected);
     this.fail("Connection closed", error.ConnectionClosed);
     this.updateHasPendingActivity();
 }
@@ -448,6 +445,7 @@ fn closeWithReason(this: *@This(), js_reason: ?jsc.JSValue) void {
 }
 
 pub fn disconnect(this: *@This()) void {
+    this.poll_ref.disable();
     this.stopTimers();
     this.cleanUpRequests(null);
     this.socket.close();

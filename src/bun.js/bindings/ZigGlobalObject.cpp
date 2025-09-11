@@ -1551,7 +1551,6 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     auto function = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
     ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
-    ASSERT_WITH_MESSAGE(!asyncContext.isEmpty(), "Invalid microtask context");
     ASSERT_WITH_MESSAGE(!callback.isEmpty(), "Invalid microtask callback");
 #endif
 

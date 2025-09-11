@@ -146,11 +146,12 @@ pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.
     const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
     const event_loop = vm.eventLoop();
     const tag = CommandTag.init(command_tag_str);
-
+    const js_tag = tag.toJSTag(globalObject) catch |e| return globalObject.reportActiveExceptionAsUnhandled(e);
+    js_tag.ensureStillAlive();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
         consumePendingValue(thisValue, globalObject) orelse .js_undefined,
-        tag.toJSTag(globalObject),
+        js_tag,
         tag.toJSNumber(),
         if (connection == .zero) .js_undefined else PostgresSQLConnection.js.queriesGetCached(connection) orelse .js_undefined,
         JSValue.jsBoolean(is_last),

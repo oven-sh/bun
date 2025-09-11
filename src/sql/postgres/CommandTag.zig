@@ -29,7 +29,7 @@ pub const CommandTag = union(enum) {
 
     other: []const u8,
 
-    pub fn toJSTag(this: CommandTag, globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn toJSTag(this: CommandTag, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return switch (this) {
             .INSERT => JSValue.jsNumber(1),
             .DELETE => JSValue.jsNumber(2),

@@ -220,11 +220,11 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
 
     const event_loop = vm.eventLoop();
     const tag: CommandTag = .{ .SELECT = result_count };
-
+    const js_tag = tag.toJSTag(globalObject) catch |e| return globalObject.reportActiveExceptionAsUnhandled(e);
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
         consumePendingValue(thisValue, globalObject) orelse .js_undefined,
-        tag.toJSTag(globalObject),
+        js_tag,
         tag.toJSNumber(),
         queries_array,
         JSValue.jsBoolean(is_last),

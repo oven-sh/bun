@@ -1925,7 +1925,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                     this.fail("Invalid request state: thisValue is null", error.InvalidState);
                     return error.InvalidState;
                 };
-                
+
                 // Validate the thisValue is still a valid cell
                 if (this_value.isEmptyOrUndefinedOrNull() or !this_value.isCell()) {
                     this.fail("Invalid request state: thisValue is not a valid cell", error.InvalidState);

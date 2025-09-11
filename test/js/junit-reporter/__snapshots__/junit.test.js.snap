@@ -60,12 +60,12 @@ exports[`junit reporter more scenarios 2`] = `
 <testsuites name="bun test" tests="22" assertions="1" failures="0" skipped="21">
   <testsuite name="comprehensive.test.js" file="comprehensive.test.js" tests="22" assertions="1" failures="0" skipped="21">
     <testsuite name="comprehensive test suite" file="comprehensive.test.js" line="4" tests="22" assertions="1" failures="0" skipped="21">
-      <testsuite name="division suite 10 / 5" file="comprehensive.test.js" tests="1" assertions="0" failures="0" skipped="1">
+      <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="5" tests="1" assertions="0" failures="0" skipped="1">
         <testcase name="should divide correctly" classname="division suite 10 / 5 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
           <skipped />
         </testcase>
       </testsuite>
-      <testsuite name="division suite 20 / 10" file="comprehensive.test.js" tests="1" assertions="0" failures="0" skipped="1">
+      <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="5" tests="1" assertions="0" failures="0" skipped="1">
         <testcase name="should divide correctly" classname="division suite 20 / 10 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
           <skipped />
         </testcase>

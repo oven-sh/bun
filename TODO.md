@@ -515,6 +515,7 @@ $> bun-after test hook-timeouts
 
 # Follow-up:
 
+- [ ] consider using a jsc Bound Function rather than callback with args. bound functions allow adding arguments.
 - [ ] consider modifying the junit reporter to print the whole describe tree at the end instead of trying to output as test results come in. and move it into its own file.
 - [ ] strong.list should only have one jsvalue (or be removed fully)
 - [ ] expect_call_count/expect_assertions is confusing. rename to `expect_calls`, `assert_expect_calls`. or something.

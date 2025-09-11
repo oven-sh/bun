@@ -645,11 +645,7 @@ pub const BaseScope = struct {
     test_id_for_debugger: i32,
     /// only available if using junit reporter, otherwise 0
     line_no: u32,
-    pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope, has_callback: bool, allow_update_parent: bool) BaseScope {
-        if (allow_update_parent) {
-            if (this.self_only and parent != null) parent.?.markContainsOnly(); // TODO: this is a bad thing to have in an init function.
-            if (has_callback and parent != null) parent.?.markHasCallback(); // TODO: these should be moved to their own pass rather than in an init function.
-        }
+    pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope, has_callback: bool) BaseScope {
         return .{
             .parent = parent,
             .name = if (name_not_owned) |name| gpa.dupe(u8, name) catch bun.outOfMemory() else null,
@@ -660,6 +656,13 @@ pub const BaseScope = struct {
             .test_id_for_debugger = this.test_id_for_debugger,
             .line_no = this.line_no,
         };
+    }
+    pub fn propagate(this: *BaseScope, has_callback: bool) void {
+        this.has_callback = has_callback;
+        if (this.parent) |parent| {
+            if (this.only != .no) parent.markContainsOnly();
+            if (this.has_callback) parent.markHasCallback();
+        }
     }
     pub fn deinit(this: BaseScope, gpa: std.mem.Allocator) void {
         if (this.name) |name| gpa.free(name);
@@ -719,12 +722,14 @@ pub const DescribeScope = struct {
         }
     }
     pub fn appendDescribe(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, base: BaseScopeCfg) bun.JSError!*DescribeScope {
-        const child = create(gpa, .init(base, gpa, name_not_owned, this, false, true));
+        const child = create(gpa, .init(base, gpa, name_not_owned, this, false));
+        child.base.propagate(false);
         try this.entries.append(.{ .describe = child });
         return child;
     }
     pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?CallbackWithArgs, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base, true);
+        const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base);
+        entry.base.propagate(entry.callback != null);
         try this.entries.append(.{ .test_callback = entry });
         return entry;
     }
@@ -740,7 +745,7 @@ pub const DescribeScope = struct {
     pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
         var callback_with_args: ?CallbackWithArgs = if (callback) |c| .init(gpa, c, &.{}) else null;
         defer if (callback_with_args) |*c| c.deinit(gpa);
-        const entry = try ExecutionEntry.create(gpa, null, callback_with_args, cfg, this, base, false);
+        const entry = try ExecutionEntry.create(gpa, null, callback_with_args, cfg, this, base);
         try this.getHookEntries(tag).append(entry);
         return entry;
     }
@@ -762,13 +767,24 @@ pub const ExecutionEntry = struct {
     /// when the timeout completes, any items with a timespec < now will have their timespec reset to .epoch
     timespec: bun.timespec = .epoch,
 
-    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg, allow_update_parent: bool) bun.JSError!*ExecutionEntry {
+    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
         const entry = bun.create(gpa, ExecutionEntry, .{
-            .base = .init(base, gpa, name_not_owned, parent, cb != null, allow_update_parent),
-            .callback = if (cb) |c| c.dupe(gpa) else null,
+            .base = .init(base, gpa, name_not_owned, parent, cb != null),
+            .callback = null,
             .timeout = cfg.timeout,
             .has_done_parameter = cfg.has_done_parameter,
         });
+
+        if (cb) |c| {
+            entry.callback = switch (entry.base.mode) {
+                .skip => null,
+                .todo => blk: {
+                    const run_todo = if (bun.jsc.Jest.Jest.runner) |runner| runner.run_todo else false;
+                    break :blk if (run_todo) c.dupe(gpa) else null;
+                },
+                else => c.dupe(gpa),
+            };
+        }
         return entry;
     }
     pub fn destroy(this: *ExecutionEntry, gpa: std.mem.Allocator) void {

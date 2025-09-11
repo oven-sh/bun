@@ -67,11 +67,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     const bunTest = try describe2.js_fns.getActive(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
 
     const callback_mode: CallbackMode = switch (this.cfg.self_mode) {
-        .skip => .ignore,
-        .todo => blk: {
-            const run_todo = if (bun.jsc.Jest.Jest.runner) |runner| runner.run_todo else false;
-            break :blk if (run_todo) .allow else .ignore;
-        },
+        .skip, .todo => .allow,
         else => .require,
     };
 
@@ -239,7 +235,7 @@ const ParseArgumentsResult = struct {
         if (this.description) |str| gpa.free(str);
     }
 };
-pub const CallbackMode = enum { require, allow, ignore };
+pub const CallbackMode = enum { require, allow };
 
 fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
     const is_valid_description =
@@ -289,9 +285,7 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
 
     const description, const callback, const options = .{ a1, a2, a3 };
 
-    const result_callback: ?jsc.JSValue = if (cfg.callback == .ignore) blk: {
-        break :blk null;
-    } else if (cfg.callback != .require and callback.isUndefinedOrNull()) blk: {
+    const result_callback: ?jsc.JSValue = if (cfg.callback != .require and callback.isUndefinedOrNull()) blk: {
         break :blk null;
     } else if (callback.isFunction()) blk: {
         break :blk callback.withAsyncContextIfNeeded(globalThis);

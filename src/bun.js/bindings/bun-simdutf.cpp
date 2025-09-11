@@ -28,10 +28,106 @@ bool simdutf__validate_ascii(const char* buf, size_t len)
     return simdutf::validate_ascii(buf, len);
 }
 
-SIMDUTFResult simdutf__validate_ascii_with_errors(const char* buf, size_t len)
+SIMDUTFResult simdutf__validate_ascii_with_errors(const unsigned char* buf, size_t len)
 {
-    auto res = simdutf::validate_ascii_with_errors(buf, len);
-    return { res.error, res.count };
+    switch (len) {
+    case 0:
+        return { 0, 0 };
+    case 1:
+        return { buf[0] < 128 ? 0 : 1, buf[0] < 128 ? 1ull : 0ull };
+    case 2: {
+        const uint16_t value = *(uint16_t*)buf;
+        const uint16_t mask = value & 0x8080;
+        if (mask == 0) {
+            return { 0, 2 };
+        }
+        const size_t pos = (__builtin_ffs(mask) - 1) / 8;
+        return { 1, pos };
+    }
+    case 3: {
+        const uint16_t value = *(uint16_t*)buf;
+        const uint16_t mask = value & 0x8080;
+        if (mask == 0) {
+            if (buf[2] >= 128) {
+                return { 1, 2 };
+            }
+            return { 0, 3 };
+        }
+        const size_t pos = (__builtin_ffs(mask) - 1) / 8;
+        return { 1, pos };
+    }
+    case 4: {
+        const uint32_t value = *(uint32_t*)buf;
+        const uint32_t mask = value & 0x80808080;
+        if (mask == 0) {
+            return { 0, 4 };
+        }
+        const size_t pos = (__builtin_ffs(mask) - 1) / 8;
+        return { 1, pos };
+    }
+    case 5: {
+        // Check first 4 bytes
+        const uint32_t first_four = *(uint32_t*)buf;
+        const uint32_t mask = first_four & 0x80808080;
+        if (mask != 0) {
+            const size_t pos = (__builtin_ffs(mask) - 1) / 8;
+            return { 1, pos };
+        }
+        // Check remaining byte
+        if (buf[4] >= 128) {
+            return { 1, 4 };
+        }
+        return { 0, 5 };
+    }
+    case 6: {
+        // Check first 4 bytes
+        const uint32_t first_four = *(uint32_t*)buf;
+        const uint32_t mask_first = first_four & 0x80808080;
+        if (mask_first != 0) {
+            const size_t pos = (__builtin_ffs(mask_first) - 1) / 8;
+            return { 1, pos };
+        }
+
+        // Check last 2 bytes
+        const uint16_t last_two = *(uint16_t*)(buf + 4);
+        const uint16_t mask_last = last_two & 0x8080;
+        if (mask_last != 0) {
+            const size_t pos = (__builtin_ffs(mask_last) - 1) / 8;
+            return { 1, pos + 4 };
+        }
+
+        return { 0, 6 };
+    }
+    case 7: {
+        // Check first 4 bytes
+        const uint32_t first_four = *(uint32_t*)buf;
+        const uint32_t mask = first_four & 0x80808080;
+        if (mask != 0) {
+            const size_t pos = (__builtin_ffs(mask) - 1) / 8;
+            return { 1, pos };
+        }
+        // Check remaining bytes
+        for (size_t i = 4; i < 7; i++) {
+            if (buf[i] >= 128) {
+                return { 1, i };
+            }
+        }
+        return { 0, 7 };
+    }
+    case 8: {
+        const uint64_t value = *(uint64_t*)buf;
+        const uint64_t mask = value & 0x8080808080808080ULL;
+        if (mask == 0) {
+            return { 0, 8 };
+        }
+        const size_t pos = (__builtin_ffsll(mask) - 1) / 8;
+        return { 1, pos };
+    }
+    default: {
+        auto res = simdutf::validate_ascii_with_errors((const char*)buf, len);
+        return { res.error, res.count };
+    }
+    }
 }
 
 bool simdutf__validate_utf16le(const char16_t* buf, size_t len)

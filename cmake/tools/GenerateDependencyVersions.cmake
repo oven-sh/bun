@@ -49,143 +49,27 @@ function(generate_dependency_versions_header)
   endif()
   list(APPEND DEPENDENCY_VERSIONS "WEBKIT" "${WEBKIT_VERSION_STR}")
   
-  # Read versions from generated_versions_list.zig if it exists
-  set(GENERATED_VERSIONS_FILE "${CMAKE_SOURCE_DIR}/src/generated_versions_list.zig")
-  
   # Track input files so CMake reconfigures when they change
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${GENERATED_VERSIONS_FILE}"
     "${CMAKE_SOURCE_DIR}/package.json"
     "${VENDOR_PATH}/libdeflate/libdeflate.h"
     "${VENDOR_PATH}/zlib/zlib.h"
     "${DEPS_PATH}/zstd/lib/zstd.h"
   )
   
-  if(EXISTS "${GENERATED_VERSIONS_FILE}")
-    file(READ "${GENERATED_VERSIONS_FILE}" VERSIONS_CONTENT)
-    
-    # Extract boringssl version
-    if(VERSIONS_CONTENT MATCHES "pub const boringssl = \"([^\"]+)\"")
-      set(BORINGSSL_VERSION "${CMAKE_MATCH_1}")
-    else()
-      set(BORINGSSL_VERSION "29a2cd359458c9384694b75456026e4b57e3e567")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "BORINGSSL" "${BORINGSSL_VERSION}")
-    
-    # Extract c_ares version
-    if(VERSIONS_CONTENT MATCHES "pub const c_ares = \"([^\"]+)\"")
-      set(C_ARES_VERSION "${CMAKE_MATCH_1}")
-    else()
-      set(C_ARES_VERSION "d1722e6e8acaf10eb73fa995798a9cd421d9f85e")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "C_ARES" "${C_ARES_VERSION}")
-    
-    # Extract libarchive version
-    if(VERSIONS_CONTENT MATCHES "pub const libarchive = \"([^\"]+)\"")
-      set(LIBARCHIVE_VERSION "${CMAKE_MATCH_1}")
-    else()
-      set(LIBARCHIVE_VERSION "898dc8319355b7e985f68a9819f182aaed61b53a")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "LIBARCHIVE" "${LIBARCHIVE_VERSION}")
-    
-    # Extract libdeflate version
-    if(VERSIONS_CONTENT MATCHES "pub const libdeflate = \"([^\"]+)\"")
-      set(LIBDEFLATE_VERSION_HASH "${CMAKE_MATCH_1}")
-    else()
-      set(LIBDEFLATE_VERSION_HASH "dc76454a39e7e83b68c3704b6e3784654f8d5ac5")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "LIBDEFLATE_HASH" "${LIBDEFLATE_VERSION_HASH}")
-    
-    # Extract lolhtml version
-    if(VERSIONS_CONTENT MATCHES "pub const lolhtml = \"([^\"]+)\"")
-      set(LOLHTML_VERSION "${CMAKE_MATCH_1}")
-    else()
-      set(LOLHTML_VERSION "8d4c273ded322193d017042d1f48df2766b0f88b")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "LOLHTML" "${LOLHTML_VERSION}")
-    
-    # Extract lshpack version
-    if(VERSIONS_CONTENT MATCHES "pub const lshpack = \"([^\"]+)\"")
-      set(LSHPACK_VERSION "${CMAKE_MATCH_1}")
-    else()
-      set(LSHPACK_VERSION "3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "LSHPACK" "${LSHPACK_VERSION}")
-    
-    # Extract mimalloc version
-    if(VERSIONS_CONTENT MATCHES "pub const mimalloc = \"([^\"]+)\"")
-      set(MIMALLOC_VERSION "${CMAKE_MATCH_1}")
-    else()
-      set(MIMALLOC_VERSION "4c283af60cdae205df5a872530c77e2a6a307d43")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "MIMALLOC" "${MIMALLOC_VERSION}")
-    
-    # Extract picohttpparser version
-    if(VERSIONS_CONTENT MATCHES "pub const picohttpparser = \"([^\"]+)\"")
-      set(PICOHTTPPARSER_VERSION "${CMAKE_MATCH_1}")
-    else()
-      set(PICOHTTPPARSER_VERSION "066d2b1e9ab820703db0837a7255d92d30f0c9f5")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "PICOHTTPPARSER" "${PICOHTTPPARSER_VERSION}")
-    
-    # Extract tinycc version
-    if(VERSIONS_CONTENT MATCHES "pub const tinycc = \"([^\"]+)\"")
-      set(TINYCC_VERSION "${CMAKE_MATCH_1}")
-    else()
-      set(TINYCC_VERSION "ab631362d839333660a265d3084d8ff060b96753")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "TINYCC" "${TINYCC_VERSION}")
-    
-    # Extract zlib version
-    if(VERSIONS_CONTENT MATCHES "pub const zlib = \"([^\"]+)\"")
-      set(ZLIB_VERSION_HASH "${CMAKE_MATCH_1}")
-    else()
-      set(ZLIB_VERSION_HASH "886098f3f339617b4243b286f5ed364b9989e245")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "ZLIB_HASH" "${ZLIB_VERSION_HASH}")
-    
-    # Extract zstd version
-    if(VERSIONS_CONTENT MATCHES "pub const zstd = \"([^\"]+)\"")
-      set(ZSTD_VERSION_HASH "${CMAKE_MATCH_1}")
-    else()
-      set(ZSTD_VERSION_HASH "794ea1b0afca0f020f4e57b6732332231fb23c70")
-    endif()
-    list(APPEND DEPENDENCY_VERSIONS "ZSTD_HASH" "${ZSTD_VERSION_HASH}")
-  else()
-    # Fallback to trying git commands
-    get_git_tree_hash("boringssl" BORINGSSL_VERSION)
-    list(APPEND DEPENDENCY_VERSIONS "BORINGSSL" "${BORINGSSL_VERSION}")
-    
-    get_git_tree_hash("c-ares" C_ARES_VERSION)
-    list(APPEND DEPENDENCY_VERSIONS "C_ARES" "${C_ARES_VERSION}")
-    
-    get_git_tree_hash("libarchive" LIBARCHIVE_VERSION)
-    list(APPEND DEPENDENCY_VERSIONS "LIBARCHIVE" "${LIBARCHIVE_VERSION}")
-    
-    get_git_tree_hash("libdeflate" LIBDEFLATE_VERSION_HASH)
-    list(APPEND DEPENDENCY_VERSIONS "LIBDEFLATE_HASH" "${LIBDEFLATE_VERSION_HASH}")
-    
-    get_git_tree_hash("lol-html" LOLHTML_VERSION)
-    list(APPEND DEPENDENCY_VERSIONS "LOLHTML" "${LOLHTML_VERSION}")
-    
-    get_git_tree_hash("ls-hpack" LSHPACK_VERSION)
-    list(APPEND DEPENDENCY_VERSIONS "LSHPACK" "${LSHPACK_VERSION}")
-    
-    get_git_tree_hash("mimalloc" MIMALLOC_VERSION)
-    list(APPEND DEPENDENCY_VERSIONS "MIMALLOC" "${MIMALLOC_VERSION}")
-    
-    get_git_tree_hash("picohttpparser" PICOHTTPPARSER_VERSION)
-    list(APPEND DEPENDENCY_VERSIONS "PICOHTTPPARSER" "${PICOHTTPPARSER_VERSION}")
-    
-    get_git_tree_hash("tinycc" TINYCC_VERSION)
-    list(APPEND DEPENDENCY_VERSIONS "TINYCC" "${TINYCC_VERSION}")
-    
-    get_git_tree_hash("zlib" ZLIB_VERSION_HASH)
-    list(APPEND DEPENDENCY_VERSIONS "ZLIB_HASH" "${ZLIB_VERSION_HASH}")
-    
-    get_git_tree_hash("zstd" ZSTD_VERSION_HASH)
-    list(APPEND DEPENDENCY_VERSIONS "ZSTD_HASH" "${ZSTD_VERSION_HASH}")
-  endif()
+  # Hardcoded dependency versions (previously from generated_versions_list.zig)
+  # These are the commit hashes/tree objects for each dependency
+  list(APPEND DEPENDENCY_VERSIONS "BORINGSSL" "29a2cd359458c9384694b75456026e4b57e3e567")
+  list(APPEND DEPENDENCY_VERSIONS "C_ARES" "d1722e6e8acaf10eb73fa995798a9cd421d9f85e")
+  list(APPEND DEPENDENCY_VERSIONS "LIBARCHIVE" "898dc8319355b7e985f68a9819f182aaed61b53a")
+  list(APPEND DEPENDENCY_VERSIONS "LIBDEFLATE_HASH" "dc76454a39e7e83b68c3704b6e3784654f8d5ac5")
+  list(APPEND DEPENDENCY_VERSIONS "LOLHTML" "8d4c273ded322193d017042d1f48df2766b0f88b")
+  list(APPEND DEPENDENCY_VERSIONS "LSHPACK" "3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0")
+  list(APPEND DEPENDENCY_VERSIONS "MIMALLOC" "4c283af60cdae205df5a872530c77e2a6a307d43")
+  list(APPEND DEPENDENCY_VERSIONS "PICOHTTPPARSER" "066d2b1e9ab820703db0837a7255d92d30f0c9f5")
+  list(APPEND DEPENDENCY_VERSIONS "TINYCC" "ab631362d839333660a265d3084d8ff060b96753")
+  list(APPEND DEPENDENCY_VERSIONS "ZLIB_HASH" "886098f3f339617b4243b286f5ed364b9989e245")
+  list(APPEND DEPENDENCY_VERSIONS "ZSTD_HASH" "794ea1b0afca0f020f4e57b6732332231fb23c70")
   
   # Extract semantic versions from header files where available
   extract_version_from_header(
@@ -240,6 +124,10 @@ function(generate_dependency_versions_header)
   endif()
   list(APPEND DEPENDENCY_VERSIONS "UWS" "${BUN_GIT_SHA}")
   list(APPEND DEPENDENCY_VERSIONS "USOCKETS" "${BUN_GIT_SHA}")
+  
+  # Zig version - hardcoded for now, can be updated as needed
+  # This should match the version of Zig used to build Bun
+  list(APPEND DEPENDENCY_VERSIONS "ZIG" "0.14.1")
   
   # Generate the header file content
   set(HEADER_CONTENT "// This file is auto-generated by CMake. Do not edit manually.\n")

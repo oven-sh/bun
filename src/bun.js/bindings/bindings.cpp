@@ -37,6 +37,7 @@
 #include "JavaScriptCore/JSArrayInlines.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
+#include "JavaScriptCore/OrderedHashTableHelper.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -6436,11 +6437,20 @@ CPP_DECL JSC::EncodedJSValue JSC__JSMap__create(JSC::JSGlobalObject* arg0)
     JSC::JSMap* map = JSC::JSMap::create(arg0->vm(), arg0->mapStructure());
     return JSC::JSValue::encode(map);
 }
-CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSMap__get_(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+
+// zero means "not found" or an exception was thrown
+CPP_DECL JSC::EncodedJSValue JSC__JSMap__get(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
+    auto& vm = arg1->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSC::JSValue value = JSC::JSValue::decode(JSValue2);
 
-    return JSC::JSValue::encode(map->get(arg1, value));
+    JSValue entryValue = map->getImpl(arg1, [&](OrderedHashMap::Storage& storage) ALWAYS_INLINE_LAMBDA {
+        return OrderedHashMap::Helper::find(arg1, storage, value);
+    });
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(entryValue));
 }
 CPP_DECL [[ZIG_EXPORT(nothrow)]] bool JSC__JSMap__has(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
@@ -6455,6 +6465,11 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] bool JSC__JSMap__remove(JSC::JSMap* map, JSC::J
 CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3)
 {
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
+}
+
+CPP_DECL [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+{
+    return map->size();
 }
 
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)

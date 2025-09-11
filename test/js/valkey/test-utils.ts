@@ -455,9 +455,9 @@ import { tmpdir } from "os";
  * Create a new client with specific connection type
  */
 export function createClient(
-    connectionType: ConnectionType = ConnectionType.TCP,
-    customOptions = {},
-    dbId: number | undefined = undefined,
+  connectionType: ConnectionType = ConnectionType.TCP,
+  customOptions = {},
+  dbId: number | undefined = undefined,
 ) {
   let url: string;
   const mkUrl = (baseUrl: string) => dbId ? `${baseUrl}/${dbId}`: baseUrl;
@@ -765,6 +765,14 @@ async function getRedisContainerName(): Promise<string> {
 
 /**
  * Restart the Redis container to simulate connection drop
+ *
+ * Restarts the container identified by the test harness and waits briefly for it
+ * to come back online (approximately 2 seconds). Use this to simulate a server
+ * restart or connection drop during tests.
+ *
+ * @returns A promise that resolves when the restart and short wait complete.
+ * @throws If the Docker restart command exits with a non-zero code; the error
+ *         message includes the container's stderr output.
  */
 export async function restartRedisContainer(): Promise<void> {
   const containerName = await getRedisContainerName();
@@ -788,4 +796,11 @@ export async function restartRedisContainer(): Promise<void> {
   await delay(2000);
 
   console.log(`Redis container restarted: ${containerName}`);
+}
+
+/**
+ * @returns true or false with approximately equal probability
+ */
+export function randomCoinFlip(): boolean {
+  return Math.floor(Math.random() * 2) == 0;
 }

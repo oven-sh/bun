@@ -1090,6 +1090,11 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
+#if ASSERT_ENABLED
+    if (!result.isEmpty() && result.isCell()) {
+      JSC::Integrity::auditCellFully(vm, result.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }`.trim(),
           );
@@ -1131,6 +1136,11 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
+#if ASSERT_ENABLED
+    if (!result.isEmpty() && result.isCell()) {
+      JSC::Integrity::auditCellFully(vm, result.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 `.trim(),
@@ -1152,6 +1162,12 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
       !!proto[name].this ? " encodedThisValue, " : ""
     } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, result);
 }
         `);
@@ -1171,6 +1187,12 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
       !!proto[name].this ? " encodedThisValue, " : ""
     } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, result);
 }
               `);
@@ -1186,10 +1208,9 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    auto result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
+    bool result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
     } lexicalGlobalObject, encodedValue);
-
     RELEASE_AND_RETURN(throwScope, result);
 }
 `,
@@ -1269,6 +1290,13 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
         : std::optional<JSC::JSType>(std::nullopt);
     }`
     }
+
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
 
     return result;
 #endif
@@ -2385,6 +2413,9 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #define JSC_CALLCONV "C" SYSV_ABI
 #endif
 
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
+#endif
 
 `;
 

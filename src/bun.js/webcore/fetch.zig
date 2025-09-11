@@ -407,14 +407,14 @@ pub const FetchTasklet = struct {
             if (readable.ptr == .Bytes) {
                 readable.ptr.Bytes.size_hint = this.getSizeHint();
                 // body can be marked as used but we still need to pipe the data
-                const scheduled_response_buffer = this.scheduled_response_buffer.list;
+                const scheduled_response_buffer = &this.scheduled_response_buffer.list;
 
                 const chunk = scheduled_response_buffer.items;
 
                 if (this.result.has_more) {
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary = bun.ByteList.initConst(chunk),
+                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -424,16 +424,9 @@ pub const FetchTasklet = struct {
                     defer prev.deinit();
                     buffer_reset = false;
                     this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
-                    this.scheduled_response_buffer = .{
-                        .allocator = bun.default_allocator,
-                        .list = .{
-                            .items = &.{},
-                            .capacity = 0,
-                        },
-                    };
                     readable.ptr.Bytes.onData(
                         .{
-                            .owned_and_done = bun.ByteList.initConst(chunk),
+                            .owned_and_done = bun.ByteList.moveFromList(scheduled_response_buffer),
                         },
                         bun.default_allocator,
                     );
@@ -456,7 +449,7 @@ pub const FetchTasklet = struct {
                         if (this.result.has_more) {
                             readable.ptr.Bytes.onData(
                                 .{
-                                    .temporary = bun.ByteList.initConst(chunk),
+                                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                                 },
                                 bun.default_allocator,
                             );
@@ -468,7 +461,7 @@ pub const FetchTasklet = struct {
                             readable.value.ensureStillAlive();
                             readable.ptr.Bytes.onData(
                                 .{
-                                    .temporary_and_done = bun.ByteList.initConst(chunk),
+                                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                                 },
                                 bun.default_allocator,
                             );

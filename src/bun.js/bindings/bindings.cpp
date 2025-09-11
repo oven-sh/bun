@@ -4897,6 +4897,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                             current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
 
                             current.remapped = true;
+                            current.is_async = frame.isAsync;
 
                             if (frame.isConstructor) {
                                 current.code_type = ZigStackFrameCodeConstructor;

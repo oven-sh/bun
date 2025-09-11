@@ -77,7 +77,8 @@ pub fn create(globalThis: *JSGlobalObject) JSValue {
     var done_callback = globalThis.bunVM().allocator.create(DoneCallback) catch bun.outOfMemory();
     done_callback.* = .{ .ref = null };
 
-    const value = done_callback.toJS(globalThis);
+    var done_callback_copy = bun.String.static("done");
+    const value = done_callback.toJS(globalThis, 1, &done_callback_copy);
     value.ensureStillAlive();
     return value;
 }

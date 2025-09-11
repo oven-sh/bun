@@ -129,18 +129,18 @@ pub const Jest = struct {
     pub fn createTestModule(globalObject: *JSGlobalObject) JSValue {
         const module = JSValue.createEmptyObject(globalObject, 14);
 
-        const test_scope_functions = describe2.ScopeFunctions.create(globalObject, .@"test", .zero, .{});
+        const test_scope_functions = describe2.ScopeFunctions.create(globalObject, .@"test", .zero, .{}, describe2.ScopeFunctions.strings.@"test");
         module.put(globalObject, ZigString.static("test"), test_scope_functions);
         module.put(globalObject, ZigString.static("it"), test_scope_functions);
 
-        const xtest_scope_functions = describe2.ScopeFunctions.create(globalObject, .@"test", .zero, .{ .self_mode = .skip });
+        const xtest_scope_functions = describe2.ScopeFunctions.create(globalObject, .@"test", .zero, .{ .self_mode = .skip }, describe2.ScopeFunctions.strings.xtest);
         module.put(globalObject, ZigString.static("xtest"), xtest_scope_functions);
         module.put(globalObject, ZigString.static("xit"), xtest_scope_functions);
 
-        const describe_scope_functions = describe2.ScopeFunctions.create(globalObject, .describe, .zero, .{});
+        const describe_scope_functions = describe2.ScopeFunctions.create(globalObject, .describe, .zero, .{}, describe2.ScopeFunctions.strings.describe);
         module.put(globalObject, ZigString.static("describe"), describe_scope_functions);
 
-        const xdescribe_scope_functions = describe2.ScopeFunctions.create(globalObject, .describe, .zero, .{ .self_mode = .skip });
+        const xdescribe_scope_functions = describe2.ScopeFunctions.create(globalObject, .describe, .zero, .{ .self_mode = .skip }, describe2.ScopeFunctions.strings.xdescribe);
         module.put(globalObject, ZigString.static("xdescribe"), xdescribe_scope_functions);
 
         module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, describe2.js_fns.genericHook(.beforeEach).hookFn, false));

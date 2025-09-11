@@ -1790,10 +1790,10 @@ JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }
 
-extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {
+extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr${obj.instanceCallable ? `, unsigned int length, BunString* name` : ``}) {
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.instanceCallable ? `, 1, "${name}"_s` : ``});
+  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.instanceCallable ? `, length, name->toWTFString()` : ``});
   ${
     obj.estimatedSize
       ? `
@@ -2286,14 +2286,14 @@ pub const ${className(typeName)} = struct {
       !overridesToJS
         ? `
     /// Create a new instance of ${typeName}
-    pub fn toJS(this: *${typeName}, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *${typeName}, globalObject: *jsc.JSGlobalObject${instanceCallable ? `, length: c_uint, name: *bun.String` : ``}) jsc.JSValue {
         if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
         if (comptime Environment.allow_assert) {
-            const value__ = ${symbolName(typeName, "create")}(globalObject, this);
+            const value__ = ${symbolName(typeName, "create")}(globalObject, this${instanceCallable ? `, length, name` : ``});
             @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
-            return ${symbolName(typeName, "create")}(globalObject, this);
+            return ${symbolName(typeName, "create")}(globalObject, this${instanceCallable ? `, length, name` : ``});
         }
     }`
         : ""
@@ -2314,7 +2314,7 @@ pub const ${className(typeName)} = struct {
     extern fn ${symbolName(typeName, "fromJS")}(jsc.JSValue) callconv(jsc.conv) ?*${typeName};
     extern fn ${symbolName(typeName, "fromJSDirect")}(jsc.JSValue) callconv(jsc.conv) ?*${typeName};
     extern fn ${symbolName(typeName, "getConstructor")}(*jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
-    extern fn ${symbolName(typeName, "create")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}) callconv(jsc.conv) jsc.JSValue;
+    extern fn ${symbolName(typeName, "create")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}${instanceCallable ? `, length: c_uint, name: *bun.String` : ``}) callconv(jsc.conv) jsc.JSValue;
 
     /// Create a new instance of ${typeName} without validating it works.
     pub const toJSUnchecked = ${symbolName(typeName, "create")};

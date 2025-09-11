@@ -837,7 +837,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     JSC::EncodedJSValue encodedValue)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
-    JSC::JSObject* target = JSC::JSValue::decode(encodedTarget).getObject();
+    JSC::JSValue targetValue = JSC::JSValue::decode(encodedTarget);
+    JSC::JSObject* target = targetValue.getObject();
+    if (!target) {
+        scope.throwException(global, createTypeError(global, "Target must be an object"_s));
+        return {};
+    }
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue newValue = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();

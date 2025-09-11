@@ -34,10 +34,10 @@ static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugStack);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugTask);
 
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*);
-extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*) SYSV_ABI;
-extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*) SYSV_ABI;
-extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*) SYSV_ABI;
-extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructRedirect(JSC::JSGlobalObject*, JSC::CallFrame*) SYSV_ABI;
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructRedirect(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 
 bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)

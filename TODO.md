@@ -296,7 +296,7 @@ Regular:
 - [x] test/regression/issue/18159/18159.test.ts
 - [ ] test/js/node/process/process-nexttick.test.js
 - [ ] test/js/bun/test/describe2.test.ts
-- [ ] test/js/bun/net/tcp-server.test.ts
+- [x] test/js/bun/net/tcp-server.test.ts
 - [ ] test/js/node/test_runner/node-test.test.ts
 - [ ] (flaky) test/bundler/bundler_compile.test.ts
 - [ ] (flaky) test/js/bun/http/serve.test.ts

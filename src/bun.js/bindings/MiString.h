@@ -2,7 +2,6 @@
 #include "root.h"
 #include <mimalloc.h>
 
-
 struct MiCString {
     const char* ptr;
     size_t length;

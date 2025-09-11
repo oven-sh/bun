@@ -265,6 +265,8 @@ pub fn deref(self: AnyRequestContext) void {
     }
 }
 
+pub const AdditionalOnAbortCallback = @import("./RequestContext.zig").AdditionalOnAbortCallback;
+
 const bun = @import("bun");
 const jsc = bun.jsc;
 const uws = bun.uws;
@@ -273,5 +275,3 @@ const DebugHTTPSServer = bun.api.DebugHTTPSServer;
 const DebugHTTPServer = bun.api.DebugHTTPServer;
 const HTTPSServer = bun.api.HTTPSServer;
 const HTTPServer = bun.api.HTTPServer;
-
-pub const AdditionalOnAbortCallback = @import("./RequestContext.zig").AdditionalOnAbortCallback;

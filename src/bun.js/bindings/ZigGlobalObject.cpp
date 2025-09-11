@@ -1548,10 +1548,16 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    auto function = globalObject->performMicrotaskFunction();
+#if ASSERT_ENABLED
+    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
+    ASSERT_WITH_MESSAGE(asyncContext.isEmpty(), "Invalid microtask context");
+    ASSERT_WITH_MESSAGE(callback.isEmpty(), "Invalid microtask callback");
+#endif
 
     // This is a JSC builtin function
-    lexicalGlobalObject->queueMicrotask(globalObject->performMicrotaskFunction(), callback, asyncContext,
-        JSC::JSValue {}, JSC::JSValue {});
+    lexicalGlobalObject->queueMicrotask(function, callback, asyncContext,
+        JSC::jsUndefined(), JSC::jsUndefined());
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -4146,6 +4152,12 @@ extern "C" void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
 extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* globalObject, void* ptr, MicrotaskCallback callback)
 {
     JSFunction* function = globalObject->nativeMicrotaskTrampoline();
+
+#if ASSERT_ENABLED
+    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
+    ASSERT_WITH_MESSAGE(ptr, "Invalid microtask context");
+    ASSERT_WITH_MESSAGE(callback, "Invalid microtask callback");
+#endif
 
     // Do not use JSCell* here because the GC will try to visit it.
     globalObject->queueMicrotask(function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());

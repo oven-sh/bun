@@ -4680,10 +4680,6 @@ public:
 
         StringView functionName = line.substring(0, openingParentheses - 1);
 
-        if (functionName == "<anonymous>"_s) {
-            functionName = StringView();
-        }
-
         if (functionName == "global code"_s) {
             functionName = StringView();
             frame.isGlobalCode = true;
@@ -4697,6 +4693,10 @@ public:
         if (functionName.startsWith("new "_s)) {
             frame.isConstructor = true;
             functionName = functionName.substring(4);
+        }
+
+        if (functionName == "<anonymous>"_s) {
+            functionName = StringView();
         }
 
         frame.functionName = functionName;

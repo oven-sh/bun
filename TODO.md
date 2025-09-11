@@ -315,8 +315,8 @@ $> bun-after test hook-timeouts
 - [x] test/js/bun/net/socket.test.ts
 - [ ] (maybe flaky) test/bake/dev/bundle.test.ts
 - [ ] (flaky) test/js/web/websocket/autobahn.test.ts
-- [ ] test/js/node/tls/node-tls-server.test.ts
-- [ ] test/internal/ban-words.test.ts (format.yml isn't running?)
+- [x] test/js/node/tls/node-tls-server.test.ts
+- [x] test/internal/ban-words.test.ts (format.yml isn't running?)
 - [ ] (maybe flaky) test/bake/dev/hot.test.ts
 - [ ] (maybe flaky) test/js/node/test/parallel/test-file-write-stream4.js
 - [ ] test/js/bun/util/inspect-error.test.js

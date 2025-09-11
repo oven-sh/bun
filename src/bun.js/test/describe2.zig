@@ -648,7 +648,7 @@ pub const BaseScope = struct {
     pub fn init(this: BaseScopeCfg, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, parent: ?*DescribeScope, has_callback: bool) BaseScope {
         return .{
             .parent = parent,
-            .name = if (name_not_owned) |name| gpa.dupe(u8, name) catch bun.outOfMemory() else null,
+            .name = if (name_not_owned) |name| bun.handleOom(gpa.dupe(u8, name)) else null,
             .concurrent = this.self_concurrent or if (parent) |p| p.base.concurrent else false,
             .mode = if (parent) |p| if (p.base.mode != .normal) p.base.mode else this.self_mode else this.self_mode,
             .only = if (this.self_only) .yes else .no,

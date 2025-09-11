@@ -1775,7 +1775,7 @@ pub const TestCommand = struct {
         const resolution = try vm.transpiler.resolveEntryPoint(file_name);
         try vm.clearEntryPoint();
 
-        const file_path = bun.fs.FileSystem.instance.filename_store.append([]const u8, resolution.path_pair.primary.text) catch bun.outOfMemory();
+        const file_path = bun.handleOom(bun.fs.FileSystem.instance.filename_store.append([]const u8, resolution.path_pair.primary.text));
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
         const file_id = bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;
 

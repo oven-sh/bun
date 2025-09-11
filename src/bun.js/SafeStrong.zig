@@ -93,7 +93,7 @@ pub const List = struct {
     pub const empty: List = .{ .#backing = .{ .items = &.{} } };
     pub fn init(gpa: std.mem.Allocator, items: []const jsc.JSValue) List {
         var result: std.ArrayListUnmanaged(jsc.JSValue) = .empty;
-        result.appendSlice(gpa, items) catch bun.outOfMemory();
+        bun.handleOom(result.appendSlice(gpa, items));
         for (result.items) |*item| item.protect();
         return .{ .#backing = result };
     }
@@ -106,10 +106,10 @@ pub const List = struct {
     }
     pub fn append(this: *List, gpa: std.mem.Allocator, item: jsc.JSValue) void {
         item.protect();
-        this.#backing.append(gpa, item) catch bun.outOfMemory();
+        bun.handleOom(this.#backing.append(gpa, item));
     }
     pub fn ensureUnusedCapacity(this: *List, gpa: std.mem.Allocator, additional: usize) void {
-        this.#backing.ensureUnusedCapacity(gpa, additional) catch bun.outOfMemory();
+        bun.handleOom(this.#backing.ensureUnusedCapacity(gpa, additional));
     }
 
     pub fn swap(this: *List, gpa: std.mem.Allocator, items: []jsc.JSValue) void {

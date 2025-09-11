@@ -383,7 +383,7 @@ pub fn create(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: d
     groupLog.begin(@src());
     defer groupLog.end();
 
-    var scope_functions = globalThis.bunVM().allocator.create(ScopeFunctions) catch bun.outOfMemory();
+    var scope_functions = bun.handleOom(globalThis.bunVM().allocator.create(ScopeFunctions));
     scope_functions.* = .{ .mode = mode, .cfg = cfg, .each = each };
 
     var name_copy = name;

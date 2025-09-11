@@ -136,6 +136,34 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     return .js_undefined;
 }
 
+const Measure = struct {
+    len: usize,
+    fn writeEnd(this: *Measure, write: []const u8) void {
+        this.len += write.len;
+    }
+};
+const Write = struct {
+    buf: []u8,
+    fn writeEnd(this: *Write, write: []const u8) void {
+        if (this.buf.len < write.len) {
+            bun.debugAssert(false);
+            return;
+        }
+        @memcpy(this.buf[this.buf.len - write.len ..], write);
+        this.buf = this.buf[0 .. this.buf.len - write.len];
+    }
+};
+fn filterNames(comptime Rem: type, rem: *Rem, description: ?[]const u8, parent_in: ?*describe2.DescribeScope) void {
+    const sep = " ";
+    rem.writeEnd(description orelse "");
+    var parent = parent_in;
+    while (parent) |scope| : (parent = scope.base.parent) {
+        if (scope.base.name == null) continue;
+        rem.writeEnd(sep);
+        rem.writeEnd(scope.base.name orelse "");
+    }
+}
+
 fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, timeout: u32, callback_length: usize, line_no: u32) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
@@ -182,17 +210,19 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunT
             // check for filter match
             var matches_filter = true;
             if (bunTest.reporter) |reporter| if (reporter.jest.filter_regex) |filter_regex| {
+                groupLog.log("matches_filter begin", .{});
                 bun.assert(bunTest.collection.filter_buffer.items.len == 0);
                 defer bunTest.collection.filter_buffer.clearRetainingCapacity();
 
-                var parent: ?*describe2.DescribeScope = bunTest.collection.active_scope;
-                while (parent) |scope| : (parent = scope.base.parent) {
-                    try bunTest.collection.filter_buffer.appendSlice(scope.base.name orelse "");
-                    try bunTest.collection.filter_buffer.append(' ');
-                }
-                try bunTest.collection.filter_buffer.appendSlice(description orelse "");
+                var len: Measure = .{ .len = 0 };
+                filterNames(Measure, &len, description, bunTest.collection.active_scope);
+                const slice = try bunTest.collection.filter_buffer.addManyAsSlice(len.len);
+                var rem: Write = .{ .buf = slice };
+                filterNames(Write, &rem, description, bunTest.collection.active_scope);
+                bun.debugAssert(rem.buf.len == 0);
 
                 const str = bun.String.fromBytes(bunTest.collection.filter_buffer.items);
+                groupLog.log("matches_filter \"{}\"", .{std.zig.fmtEscapes(bunTest.collection.filter_buffer.items)});
                 matches_filter = filter_regex.matches(str);
             };
 

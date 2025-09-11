@@ -5,7 +5,7 @@ pub fn dumpSub(current: TestScheduleEntry) bun.JSError!void {
     }
 }
 pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
-    group.beginMsg("describe {s} (concurrent={}, mode={s}, only={s}, has_callback={})", .{ describe.base.name orelse "undefined", describe.base.concurrent, @tagName(describe.base.mode), @tagName(describe.base.only), describe.base.has_callback });
+    group.beginMsg("describe \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.zig.fmtEscapes(describe.base.name orelse "(unnamed)"), describe.base.concurrent, @tagName(describe.base.mode), @tagName(describe.base.only), describe.base.has_callback });
     defer group.end();
 
     for (describe.beforeAll.items) |entry| try dumpTest(entry, "beforeAll");
@@ -15,7 +15,7 @@ pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
     for (describe.afterAll.items) |entry| try dumpTest(entry, "afterAll");
 }
 pub fn dumpTest(current: *ExecutionEntry, label: []const u8) bun.JSError!void {
-    group.beginMsg("{s} {s} (concurrent={}, only={})", .{ label, current.base.name orelse "undefined", current.base.concurrent, current.base.only });
+    group.beginMsg("{s} \"{}\" (concurrent={}, only={})", .{ label, std.zig.fmtEscapes(current.base.name orelse "(unnamed)"), current.base.concurrent, current.base.only });
     defer group.end();
 }
 pub fn dumpOrder(this: *Execution) bun.JSError!void {
@@ -31,7 +31,7 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
             defer group.end();
 
             for (sequence.entries(this), 0..) |entry, entry_index| {
-                group.log("{d} ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "undefined"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
+                group.log("{d} ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "(unnamed)"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
             }
         }
     }

@@ -82,7 +82,7 @@ pub fn onWriteFail(
     js_err.ensureStillAlive();
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().mysql_context.onQueryRejectFn.get() orelse return;
-    bun.assertf(function.isCallable(), "onQueryRejectFn is not callable");
+    bun.assertf(function.isCallable(), "onQueryRejectFn is not callable", .{});
     const event_loop = vm.eventLoop();
     const js_array = if (queries_array == .zero) .js_undefined else queries_array;
     js_array.ensureStillAlive();

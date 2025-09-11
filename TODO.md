@@ -340,6 +340,7 @@ $> bun-after test hook-timeouts
 # Add features:
 
 - [x] `done` is missing `.call()`/`.apply()`
+- [ ] for supporting inserting tests while running tests, we should consider changing Execution.zig to be based on linked lists. all memory can be pool-allocated and is owned by BunTest.
 - [ ] `describe.skip()` is not displaying the tests it skipped; fix
 - [ ] drain microtasks / tick? between callback calls? tickImmediateTasks()? use a Task to queue callback execution? for "unhandled errors between tests are reported"
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690

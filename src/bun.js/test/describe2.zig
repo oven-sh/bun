@@ -75,9 +75,9 @@ pub const js_fns = struct {
                         return .js_undefined;
                     },
                     .execution => {
-                        return globalThis.throw("Cannot call beforeAll/beforeEach/afterEach/afterAll() inside a test", .{});
+                        return globalThis.throw("Cannot call {s}() inside a test", .{@tagName(tag)});
                     },
-                    .done => return globalThis.throw("Cannot call beforeAll/beforeEach/afterEach/afterAll() after the test run has completed", .{}),
+                    .done => return globalThis.throw("Cannot call {s}() after the test run has completed", .{@tagName(tag)}),
                 }
             }
         };

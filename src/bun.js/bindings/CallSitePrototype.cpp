@@ -161,17 +161,38 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunctionName, (JSGlobalObject * glo
     return JSC::JSValue::encode(functionName);
 }
 
-// TODO: Implement proper method name detection
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    // For now, return the function name or null
+    
+    // getMethodName() should only return a name if this is actually a method call
+    // (i.e., when 'this' is an object and not the global object or undefined)
+    JSValue thisValue = callSite->thisValue();
     JSValue functionName = callSite->functionName();
-    // Return null instead of empty string to match V8 behavior
-    if (functionName.isString() && asString(functionName)->length() == 0) {
+    
+    // If there's no function name, return null
+    if (!functionName.isString() || asString(functionName)->length() == 0) {
         return JSC::JSValue::encode(jsNull());
     }
-    return JSC::JSValue::encode(functionName);
+    
+    // If 'this' is undefined or null (strict mode, top-level), it's not a method
+    if (thisValue.isUndefinedOrNull()) {
+        return JSC::JSValue::encode(jsNull());
+    }
+    
+    // If 'this' is an object (but not global object), it's likely a method call
+    if (thisValue.isObject()) {
+        JSObject* obj = asObject(thisValue);
+        // Check if it's the global object - if so, it's not a method call
+        if (obj->isGlobalObject()) {
+            return JSC::JSValue::encode(jsNull());
+        }
+        // It's a method call on a regular object
+        return JSC::JSValue::encode(functionName);
+    }
+    
+    // For all other cases, return null
+    return JSC::JSValue::encode(jsNull());
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFileName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -209,7 +230,24 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL, (JSGlobalObj
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
+    
+    // Constructor calls are never top-level
+    if (callSite->isConstructor()) {
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+    }
 
+    JSC::JSValue thisValue = callSite->thisValue();
+    
+    // Method calls (where 'this' is a regular object, not global) are not top-level
+    if (thisValue.isObject()) {
+        JSC::JSObject* thisObject = asObject(thisValue);
+        if (!thisObject->isGlobalObject()) {
+            // This is a method call on a regular object
+            return JSC::JSValue::encode(JSC::jsBoolean(false));
+        }
+    }
+
+    // Check the function type
     if (JSValue functionValue = callSite->function()) {
         if (JSObject* fn = functionValue.getObject()) {
             if (JSFunction* function = jsDynamicCast<JSFunction*>(fn)) {
@@ -221,8 +259,13 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
                     return JSC::JSValue::encode(JSC::jsBoolean(true));
                 }
 
+                // Check if it's module-level code
                 if (auto* executable = function->jsExecutable()) {
-                    return JSValue::encode(jsBoolean(executable->isProgramExecutable() || executable->isModuleProgramExecutable()));
+                    // Module and program level code is considered NOT top-level in Node.js
+                    // when it's the actual module wrapper function
+                    if (executable->isModuleProgramExecutable()) {
+                        return JSC::JSValue::encode(JSC::jsBoolean(false));
+                    }
                 }
             } else if (jsDynamicCast<InternalFunction*>(functionValue)) {
                 return JSC::JSValue::encode(JSC::jsBoolean(true));
@@ -230,15 +273,9 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
         }
     }
 
-    JSC::JSValue thisValue = callSite->thisValue();
-
-    // This is what v8 does (JSStackFrame::IsToplevel in messages.cc):
-    if (thisValue.isUndefinedOrNull()) {
-        return JSC::JSValue::encode(JSC::jsBoolean(true));
-    }
-
-    JSC::JSObject* thisObject = thisValue.getObject();
-    if (thisObject && thisObject->isGlobalObject()) {
+    // Default: If 'this' is undefined/null or global object, it's top-level
+    if (thisValue.isUndefinedOrNull() || 
+        (thisValue.isObject() && asObject(thisValue)->isGlobalObject())) {
         return JSC::JSValue::encode(JSC::jsBoolean(true));
     }
 

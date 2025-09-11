@@ -211,7 +211,7 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Describe<T extends Readonly<[any, ...any[]]>> {
+  export interface Describe<T extends Readonly<any[]>> {
     (fn: () => void): void;
 
     (label: DescribeLabel, fn: (...args: T) => void): void;
@@ -285,7 +285,7 @@ declare module "bun:test" {
    * @param label the label for the tests
    * @param fn the function that defines the tests
    */
-  export const xdescribe: Describe;
+  export const xdescribe: Describe<[]>;
 
   type HookOptions = number | { timeout?: number };
   /**
@@ -414,7 +414,7 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Test<T extends Readonly<[any, ...any[]]>> {
+  export interface Test<T extends Readonly<any[]>> {
     (
       label: string,
       fn: (...args: IsTuple<T> extends true ? [...T, (err?: unknown) => void] : T) => void | Promise<unknown>,

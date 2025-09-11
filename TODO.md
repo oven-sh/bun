@@ -322,7 +322,7 @@ $> bun-after test hook-timeouts
 - [ ] test/js/bun/util/inspect-error.test.js
 - [x] test/js/bun/test/done-async.test.ts
 - [x] test/cli/test/bun-test.test.ts
-- [ ] test/integration/bun-types/bun-types.test.ts
+- [x] test/integration/bun-types/bun-types.test.ts
 - [ ] test/js/web/fetch/abort-signal-leak.test.ts
 - [ ] test/js/bun/test/test-failing.test.ts
 - [ ] (flaky) test/bake/dev/stress.test.ts

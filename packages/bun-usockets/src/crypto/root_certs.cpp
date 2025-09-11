@@ -151,9 +151,7 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
-// Create the default CA store with all certificates
-// This is only called once to create the cached store
-static X509_STORE* us_create_default_ca_store() {
+extern "C" X509_STORE *us_get_default_ca_store() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
@@ -186,21 +184,6 @@ static X509_STORE* us_create_default_ca_store() {
   }
 
   return store;
-}
-
-extern "C" X509_STORE *us_get_default_ca_store() {
-  // Create the store once using static initialization (thread-safe in C++11)
-  // This is similar to Node.js's approach but using a single global store
-  // instead of per-thread storage
-  static X509_STORE* cached_store = us_create_default_ca_store();
-  
-  // Return a new reference to the cached store
-  // X509_STORE_up_ref is thread-safe according to BoringSSL docs
-  if (cached_store != NULL) {
-    X509_STORE_up_ref(cached_store);
-  }
-  
-  return cached_store;
 }
 extern "C" const char *us_get_default_ciphers() {
   return DEFAULT_CIPHER_LIST;

@@ -107,16 +107,16 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalO
 {
     ENTER_PROTO_FUNC();
     JSValue thisValue = callSite->thisValue();
-    
+
     // Return null for undefined to match V8 behavior
     if (thisValue.isUndefinedOrNull()) {
         return JSC::JSValue::encode(jsNull());
     }
-    
+
     // For objects, try to get the constructor name or class name
     if (thisValue.isObject()) {
         JSObject* obj = asObject(thisValue);
-        
+
         // Try to get the class name
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
         String className = obj->calculatedClassName(obj);
@@ -124,15 +124,15 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalO
             catchScope.clearException();
             return JSC::JSValue::encode(jsNull());
         }
-        
+
         if (!className.isEmpty()) {
             return JSC::JSValue::encode(jsString(vm, className));
         }
     }
-    
+
     // Fallback to type string
     JSString* typeString = jsTypeStringForValue(globalObject, thisValue);
-    
+
     // Return null if the type string is "undefined"
     if (typeString) {
         String typeStr = typeString->tryGetValue();
@@ -140,7 +140,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalO
             return JSC::JSValue::encode(jsNull());
         }
     }
-    
+
     return JSC::JSValue::encode(typeString);
 }
 
@@ -277,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsAsync, (JSGlobalObject * globalObjec
     if (!functionValue.isCell()) {
         return JSC::JSValue::encode(JSC::jsBoolean(false));
     }
-    
+
     auto* function = jsDynamicCast<JSFunction*>(functionValue);
     if (!function || function->isHostFunction()) {
         return JSC::JSValue::encode(JSC::jsBoolean(false));
@@ -291,13 +291,10 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsAsync, (JSGlobalObject * globalObjec
     // Cast to FunctionExecutable to access parseMode
     if (auto* funcExecutable = jsDynamicCast<FunctionExecutable*>(executable)) {
         SourceParseMode mode = funcExecutable->parseMode();
-        
+
         // Check if it's any kind of async function
-        bool isAsync = isAsyncFunctionWrapperParseMode(mode) || 
-                      isAsyncGeneratorWrapperParseMode(mode) ||
-                      isAsyncFunctionParseMode(mode) ||
-                      funcExecutable->isAsyncGenerator();
-        
+        bool isAsync = isAsyncFunctionWrapperParseMode(mode) || isAsyncGeneratorWrapperParseMode(mode) || isAsyncFunctionParseMode(mode) || funcExecutable->isAsyncGenerator();
+
         if (isAsync) {
             return JSC::JSValue::encode(JSC::jsBoolean(true));
         }

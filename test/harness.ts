@@ -15,8 +15,6 @@ import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 import { execSync } from "child_process";
 
-type Awaitable<T> = T | Promise<T>;
-
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
 export const isMacOS = process.platform === "darwin";
@@ -183,7 +181,7 @@ export type DirectoryTree = {
     | string
     | Buffer
     | DirectoryTree
-    | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
+    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -204,6 +202,7 @@ export async function makeTree(base: string, tree: DirectoryTree) {
       makeTree(joined, contents);
       continue;
     }
+    contents;
     fs.writeFileSync(joined, contents);
   }
 }
@@ -1221,6 +1220,7 @@ export async function runBunInstall(
     stderr: "pipe",
     env,
   });
+
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
   let err: string = stderrForInstall(await stderr.text());

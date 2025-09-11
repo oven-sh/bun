@@ -39,6 +39,9 @@ registry=https://example.com/contents/release/npm/
   const result5 = loadNpmrc(ini5);
   // Scoped registries are handled separately, but we can still test the parsing
   expect(result5).toBeDefined();
+
+  // Note: Registry URLs with query strings or fragments are uncommon
+  // but we test to ensure we don't break if someone uses them
 });
 
 test("npmrc registry with authentication adds trailing slash", () => {

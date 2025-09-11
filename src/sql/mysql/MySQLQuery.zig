@@ -312,9 +312,9 @@ pub fn call(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 
     return this_value;
 }
-pub fn setPendingValue(this: *@This(), globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+pub fn setPendingValue(_: *@This(), globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const result = callframe.argument(0);
-    const thisValue = this.thisValue.tryGet() orelse return .js_undefined;
+    const thisValue = callframe.this();
     js.pendingValueSetCached(thisValue, globalObject, result);
     return .js_undefined;
 }

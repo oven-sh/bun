@@ -389,7 +389,7 @@ Regular:
 - [ ] (flaky) test/js/node/test/parallel/test-worker-heap-snapshot.js
 - [ ] test/js/bun/spawn/spawn-noread-leak.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
-- [ ] test/js/bun/bun-object/write.spec.ts
+- [x] test/js/bun/bun-object/write.spec.ts
 - [ ] test/js/bun/test/describe.test.ts
 - [ ] test/cli/test/test-filter-lifecycle-snapshot.test.ts
 - [ ] test/js/web/fetch/fetch.upgrade.test.ts

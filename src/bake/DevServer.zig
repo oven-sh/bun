@@ -2346,7 +2346,7 @@ pub fn finalizeBundle(
             );
             break :json json_data;
         } else null;
-        defer if (source_map_json) |json| bun.default_allocator.free(json);
+        defer if (source_map_json) |json| dev.allocator().free(json);
 
         const server_bundle = try dev.server_graph.takeJSBundle(&.{
             .kind = .hmr_chunk,

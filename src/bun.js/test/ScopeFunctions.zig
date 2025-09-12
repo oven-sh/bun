@@ -293,7 +293,7 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
         description.isString();
 
     if (!is_valid_description) {
-        return globalThis.throwPretty("{s} expects first argument to be a named class, named function, number, or string", .{signature});
+        return globalThis.throwPretty("{s}() expects first argument to be a named class, named function, number, or string", .{signature});
     }
 
     if (description == .zero) {
@@ -320,18 +320,20 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
 pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
     var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
-    if (a1.isFunction()) {
-        a3 = a2;
-        a2 = a1;
-        a1 = .js_undefined;
-    }
-    if (!a2.isFunction() and a3.isFunction()) {
-        const tmp = a2;
-        a2 = a3;
-        a3 = tmp;
-    }
-
-    const description, const callback, const options = .{ a1, a2, a3 };
+    const len: enum { three, two, one, zero } = if (!a3.isUndefinedOrNull()) .three else if (!a2.isUndefinedOrNull()) .two else if (!a1.isUndefinedOrNull()) .one else .zero;
+    const DescriptionCallbackOptions = struct { description: JSValue = .js_undefined, callback: JSValue = .js_undefined, options: JSValue = .js_undefined };
+    const items: DescriptionCallbackOptions = switch (len) {
+        // description, callback(fn), options(!fn)
+        // description, options(!fn), callback(fn)
+        .three => if (a2.isFunction()) .{ .description = a1, .callback = a2, .options = a3 } else .{ .description = a1, .callback = a3, .options = a2 },
+        // description, callback(fn)
+        .two => .{ .description = a1, .callback = a2 },
+        // description
+        // callback(fn)
+        .one => if (a1.isFunction()) .{ .callback = a1 } else .{ .description = a1 },
+        .zero => .{},
+    };
+    const description, const callback, const options = .{ items.description, items.callback, items.options };
 
     const result_callback: ?jsc.JSValue = if (cfg.callback != .require and callback.isUndefinedOrNull()) blk: {
         break :blk null;
@@ -352,29 +354,31 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
 
     if (options.isNumber()) {
         timeout_option = options.asNumber();
+    } else if (options.isFunction()) {
+        return globalThis.throw("{}() expects options to be a number or object, not a function", .{signature});
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
+                return globalThis.throwPretty("{}() expects timeout to be a number", .{signature});
             }
             timeout_option = timeout.asNumber();
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
+                return globalThis.throwPretty("{}() expects retry to be a number", .{signature});
             }
             result.options.retry = retries.asNumber();
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
+                return globalThis.throwPretty("{}() expects repeats to be a number", .{signature});
             }
             result.options.repeats = repeats.asNumber();
         }
     } else if (options.isUndefinedOrNull()) {
         // no options
     } else {
-        return globalThis.throw("describe() expects a number, object, or undefined as the third argument", .{});
+        return globalThis.throw("{}() expects a number, object, or undefined as the third argument", .{signature});
     }
 
     result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);

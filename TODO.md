@@ -390,7 +390,7 @@ Regular:
 - [ ] test/js/bun/spawn/spawn-noread-leak.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
 - [x] test/js/bun/bun-object/write.spec.ts
-- [ ] test/js/bun/test/describe.test.ts
+- [x] test/js/bun/test/describe.test.ts
 - [x] test/cli/test/test-filter-lifecycle-snapshot.test.ts
 - [ ] test/js/web/fetch/fetch.upgrade.test.ts
 
@@ -407,8 +407,9 @@ Regular:
   - alternative:
     - add a seperate queue of during-test items
     - add a seperate queue of
-- [ ] `describe.skip()` is not displaying the tests it skipped; fix
-- [ ] drain microtasks / tick? between callback calls? tickImmediateTasks()? use a Task to queue callback execution? for "unhandled errors between tests are reported"
+- [x] `describe.skip()` is not displaying the tests it skipped; fix
+- [ ] ~~drain microtasks / tick? between callback calls? tickImmediateTasks()? use a Task to queue callback execution? for "unhandled errors between tests are reported"~~
+  - instead of this, let's modify the test
 - [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
 - [ ] add retry/repeat back
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
@@ -430,7 +431,7 @@ Regular:
     await Bun.sleep(2000);
   });
   ```
-- [ ] what is existing behaviour for an uncaught exception? do we resume execution immediately or later?
+- [x] what is existing behaviour for an uncaught exception? do we resume execution immediately or later?
 - [ ] add tests for re-entry in different scenerios (timeout, done callback, ...) using waitForPromise in expect()
 - [ ] validate junit output does not regress (make sure the generated xml files are identical to existing behaviour)
 - [ ] add tests for debugger.test_reporter_agent reporting, maybe using `bun-debug x bun-inspect-echo` or using the existing setup but fixing it

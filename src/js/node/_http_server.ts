@@ -588,6 +588,19 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
               http_res.assignSocket(socket);
             }
           }
+        } else if (method === "CONNECT") {
+          // Handle CONNECT method for HTTP tunneling/proxy
+          if (server.listenerCount("connect") > 0) {
+            // For CONNECT, emit the event and let the handler respond
+            server.emit("connect", http_req, socket, kEmptyBuffer);
+            
+            // Don't assign the socket to a response for CONNECT
+            // The handler should write the raw response
+          } else {
+            // If no connect handler, respond with 400 Bad Request
+            http_res.writeHead(400);
+            http_res.end();
+          }
         } else if (http_req.headers.expect !== undefined) {
           if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {
@@ -998,7 +1011,26 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk, _encoding, _callback) {}
+  _write(chunk, encoding, callback) {
+    // For CONNECT tunneling, we need to write raw data
+    const handle = this[kHandle];
+    if (handle && handle.write) {
+      // Try to write directly to the socket handle
+      try {
+        // Convert string to buffer if needed
+        if (typeof chunk === 'string') {
+          chunk = Buffer.from(chunk, encoding || 'utf8');
+        }
+        // Write raw data
+        handle.write(chunk);
+        if (callback) callback();
+      } catch (err) {
+        if (callback) callback(err);
+      }
+    } else {
+      if (callback) callback(new Error("Socket not writable"));
+    }
+  }
 
   pause() {
     const handle = this[kHandle];

@@ -1,7 +1,7 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext", "DOM.Iterable", "DOM.AsyncIterable"],
+    "lib": ["ESNext", "ES2015.Iterable", "ESNext.AsyncIterable"],
     // Path remapping
     "baseUrl": ".",
     "paths": {

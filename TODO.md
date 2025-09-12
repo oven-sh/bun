@@ -258,6 +258,31 @@ Error: before all: uh oh!
 after all
 ```
 
+Previously, an async beforeEach failure would still allow the test to run. Now, an async beforeEach failure will prevent the test from running
+
+```js
+beforeEach(() => {
+  await 0;
+  throw "uh oh!";
+});
+it("the test", async () => {
+  console.log("does the test run?");
+});
+```
+
+```
+$> bun-before test async-beforeeach-failure
+does the test run?
+error: uh oh!
+uh oh!
+✗ the test
+
+$> bun-after test async-beforeeach-failure
+error: uh oh!
+uh oh!
+✗ the test
+```
+
 ## Hook timeouts
 
 Hooks will now time out, and can have their timeout configured in an options parameter
@@ -346,7 +371,7 @@ Problematic:
 Regular:
 
 - [x] test/regression/issue/18159/18159.test.ts
-- [ ] test/js/node/process/process-nexttick.test.js
+- [x] test/js/node/process/process-nexttick.test.js
 - [ ] test/js/bun/test/describe2.test.ts
 - [x] test/js/bun/net/tcp-server.test.ts
 - [x] test/js/node/test_runner/node-test.test.ts

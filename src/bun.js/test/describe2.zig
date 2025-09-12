@@ -488,6 +488,15 @@ pub const BunTest = struct {
             group.log("callTestCallback -> error", .{});
             break :blk null;
         };
+        const bun_vm = globalThis.bunVM();
+        bun_vm.drainMicrotasks();
+        var count = bun_vm.unhandled_error_counter;
+        bun_vm.global.handleRejectedPromises();
+        while (bun_vm.unhandled_error_counter > count) {
+            count = bun_vm.unhandled_error_counter;
+            bun_vm.drainMicrotasks();
+            bun_vm.global.handleRejectedPromises();
+        }
 
         var dcb_ref: ?*RefData = null;
         if (done_callback) |dcb| {

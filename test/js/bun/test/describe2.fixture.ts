@@ -264,4 +264,8 @@ describe("done parameter", () => {
   });
 });
 
+test.failing("microtasks and rejections are drained after the test callback is executed", () => {
+  Promise.reject(new Error("uh oh!"));
+});
+
 console.log("exit");

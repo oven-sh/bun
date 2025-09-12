@@ -215,7 +215,7 @@ public:
         int arg_was_jsx = 0;
         void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, &arg_was_jsx);
         if (scope.exception()) [[unlikely]] {
-            ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new SSRResponse() allocated memory without checking for exceptions.");
+            ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());
         }
 
@@ -245,7 +245,7 @@ public:
 
         void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, nullptr);
         if (scope.exception()) [[unlikely]] {
-            ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new SSRResponse() allocated memory without checking for exceptions.");
+            ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());
         }
 
@@ -278,13 +278,13 @@ private:
 
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
-        Base::finishCreation(vm, 0, "SSRResponse"_s);
+        Base::finishCreation(vm, 0, "Response"_s);
         putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
         reifyStaticProperties(vm, info(), JSBakeResponseConstructorTableValues, *this);
     }
 };
 
-const JSC::ClassInfo JSBakeResponse::s_info = { "SSRResponse"_s, &JSResponse::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponse) };
+const JSC::ClassInfo JSBakeResponse::s_info = { "Response"_s, &JSResponse::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponse) };
 const JSC::ClassInfo JSBakeResponseConstructor::s_info = { ""_s, &JSC::InternalFunction::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponseConstructor) };
 
 Structure* createJSBakeResponseStructure(JSC::VM& vm, Zig::GlobalObject* globalObject, JSObject* prototype)

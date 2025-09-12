@@ -17,7 +17,6 @@
     macro(SHA384) \
     macro(SHA512) \
     macro(SHA512_256) \
-    macro(SSRResponse) \
     macro(TOML) \
     macro(YAML) \
     macro(Transpiler) \

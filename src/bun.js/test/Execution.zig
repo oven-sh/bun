@@ -248,7 +248,10 @@ pub fn stepGroup(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobal
 
     while (true) {
         const group = this.activeGroup() orelse return .complete;
-        group.executing = true;
+        if (!group.executing) {
+            this.onGroupStarted(group, globalThis);
+            group.executing = true;
+        }
 
         // loop over items in the group and advance their execution
 
@@ -257,6 +260,9 @@ pub fn stepGroup(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobal
             .execute => |exec| return .{ .waiting = .{ .timeout = exec.timeout } },
             .done => {},
         }
+
+        group.executing = false;
+        this.onGroupCompleted(group, globalThis);
 
         // if there is one sequence and it failed, skip to the next group
         const all_failed = for (group.sequences(this)) |*sequence| {
@@ -455,6 +461,15 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
             this.resetSequence(sequence);
         }
     }
+}
+fn onGroupStarted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
+    const vm = globalThis.bunVM();
+    vm.auto_killer.enable();
+}
+fn onGroupCompleted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
+    const vm = globalThis.bunVM();
+    _ = vm.auto_killer.kill();
+    vm.auto_killer.disable();
 }
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();

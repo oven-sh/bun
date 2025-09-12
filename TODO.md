@@ -423,19 +423,10 @@ Regular:
 
 - [x] `done` is missing `.call()`/`.apply()`
 - [ ] switch to a memory pool instead of individually-tracked scope allocations
-- [ ] for supporting inserting tests while running tests, we should consider changing Execution.zig to be based on linked lists. all memory can be pool-allocated and is owned by BunTest.
-  - linked list:
-    - afterEach inside test: insert after execution entry after the test item
-      - this is problematic if we run the test multiple times because it will insert multiple times
-    - afterAll inside test: insert after the test in the sequence
-    - beforeAll/beforeEach inside test: not supported
-  - alternative:
-    - add a seperate queue of during-test items
-    - add a seperate queue of
 - [x] `describe.skip()` is not displaying the tests it skipped; fix
 - [ ] ~~drain microtasks / tick? between callback calls? tickImmediateTasks()? use a Task to queue callback execution? for "unhandled errors between tests are reported"~~
   - instead of this, let's modify the test
-- [ ] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
+- [x] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
 - [ ] add retry/repeat back
 - [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
@@ -608,6 +599,7 @@ Regular:
 
 # Follow-up:
 
+- [ ] consider memory pool + linked lists, or just 'next': usize rather than incrementing an index. this is to allow inserting items during test execution.
 - [ ] consider using a jsc Bound Function rather than callback with args. bound functions allow adding arguments.
 - [ ] consider modifying the junit reporter to print the whole describe tree at the end instead of trying to output as test results come in. and move it into its own file.
 - [ ] strong.list should only have one jsvalue (or be removed fully)

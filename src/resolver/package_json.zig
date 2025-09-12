@@ -142,7 +142,12 @@ pub const PackageJSON = struct {
             return switch (side_effects) {
                 .unspecified => true,
                 .false => false,
-                .map => |map| map.contains(bun.StringHashMapUnowned.Key.init(path)),
+                .map => |map| {
+                    // Normalize path for cross-platform compatibility
+                    const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
+                    defer bun.default_allocator.free(normalized_path);
+                    return map.contains(bun.StringHashMapUnowned.Key.init(normalized_path));
+                },
                 .glob => |glob_list| {
                     // Normalize path for cross-platform glob matching
                     const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
@@ -156,13 +161,14 @@ pub const PackageJSON = struct {
                     return false;
                 },
                 .mixed => |mixed| {
-                    // First check exact matches
-                    if (mixed.exact.contains(bun.StringHashMapUnowned.Key.init(path))) {
-                        return true;
-                    }
-                    // Then check glob patterns with normalized path
+                    // Normalize path for cross-platform compatibility
                     const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
                     defer bun.default_allocator.free(normalized_path);
+                    
+                    // First check exact matches
+                    if (mixed.exact.contains(bun.StringHashMapUnowned.Key.init(normalized_path))) {
+                        return true;
+                    }
 
                     for (mixed.globs.items) |pattern| {
                         if (glob.match(bun.default_allocator, pattern, normalized_path).matches()) {
@@ -845,8 +851,10 @@ pub const PackageJSON = struct {
                                     const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
                                     glob_list.appendAssumeCapacity(normalized_pattern);
                                 } else {
+                                    // Also normalize exact paths for cross-platform compatibility
+                                    const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
                                     _ = map.getOrPutAssumeCapacity(
-                                        bun.StringHashMapUnowned.Key.init(pattern),
+                                        bun.StringHashMapUnowned.Key.init(normalized_pattern),
                                     );
                                 }
                             }
@@ -884,8 +892,11 @@ pub const PackageJSON = struct {
                                     name,
                                 };
 
+                                const pattern = r.fs.join(&joined);
+                                // Normalize path for cross-platform compatibility
+                                const normalized_pattern = normalizePathForGlob(allocator, pattern) catch pattern;
                                 _ = map.getOrPutAssumeCapacity(
-                                    bun.StringHashMapUnowned.Key.init(r.fs.join(&joined)),
+                                    bun.StringHashMapUnowned.Key.init(normalized_pattern),
                                 );
                             }
                         }

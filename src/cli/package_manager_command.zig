@@ -1,5 +1,6 @@
 const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const ScanCommand = @import("./scan_command.zig").ScanCommand;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -92,6 +93,7 @@ pub const PackageManagerCommand = struct {
             \\
             \\<b>Commands:<r>
             \\
+            \\  <b><green>bun pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities
             \\  <b><green>bun pm<r> <blue>pack<r>                 create a tarball of the current workspace
             \\  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk
             \\  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in
@@ -157,7 +159,10 @@ pub const PackageManagerCommand = struct {
             try pm.setupGlobalDir(ctx);
         }
 
-        if (strings.eqlComptime(subcommand, "pack")) {
+        if (strings.eqlComptime(subcommand, "scan")) {
+            try ScanCommand.execWithManager(ctx, pm, cwd);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "pack")) {
             try PackCommand.execWithManager(ctx, pm);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "whoami")) {

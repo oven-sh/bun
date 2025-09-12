@@ -871,7 +871,7 @@ pub fn doFlush(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject, _: *jsc.Cal
 fn close(this: *@This()) void {
     this.disconnect();
     this.unregisterAutoFlusher();
-    this.write_buffer.deinit(bun.default_allocator);
+    this.write_buffer.clearAndFree(bun.default_allocator);
 }
 
 pub fn doClose(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
@@ -1350,7 +1350,7 @@ fn advance(this: *PostgresSQLConnection) void {
 }
 
 pub fn getQueriesArray(this: *const PostgresSQLConnection) JSValue {
-    return js.queriesGetCached(this.js_value) orelse .zero;
+    return js.queriesGetCached(this.js_value) orelse .js_undefined;
 }
 
 pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_literal), comptime Context: type, reader: protocol.NewReader(Context)) AnyPostgresError!void {

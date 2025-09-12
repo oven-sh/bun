@@ -2,6 +2,9 @@
 #include "napi.h"
 
 #include "BunProcess.h"
+
+// Include the CMake-generated dependency versions header
+#include "bun_dependency_versions.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -88,6 +91,10 @@ typedef int mode_t;
 #ifdef __GNU_LIBRARY__
 #include <gnu/libc-version.h>
 #endif
+#endif
+
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
 #endif
 
 #pragma mark - Node.js Process
@@ -190,26 +197,37 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__versions_boringssl))), 0);
+
+    // Use CMake-generated versions
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_BORINGSSL))), 0);
     // https://github.com/oven-sh/bun/issues/7921
     // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
     object->putDirect(vm, JSC::Identifier::fromString(vm, "openssl"_s), JSC::jsOwnedString(vm, String("1.1.0"_s)));
     // keep in sync with src/bun.js/bindings/node/http/llhttp/README.md
     object->putDirect(vm, JSC::Identifier::fromString(vm, "llhttp"_s), JSC::jsOwnedString(vm, String("9.3.0"_s)));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_libarchive)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_mimalloc)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_picohttpparser)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_uws)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_WEBKIT_VERSION)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_zig)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_zlib)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "tinycc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_tinycc)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "lolhtml"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_lolhtml)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_c_ares)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "libdeflate"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_libdeflate)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_usockets)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_lshpack)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zstd"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(Bun__versions_zstd)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LIBARCHIVE)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_MIMALLOC)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_PICOHTTPPARSER)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_UWS)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_WEBKIT)), 0);
+    // Zig version from CMake-generated header
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZIG)), 0);
+
+    // Use commit hash for zlib to match test expectations
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZLIB_HASH)), 0);
+
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "tinycc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_TINYCC)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "lolhtml"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LOLHTML)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_C_ARES)), 0);
+
+    // Use commit hash for libdeflate to match test expectations
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "libdeflate"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LIBDEFLATE_HASH)), 0);
+
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_USOCKETS)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LSHPACK)), 0);
+
+    // Use commit hash for zstd (semantic version extraction not working yet)
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zstd"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZSTD_HASH)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsOwnedString(vm, String("13.6.233.10-node.18"_s))), 0);
 #if OS(WINDOWS)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))), 0);
@@ -3407,12 +3425,9 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
-    auto* frame = jsDynamicCast<AsyncContextFrame*>(args.at(0));
-    if (frame) {
-        frame->run(globalObject, jsUndefined(), nextTickFn, args);
-    } else {
-        AsyncContextFrame::call(globalObject, nextTickFn, jsUndefined(), args);
-    }
+    ASSERT(nextTickFn);
+    ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
+    JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);
     RELEASE_AND_RETURN(scope, void());
 }
 

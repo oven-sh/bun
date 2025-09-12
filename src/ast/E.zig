@@ -18,7 +18,7 @@ pub const Array = struct {
     close_bracket_loc: logger.Loc = logger.Loc.Empty,
 
     pub fn push(this: *Array, allocator: std.mem.Allocator, item: Expr) !void {
-        try this.items.push(allocator, item);
+        try this.items.append(allocator, item);
     }
 
     pub inline fn slice(this: Array) []Expr {
@@ -30,12 +30,13 @@ pub const Array = struct {
         allocator: std.mem.Allocator,
         estimated_count: usize,
     ) !ExprNodeList {
-        var out = try allocator.alloc(
-            Expr,
+        var out: bun.BabyList(Expr) = try .initCapacity(
+            allocator,
             // This over-allocates a little but it's fine
             estimated_count + @as(usize, this.items.len),
         );
-        var remain = out;
+        out.expandToCapacity();
+        var remain = out.slice();
         for (this.items.slice()) |item| {
             switch (item.data) {
                 .e_spread => |val| {
@@ -63,7 +64,8 @@ pub const Array = struct {
             remain = remain[1..];
         }
 
-        return ExprNodeList.init(out[0 .. out.len - remain.len]);
+        out.shrinkRetainingCapacity(out.len - remain.len);
+        return out;
     }
 
     pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
@@ -573,7 +575,7 @@ pub const Object = struct {
         if (asProperty(self, key)) |query| {
             self.properties.ptr[query.i].value = expr;
         } else {
-            try self.properties.push(allocator, .{
+            try self.properties.append(allocator, .{
                 .key = Expr.init(E.String, E.String.init(key), expr.loc),
                 .value = expr,
             });
@@ -588,7 +590,7 @@ pub const Object = struct {
 
     pub fn set(self: *const Object, key: Expr, allocator: std.mem.Allocator, value: Expr) SetError!void {
         if (self.hasProperty(key.data.e_string.data)) return error.Clobber;
-        try self.properties.push(allocator, .{
+        try self.properties.append(allocator, .{
             .key = key,
             .value = value,
         });
@@ -642,7 +644,7 @@ pub const Object = struct {
             value_ = obj;
         }
 
-        try self.properties.push(allocator, .{
+        try self.properties.append(allocator, .{
             .key = rope.head,
             .value = value_,
         });
@@ -683,7 +685,7 @@ pub const Object = struct {
         if (rope.next) |next| {
             var obj = Expr.init(E.Object, E.Object{ .properties = .{} }, rope.head.loc);
             const out = try obj.data.e_object.getOrPutObject(next, allocator);
-            try self.properties.push(allocator, .{
+            try self.properties.append(allocator, .{
                 .key = rope.head,
                 .value = obj,
             });
@@ -691,7 +693,7 @@ pub const Object = struct {
         }
 
         const out = Expr.init(E.Object, E.Object{}, rope.head.loc);
-        try self.properties.push(allocator, .{
+        try self.properties.append(allocator, .{
             .key = rope.head,
             .value = out,
         });
@@ -732,7 +734,7 @@ pub const Object = struct {
         if (rope.next) |next| {
             var obj = Expr.init(E.Object, E.Object{ .properties = .{} }, rope.head.loc);
             const out = try obj.data.e_object.getOrPutArray(next, allocator);
-            try self.properties.push(allocator, .{
+            try self.properties.append(allocator, .{
                 .key = rope.head,
                 .value = obj,
             });
@@ -740,7 +742,7 @@ pub const Object = struct {
         }
 
         const out = Expr.init(E.Array, E.Array{}, rope.head.loc);
-        try self.properties.push(allocator, .{
+        try self.properties.append(allocator, .{
             .key = rope.head,
             .value = out,
         });

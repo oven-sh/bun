@@ -5865,8 +5865,8 @@ pub fn printJSON(
     var stmts = [_]js_ast.Stmt{stmt};
     var parts = [_]js_ast.Part{.{ .stmts = &stmts }};
     const ast = Ast.initTest(&parts);
-    const list = js_ast.Symbol.List.init(ast.symbols.slice());
-    const nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
+    const list = js_ast.Symbol.List.fromBorrowedSliceDangerous(ast.symbols.slice());
+    const nested_list = js_ast.Symbol.NestedList.fromBorrowedSliceDangerous(&.{list});
     var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);
 
     var printer = PrinterType.init(

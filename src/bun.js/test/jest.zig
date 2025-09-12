@@ -69,7 +69,7 @@ pub const TestLineFilter = struct {
         hasher.update(self.path);
         hasher.update("-------");
         hasher.update(std.mem.asBytes(&self.line));
-        return @truncate(hasher.digest());
+        return @truncate(hasher.final());
     }
 
     pub fn eql(a: TestLineFilter, b: TestLineFilter) bool {

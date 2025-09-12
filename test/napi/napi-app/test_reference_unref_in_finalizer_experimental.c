@@ -1,5 +1,9 @@
-// Test that napi_reference_unref can be called from a finalizer
+// Test that napi_reference_unref CANNOT be called from a finalizer in experimental NAPI
+// This verifies the GC check is enforced for experimental modules
 // This is a regression test for https://github.com/oven-sh/bun/issues/22596
+
+#define NAPI_VERSION NAPI_VERSION_EXPERIMENTAL
+#define NAPI_EXPERIMENTAL
 
 #include <assert.h>
 #include <js_native_api.h>
@@ -26,15 +30,13 @@
     }                                                                          \
   } while (0)
 
-#define MAX_REFS 100
 typedef struct {
   napi_ref ref;
   int index;
 } RefHolder;
 
-static RefHolder* ref_holders[MAX_REFS];
 static int finalizer_called_count = 0;
-static int unref_succeeded_count = 0;
+static int unref_failed_count = 0;
 static bool test_ran = false;
 
 // Called at exit to verify the test actually ran
@@ -48,12 +50,13 @@ static void check_test_ran(void* arg) {
     fprintf(stderr, "ERROR: No finalizers were called\n");
     exit(1);
   }
-  if (unref_succeeded_count == 0) {
-    fprintf(stderr, "ERROR: No napi_reference_unref calls succeeded\n");
+  // For experimental version, we expect unrefs to fail
+  if (unref_failed_count == 0) {
+    fprintf(stderr, "ERROR: Expected napi_reference_unref to fail in experimental mode but it succeeded\n");
     exit(1);
   }
-  printf("Test completed: %d finalizers called, %d unrefs succeeded\n", 
-         finalizer_called_count, unref_succeeded_count);
+  printf("Test completed: %d finalizers called, %d unrefs failed as expected\n", 
+         finalizer_called_count, unref_failed_count);
 }
 
 static void finalizer_unref(napi_env env, void *data, void *hint) {
@@ -63,26 +66,22 @@ static void finalizer_unref(napi_env env, void *data, void *hint) {
   
   if (holder && holder->ref) {
     uint32_t result;
-    // This is the critical test - calling napi_reference_unref during GC
-    // This would crash with NAPI_CHECK_ENV_NOT_IN_GC if not properly handled
+    // This should FAIL for experimental NAPI versions during GC
     napi_status status = napi_reference_unref(env, holder->ref, &result);
-    if (status == napi_ok) {
-      unref_succeeded_count++;
-      // Try to unref again to get to 0
-      if (result > 0) {
-        status = napi_reference_unref(env, holder->ref, &result);
-      }
-      // Clean up the reference if refcount is 0
-      if (result == 0) {
-        napi_delete_reference(env, holder->ref);
-        holder->ref = NULL;
-      }
+    if (status != napi_ok) {
+      unref_failed_count++;
+      printf("napi_reference_unref failed as expected in experimental mode\n");
+    } else {
+      printf("ERROR: napi_reference_unref succeeded but should have failed!\n");
     }
+    
+    // Try to clean up the reference with post_finalizer if available
+    // In experimental mode, we should use node_api_post_finalizer
     free(holder);
   }
 }
 
-static napi_value test_reference_unref_in_finalizer(napi_env env, napi_callback_info info) {
+static napi_value test_reference_unref_in_finalizer_experimental(napi_env env, napi_callback_info info) {
   (void)info;
   
   test_ran = true;
@@ -94,11 +93,12 @@ static napi_value test_reference_unref_in_finalizer(napi_env env, napi_callback_
     atexit_registered = true;
   }
   
-  // Create many objects with finalizers that will call napi_reference_unref
+  // Create just a few objects to test - we only need to verify the behavior
+  const int NUM_OBJECTS = 5;
   napi_value objects_array;
-  NODE_API_CALL(env, napi_create_array_with_length(env, MAX_REFS, &objects_array));
+  NODE_API_CALL(env, napi_create_array_with_length(env, NUM_OBJECTS, &objects_array));
   
-  for (int i = 0; i < MAX_REFS; i++) {
+  for (int i = 0; i < NUM_OBJECTS; i++) {
     // Create an object to hold a reference to
     napi_value target_obj;
     NODE_API_CALL(env, napi_create_object(env, &target_obj));
@@ -107,22 +107,21 @@ static napi_value test_reference_unref_in_finalizer(napi_env env, napi_callback_
     RefHolder* holder = (RefHolder*)malloc(sizeof(RefHolder));
     holder->index = i;
     
-    // Create a reference with refcount 2 so we can unref it in the finalizer
+    // Create a reference with refcount 2
     NODE_API_CALL(env, napi_create_reference(env, target_obj, 2, &holder->ref));
-    ref_holders[i] = holder;
     
     // Create a wrapper object that will trigger the finalizer when GC'd
     napi_value wrapper_obj;
     NODE_API_CALL(env, napi_create_object(env, &wrapper_obj));
     
-    // Add a finalizer that will call napi_reference_unref
+    // Add a finalizer that will try to call napi_reference_unref (should fail)
     NODE_API_CALL(env, napi_add_finalizer(env, wrapper_obj, holder, finalizer_unref, NULL, NULL));
     
     // Store in array
     NODE_API_CALL(env, napi_set_element(env, objects_array, i, wrapper_obj));
   }
   
-  printf("Created %d objects with finalizers\n", MAX_REFS);
+  printf("Created %d objects with finalizers (experimental mode)\n", NUM_OBJECTS);
   
   // Return the array so JS can control when to release it
   return objects_array;
@@ -137,19 +136,19 @@ static napi_value get_stats(napi_env env, napi_callback_info info) {
   NODE_API_CALL(env, napi_create_int32(env, finalizer_called_count, &finalizers_called));
   NODE_API_CALL(env, napi_set_named_property(env, result, "finalizersCalled", finalizers_called));
   
-  napi_value unrefs_succeeded;
-  NODE_API_CALL(env, napi_create_int32(env, unref_succeeded_count, &unrefs_succeeded));
-  NODE_API_CALL(env, napi_set_named_property(env, result, "unrefsSucceeded", unrefs_succeeded));
+  napi_value unrefs_failed;
+  NODE_API_CALL(env, napi_create_int32(env, unref_failed_count, &unrefs_failed));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "unrefsFailed", unrefs_failed));
   
   return result;
 }
 
 static napi_value init(napi_env env, napi_value exports) {
   napi_value test_fn;
-  NODE_API_CALL(env, napi_create_function(env, "test_reference_unref_in_finalizer", 
-                                          NAPI_AUTO_LENGTH, test_reference_unref_in_finalizer, 
+  NODE_API_CALL(env, napi_create_function(env, "test_reference_unref_in_finalizer_experimental", 
+                                          NAPI_AUTO_LENGTH, test_reference_unref_in_finalizer_experimental, 
                                           NULL, &test_fn));
-  NODE_API_CALL(env, napi_set_named_property(env, exports, "test_reference_unref_in_finalizer", test_fn));
+  NODE_API_CALL(env, napi_set_named_property(env, exports, "test_reference_unref_in_finalizer_experimental", test_fn));
   
   napi_value stats_fn;
   NODE_API_CALL(env, napi_create_function(env, "get_stats", 
@@ -160,4 +159,4 @@ static napi_value init(napi_env env, napi_value exports) {
   return exports;
 }
 
-NAPI_MODULE(test_reference_unref_in_finalizer, init)
+NAPI_MODULE(test_reference_unref_in_finalizer_experimental, init)

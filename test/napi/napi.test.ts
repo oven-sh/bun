@@ -550,15 +550,29 @@ describe("napi", () => {
     expect(typeof count).toBe("number");
   });
 
-  it("napi_reference_unref can be called from finalizers without crashing", async () => {
+  it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC
-    // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion.
+    // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.
     // This was causing crashes with packages like rolldown-vite when used with Nuxt.
     // See: https://github.com/oven-sh/bun/issues/22596
     const result = await checkSameOutput("test_reference_unref_in_finalizer", []);
-    expect(result).toContain("test setup complete");
-    expect(result).toContain("unref succeeded");
-    expect(result).toContain("SUCCESS");
+    expect(result).toContain("Created 100 objects with finalizers");
+    expect(result).toContain("Finalizers called:");
+    expect(result).toContain("Unrefs succeeded:");
+    expect(result).toContain("SUCCESS: napi_reference_unref worked in finalizers without crashing");
+    expect(result).toContain("Test completed:");
+  });
+
+  it("napi_reference_unref is blocked from finalizers in experimental modules", async () => {
+    // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
+    // This matches Node.js behavior for experimental modules
+    const result = await checkSameOutput("test_reference_unref_in_finalizer_experimental", []);
+    expect(result).toContain("Created 5 objects with finalizers (experimental mode)");
+    expect(result).toContain("napi_reference_unref failed as expected in experimental mode");
+    expect(result).toContain("Experimental mode - Finalizers called:");
+    expect(result).toContain("Unrefs failed:");
+    expect(result).toContain("SUCCESS: napi_reference_unref correctly failed in experimental mode");
+    expect(result).toContain("Test completed:");
   });
 });
 

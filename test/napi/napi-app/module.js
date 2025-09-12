@@ -3,6 +3,7 @@ const nativeTests = require("./build/Debug/napitests.node");
 const secondAddon = require("./build/Debug/second_addon.node");
 const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
 const testReferenceUnrefInFinalizer = require("./build/Debug/test_reference_unref_in_finalizer.node");
+const testReferenceUnrefInFinalizerExperimental = require("./build/Debug/test_reference_unref_in_finalizer_experimental.node");
 
 async function gcUntil(fn) {
   const MAX = 100;
@@ -650,21 +651,97 @@ nativeTests.test_ref_deleted_in_async_finalize = () => {
 };
 
 nativeTests.test_reference_unref_in_finalizer = async (gc) => {
-  // Call the test function which sets up an object with a finalizer
-  // that will call napi_reference_unref when GC'd
-  testReferenceUnrefInFinalizer.test_reference_unref_in_finalizer();
+  // Create objects with finalizers that will call napi_reference_unref when GC'd
+  let objects = testReferenceUnrefInFinalizer.test_reference_unref_in_finalizer();
   
-  // Force GC to trigger the finalizer
+  // Clear the reference to allow GC
+  objects = null;
+  
+  // Force GC multiple times to ensure finalizers run
   if (gc) {
     gc();
-    gc(); // Run twice to ensure finalizers run
+    gc();
   }
   
-  // Wait a bit for async operations
-  await new Promise(resolve => setTimeout(resolve, 10));
+  // Allocate large ArrayBuffers to trigger GC pressure
+  const buffers = [];
+  for (let i = 0; i < 100; i++) {
+    buffers.push(new ArrayBuffer(10 * 1024 * 1024)); // 10MB each
+    if (gc && i % 10 === 0) {
+      gc();
+    }
+  }
   
-  // The test passes if we didn't crash
-  console.log("SUCCESS: No crash when calling napi_reference_unref from finalizer");
+  // Wait for async operations
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Force final GC
+  if (gc) {
+    gc();
+    gc();
+  }
+  
+  // Get stats to verify finalizers were called
+  const stats = testReferenceUnrefInFinalizer.get_stats();
+  console.log(`Finalizers called: ${stats.finalizersCalled}, Unrefs succeeded: ${stats.unrefsSucceeded}`);
+  
+  if (stats.finalizersCalled === 0) {
+    throw new Error("No finalizers were called - test did not properly trigger GC");
+  }
+  
+  if (stats.unrefsSucceeded === 0) {
+    throw new Error("No napi_reference_unref calls succeeded");
+  }
+  
+  console.log("SUCCESS: napi_reference_unref worked in finalizers without crashing");
+};
+
+nativeTests.test_reference_unref_in_finalizer_experimental = async (gc) => {
+  // Create objects with finalizers that will call napi_reference_unref when GC'd
+  // This should FAIL for experimental NAPI modules
+  let objects = testReferenceUnrefInFinalizerExperimental.test_reference_unref_in_finalizer_experimental();
+  
+  // Clear the reference to allow GC
+  objects = null;
+  
+  // Force GC multiple times to ensure finalizers run
+  if (gc) {
+    gc();
+    gc();
+  }
+  
+  // Allocate some memory to trigger GC pressure
+  const buffers = [];
+  for (let i = 0; i < 10; i++) {
+    buffers.push(new ArrayBuffer(10 * 1024 * 1024)); // 10MB each
+    if (gc) {
+      gc();
+    }
+  }
+  
+  // Wait for async operations
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Force final GC
+  if (gc) {
+    gc();
+    gc();
+  }
+  
+  // Get stats to verify the expected behavior
+  const stats = testReferenceUnrefInFinalizerExperimental.get_stats();
+  console.log(`Experimental mode - Finalizers called: ${stats.finalizersCalled}, Unrefs failed: ${stats.unrefsFailed}`);
+  
+  if (stats.finalizersCalled === 0) {
+    throw new Error("No finalizers were called - test did not properly trigger GC");
+  }
+  
+  // For experimental modules, we expect unrefs to fail
+  if (stats.unrefsFailed === 0) {
+    throw new Error("Expected napi_reference_unref to fail in experimental mode but it succeeded");
+  }
+  
+  console.log("SUCCESS: napi_reference_unref correctly failed in experimental mode");
 };
 
 nativeTests.test_create_bigint_words = () => {

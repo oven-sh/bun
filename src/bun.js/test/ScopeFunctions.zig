@@ -246,7 +246,7 @@ fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Cal
     defer groupLog.end();
 
     const condition = callFrame.argumentsAsArray(1)[0];
-    if (condition.isUndefinedOrNull()) return globalThis.throw("Expected condition to be a boolean", .{});
+    if (callFrame.arguments().len == 0) return globalThis.throw("Expected condition to be a boolean", .{});
     const cond = condition.toBoolean();
     if (cond != invert) {
         return genericExtend(this, globalThis, addLineNumberToCfg(conditional_cfg, globalThis, callFrame), name, fn_name);

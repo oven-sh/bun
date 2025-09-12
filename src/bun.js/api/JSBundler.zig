@@ -577,6 +577,12 @@ pub const JSBundler = struct {
 
                     const key = try prop.toOwnedSlice(bun.default_allocator);
 
+                    // Validate that the key is a valid JS identifier
+                    if (!js_lexer.isIdentifier(key)) {
+                        defer bun.default_allocator.free(key);
+                        return globalThis.throwInvalidArguments("define \"{s}\" is not a valid JavaScript identifier", .{key});
+                    }
+
                     // value is always cloned
                     const value = val.toSlice(bun.default_allocator);
                     defer value.deinit();
@@ -1540,6 +1546,7 @@ const CompileTarget = @import("../../compile_target.zig");
 const Fs = @import("../../fs.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const std = @import("std");
+const js_lexer = @import("../../js_lexer.zig");
 
 const options = @import("../../options.zig");
 const Loader = options.Loader;

@@ -159,11 +159,6 @@ pub const Result = enum {
         return !this.isPass(.pending_is_pass);
     }
 };
-const EntryID = enum(usize) {
-    none = std.math.maxInt(usize),
-    _,
-};
-
 pub fn init(_: std.mem.Allocator) Execution {
     return .{
         .groups = &.{},

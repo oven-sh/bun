@@ -3,7 +3,7 @@ import { afterAll, beforeAll, expect } from "bun:test";
 import { bunEnv, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
-var redisOverrideUrl = "redis://localhost:6379";
+var redisOverrideUrl: string | undefined = undefined;
 /**
  * Utility to override the Redis URL for local testing.
  *

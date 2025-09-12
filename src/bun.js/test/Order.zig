@@ -18,13 +18,13 @@ pub fn deinit(this: *Order) void {
     this.entries.deinit();
 }
 
-pub fn generateOrderSub(this: *Order, current: TestScheduleEntry) bun.JSError!void {
+pub fn generateOrderSub(this: *Order, current: TestScheduleEntry, cfg: Config) bun.JSError!void {
     switch (current) {
-        .describe => |describe| try generateOrderDescribe(this, describe),
-        .test_callback => |test_callback| try generateOrderTest(this, test_callback),
+        .describe => |describe| try generateOrderDescribe(this, describe, cfg),
+        .test_callback => |test_callback| try generateOrderTest(this, test_callback, cfg),
     }
 }
-const AllOrderResult = struct {
+pub const AllOrderResult = struct {
     start: usize,
     end: usize,
     pub const empty: AllOrderResult = .{ .start = 0, .end = 0 };
@@ -36,7 +36,10 @@ const AllOrderResult = struct {
         }
     }
 };
-pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSError!AllOrderResult {
+pub const Config = struct {
+    always_use_hooks: bool = false,
+};
+pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, _: Config) bun.JSError!AllOrderResult {
     const start = this.groups.items.len;
     for (entries) |entry| {
         const entries_start = this.entries.items.len;
@@ -50,35 +53,35 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
     const end = this.groups.items.len;
     return .{ .start = start, .end = end };
 }
-pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!void {
+pub fn generateOrderDescribe(this: *Order, current: *DescribeScope, cfg: Config) bun.JSError!void {
     if (current.failed) return; // do not schedule any tests in a failed describe scope
-    const use_hooks = current.base.has_callback;
+    const use_hooks = cfg.always_use_hooks or current.base.has_callback;
 
     // gather beforeAll
-    const beforeall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.beforeAll.items) else .empty;
+    const beforeall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.beforeAll.items, cfg) else .empty;
 
     // gather children
     for (current.entries.items) |entry| {
         if (current.base.only == .contains and entry.base().only == .no) continue;
-        try generateOrderSub(this, entry);
+        try generateOrderSub(this, entry, cfg);
     }
 
     // update skip_to values for beforeAll to skip to the first afterAll
     beforeall_order.setFailureSkipTo(this);
 
     // gather afterAll
-    const afterall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.afterAll.items) else .empty;
+    const afterall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.afterAll.items, cfg) else .empty;
 
     // update skip_to values for afterAll to skip the remaining afterAll items
     afterall_order.setFailureSkipTo(this);
 }
-pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!void {
+pub fn generateOrderTest(this: *Order, current: *ExecutionEntry, _: Config) bun.JSError!void {
     const entries_start = this.entries.items.len;
-    const use_hooks = current.base.has_callback;
     bun.assert(current.base.has_callback == (current.callback != null));
+    const use_each_hooks = current.base.has_callback;
 
     // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
-    if (use_hooks) {
+    if (use_each_hooks) {
         // determine length of beforeEach
         var beforeEachLen: usize = 0;
         {
@@ -103,7 +106,7 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!voi
     try this.entries.append(current); // add entry to sequence
 
     // gather afterEach
-    if (use_hooks) {
+    if (use_each_hooks) {
         var parent: ?*DescribeScope = current.base.parent;
         while (parent) |p| : (parent = p.base.parent) {
             try this.entries.appendSlice(p.afterEach.items); // add entry to sequence

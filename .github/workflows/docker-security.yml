@@ -1,0 +1,141 @@
+name: Docker Security Updates
+
+on:
+  schedule:
+    # Run weekly on Mondays at 2 AM UTC
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'dockerhub/**'
+      - '.github/workflows/docker-security.yml'
+
+jobs:
+  update-base-images:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "latest"
+          
+      - name: Check for base image updates
+        id: check-updates
+        run: |
+          #!/bin/bash
+          set -e
+          
+          echo "Checking for base image updates..."
+          UPDATES_NEEDED=false
+          UPDATE_MESSAGE=""
+          
+          # Check Debian bookworm latest
+          DEBIAN_LATEST=$(docker run --rm debian:bookworm-slim cat /etc/debian_version 2>/dev/null || echo "unknown")
+          echo "Latest Debian bookworm version: $DEBIAN_LATEST"
+          
+          # Check Alpine latest  
+          ALPINE_CURRENT=$(grep -oP 'alpine:\K[0-9.]+' dockerhub/alpine/Dockerfile | head -1)
+          ALPINE_LATEST=$(docker run --rm alpine:latest cat /etc/alpine-release 2>/dev/null | cut -d. -f1,2)
+          echo "Current Alpine version in Dockerfile: $ALPINE_CURRENT"
+          echo "Latest Alpine version: $ALPINE_LATEST"
+          
+          if [ "$ALPINE_CURRENT" != "$ALPINE_LATEST" ]; then
+            echo "Alpine update available: $ALPINE_CURRENT -> $ALPINE_LATEST"
+            UPDATES_NEEDED=true
+            UPDATE_MESSAGE="${UPDATE_MESSAGE}Alpine: $ALPINE_CURRENT -> $ALPINE_LATEST\n"
+            
+            # Update Alpine version
+            sed -i "s/alpine:${ALPINE_CURRENT}/alpine:${ALPINE_LATEST}/g" dockerhub/alpine/Dockerfile
+          fi
+          
+          # Check distroless Debian version
+          DISTROLESS_CURRENT=$(grep -oP 'base-nossl-debian\K[0-9]+' dockerhub/distroless/Dockerfile | head -1)
+          # Debian 12 is bookworm, check if we should update
+          if [ "$DISTROLESS_CURRENT" -lt "12" ]; then
+            echo "Distroless needs update from debian$DISTROLESS_CURRENT to debian12"
+            UPDATES_NEEDED=true
+            UPDATE_MESSAGE="${UPDATE_MESSAGE}Distroless: debian$DISTROLESS_CURRENT -> debian12\n"
+            sed -i "s/base-nossl-debian${DISTROLESS_CURRENT}/base-nossl-debian12/g" dockerhub/distroless/Dockerfile
+          fi
+          
+          echo "updates_needed=$UPDATES_NEEDED" >> $GITHUB_OUTPUT
+          echo "update_message<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$UPDATE_MESSAGE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run vulnerability scan on current images
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Install trivy
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+          
+          # Scan each Dockerfile
+          for dockerfile in dockerhub/*/Dockerfile; do
+            dir=$(dirname "$dockerfile")
+            variant=$(basename "$dir")
+            echo "Scanning $variant..."
+            
+            # Build the image locally
+            docker build -t "bun-test:$variant" "$dir" --build-arg BUN_VERSION=latest || true
+            
+            # Run trivy scan
+            trivy image --severity HIGH,CRITICAL "bun-test:$variant" || true
+          done
+
+      - name: Create Pull Request
+        if: steps.check-updates.outputs.updates_needed == 'true' && github.event_name == 'schedule'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update Docker base images for security"
+          title: "chore: update Docker base images for security"
+          body: |
+            ## Automated Docker Base Image Updates
+            
+            This PR updates the base images used in our Docker containers to their latest versions for security patches.
+            
+            ### Updates:
+            ${{ steps.check-updates.outputs.update_message }}
+            
+            ### Security Benefits:
+            - Patches latest CVEs in base OS packages
+            - Updates system libraries to latest stable versions
+            - Ensures compliance with security best practices
+            
+            Please review and merge to keep our Docker images secure.
+          branch: docker-base-updates
+          delete-branch: true
+
+  scan-published-images:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    strategy:
+      matrix:
+        variant: [latest, slim, alpine, distroless, debian]
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'oven/bun:${{ matrix.variant }}'
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.variant }}.sarif'
+          severity: 'HIGH,CRITICAL'
+          
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results-${{ matrix.variant }}.sarif'
+          category: 'trivy-${{ matrix.variant }}'

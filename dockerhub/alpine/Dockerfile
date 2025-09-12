@@ -1,4 +1,4 @@
-FROM alpine:3.20 AS build
+FROM alpine:3.21 AS build
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
@@ -44,7 +44,7 @@ RUN apk --no-cache add ca-certificates curl dirmngr gpg gpg-agent unzip \
     && rm -f "bun-linux-$build.zip" SHASUMS256.txt.asc SHASUMS256.txt \
     && chmod +x /usr/local/bin/bun
 
-FROM alpine:3.20
+FROM alpine:3.21
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful
@@ -65,7 +65,7 @@ RUN --mount=type=bind,from=build,source=/tmp,target=/tmp \
     addgroup -g 1000 bun \
     && adduser -u 1000 -G bun -s /bin/sh -D bun \
     && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
-    && apk add libgcc libstdc++ \
+    && apk add --no-cache libgcc libstdc++ git ca-certificates \
     && which bun \
     && which bunx \
     && bun --version

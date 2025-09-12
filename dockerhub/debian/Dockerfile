@@ -58,6 +58,16 @@ RUN apt-get update -qq \
 
 FROM debian:bookworm
 
+# Install commonly needed packages
+RUN apt-get update -qq 
+    && apt-get install -qq --no-install-recommends 
+      ca-certificates 
+      git 
+      curl 
+      python3 
+    && apt-get clean 
+    && rm -rf /var/lib/apt/lists/*
+
 COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
 RUN mkdir -p /usr/local/bun-node-fallback-bin && ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/node

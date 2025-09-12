@@ -57,6 +57,14 @@ RUN apt-get update -qq \
 
 FROM debian:bookworm-slim
 
+# Install essential packages including git
+RUN apt-get update -qq \
+    && apt-get install -qq --no-install-recommends \
+      ca-certificates \
+      git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful
 ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0

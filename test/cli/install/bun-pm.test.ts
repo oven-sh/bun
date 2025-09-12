@@ -383,12 +383,12 @@ test("bun whoami executes pm whoami", async () => {
       version: "1.0.0",
     }),
   );
-  
+
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "whoami"],
     cwd: package_dir,
     stdout: "pipe",
-    stdin: "pipe", 
+    stdin: "pipe",
     stderr: "pipe",
     env: bunEnv,
   });
@@ -403,7 +403,7 @@ test("bun whoami executes pm whoami", async () => {
   expect(stderrText).toContain("missing authentication");
   expect(stderrText).not.toContain("reserved for future use");
   expect(stdoutText).not.toContain("reserved for future use");
-  
+
   // Exit code will be non-zero due to missing auth
   expect(exitCode).toBe(1);
 });
@@ -418,7 +418,7 @@ test("bun pm whoami still works", async () => {
       version: "1.0.0",
     }),
   );
-  
+
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "whoami"],
     cwd: package_dir,
@@ -438,7 +438,7 @@ test("bun pm whoami still works", async () => {
   expect(stderrText).toContain("missing authentication");
   expect(stderrText).not.toContain("reserved for future use");
   expect(stdoutText).not.toContain("reserved for future use");
-  
+
   // Exit code will be non-zero due to missing auth
   expect(exitCode).toBe(1);
 });

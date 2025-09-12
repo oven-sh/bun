@@ -42,7 +42,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
     const err = await stderr.text();
     expect(err).toContain("Test passed successfully");
     expect(err).toContain("error: ##123##");
-    expect(err).toContain("error: ##456##");
+    expect(err).not.toContain("error: ##456##"); // Because the beforeEach failed, we do not expect the test to run.
     expect(stdout).toBeDefined();
     expect(await stdout.text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);

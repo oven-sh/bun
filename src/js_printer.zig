@@ -183,35 +183,62 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 break :brk @as(i32, text[i]);
             },
         };
-        if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            const remain = text[i + clamped_width ..];
+        // Fast path: For non-JSON strings, we can batch-write printable characters
+        // JSON mode must check every character individually to ensure proper escaping
+        if (comptime !json) {
+            if (canPrintWithoutEscape(i32, c, ascii_only)) {
+                const remain = text[i + clamped_width ..];
 
-            switch (encoding) {
-                .ascii, .utf8 => {
-                    if (strings.indexOfNeedsEscapeForJavaScriptString(remain, quote_char)) |j| {
-                        const text_chunk = text[i .. i + clamped_width];
-                        try writer.writeAll(text_chunk);
+                switch (encoding) {
+                    .ascii, .utf8 => {
+                        if (strings.indexOfNeedsEscapeForJavaScriptString(remain, quote_char)) |j| {
+                            const text_chunk = text[i .. i + clamped_width];
+                            try writer.writeAll(text_chunk);
+                            i += clamped_width;
+                            try writer.writeAll(remain[0..j]);
+                            i += j;
+                        } else {
+                            try writer.writeAll(text[i..]);
+                            i = n;
+                            break;
+                        }
+                    },
+                    .latin1, .utf16 => {
+                        var codepoint_bytes: [4]u8 = undefined;
+                        const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], c);
+                        try writer.writeAll(codepoint_bytes[0..codepoint_len]);
                         i += clamped_width;
-                        try writer.writeAll(remain[0..j]);
-                        i += j;
-                    } else {
-                        try writer.writeAll(text[i..]);
-                        i = n;
-                        break;
-                    }
-                },
-                .latin1, .utf16 => {
-                    var codepoint_bytes: [4]u8 = undefined;
-                    const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], c);
-                    try writer.writeAll(codepoint_bytes[0..codepoint_len]);
-                    i += clamped_width;
-                },
+                    },
+                }
+                continue;
             }
-            continue;
+        } else {
+            // In JSON mode, write printable characters directly without batching
+            if (canPrintWithoutEscape(i32, c, ascii_only)) {
+                switch (encoding) {
+                    .ascii, .utf8 => {
+                        try writer.writeAll(text[i .. i + clamped_width]);
+                        i += clamped_width;
+                    },
+                    .latin1, .utf16 => {
+                        var codepoint_bytes: [4]u8 = undefined;
+                        const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], c);
+                        try writer.writeAll(codepoint_bytes[0..codepoint_len]);
+                        i += clamped_width;
+                    },
+                }
+                continue;
+            }
         }
         switch (c) {
             0x07 => {
-                try writer.writeAll("\\x07");
+                // Bell character
+                if (comptime json) {
+                    // JSON doesn't support \x escapes, use \u instead
+                    try writer.writeAll("\\u0007");
+                } else {
+                    try writer.writeAll("\\x07");
+                }
                 i += 1;
             },
             0x08 => {
@@ -223,9 +250,14 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 i += 1;
             },
             '\n' => {
-                if (quote_char == '`') {
+                // Issue #22604: Always escape newlines in JSON mode
+                if (comptime json) {
+                    try writer.writeAll("\\n");
+                } else if (quote_char == '`') {
+                    // Preserve newlines in template literals
                     try writer.writeAll("\n");
                 } else {
+                    // Escape newlines in regular strings
                     try writer.writeAll("\\n");
                 }
                 i += 1;
@@ -234,9 +266,14 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 try writer.writeAll("\\r");
                 i += 1;
             },
-            // \v
+            // \v (vertical tab)
             std.ascii.control_code.vt => {
-                try writer.writeAll("\\v");
+                if (comptime json) {
+                    // JSON doesn't support \v, use \u000b instead
+                    try writer.writeAll("\\u000b");
+                } else {
+                    try writer.writeAll("\\v");
+                }
                 i += 1;
             },
             // "\\"
@@ -283,9 +320,14 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
             },
 
             '\t' => {
-                if (quote_char == '`') {
+                // Issue #22604: Always escape tabs in JSON mode
+                if (comptime json) {
+                    try writer.writeAll("\\t");
+                } else if (quote_char == '`') {
+                    // Preserve tabs in template literals
                     try writer.writeAll("\t");
                 } else {
+                    // Escape tabs in regular strings
                     try writer.writeAll("\\t");
                 }
                 i += 1;

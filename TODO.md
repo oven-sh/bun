@@ -370,55 +370,57 @@ Problematic:
 
 Regular:
 
-- [x] test/regression/issue/18159/18159.test.ts
-- [x] test/js/node/process/process-nexttick.test.js
 - [ ] test/js/bun/test/describe2.test.ts
-- [x] test/js/bun/net/tcp-server.test.ts
-- [x] test/js/node/test_runner/node-test.test.ts
-- [ ] (flaky) test/bundler/bundler_compile.test.ts
-- [ ] (flaky) test/js/bun/http/serve.test.ts
-- [ ] (flaky) test/js/web/fetch/fetch-leak.test.ts
-- [ ] (flaky) test/js/node/zlib/leak.test.ts
-- [ ] (flaky) test/js/bun/shell/bunshell.test.ts
-- [ ] (maybe flaky) test/cli/test/test-timeout-behavior.test.ts
-- [ ] (flaky) test/cli/install/bun-install.test.ts
-- [ ] (flaky) test/js/bun/s3/s3.leak.test.ts
-- [ ] (flaky) test/js/bun/s3/s3.test.ts
-- [ ] (flaky) test/napi/napi.test.ts
-- [x] test/js/bun/test/test-test.test.ts
-- [x] test/cli/install/bun-install-patch.test.ts
-- [x] test/js/node/net/node-net-server.test.ts
-- [x] (maybe flaky?) test/cli/install/bun-install-registry.test.ts
-- [x] test/js/node/test/parallel/test-child-process-fork-exec-path.js
-- [x] test/cli/install/bun-lock.test.ts
-- [x] test/js/node/test/parallel/test-util-inspect-long-running.js
-- [x] test/js/bun/glob/scan.test.ts
-- [x] test/js/bun/util/v8-heap-snapshot.test.ts
-- [x] test/js/junit-reporter/junit.test.js
-- [x] test/js/bun/net/socket.test.ts
-- [ ] (maybe flaky) test/bake/dev/bundle.test.ts
-- [ ] (flaky) test/js/web/websocket/autobahn.test.ts
-- [x] test/js/node/tls/node-tls-server.test.ts
-- [x] test/internal/ban-words.test.ts (format.yml isn't running?)
-- [ ] (maybe flaky) test/bake/dev/hot.test.ts
-- [ ] (maybe flaky) test/js/node/test/parallel/test-file-write-stream4.js
-- [x] test/js/bun/util/inspect-error.test.js
-- [x] test/js/bun/test/done-async.test.ts
-- [x] test/cli/test/bun-test.test.ts
-- [x] test/integration/bun-types/bun-types.test.ts
-- [ ] test/js/web/fetch/abort-signal-leak.test.ts
-- [x] test/js/bun/test/test-failing.test.ts
-- [ ] (flaky) test/bake/dev/stress.test.ts
-- [ ] (flaky) test/cli/inspect/BunFrontendDevServer.test.ts
-- [ ] (flaky) test/js/node/child_process/child_process_ipc.test.js
-- [ ] (flaky) test/js/node/test/parallel/test-worker-heap-snapshot.js
-- [x] test/js/bun/spawn/spawn-noread-leak.test.ts
-  - '0' should mean unlimited, not 0ms
-- [x] (maybe fixed? maybe not) test/js/bun/test/test-error-code-done-callback.test.ts
-- [x] test/js/bun/bun-object/write.spec.ts
-- [x] test/js/bun/test/describe.test.ts
-- [x] test/cli/test/test-filter-lifecycle-snapshot.test.ts
-- [x] test/js/web/fetch/fetch.upgrade.test.ts
+- [ ] test/cli/update_interactive_formatting.test.ts
+- [ ] test/js/bun/bun-object/write.spec.ts
+- [ ] test/cli/install/isolated-install.test.ts
+- [ ] test/js/bun/test/test-error-code-done-callback.test.ts
+- [ ] test/cli/install/catalogs.test.ts
+- [ ] test/js/node/test/parallel/test-worker-uncaught-exception-async.js
+- [ ] test/js/bun/spawn/spawn-pipe-leak.test.ts
+- [ ] test/cli/install/npmrc.test.ts
+- [ ] test/cli/inspect/BunFrontendDevServer.test.ts
+- [ ] test/bake/dev/stress.test.ts
+- [ ] test/js/bun/test/test-failing.test.ts
+- [ ] test/cli/test/bun-test.test.ts
+- [ ] test/bake/dev/hot.test.ts
+- [ ] test/integration/svelte/client-side.test.ts
+- [ ] test/bake/dev-and-prod.test.ts
+- [ ] test/bake/dev/react-spa.test.ts
+- [ ] test/bake/dev/css.test.ts
+- [ ] test/bake/dev/html.test.ts
+- [ ] test/cli/install/bun-publish.test.ts
+- [ ] test/js/web/websocket/autobahn.test.ts
+- [ ] test/js/node/buffer.test.js
+- [ ] test/js/junit-reporter/junit.test.js
+- [ ] test/js/bun/test/expect.test.js
+- [ ] test/cli/install/bun-lock.test.ts
+- [ ] test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts
+- [ ] test/cli/install/bun-install-registry.test.ts
+- [ ] test/cli/install/bun-install-lifecycle-scripts.test.ts
+- [ ] test/js/node/dns/node-dns.test.js
+- [ ] test/js/bun/s3/s3.test.ts
+- [ ] test/cli/install/bunx.test.ts
+- [ ] test/cli/run/transpiler-cache.test.ts
+- [ ] test/cli/install/bun-lockb.test.ts
+- [ ] test/cli/install/bun-workspaces.test.ts
+- [ ] test/cli/test/test-timeout-behavior.test.ts
+
+# Real:
+
+- [ ] test/js/bun/shell/bunshell.test.ts
+- [ ] test/integration/next-pages/test/dev-server.test.ts
+
+# Flaky failure:
+
+- [ ] test/bundler/bundler_npm.test.ts
+
+# Flaky warning:
+
+- [ ] test/js/web/fetch/fetch.stream.test.ts
+- [ ] test/cli/run/require-cache.test.ts
+- [ ] test/regression/issue/09041.test.ts
+- [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
 
 # Add features:
 

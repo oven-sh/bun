@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Issue #22604: tabs in TypeScript comments should be properly escaped in source maps", async () => {
   using dir = tempDir("issue-22604", {
@@ -18,11 +18,7 @@ const x = "normal string with\ttab";`,
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
 
@@ -36,17 +32,17 @@ const x = "normal string with\ttab";`,
   expect(sourceMap.sourcesContent.length).toBe(1);
 
   const sourceContent = sourceMap.sourcesContent[0];
-  
+
   // The parsed JSON will have the actual tab and newline characters
   // The important thing is that the JSON was valid and could be parsed
   expect(sourceContent).toContain("\t");
   expect(sourceContent).toContain("\n");
-  
+
   // Verify the content matches the original source exactly
   expect(sourceContent).toBe(
-    'console.log("Hello World");\n// \t})();\n// Multiple tabs:\t\t\there\nconst x = "normal string with\ttab";'
+    'console.log("Hello World");\n// \t})();\n// Multiple tabs:\t\t\there\nconst x = "normal string with\ttab";',
   );
-  
+
   // Also verify that the source map is valid JSON by re-parsing it
   const sourceMapText = await Bun.file(sourceMapPath).text();
   expect(() => JSON.parse(sourceMapText)).not.toThrow();
@@ -76,7 +72,5 @@ console.log("Line 3");`,
   // The parsed JSON will have actual newlines (that's correct behavior)
   const sourceContent = sourceMap.sourcesContent[0];
   expect(sourceContent).toContain("\n");
-  expect(sourceContent).toBe(
-    'console.log("Line 1");\n// Comment with newline\nconsole.log("Line 3");'
-  );
+  expect(sourceContent).toBe('console.log("Line 1");\n// Comment with newline\nconsole.log("Line 3");');
 });

@@ -40,7 +40,7 @@ beforeAll(async () => {
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun install
+      bun install --no-cache
       cp package.json package.json.backup
     `;
 
@@ -70,7 +70,7 @@ beforeAll(async () => {
         "private": true,
         "name": "@types/bun",
         "version": BUN_VERSION,
-        "projects": ["https://bun.sh"],
+        "projects": ["https://bun.com"],
         "dependencies": {
           "bun-types": BUN_VERSION,
         },

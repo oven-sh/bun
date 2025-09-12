@@ -213,7 +213,7 @@ pub const Entry = struct {
         // On the server, escape special characters for JSON
         var remaining = utf8_input;
         while (remaining.len > 0) {
-            if (std.mem.indexOfAny(u8, remaining, "\"\\\n\r\t")) |index| {
+            if (bun.strings.indexOfAny(remaining, "\"\\\n\r\t")) |index| {
                 // Write everything before the special character
                 if (index > 0) {
                     try writer.appendSlice(remaining[0..index]);

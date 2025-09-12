@@ -110,7 +110,7 @@ pub fn putBakeSourceProvider(this: *SavedSourceMap, opaque_source_provider: *Bak
 }
 
 pub fn putDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider: *DevServerSourceProvider, path: []const u8) void {
-    this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
+    this.putValue(path, Value.init(opaque_source_provider)) catch |err| bun.handleOom(err);
 }
 
 pub fn removeDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
@@ -315,7 +315,7 @@ fn getWithContent(
                 if (parse.map) |map| {
                     map.ref();
                     // The mutex is not locked. We have to check the hash table again.
-                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+                    this.putValue(path, Value.init(map)) catch |err| bun.handleOom(err);
 
                     return parse;
                 }

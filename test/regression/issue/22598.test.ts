@@ -1,93 +1,23 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
 
-test("issue #22598 - temporal-polyfill/global sideEffects should be respected on Windows", async () => {
+test("issue #22598 - sideEffects with exact paths should work on Windows", async () => {
   using dir = tempDir("issue-22598", {
     "index.ts": `
-      import "temporal-polyfill/global";
-      console.log(typeof Temporal);
+      import "my-module/side-effect";
+      console.log(globalThis.TEST_GLOBAL);
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "temporal-polyfill": "0.3.0",
+    "node_modules/my-module/package.json": JSON.stringify({
+      name: "my-module",
+      exports: {
+        "./side-effect": "./side-effect.js",
       },
-    }),
-  });
-
-  // Install dependencies
-  await using installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [installStdout, installStderr, installExitCode] = await Promise.all([
-    installProc.stdout.text(),
-    installProc.stderr.text(),
-    installProc.exited,
-  ]);
-
-  expect(installExitCode).toBe(0);
-
-  // Bundle the code
-  await using buildProc = Bun.spawn({
-    cmd: [bunExe(), "build", "--target=bun", "index.ts", "--outfile=bundled.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
-    buildProc.stdout.text(),
-    buildProc.stderr.text(),
-    buildProc.exited,
-  ]);
-
-  expect(buildExitCode).toBe(0);
-
-  // Run the bundled output
-  await using runProc = Bun.spawn({
-    cmd: [bunExe(), "bundled.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [runStdout, runStderr, runExitCode] = await Promise.all([
-    runProc.stdout.text(),
-    runProc.stderr.text(),
-    runProc.exited,
-  ]);
-
-  expect(runExitCode).toBe(0);
-  expect(runStdout.trim()).toBe("object");
-
-  // Verify the temporal-polyfill/global module is included in the bundle
-  const bundledContent = await Bun.file(join(String(dir), "bundled.js")).text();
-  expect(bundledContent).toContain("globalThis");
-  expect(bundledContent).toContain("Temporal");
-  expect(bundledContent).toContain("// node_modules/temporal-polyfill/global.esm.js");
-});
-
-test("sideEffects array with exact paths works cross-platform", async () => {
-  using dir = tempDir("sideeffects-exact", {
-    "index.ts": `
-      import "./my-lib/side-effect.js";
-      console.log(globalThis.MY_GLOBAL);
-    `,
-    "my-lib/package.json": JSON.stringify({
-      name: "my-lib",
       sideEffects: ["./side-effect.js"],
     }),
-    "my-lib/side-effect.js": `
-      globalThis.MY_GLOBAL = "side-effect-loaded";
+    "node_modules/my-module/side-effect.js": `
+      globalThis.TEST_GLOBAL = "side-effect-loaded";
     `,
-    "my-lib/no-effect.js": `
+    "node_modules/my-module/other.js": `
       export const unused = "should be tree-shaken";
     `,
   });
@@ -127,24 +57,89 @@ test("sideEffects array with exact paths works cross-platform", async () => {
   expect(runExitCode).toBe(0);
   expect(runStdout.trim()).toBe("side-effect-loaded");
 
-  // Verify the side-effect module is included
-  const bundledContent = await Bun.file(join(String(dir), "bundled.js")).text();
-  expect(bundledContent).toContain("MY_GLOBAL");
+  // Verify the side-effect module is included in the bundle
+  const bundledContent = await Bun.file(`${dir}/bundled.js`).text();
+  expect(bundledContent).toContain("TEST_GLOBAL");
   expect(bundledContent).toContain("side-effect-loaded");
+});
+
+test("sideEffects array with glob patterns works cross-platform", async () => {
+  using dir = tempDir("sideeffects-glob", {
+    "index.ts": `
+      import "glob-module/effects/init";
+      console.log(globalThis.GLOB_LOADED);
+    `,
+    "node_modules/glob-module/package.json": JSON.stringify({
+      name: "glob-module",
+      exports: {
+        "./effects/init": "./effects/init.js",
+      },
+      sideEffects: ["./effects/*.js"],
+    }),
+    "node_modules/glob-module/effects/init.js": `
+      globalThis.GLOB_LOADED = "glob-matched";
+    `,
+    "node_modules/glob-module/lib/util.js": `
+      export const unused = "should be tree-shaken";
+    `,
+  });
+
+  // Bundle the code
+  await using buildProc = Bun.spawn({
+    cmd: [bunExe(), "build", "--target=bun", "index.ts", "--outfile=bundled.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+    buildProc.stdout.text(),
+    buildProc.stderr.text(),
+    buildProc.exited,
+  ]);
+
+  expect(buildExitCode).toBe(0);
+
+  // Run the bundled output
+  await using runProc = Bun.spawn({
+    cmd: [bunExe(), "bundled.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [runStdout, runStderr, runExitCode] = await Promise.all([
+    runProc.stdout.text(),
+    runProc.stderr.text(),
+    runProc.exited,
+  ]);
+
+  expect(runExitCode).toBe(0);
+  expect(runStdout.trim()).toBe("glob-matched");
+
+  // Verify the side-effect module is included
+  const bundledContent = await Bun.file(`${dir}/bundled.js`).text();
+  expect(bundledContent).toContain("GLOB_LOADED");
+  expect(bundledContent).toContain("glob-matched");
 });
 
 test("sideEffects false removes bare imports", async () => {
   using dir = tempDir("sideeffects-false", {
     "index.ts": `
-      import "./my-lib/side-effect.js";
-      console.log(globalThis.MY_GLOBAL || "undefined");
+      import "no-effects/init";
+      console.log(globalThis.NO_EFFECT || "undefined");
     `,
-    "my-lib/package.json": JSON.stringify({
-      name: "my-lib",
+    "node_modules/no-effects/package.json": JSON.stringify({
+      name: "no-effects",
+      exports: {
+        "./init": "./init.js",
+      },
       sideEffects: false,
     }),
-    "my-lib/side-effect.js": `
-      globalThis.MY_GLOBAL = "should-not-load";
+    "node_modules/no-effects/init.js": `
+      globalThis.NO_EFFECT = "should-not-load";
     `,
   });
 
@@ -184,6 +179,6 @@ test("sideEffects false removes bare imports", async () => {
   expect(runStdout.trim()).toBe("undefined");
 
   // Verify the side-effect module is NOT included
-  const bundledContent = await Bun.file(join(String(dir), "bundled.js")).text();
+  const bundledContent = await Bun.file(`${dir}/bundled.js`).text();
   expect(bundledContent).not.toContain("should-not-load");
 });

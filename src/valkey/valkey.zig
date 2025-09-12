@@ -675,7 +675,7 @@ pub const ValkeyClient = struct {
                                 protocol.RedisError.InvalidResponseType,
                             );
                             return .fallthrough;
-                        }
+                        },
                     }
                 } else {
                     // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,

@@ -1,5 +1,5 @@
 import { randomUUIDv7, RedisClient } from "bun";
-import { describe, expect, test, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import {
   awaitableCounter,
   ConnectionType,
@@ -226,7 +226,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     const testMessage = "test-message";
 
     beforeEach(async () => {
-      try { await ctx.redis.unsubscribe(); } catch {};
+      try {
+        await ctx.redis.unsubscribe();
+      } catch {}
       await ctx.redis.connect();
     });
 

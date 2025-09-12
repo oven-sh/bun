@@ -805,36 +805,35 @@ export function randomCoinFlip(): boolean {
   return Math.floor(Math.random() * 2) == 0;
 }
 
-export function awaitableCounter(targetCount: number) {
-  let count = 0;
-
-  let resolve: () => void;
-  const promise = new Promise<void>((res) => {
-    resolve = res;
-  });
-
-  const increment = () => {
-    count++;
-    if (count >= targetCount) {
-      resolve();
-    }
-  };
+/**
+ * Utility for creating a counter that can be awaited until it reaches a target value.
+ */
+export function awaitableCounter() {
+  let activeResolvers: [number, (value: number) => void][] = [];
+  let currentCount = 0;
 
   return {
-    increment,
-    count: () => count,
-    waitForTarget: () => promise,
-    untilValue: (value: number) => new Promise<void>((res) => {
-      if (count >= value) {
-        res();
-      } else {
-        const interval = setInterval(() => {
-          if (count >= value) {
-            clearInterval(interval);
-            res();
-          }
-        }, 10);
+    increment: () => {
+      currentCount++;
+
+      for (const [value, resolve] of activeResolvers) {
+        if (currentCount >= value) {
+          resolve(currentCount);
+        }
       }
+
+      // Remove resolved promises
+      activeResolvers = activeResolvers.filter(([value]) => currentCount < value);
+    },
+    count: () => currentCount,
+
+    untilValue: (value: number) => new Promise<number>((resolve) => {
+      if (currentCount >= value) {
+        resolve(currentCount);
+        return;
+      }
+
+      activeResolvers.push([value, resolve]);
     }),
   };
 };

@@ -105,10 +105,15 @@ jobs:
         env:
           GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
           GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}
+          GITHUB_ISSUE_NUMBER: ${{ github.event.issue.number }}
         shell: bash
         run: |
           LABELS=$(bun scripts/read-issue.ts)
           bun scripts/is-outdated.ts
+
+          # Check for patterns that should close the issue
+          CLOSE_ACTION=$(bun scripts/handle-crash-patterns.ts)
+          echo "close-action=$CLOSE_ACTION" >> $GITHUB_OUTPUT
 
           if [[ -f "is-outdated.txt" ]]; then
             echo "is-outdated=true" >> $GITHUB_OUTPUT
@@ -128,8 +133,31 @@ jobs:
           echo "latest=$(cat LATEST)" >> $GITHUB_OUTPUT
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
           rm -rf is-outdated.txt outdated.txt latest.txt is-very-outdated.txt
+      - name: Close issue if pattern detected
+        if: github.event.label.name == 'crash' && fromJson(steps.add-labels.outputs.close-action).close == true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const closeAction = JSON.parse('${{ steps.add-labels.outputs.close-action }}');
+            
+            // Comment with the reason
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: closeAction.comment
+            });
+            
+            // Close the issue
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed',
+              state_reason: closeAction.reason
+            });
       - name: Generate comment text with Sentry Link
-        if: github.event.label.name == 'crash'
+        if: github.event.label.name == 'crash' && fromJson(steps.add-labels.outputs.close-action).close != true
         # ignore if fail
         continue-on-error: true
         id: generate-comment-text

@@ -1114,7 +1114,7 @@ pub fn duplicate(
     return promise.toJS();
 }
 
-pub fn hget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) {
+pub fn hget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
     return compile.@"(key: RedisKey, value: RedisValue)"("hget", "HGET", "key", "field").call(this, globalObject, callframe);
 }

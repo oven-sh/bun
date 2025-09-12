@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("napi_reference_unref can be called from finalizers without crashing", async () => {
@@ -6,7 +6,7 @@ test("napi_reference_unref can be called from finalizers without crashing", asyn
   // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion.
   // This was causing crashes with packages like rolldown-vite when used with Nuxt.
   // See: https://github.com/oven-sh/bun/issues/22596
-  
+
   const code = `
     // This test ensures that napi_reference_unref can be called during GC
     // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion.
@@ -38,11 +38,7 @@ test("napi_reference_unref can be called from finalizers without crashing", asyn
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("SUCCESS");

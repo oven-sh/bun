@@ -292,6 +292,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
     , m_sourceURL()
     , m_functionName()
     , m_isWasmFrame(false)
+    , m_isAsync(false)
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
     m_callee = visitor->callee().asCell();
@@ -340,6 +341,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     , m_sourceURL()
     , m_functionName()
     , m_isWasmFrame(false)
+    , m_isAsync(frame.isAsyncFrame())
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
     m_callee = frame.callee();

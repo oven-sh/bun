@@ -1114,6 +1114,12 @@ pub fn duplicate(
     return promise.toJS();
 }
 
+pub fn hget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) {
+    try requireNotSubscriber(this, @src().fn_name);
+    return compile.@"(key: RedisKey, value: RedisValue)"("hget", "HGET", "key", "field").call(this, globalObject, callframe);
+}
+
+// Because these are not currently implemented, we have no checks for subscriber mode.
 pub const psubscribe = compile.@"(...strings: string[])"("psubscribe", "PSUBSCRIBE").call;
 pub const punsubscribe = compile.@"(...strings: string[])"("punsubscribe", "PUNSUBSCRIBE").call;
 pub const pubsub = compile.@"(...strings: string[])"("pubsub", "PUBSUB").call;

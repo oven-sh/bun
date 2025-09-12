@@ -10,7 +10,6 @@ import {
   isEnabled,
   randomCoinFlip,
 } from "./test-utils";
-import {Certificate} from "node:crypto";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(async () => {

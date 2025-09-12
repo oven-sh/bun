@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 // This test replicates the pattern used by TUI apps
@@ -80,16 +80,12 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
     stderr: "pipe",
   });
 
-  const [exitCode, stdout, stderr] = await Promise.all([
-    proc.exited,
-    proc.stdout.text(),
-    proc.stderr.text(),
-  ]);
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
 
   // The test should successfully read piped input and reopen TTY
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
-  
+
   // Normalize and check output
   const output = normalizeBunSnapshot(stdout, dir);
   expect(output).toContain("PIPED_INPUT:piped content");
@@ -100,22 +96,22 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
 test("tty.ReadStream handles non-TTY file descriptors correctly", () => {
   const fs = require("fs");
   const tty = require("tty");
-  
+
   // Create a regular file
   const tempFile = "/tmp/test-regular-file.txt";
   fs.writeFileSync(tempFile, "test content");
-  
+
   try {
     const fd = fs.openSync(tempFile, "r");
     const stream = new tty.ReadStream(fd);
-    
+
     // Regular file should not be identified as TTY
     expect(stream.isTTY).toBe(false);
-    
+
     // ref/unref should still exist (for compatibility) but may be no-ops
     expect(typeof stream.ref).toBe("function");
     expect(typeof stream.unref).toBe("function");
-    
+
     stream.destroy();
     fs.closeSync(fd);
   } finally {

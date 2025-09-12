@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
 import { openSync } from "fs";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import tty from "tty";
 
 test("tty.ReadStream should have ref/unref methods when opened on /dev/tty", () => {
@@ -85,11 +85,7 @@ test("tty.ReadStream ref/unref should behave like Node.js", async () => {
     stderr: "pipe",
   });
 
-  const [exitCode, stdout, stderr] = await Promise.all([
-    proc.exited,
-    proc.stdout.text(),
-    proc.stderr.text(),
-  ]);
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
 
   if (stdout.includes("NO_TTY")) {
     // No TTY available in test environment, skip

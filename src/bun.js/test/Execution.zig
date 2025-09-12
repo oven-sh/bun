@@ -480,7 +480,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     }
 }
 fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
-    if (entry.timeout != std.math.maxInt(u32)) {
+    if (entry.timeout != 0) {
         entry.timespec = bun.timespec.msFromNow(entry.timeout);
     } else {
         entry.timespec = .epoch;

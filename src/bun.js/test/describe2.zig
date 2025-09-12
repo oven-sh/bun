@@ -766,14 +766,14 @@ pub const DescribeScope = struct {
     }
 };
 pub const ExecutionEntryCfg = struct {
-    /// std.math.maxInt(u32) = no timeout
+    /// 0 = unlimited timeout
     timeout: u32,
     has_done_parameter: bool,
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
     callback: ?CallbackWithArgs,
-    /// std.math.maxInt(u32) = no timeout
+    /// 0 = unlimited timeout
     timeout: u32,
     has_done_parameter: bool,
     /// '.epoch' = not set

@@ -412,7 +412,7 @@ Regular:
 - [ ] (flaky) test/cli/inspect/BunFrontendDevServer.test.ts
 - [ ] (flaky) test/js/node/child_process/child_process_ipc.test.js
 - [ ] (flaky) test/js/node/test/parallel/test-worker-heap-snapshot.js
-- [ ] test/js/bun/spawn/spawn-noread-leak.test.ts
+- [x] test/js/bun/spawn/spawn-noread-leak.test.ts
   - '0' should mean unlimited, not 0ms
 - [x] (maybe fixed? maybe not) test/js/bun/test/test-error-code-done-callback.test.ts
 - [x] test/js/bun/bun-object/write.spec.ts

@@ -275,7 +275,7 @@ const ParseArgumentsResult = struct {
     description: ?[]const u8,
     callback: ?jsc.JSValue,
     options: struct {
-        timeout: u32 = std.math.maxInt(u32),
+        timeout: u32 = 0,
         retry: ?f64 = null, // TODO: use this value
         repeats: ?f64 = null, // TODO: use this value
     },
@@ -383,9 +383,9 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
 
     result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);
 
-    const default_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_ms else std.math.maxInt(u32);
-    const override_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_override else std.math.maxInt(u32);
-    const final_default_timeout_ms = if (override_timeout_ms != std.math.maxInt(u32)) override_timeout_ms else default_timeout_ms;
+    const default_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_ms else 0;
+    const override_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_override else 0;
+    const final_default_timeout_ms = if (override_timeout_ms != 0) override_timeout_ms else default_timeout_ms;
     result.options.timeout = std.math.lossyCast(u32, timeout_option orelse @as(f64, @floatFromInt(final_default_timeout_ms)));
 
     return result;

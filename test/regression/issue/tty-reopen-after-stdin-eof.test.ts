@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 // Skip on Windows as it doesn't have /dev/tty
@@ -58,7 +58,7 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
   using dir = tempDir("tty-reopen", {});
   const scriptPath = join(String(dir), "test.js");
   await Bun.write(scriptPath, testScript);
-  
+
   // Check if script command is available (might not be on Alpine by default)
   const hasScript = Bun.which("script");
   if (!hasScript) {
@@ -70,19 +70,15 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
       stdout: "pipe",
       stderr: "pipe",
     });
-    
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
-    
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
     // If it fails with ENXIO, skip the test
     if (exitCode !== 0 && stdout.includes("ERROR:ENXIO")) {
       console.log("Skipping test: requires 'script' command for PTY simulation");
       return;
     }
-    
+
     // Otherwise check results
     expect(exitCode).toBe(0);
     expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
@@ -96,7 +92,7 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
     `);
     return;
   }
-  
+
   // Use script command to provide a PTY environment
   // This simulates a real terminal where /dev/tty is available
   await using proc = Bun.spawn({
@@ -173,7 +169,7 @@ test.skipIf(isWindows)("TTY ReadStream should not set position for character dev
   using dir = tempDir("tty-position", {});
   const scriptPath = join(String(dir), "test.js");
   await Bun.write(scriptPath, testScript);
-  
+
   // Check if script command is available
   const hasScript = Bun.which("script");
   if (!hasScript) {
@@ -185,18 +181,14 @@ test.skipIf(isWindows)("TTY ReadStream should not set position for character dev
       stdout: "pipe",
       stderr: "pipe",
     });
-    
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
-    
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
     if (exitCode !== 0 && stdout.includes("ERROR:ENXIO")) {
       console.log("Skipping test: requires 'script' command for PTY simulation");
       return;
     }
-    
+
     expect(exitCode).toBe(0);
     expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
       "POS_TYPE:undefined
@@ -207,7 +199,7 @@ test.skipIf(isWindows)("TTY ReadStream should not set position for character dev
     `);
     return;
   }
-  
+
   // Use script command to provide a PTY environment
   await using proc = Bun.spawn({
     cmd: ["script", "-q", "-c", `${bunExe()} ${scriptPath}`, "/dev/null"],

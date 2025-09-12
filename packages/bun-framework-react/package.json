@@ -1,11 +1,24 @@
 {
+  "name": "bun-framework-react",
+  "version": "0.1.0",
+  "description": "React framework integration for Bun Bake",
   "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./package.json": "./package.json",
+    "./*": "./*"
+  },
+  "dependencies": {
+    "react": "19.0.0-rc-fb9a90fa48-20240614",
+    "react-dom": "19.0.0-rc-fb9a90fa48-20240614",
+    "react-server-dom-bun": "0.0.0-experimental-603e6108-20241029",
+    "react-refresh": "0.14.2"
+  },
   "devDependencies": {
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9"
   },
-  "exports": {
-    "./package.json": "./package.json",
-    "./*": "./*"
-  }
+  "keywords": ["bun", "react", "framework", "bake"],
+  "license": "MIT"
 }

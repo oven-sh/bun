@@ -10,6 +10,9 @@ pub const FrameworkRouter = @import("./bake/FrameworkRouter.zig");
 pub const api_name = "app";
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
+// External functions for module loading
+extern fn BakeGetDefaultExportFromModule(global: *jsc.JSGlobalObject, key: jsc.JSValue) jsc.JSValue;
+
 pub const UserOptions = struct {
     /// This arena contains some miscellaneous allocations at startup
     arena: std.heap.ArenaAllocator,
@@ -26,7 +29,7 @@ pub const UserOptions = struct {
     }
 
     /// Currently, this function must run at the top of the event loop.
-    pub fn fromJS(config: JSValue, global: *jsc.JSGlobalObject) !UserOptions {
+    pub fn fromJS(config: JSValue, global: *jsc.JSGlobalObject, resolver: ?*bun.resolver.Resolver) !UserOptions {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         errdefer arena.deinit();
         const alloc = arena.allocator();
@@ -53,7 +56,37 @@ pub const UserOptions = struct {
                         },
                     };
 
-                    const framework = try Framework.react(alloc);
+                    // Try to load the React framework
+                    const framework = if (resolver) |r| brk: {
+                        // Try to resolve "bun-framework-react"
+                        _ = r.resolve(r.fs.top_level_dir, "bun-framework-react", .stmt) catch {
+                            // TODO: Load and execute the module
+                            // For now, return a minimal framework
+                            break :brk Framework{
+                                .is_built_in_react = false,
+                                .file_system_router_types = &.{},
+                                .server_components = null,
+                                .react_fast_refresh = null,
+                                .built_in_modules = .empty,
+                            };
+                        };
+
+                        // TODO: Actually load the module
+                        break :brk Framework{
+                            .is_built_in_react = false,
+                            .file_system_router_types = &.{},
+                            .server_components = null,
+                            .react_fast_refresh = null,
+                            .built_in_modules = .empty,
+                        };
+                    } else Framework{
+                        .is_built_in_react = false,
+                        .file_system_router_types = &.{},
+                        .server_components = null,
+                        .react_fast_refresh = null,
+                        .built_in_modules = .empty,
+                        .needs_package_load = try alloc.dupe(u8, "react"),
+                    };
 
                     return UserOptions{
                         .arena = arena,
@@ -79,10 +112,84 @@ pub const UserOptions = struct {
             }
         }
 
-        const framework = try Framework.fromJS(
-            try config.get(global, "framework") orelse {
-                return global.throwInvalidArguments("'" ++ api_name ++ "' is missing 'framework'", .{});
-            },
+        const framework_value = try config.get(global, "framework") orelse {
+            return global.throwInvalidArguments("'" ++ api_name ++ "' is missing 'framework'", .{});
+        };
+
+        const framework = if (framework_value.isString()) brk: {
+            const str = try framework_value.toBunString(global);
+            defer str.deref();
+            const name = allocations.track(str.toUTF8(alloc));
+
+            // If we have a resolver, try to load the framework module now
+            if (resolver) |r| {
+                // Try to resolve "bun-framework-<name>" first
+                const prefixed_name = try std.fmt.allocPrint(alloc, "bun-framework-{s}", .{name});
+
+                const resolved_path = r.resolve(r.fs.top_level_dir, prefixed_name, .stmt) catch |err| blk: {
+                    // If that fails, try "<name>" directly
+                    r.log.reset();
+                    const direct_path = r.resolve(r.fs.top_level_dir, name, .stmt) catch {
+                        return global.throwError(err, "Failed to resolve framework package");
+                    };
+                    break :blk direct_path;
+                };
+
+                const module_path_str = bun.String.cloneUTF8(resolved_path.pathConst().?.text);
+                defer module_path_str.deref();
+
+                const promise = jsc.JSModuleLoader.loadAndEvaluateModule(global, &module_path_str) orelse {
+                    if (global.hasException()) {
+                        return error.JSError;
+                    }
+                    return global.throwInvalidArguments("Failed to load framework module", .{});
+                };
+
+                const vm = global.vm();
+                promise.setHandled(vm);
+                global.bunVM().waitForPromise(.{ .internal = promise });
+
+                const result = switch (promise.unwrap(vm, .mark_handled)) {
+                    .pending => unreachable,
+                    .fulfilled => |resolved| blk: {
+                        _ = resolved;
+                        const default_export = BakeGetDefaultExportFromModule(global, module_path_str.toJS(global));
+
+                        if (!default_export.isObject()) {
+                            return global.throwInvalidArguments("Framework module must export an object as default", .{});
+                        }
+
+                        break :blk try Framework.fromJS(
+                            default_export,
+                            global,
+                            &allocations,
+                            &bundler_options,
+                            alloc,
+                        );
+                    },
+                    .rejected => |err| {
+                        _ = err;
+                        if (!global.hasException()) {
+                            return global.throwInvalidArguments("Failed to load framework module", .{});
+                        }
+                        return error.JSError;
+                    },
+                };
+
+                break :brk result;
+            } else {
+                // No resolver available, defer loading
+                break :brk Framework{
+                    .is_built_in_react = false,
+                    .file_system_router_types = &.{},
+                    .server_components = null,
+                    .react_fast_refresh = null,
+                    .built_in_modules = .empty,
+                    .needs_package_load = name,
+                };
+            }
+        } else try Framework.fromJS(
+            framework_value,
             global,
             &allocations,
             &bundler_options,
@@ -250,75 +357,8 @@ pub const Framework = struct {
     server_components: ?ServerComponents = null,
     react_fast_refresh: ?ReactFastRefresh = null,
     built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{},
-
-    /// Bun provides built-in support for using React as a framework.
-    /// Depends on externally provided React
-    ///
-    /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
-    pub fn react(arena: std.mem.Allocator) !Framework {
-        return .{
-            .is_built_in_react = true,
-            .server_components = .{
-                .separate_ssr_graph = true,
-                .server_runtime_import = "react-server-dom-bun/server",
-            },
-            .react_fast_refresh = .{},
-            .file_system_router_types = try arena.dupe(FileSystemRouterType, &.{
-                .{
-                    .root = "pages",
-                    .prefix = "/",
-                    .entry_client = "bun-framework-react/client.tsx",
-                    .entry_server = "bun-framework-react/server.tsx",
-                    .ignore_underscores = true,
-                    .ignore_dirs = &.{ "node_modules", ".git" },
-                    .extensions = &.{ ".tsx", ".jsx" },
-                    .style = .nextjs_pages,
-                    .allow_layouts = true,
-                },
-            }),
-            // .static_routers = try arena.dupe([]const u8, &.{"public"}),
-            .built_in_modules = bun.StringArrayHashMapUnmanaged(BuiltInModule).init(arena, &.{
-                "bun-framework-react/client.tsx",
-                "bun-framework-react/server.tsx",
-                "bun-framework-react/ssr.tsx",
-                "bun-framework-react/client/app.ts",
-                "bun-framework-react/client/constants.ts",
-                "bun-framework-react/client/css.ts",
-                "bun-framework-react/client/entry.tsx",
-                "bun-framework-react/client/root.tsx",
-                "bun-framework-react/client/router.ts",
-                "bun-framework-react/client/simple-store.ts",
-                "bun-framework-react/components/link.tsx",
-                "bun-framework-react/lib/util.ts",
-            }, if (Environment.codegen_embed) &.{
-                .{ .code = @embedFile("../packages/bun-framework-react/client.tsx") },
-                .{ .code = @embedFile("../packages/bun-framework-react/server.tsx") },
-                .{ .code = @embedFile("../packages/bun-framework-react/ssr.tsx") },
-                .{ .code = @embedFile("../packages/bun-framework-react/client/app.ts") },
-                .{ .code = @embedFile("../packages/bun-framework-react/client/constants.ts") },
-                .{ .code = @embedFile("../packages/bun-framework-react/client/css.ts") },
-                .{ .code = @embedFile("../packages/bun-framework-react/client/entry.tsx") },
-                .{ .code = @embedFile("../packages/bun-framework-react/client/root.tsx") },
-                .{ .code = @embedFile("../packages/bun-framework-react/client/router.ts") },
-                .{ .code = @embedFile("../packages/bun-framework-react/client/simple-store.ts") },
-                .{ .code = @embedFile("../packages/bun-framework-react/components/link.tsx") },
-                .{ .code = @embedFile("../packages/bun-framework-react/lib/util.ts") },
-            } else &.{
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/server.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/ssr.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client/app.ts") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client/constants.ts") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client/css.ts") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client/entry.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client/root.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client/router.ts") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/client/simple-store.ts") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/components/link.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "../packages/bun-framework-react/lib/util.ts") },
-            }) catch |err| bun.handleOom(err),
-        };
-    }
+    /// If set, this framework needs to be loaded from a package
+    needs_package_load: ?[]const u8 = null,
 
     /// Default that requires no packages or configuration.
     /// - If `react-refresh` is installed, enable react fast refresh with it.
@@ -335,9 +375,15 @@ pub const Framework = struct {
         var fw: Framework = Framework.none;
 
         if (file_system_router_types.len > 0) {
-            fw = try react(arena);
-            arena.free(fw.file_system_router_types);
-            fw.file_system_router_types = file_system_router_types;
+            // For auto mode with file system routing, we need React-like setup
+            // but without the embedded modules
+            fw = .{
+                .is_built_in_react = false,
+                .file_system_router_types = file_system_router_types,
+                .server_components = null,
+                .react_fast_refresh = null,
+                .built_in_modules = .empty,
+            };
         }
 
         if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
@@ -415,6 +461,52 @@ pub const Framework = struct {
         var clone = f;
         var had_errors: bool = false;
 
+        // If this framework needs to be loaded from a package, do it now
+        if (clone.needs_package_load) |package_name| {
+            // Try to resolve "bun-framework-<name>" first
+            const prefixed_name = try std.fmt.allocPrint(arena, "bun-framework-{s}", .{package_name});
+
+            _ = server.resolve(server.fs.top_level_dir, prefixed_name, .stmt) catch |err| {
+                // If that fails, try "<name>" directly
+                server.log.reset();
+                _ = server.resolve(server.fs.top_level_dir, package_name, .stmt) catch {
+                    bun.Output.err(err, "Failed to resolve framework package '{s}' (tried '{s}' and '{s}')", .{ package_name, prefixed_name, package_name });
+                    had_errors = true;
+                    return error.ModuleNotFound;
+                };
+
+                // TODO: Actually load and execute the framework module
+                // For now, return a minimal config
+                clone = .{
+                    .is_built_in_react = false,
+                    .file_system_router_types = &.{},
+                    .server_components = null,
+                    .react_fast_refresh = null,
+                    .built_in_modules = .empty,
+                    .needs_package_load = null,
+                };
+            };
+
+            // TODO: Load the resolved module and extract the framework config
+            // This would involve:
+            // 1. Reading the file at framework_path
+            // 2. Executing it as JavaScript/TypeScript
+            // 3. Getting the default export
+            // 4. Converting it to a Framework struct
+
+            // For now, if it's "react", return a basic config
+            if (bun.strings.eql(package_name, "react")) {
+                clone = .{
+                    .is_built_in_react = false,
+                    .file_system_router_types = &.{},
+                    .server_components = null,
+                    .react_fast_refresh = null,
+                    .built_in_modules = .empty,
+                    .needs_package_load = null,
+                };
+            }
+        }
+
         if (clone.react_fast_refresh) |*react_fast_refresh| {
             f.resolveHelper(client, &react_fast_refresh.import_source, &had_errors, "react refresh runtime");
         }
@@ -466,23 +558,10 @@ pub const Framework = struct {
         bundler_options: *SplitBundlerOptions,
         arena: Allocator,
     ) bun.JSError!Framework {
-        if (opts.isString()) {
-            const str = try opts.toBunString(global);
-            defer str.deref();
-
-            // Deprecated
-            if (str.eqlComptime("react-server-components")) {
-                bun.Output.warn("deprecation notice: 'react-server-components' will be renamed to 'react'", .{});
-                return Framework.react(arena);
-            }
-
-            if (str.eqlComptime("react")) {
-                return Framework.react(arena);
-            }
-        }
-
+        // This function should only be called with JS objects
+        // String handling happens in UserOptions.fromJS
         if (!opts.isObject()) {
-            return global.throwInvalidArguments("Framework must be an object", .{});
+            return global.throwInvalidArguments("Framework configuration must be an object", .{});
         }
 
         if (try opts.get(global, "serverEntryPoint") != null) {

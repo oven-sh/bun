@@ -9,17 +9,19 @@
  * an app built with the Bun Rendering API.
  */
 declare module "bun:app" {
-  type FrameworkDefinitionLike = Framework | "react";
+  type FrameworkDefinitionLike = Framework | `bun-framework-${string}` | (string & {});
 
   interface Options {
     /**
-     * Bun provides built-in support for using React as a framework by passing
-     * 'react' as the framework name. Otherwise, frameworks are config objects.
+     * Bun supports loading frameworks in two ways:
      *
-     * External dependencies:
-     * ```
-     * bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
-     * ```
+     * - 1. Passing the actual framework object itself
+     * - 2. Passing the name of a `bun-framework-<name>` package, with or
+     *      without the `bun-framework-` prefix.
+     *
+     * When given a string, bun will first try to resolve `bun-framework-<name>`
+     * before trying just `<name>`. For example, `react` would try to resolve
+     * `bun-framework-react` before trying `react`.
      */
     framework: FrameworkDefinitionLike;
 

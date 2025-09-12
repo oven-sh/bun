@@ -164,7 +164,7 @@ pub const PackageJSON = struct {
                     // Normalize path for cross-platform compatibility
                     const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
                     defer bun.default_allocator.free(normalized_path);
-                    
+
                     // First check exact matches
                     if (mixed.exact.contains(bun.StringHashMapUnowned.Key.init(normalized_path))) {
                         return true;

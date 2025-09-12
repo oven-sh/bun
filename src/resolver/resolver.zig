@@ -587,7 +587,7 @@ pub const Resolver = struct {
     }
 
     pub fn deinit(r: *ThisResolver) void {
-        for (r.dir_cache.values()) |di| di.deinit();
+        for (r.dir_cache.values()) |*di| di.deinit();
         r.dir_cache.deinit();
     }
 

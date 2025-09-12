@@ -97,9 +97,15 @@ pub fn getEnclosingBrowserScope(i: *const DirInfo) ?*DirInfo {
     return HashMap.instance.atIndex(i.enclosing_browser_scope);
 }
 
-pub fn deinit(i: *const DirInfo) void {
-    if (i.package_json) |p| p.deinit();
-    if (i.tsconfig_json) |t| t.deinit();
+pub fn deinit(i: *DirInfo) void {
+    if (i.package_json) |p| {
+        p.deinit();
+        i.package_json = null;
+    }
+    if (i.tsconfig_json) |t| {
+        t.deinit();
+        i.tsconfig_json = null;
+    }
 }
 
 // Goal: Really fast, low allocation directory map exploiting cache locality where we don't worry about lifetimes much.

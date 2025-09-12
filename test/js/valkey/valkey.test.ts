@@ -1,15 +1,19 @@
 import { randomUUIDv7, RedisClient } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
-  awaitableCounter,
   ConnectionType,
+  DEFAULT_REDIS_URL,
+  awaitableCounter,
   createClient,
   ctx,
-  DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
+  overrideRedisUrl, // Commented out in the file, but useful for local testing...
   randomCoinFlip,
 } from "./test-utils";
+
+// Uncomment to override the Redis URL for local testing.
+//overrideRedisUrl("redis://localhost:6379");
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(async () => {
@@ -220,94 +224,102 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   });
 
   describe("PUB/SUB", () => {
-    const testChannel = "test-channel";
-    const testKey = "test-key";
-    const testValue = "test-value";
-    const testMessage = "test-message";
+    var i = 0
+    const testChannel = () => { return `test-channel-${i++}`; };
+    const testKey = () => { return `test-key-${i++}`; };
+    const testValue = () => { return `test-value-${i++}`; };
+    const testMessage = () => { return `test-message-${i++}`; };
 
     beforeEach(async () => {
-      try {
-        await ctx.redis.unsubscribe();
-      } catch {}
-      await ctx.redis.connect();
+      // The PUB/SUB tests expect that ctx.redis is connected but not in subscriber mode.
+      if (ctx.redis?.connected) {
+        try {
+          await ctx.redis.unsubscribe();
+        } catch {}
+      } else {
+        await ctx.redis.connect();
+      }
     });
 
     test("publishing to a channel does not fail", async () => {
-      expect(await ctx.redis.publish(testChannel, testMessage)).toBe(0);
+      expect(await ctx.redis.publish(testChannel(), testMessage())).toBe(0);
     });
 
     test("setting in subscriber mode gracefully fails", async () => {
-      await ctx.redis.subscribe(testChannel, () => {});
+      await ctx.redis.subscribe(testChannel(), () => {});
 
-      expect(() => ctx.redis.set(testKey, testValue)).toThrow(
+      expect(() => ctx.redis.set(testKey(), testValue())).toThrow(
         "RedisClient.prototype.set cannot be called while in subscriber mode",
       );
 
-      // Clean up subscription
-      await ctx.redis.unsubscribe(testChannel);
+      await ctx.redis.unsubscribe(testChannel());
     });
 
     test("setting after unsubscribing works", async () => {
-      await ctx.redis.subscribe(testChannel, () => {});
-      await ctx.redis.unsubscribe(testChannel);
-
-      expect(ctx.redis.set(testKey, testValue)).resolves.toEqual("OK");
+      const channel = testChannel();
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
+      await subscriber.subscribe(channel, () => {});
+      await subscriber.unsubscribe(channel);
+      expect(ctx.redis.set(testKey(), testValue())).resolves.toEqual("OK");
     });
 
     test("subscribing to a channel receives messages", async () => {
       const TEST_MESSAGE_COUNT = 128;
-      const subscriber = createClient(ConnectionType.TCP);
-      await subscriber.connect();
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
+      const channel = testChannel();
 
       const counter = awaitableCounter();
-      await subscriber.subscribe(testChannel, (message, channel) => {
+      await subscriber.subscribe(channel, (message, channel) => {
         counter.increment();
-        expect(channel).toBe(testChannel);
-        expect(message).toBe(testMessage);
+        expect(channel).toBe(channel);
+        expect(message).toBe(testMessage());
       });
 
       Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
-        expect(await ctx.redis.publish(testChannel, testMessage)).toBe(1);
+        expect(await ctx.redis.publish(channel, testMessage())).toBe(1);
       });
 
       await counter.untilValue(TEST_MESSAGE_COUNT);
       expect(counter.count()).toBe(TEST_MESSAGE_COUNT);
-
-      await subscriber.unsubscribe(testChannel);
     });
 
     test("messages are received in order", async () => {
+      const channel = testChannel();
+
+      await ctx.redis.set("START-TEST", "1")
       const TEST_MESSAGE_COUNT = 1024;
-      const subscriber = createClient(ConnectionType.TCP);
-      await subscriber.connect();
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
 
       const counter = awaitableCounter();
       var receivedMessages: string[] = [];
-      await subscriber.subscribe(testChannel, message => {
+      await subscriber.subscribe(channel, message => {
         receivedMessages.push(message);
         counter.increment();
       });
 
-      var sentMessages: string[] = [];
-      Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
-        const message = randomUUIDv7();
-        expect(await ctx.redis.publish(testChannel, message)).toBe(1);
-        sentMessages.push(message);
+      const sentMessages = Array.from({ length: TEST_MESSAGE_COUNT }).map(() => {
+        return randomUUIDv7();
       });
+      await Promise.all(
+        sentMessages.map(async message => {
+          expect(await ctx.redis.publish(channel, message)).toBe(1);
+        }),
+      );
 
       await counter.untilValue(TEST_MESSAGE_COUNT);
       expect(receivedMessages.length).toBe(sentMessages.length);
       expect(receivedMessages).toEqual(sentMessages);
 
-      await subscriber.unsubscribe(testChannel);
+      await subscriber.unsubscribe(channel);
+
+      await ctx.redis.set("STOP-TEST", "1")
     });
 
     test("subscribing to multiple channels receives messages", async () => {
       const TEST_MESSAGE_COUNT = 128;
-      const subscriber = createClient(ConnectionType.TCP);
-      await subscriber.connect();
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
 
-      const channels = [testChannel, "another-test-channel"];
+      const channels = [testChannel(), testChannel()];
       const counter = awaitableCounter();
 
       var receivedMessages: { [channel: string]: string[] } = {};
@@ -390,7 +402,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     test("subscribing to the same channel multiple times", async () => {
       const subscriber = createClient(ConnectionType.TCP);
       await subscriber.connect();
-      const channel = "duplicate-channel";
+      const channel = testChannel();
 
       const counter = awaitableCounter();
 
@@ -482,8 +494,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       const customPing = await ctx.redis.ping("hello");
       expect(customPing).toBe("hello");
-
-      await ctx.redis.unsubscribe(channel);
     });
 
     test("publish does not work from a subscribed client", async () => {
@@ -493,8 +503,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       // Publishing from the same client should work
       expect(async () => ctx.redis.publish(channel, "self-published")).toThrow();
-
-      await ctx.redis.unsubscribe(channel);
     });
 
     test("complete unsubscribe restores normal command mode", async () => {
@@ -504,7 +512,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await ctx.redis.subscribe(channel, () => {});
 
       // Should fail in subscription mode
-      expect(() => ctx.redis.set(testKey, testValue)).toThrow(
+      expect(() => ctx.redis.set(testKey, testValue())).toThrow(
         "RedisClient.prototype.set cannot be called while in subscriber mode.",
       );
 
@@ -557,8 +565,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       await counter.untilValue(3);
       expect(messageCount).toBe(3);
-
-      await subscriber.unsubscribe(channel);
     });
 
     test("subscriptions return correct counts", async () => {
@@ -567,8 +573,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       expect(await subscriber.subscribe("chan1", () => {})).toBe(1);
       expect(await subscriber.subscribe("chan2", () => {})).toBe(2);
-
-      await subscriber.unsubscribe();
     });
 
     test("unsubscribing from listeners", async () => {
@@ -607,8 +611,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       expect(messageCount1).toBe(2);
       expect(messageCount2).toBe(1);
-
-      await subscriber.unsubscribe();
     });
   });
 

@@ -41,9 +41,7 @@ pub const SubscriptionCtx = struct {
         channelName: JSValue,
     ) void {
         const map = this.subscriptionCallbackMap();
-        if (map.remove(globalObject, channelName)) {
-            this._parent.channel_subscription_count -= 1;
-        }
+        _ = map.remove(globalObject, channelName);
     }
 
     /// Remove a specific receive handler.
@@ -99,8 +97,6 @@ pub const SubscriptionCtx = struct {
         const new_length = (updated_array.arrayIterator(globalObject) catch unreachable).len;
         if (new_length != 0) {
             map.set(globalObject, channelName, updated_array);
-        } else {
-            this._parent.channel_subscription_count -= 1;
         }
 
         return new_length;
@@ -113,6 +109,7 @@ pub const SubscriptionCtx = struct {
         channelName: JSValue,
         callback: JSValue,
     ) bun.JSError!void {
+        defer this._parent.onNewSubscriptionCallbackInsert();
         const map = this.subscriptionCallbackMap();
 
         var handlers_array: JSValue = undefined;
@@ -138,11 +135,6 @@ pub const SubscriptionCtx = struct {
 
         // Set the updated array back in the map
         map.set(globalObject, channelName, handlers_array);
-
-        // Update subscription count if this is a new channel
-        if (is_new_channel) {
-            this._parent.channel_subscription_count += 1;
-        }
     }
 
     pub fn registerCallback(this: *Self, globalObject: *jsc.JSGlobalObject, eventString: JSValue, callback: JSValue) bun.JSError!void {
@@ -190,15 +182,16 @@ pub const SubscriptionCtx = struct {
         }
     }
 
-    pub fn deinit(this: *Self) void {
-        this._parent.channel_subscription_count = 0;
+    /// Return whether the subscription context is ready to be disposed.
+    pub fn isDisposable(this: *Self, global_object: *jsc.JSGlobalObject) bool {
+        // The user may request .close(), in which case we can dispose of the subscription object. If that is the case,
+        // finalized will be true. Otherwise, we should treat the object as disposable if there are no active
+        // subscriptions.
+        return this._parent.client.flags.finalized or !this.hasSubscriptions(global_object);
+    }
 
-        ParentJS.gc.set(
-            .subscriptionCallbackMap,
-            this._parent.this_value.get(),
-            this._parent.globalObject,
-            .js_undefined,
-        );
+    pub fn deinit(this: *Self) void {
+        bun.debugAssert(this.isDisposable(this._parent.globalObject));
     }
 };
 
@@ -210,7 +203,6 @@ pub const JSValkeyClient = struct {
     poll_ref: bun.Async.KeepAlive = .{},
 
     _subscription_ctx: ?SubscriptionCtx,
-    channel_subscription_count: u32 = 0,
 
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
@@ -318,7 +310,7 @@ pub const JSValkeyClient = struct {
 
         bun.analytics.Features.valkey += 1;
 
-        return JSValkeyClient.new(.{
+        const client = JSValkeyClient.new(.{
             .ref_count = .init(),
             ._subscription_ctx = null,
             .client = .{
@@ -359,6 +351,8 @@ pub const JSValkeyClient = struct {
             },
             .globalObject = globalObject,
         });
+
+        return client;
     }
 
     /// Clone this client while remaining in the initial disconnected state. This does not preserve
@@ -768,7 +762,21 @@ pub const JSValkeyClient = struct {
         this.updatePollRef();
     }
 
+    /// Invoked when the Valkey client receives a new listener.
+    ///
+    /// `SubscriptionCtx` will invoke this to communicate that it has added a new listener.
+    pub fn onNewSubscriptionCallbackInsert(this: *JSValkeyClient) void {
+        this.ref();
+        defer this.deref();
+
+        this.client.onWritable();
+        this.updatePollRef();
+    }
+
     pub fn onValkeySubscribe(this: *JSValkeyClient, value: *protocol.RESPValue) void {
+        this.ref();
+        defer this.deref();
+
         if (!this.isSubscriber()) {
             debug("onSubscribe called but client is not in subscriber mode", .{});
             return;
@@ -781,6 +789,9 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn onValkeyUnsubscribe(this: *JSValkeyClient, value: *protocol.RESPValue) void {
+        this.ref();
+        defer this.deref();
+
         if (!this.isSubscriber()) {
             debug("onUnsubscribe called but client is not in subscriber mode", .{});
             return;
@@ -1050,8 +1061,8 @@ pub const JSValkeyClient = struct {
     /// Keep the event loop alive, or don't keep it alive
     pub fn updatePollRef(this: *JSValkeyClient) void {
         const pending_commands = this.client.hasAnyPendingCommands();
-        const have_subs = if (this._subscription_ctx) |*ctx| ctx.hasSubscriptions(this.globalObject) else false;
-        const has_activity = pending_commands or have_subs;
+        const subs_disposable = if (this._subscription_ctx) |*ctx| ctx.isDisposable(this.globalObject) else false;
+        const has_activity = pending_commands or !subs_disposable;
 
         if (!has_activity and this.client.status == .connected) {
             this.poll_ref.unref(this.client.vm);

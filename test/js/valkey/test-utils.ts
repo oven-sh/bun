@@ -1,10 +1,21 @@
 import { RedisClient, type SpawnOptions } from "bun";
 import { afterAll, beforeAll, expect } from "bun:test";
-import { bunEnv, isCI, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
+var redisOverrideUrl = "redis://localhost:6379";
+/**
+ * Utility to override the Redis URL for local testing.
+ *
+ * A good workflow is to use Wireshark with a local server rather than Docker.
+ * If you want to do that, you can call this function at the top of `valkey.test.ts`.
+ */
+export function overrideRedisUrl(url: string) {
+  redisOverrideUrl = url;
+}
+
 const dockerCLI = Bun.which("docker") as string;
-export const isEnabled =
+export const isEnabled = redisOverrideUrl ? true :
   !!dockerCLI &&
   (() => {
     try {
@@ -110,7 +121,7 @@ export const WRITEONLY_REDIS_OPTIONS = {
 };
 
 // Default test URLs - will be updated if Docker containers are started
-export let DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
+export let DEFAULT_REDIS_URL = redisOverrideUrl || `redis://${REDIS_HOST}:${REDIS_PORT}`;
 export let TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
 export let UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
 export let AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
@@ -198,7 +209,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
         // Update Redis connection info
         REDIS_PORT = port;
         REDIS_TLS_PORT = tlsPort;
-        DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
+        DEFAULT_REDIS_URL = redisOverrideUrl || `redis://${REDIS_HOST}:${REDIS_PORT}`;
         TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
         UNIX_REDIS_URL = `redis+unix:${REDIS_UNIX_SOCKET}`;
         AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
@@ -253,7 +264,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
     // Update Redis connection info
     REDIS_PORT = port;
     REDIS_TLS_PORT = tlsPort;
-    DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
+    DEFAULT_REDIS_URL = redisOverrideUrl || `redis://${REDIS_HOST}:${REDIS_PORT}`;
     TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
     UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
     AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
@@ -314,7 +325,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
         if (attempt > 1) {
           REDIS_PORT = currentPort;
           REDIS_TLS_PORT = currentTlsPort;
-          DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
+          DEFAULT_REDIS_URL = redisOverrideUrl || `redis://${REDIS_HOST}:${REDIS_PORT}`;
           TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
           UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
           AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
@@ -467,7 +478,7 @@ export function createClient(
 
   switch (connectionType) {
     case ConnectionType.TCP:
-      url = mkUrl(DEFAULT_REDIS_URL);
+      url = mkUrl(redisOverrideUrl|| DEFAULT_REDIS_URL);
       options = {
         ...DEFAULT_REDIS_OPTIONS,
         ...customOptions,
@@ -546,6 +557,8 @@ export interface TestContext {
   redisWriteOnly?: RedisClient;
   id: number;
   restartServer: () => Promise<void>;
+  __subscriberClientPool: RedisClient[];
+  newSubscriberClient: (connectionType: ConnectionType) => Promise<RedisClient>;
 }
 
 // Create a singleton promise for Docker initialization
@@ -568,6 +581,24 @@ export const context: TestContext = {
   redisWriteOnly: undefined,
   id,
   restartServer: restartRedisContainer,
+  __subscriberClientPool: [],
+  newSubscriberClient: async function (connectionType: ConnectionType) {
+    const client = createClient(connectionType);
+    this.__subscriberClientPool.push(client);
+    await client.connect();
+    return client;
+  },
+  cleanupSubscribers: async function () {
+    for (const client of this.__subscriberClientPool) {
+      try { await client.unsubscribe(); } catch {};
+
+      if (client.connected) {
+        await client.close();
+      }
+    }
+
+    this.__subscriberClientPool = [];
+  }
 };
 export { context as ctx };
 

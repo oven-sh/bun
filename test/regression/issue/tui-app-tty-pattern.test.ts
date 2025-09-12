@@ -103,7 +103,7 @@ test("tty.ReadStream handles non-TTY file descriptors correctly", () => {
   const tty = require("tty");
   const path = require("path");
   const os = require("os");
-  
+
   // Create a regular file in the system temp directory
   const tempFile = path.join(os.tmpdir(), "test-regular-file-" + Date.now() + ".txt");
   fs.writeFileSync(tempFile, "test content");
@@ -118,7 +118,7 @@ test("tty.ReadStream handles non-TTY file descriptors correctly", () => {
     // ref/unref should still exist (for compatibility) but may be no-ops
     expect(typeof stream.ref).toBe("function");
     expect(typeof stream.unref).toBe("function");
-    
+
     // Clean up - only destroy the stream, don't double-close the fd
     stream.destroy();
   } finally {

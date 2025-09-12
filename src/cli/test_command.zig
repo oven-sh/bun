@@ -1848,7 +1848,9 @@ pub const TestCommand = struct {
                 const buntest = buntest_strong.get();
 
                 // Automatically execute describe2 tests
-                buntest.addResult(.start);
+                if (buntest.result_queue.readableLength() == 0) {
+                    buntest.addResult(.start);
+                }
                 try bun.jsc.Jest.describe2.BunTest.run(buntest_strong, vm.global);
 
                 // Process event loop while describe2 tests are running

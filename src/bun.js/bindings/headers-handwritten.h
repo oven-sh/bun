@@ -181,6 +181,7 @@ typedef struct ZigStackFrame {
     BunString source_url;
     ZigStackFramePosition position;
     ZigStackFrameCode code_type;
+    bool is_async;
     bool remapped;
 } ZigStackFrame;
 

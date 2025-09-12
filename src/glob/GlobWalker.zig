@@ -432,7 +432,7 @@ pub fn GlobWalker_(
 
                     if (path_without_special_syntax.len == 0) {
                         path_without_special_syntax = if (!bun.Environment.isWindows) "/" else ResolvePath.windowsFilesystemRoot(this.walker.cwd);
-                    } else {
+                    } else folder_check: {
                         // Skip the components associated with the literal path
                         starting_component_idx += 1;
 
@@ -445,8 +445,12 @@ pub fn GlobWalker_(
                             const fd = switch (try Accessor.open(path)) {
                                 .err => |e| {
                                     if (e.getErrno() == bun.sys.E.NOTDIR) {
-                                        this.iter_state = .{ .matched = path };
-                                        return .success;
+                                        // This means that the glob pattern is an absolute file path
+                                        const directory_idx = std.mem.lastIndexOfScalar(u8, this.walker.pattern, if (bun.Environment.isWindows) '\\' else '/');
+                                        path_without_special_syntax =
+                                            if (directory_idx) |idx| path_without_special_syntax[0 .. idx + 1] else if (!bun.Environment.isWindows) "/" else ResolvePath.windowsFilesystemRoot(this.walker.cwd);
+                                        starting_component_idx -= 1;
+                                        break :folder_check;
                                     }
                                     // Doesn't exist
                                     if (e.getErrno() == bun.sys.E.NOENT) {

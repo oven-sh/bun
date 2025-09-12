@@ -2,6 +2,7 @@ const assert = require("node:assert");
 const nativeTests = require("./build/Debug/napitests.node");
 const secondAddon = require("./build/Debug/second_addon.node");
 const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
+const testReferenceUnrefInFinalizer = require("./build/Debug/test_reference_unref_in_finalizer.node");
 
 async function gcUntil(fn) {
   const MAX = 100;
@@ -646,6 +647,24 @@ nativeTests.test_ref_deleted_in_cleanup = () => {
 
 nativeTests.test_ref_deleted_in_async_finalize = () => {
   asyncFinalizeAddon.create_ref();
+};
+
+nativeTests.test_reference_unref_in_finalizer = async (gc) => {
+  // Call the test function which sets up an object with a finalizer
+  // that will call napi_reference_unref when GC'd
+  testReferenceUnrefInFinalizer.test_reference_unref_in_finalizer();
+  
+  // Force GC to trigger the finalizer
+  if (gc) {
+    gc();
+    gc(); // Run twice to ensure finalizers run
+  }
+  
+  // Wait a bit for async operations
+  await new Promise(resolve => setTimeout(resolve, 10));
+  
+  // The test passes if we didn't crash
+  console.log("SUCCESS: No crash when calling napi_reference_unref from finalizer");
 };
 
 nativeTests.test_create_bigint_words = () => {

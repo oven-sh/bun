@@ -549,6 +549,17 @@ describe("napi", () => {
     const count = addon.getFinalizeCount();
     expect(typeof count).toBe("number");
   });
+
+  it("napi_reference_unref can be called from finalizers without crashing", async () => {
+    // This test ensures that napi_reference_unref can be called during GC
+    // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion.
+    // This was causing crashes with packages like rolldown-vite when used with Nuxt.
+    // See: https://github.com/oven-sh/bun/issues/22596
+    const result = await checkSameOutput("test_reference_unref_in_finalizer", []);
+    expect(result).toContain("test setup complete");
+    expect(result).toContain("unref succeeded");
+    expect(result).toContain("SUCCESS");
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {

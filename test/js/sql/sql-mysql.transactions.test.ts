@@ -33,6 +33,16 @@ describeWithContainer(
 
     test("Throws on illegal transactions", async () => {
       await using sql = new SQL({ ...options, max: 2 });
+      try {
+        await sql`BEGIN`;
+        expect.unreachable();
+      } catch (error) {
+        expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
+      }
+    });
+
+    test(".catch suppresses uncaught promise rejection", async () => {
+      await using sql = new SQL({ ...options, max: 2 });
       const error = await sql`BEGIN`.catch(e => e);
       return expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
     });

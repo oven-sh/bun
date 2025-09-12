@@ -26,7 +26,6 @@ describe("bundler", () => {
   };
 
   itBundled("plugin/Resolve", {
-    todo: true,
     files: resolveFixture,
     // The bundler testing api has a shorthand where the plugins array can be
     // the `setup` function of one plugin.
@@ -85,7 +84,6 @@ describe("bundler", () => {
   });
   itBundled("plugin/LoadThrowPrimative", {
     files: loadFixture,
-    todo: true,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, args => {
         throw "123";
@@ -108,7 +106,6 @@ describe("bundler", () => {
   });
   itBundled("plugin/LoadThrowPrimativeAsync", {
     files: loadFixture,
-    todo: true,
     plugins(builder) {
       builder.onLoad({ filter: /\.magic$/ }, async args => {
         throw 123;
@@ -179,7 +176,6 @@ describe("bundler", () => {
   });
   itBundled("plugin/ResolveThrowPrimative", {
     files: resolveFixture,
-    todo: true,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, args => {
         throw "123";
@@ -202,7 +198,6 @@ describe("bundler", () => {
   });
   itBundled("plugin/ResolveThrowPrimativeAsync", {
     files: resolveFixture,
-    todo: true,
     plugins(builder) {
       builder.onResolve({ filter: /\.magic$/ }, async args => {
         throw 123;

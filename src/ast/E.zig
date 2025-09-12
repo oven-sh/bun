@@ -18,7 +18,7 @@ pub const Array = struct {
     close_bracket_loc: logger.Loc = logger.Loc.Empty,
 
     pub fn push(this: *Array, allocator: std.mem.Allocator, item: Expr) !void {
-        try this.items.push(allocator, item);
+        try this.items.append(allocator, item);
     }
 
     pub inline fn slice(this: Array) []Expr {
@@ -30,12 +30,13 @@ pub const Array = struct {
         allocator: std.mem.Allocator,
         estimated_count: usize,
     ) !ExprNodeList {
-        var out = try allocator.alloc(
-            Expr,
+        var out: bun.BabyList(Expr) = try .initCapacity(
+            allocator,
             // This over-allocates a little but it's fine
             estimated_count + @as(usize, this.items.len),
         );
-        var remain = out;
+        out.expandToCapacity();
+        var remain = out.slice();
         for (this.items.slice()) |item| {
             switch (item.data) {
                 .e_spread => |val| {
@@ -63,7 +64,8 @@ pub const Array = struct {
             remain = remain[1..];
         }
 
-        return ExprNodeList.init(out[0 .. out.len - remain.len]);
+        out.shrinkRetainingCapacity(out.len - remain.len);
+        return out;
     }
 
     pub fn toJS(this: @This(), allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject) ToJSError!jsc.JSValue {
@@ -98,6 +100,43 @@ pub const Array = struct {
 pub const Unary = struct {
     op: Op.Code,
     value: ExprNodeIndex,
+    flags: Unary.Flags = .{},
+
+    pub const Flags = packed struct(u8) {
+        /// The expression "typeof (0, x)" must not become "typeof x" if "x"
+        /// is unbound because that could suppress a ReferenceError from "x".
+        ///
+        /// Also if we know a typeof operator was originally an identifier, then
+        /// we know that this typeof operator always has no side effects (even if
+        /// we consider the identifier by itself to have a side effect).
+        ///
+        /// Note that there *is* actually a case where "typeof x" can throw an error:
+        /// when "x" is being referenced inside of its TDZ (temporal dead zone). TDZ
+        /// checks are not yet handled correctly by Bun, so this possibility is
+        /// currently ignored.
+        was_originally_typeof_identifier: bool = false,
+
+        /// Similarly the expression "delete (0, x)" must not become "delete x"
+        /// because that syntax is invalid in strict mode. We also need to make sure
+        /// we don't accidentally change the return value:
+        ///
+        ///   Returns false:
+        ///     "var a; delete (a)"
+        ///     "var a = Object.freeze({b: 1}); delete (a.b)"
+        ///     "var a = Object.freeze({b: 1}); delete (a?.b)"
+        ///     "var a = Object.freeze({b: 1}); delete (a['b'])"
+        ///     "var a = Object.freeze({b: 1}); delete (a?.['b'])"
+        ///
+        ///   Returns true:
+        ///     "var a; delete (0, a)"
+        ///     "var a = Object.freeze({b: 1}); delete (true && a.b)"
+        ///     "var a = Object.freeze({b: 1}); delete (false || a?.b)"
+        ///     "var a = Object.freeze({b: 1}); delete (null ?? a?.['b'])"
+        ///
+        ///     "var a = Object.freeze({b: 1}); delete (true ? a['b'] : a['b'])"
+        was_originally_delete_of_identifier_or_property_access: bool = false,
+        _: u6 = 0,
+    };
 };
 
 pub const Binary = struct {
@@ -536,7 +575,7 @@ pub const Object = struct {
         if (asProperty(self, key)) |query| {
             self.properties.ptr[query.i].value = expr;
         } else {
-            try self.properties.push(allocator, .{
+            try self.properties.append(allocator, .{
                 .key = Expr.init(E.String, E.String.init(key), expr.loc),
                 .value = expr,
             });
@@ -551,7 +590,7 @@ pub const Object = struct {
 
     pub fn set(self: *const Object, key: Expr, allocator: std.mem.Allocator, value: Expr) SetError!void {
         if (self.hasProperty(key.data.e_string.data)) return error.Clobber;
-        try self.properties.push(allocator, .{
+        try self.properties.append(allocator, .{
             .key = key,
             .value = value,
         });
@@ -605,7 +644,7 @@ pub const Object = struct {
             value_ = obj;
         }
 
-        try self.properties.push(allocator, .{
+        try self.properties.append(allocator, .{
             .key = rope.head,
             .value = value_,
         });
@@ -646,7 +685,7 @@ pub const Object = struct {
         if (rope.next) |next| {
             var obj = Expr.init(E.Object, E.Object{ .properties = .{} }, rope.head.loc);
             const out = try obj.data.e_object.getOrPutObject(next, allocator);
-            try self.properties.push(allocator, .{
+            try self.properties.append(allocator, .{
                 .key = rope.head,
                 .value = obj,
             });
@@ -654,7 +693,7 @@ pub const Object = struct {
         }
 
         const out = Expr.init(E.Object, E.Object{}, rope.head.loc);
-        try self.properties.push(allocator, .{
+        try self.properties.append(allocator, .{
             .key = rope.head,
             .value = out,
         });
@@ -695,7 +734,7 @@ pub const Object = struct {
         if (rope.next) |next| {
             var obj = Expr.init(E.Object, E.Object{ .properties = .{} }, rope.head.loc);
             const out = try obj.data.e_object.getOrPutArray(next, allocator);
-            try self.properties.push(allocator, .{
+            try self.properties.append(allocator, .{
                 .key = rope.head,
                 .value = obj,
             });
@@ -703,7 +742,7 @@ pub const Object = struct {
         }
 
         const out = Expr.init(E.Array, E.Array{}, rope.head.loc);
-        try self.properties.push(allocator, .{
+        try self.properties.append(allocator, .{
             .key = rope.head,
             .value = out,
         });
@@ -938,6 +977,30 @@ pub const String = struct {
     pub fn slice(this: *String, allocator: std.mem.Allocator) []const u8 {
         this.resolveRopeIfNeeded(allocator);
         return bun.handleOom(this.string(allocator));
+    }
+
+    fn stringCompareForJavaScript(comptime T: type, a: []const T, b: []const T) std.math.Order {
+        const a_slice = a[0..@min(a.len, b.len)];
+        const b_slice = b[0..@min(a.len, b.len)];
+        for (a_slice, b_slice) |a_char, b_char| {
+            const delta: i32 = @as(i32, a_char) - @as(i32, b_char);
+            if (delta != 0) {
+                return if (delta < 0) .lt else .gt;
+            }
+        }
+        return std.math.order(a.len, b.len);
+    }
+
+    /// Compares two strings lexicographically for JavaScript semantics.
+    /// Both strings must share the same encoding (UTF-8 vs UTF-16).
+    pub inline fn order(this: *const String, other: *const String) std.math.Order {
+        bun.debugAssert(this.isUTF8() == other.isUTF8());
+
+        if (this.isUTF8()) {
+            return stringCompareForJavaScript(u8, this.data, other.data);
+        } else {
+            return stringCompareForJavaScript(u16, this.slice16(), other.slice16());
+        }
     }
 
     pub var empty = String{};

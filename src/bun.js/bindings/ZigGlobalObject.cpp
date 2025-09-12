@@ -330,6 +330,11 @@ extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
+// Declare the Zig functions for LazyProperty initializers
+extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1349,10 +1354,10 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
     auto* globalObj = static_cast<GlobalObject*>(obj);
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(JSC::Strong<JSPromise>(obj->vm(), promise));
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
         break;
     case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching([&](Strong<JSPromise>& unhandledPromise) {
+        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching(globalObj, [&](JSC::WriteBarrier<JSC::JSPromise>& unhandledPromise) {
             return unhandledPromise.get() == promise;
         });
         if (removed) break;
@@ -3463,6 +3468,17 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
     });
 
+    // Initialize LazyProperties for stdin/stderr/stdout
+    m_bunStdin.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());
+    });
+    m_bunStderr.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStderr(init.owner)).getObject());
+    });
+    m_bunStdout.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStdout(init.owner)).getObject());
+    });
+
     configureNodeVM(vm, this);
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -4032,16 +4048,13 @@ void GlobalObject::handleRejectedPromises()
 {
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_CATCH_SCOPE(virtual_machine);
-    do {
-        auto unhandledRejections = WTFMove(m_aboutToBeNotifiedRejectedPromises);
-        for (auto& promise : unhandledRejections) {
-            if (promise->isHandled(virtual_machine))
-                continue;
+    while (auto* promise = m_aboutToBeNotifiedRejectedPromises.takeFirst(this)) {
+        if (promise->isHandled(virtual_machine))
+            continue;
 
-            Bun__handleRejectedPromise(this, promise.get());
-            if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
-        }
-    } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
+        Bun__handleRejectedPromise(this, promise);
+        if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
+    }
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);
@@ -4053,6 +4066,9 @@ void GlobalObject::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     thisObject->globalEventScope->visitJSEventListeners(visitor);
+
+    thisObject->m_aboutToBeNotifiedRejectedPromises.visit(thisObject, visitor);
+    thisObject->m_ffiFunctions.visit(thisObject, visitor);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
@@ -4609,18 +4625,13 @@ void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvir
 
 void GlobalObject::trackFFIFunction(JSC::JSFunction* function)
 {
-    this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
+    this->m_ffiFunctions.append(vm(), this, function);
 }
 bool GlobalObject::untrackFFIFunction(JSC::JSFunction* function)
 {
-    for (size_t i = 0; i < this->m_ffiFunctions.size(); ++i) {
-        if (this->m_ffiFunctions[i].get() == function) {
-            this->m_ffiFunctions[i].clear();
-            this->m_ffiFunctions.removeAt(i);
-            return true;
-        }
-    }
-    return false;
+    return this->m_ffiFunctions.removeFirstMatching(this, [&](JSC::WriteBarrier<JSC::JSFunction>& untrackedFunction) -> bool {
+        return untrackedFunction.get() == function;
+    });
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

@@ -174,8 +174,11 @@ pub const ZstdReaderArrayList = struct {
             if (bytes_read == next_in.len) {
                 this.state = .Inflating;
                 if (is_done) {
+                    // Stream is truncated - we're at EOF but need more data
                     this.state = .Error;
+                    return error.ZstdDecompressionError;
                 }
+                // Not at EOF - we can retry with more data
                 return error.ShortRead;
             }
         }

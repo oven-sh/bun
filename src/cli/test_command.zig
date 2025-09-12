@@ -616,7 +616,7 @@ pub const CommandLineReporter = struct {
         file_reporter: ?FileReporter,
         line_number: u32,
     ) void {
-        var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
+        var scopes_stack = bun.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
         while (parent_) |scope| {
@@ -1373,7 +1373,6 @@ pub const TestCommand = struct {
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
                 .is_main_thread = true,
-                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             },
         );
         vm.argv = ctx.passthrough;

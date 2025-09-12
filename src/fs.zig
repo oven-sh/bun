@@ -1784,6 +1784,14 @@ pub const Path = struct {
         }
     }
 
+    pub inline fn assertFilePathIsAbsolute(path: *const Path) void {
+        if (bun.Environment.ci_assert) {
+            if (path.isFile()) {
+                bun.assert(std.fs.path.isAbsolute(path.text));
+            }
+        }
+    }
+
     pub inline fn isPrettyPathPosix(path: *const Path) bool {
         if (!Environment.isWindows) return true;
         return bun.strings.indexOfChar(path.pretty, '\\') == null;

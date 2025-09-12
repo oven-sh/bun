@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionType, createClient, ctx, DEFAULT_REDIS_URL, expectType, isEnabled } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     if (ctx.redis?.connected) {
       ctx.redis.close?.();
     }
     ctx.redis = createClient(ConnectionType.TCP);
+
+    await ctx.redis.send("FLUSHALL", ["SYNC"]);
   });
 
   describe("Basic Operations", () => {
@@ -174,6 +176,17 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(async () => {
         await customRedis.get("test");
       }).toThrowErrorMatchingInlineSnapshot(`"WRONGPASS invalid username-password pair or user is disabled."`);
+    });
+
+    const testKeyUniquePerDb = crypto.randomUUID();
+    test.each([...Array(16).keys()])("Connecting to database with url $url succeeds", async (dbId: number) => {
+      const redis = createClient(ConnectionType.TCP, {}, dbId);
+
+      // Ensure the value is not in the database.
+      const testValue = await redis.get(testKeyUniquePerDb);
+      expect(testValue).toBeNull();
+
+      redis.close();
     });
   });
 

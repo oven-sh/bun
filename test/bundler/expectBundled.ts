@@ -540,9 +540,6 @@ function expectBundled(
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
     throw new Error("unsupportedCSSFeatures not implemented in bun build");
   }
-  if (!ESBUILD && keepNames) {
-    throw new Error("keepNames not implemented in bun build");
-  }
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
   }
@@ -717,6 +714,7 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
+              jsx.side_effects && ["--jsx-side-effects"],
               dotenv && ["--env", dotenv],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
@@ -734,7 +732,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
-              // keepNames && `--keep-names`,
+              keepNames && `--keep-names`,
               // mainFields && `--main-fields=${mainFields}`,
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
@@ -760,6 +758,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
+              jsx.side_effects && `--jsx-side-effects`,
               env?.NODE_ENV !== "production" && `--jsx-dev`,
               entryNaming &&
                 entryNaming !== "[dir]/[name].[ext]" &&
@@ -1049,6 +1048,7 @@ function expectBundled(
             whitespace: minifyWhitespace,
             identifiers: minifyIdentifiers,
             syntax: minifySyntax,
+            keepNames: keepNames,
           },
           naming: {
             entry: useOutFile ? path.basename(outfile!) : entryNaming,

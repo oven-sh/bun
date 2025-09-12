@@ -73,6 +73,15 @@ pub const Row = struct {
                     cell.* = SQLDataCell{ .tag = .int4, .value = .{ .int4 = val } };
                 }
             },
+            .MYSQL_TYPE_INT24 => {
+                if (column.flags.UNSIGNED) {
+                    const val: u24 = std.fmt.parseInt(u24, value.slice(), 10) catch 0;
+                    cell.* = SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = val } };
+                } else {
+                    const val: i24 = std.fmt.parseInt(i24, value.slice(), 10) catch std.math.minInt(i24);
+                    cell.* = SQLDataCell{ .tag = .int4, .value = .{ .int4 = val } };
+                }
+            },
             .MYSQL_TYPE_LONGLONG => {
                 if (column.flags.UNSIGNED) {
                     const val: u64 = std.fmt.parseInt(u64, value.slice(), 10) catch 0;
@@ -114,6 +123,15 @@ pub const Row = struct {
                     };
                 };
                 cell.* = SQLDataCell{ .tag = .date, .value = .{ .date = date } };
+            },
+            .MYSQL_TYPE_BIT => {
+                // BIT(1) is a special case, it's a boolean
+                if (column.column_length == 1) {
+                    const slice = value.slice();
+                    cell.* = SQLDataCell{ .tag = .bool, .value = .{ .bool = if (slice.len > 0 and slice[0] == 1) 1 else 0 } };
+                } else {
+                    cell.* = SQLDataCell.raw(value);
+                }
             },
             else => {
                 const slice = value.slice();
@@ -202,7 +220,7 @@ pub const Row = struct {
             }
 
             const column = this.columns[i];
-            value.* = try decodeBinaryValue(this.globalObject, column.column_type, this.raw, this.bigint, column.flags.UNSIGNED, Context, reader);
+            value.* = try decodeBinaryValue(this.globalObject, column.column_type, column.column_length, this.raw, this.bigint, column.flags.UNSIGNED, Context, reader);
             value.index = switch (column.name_or_index) {
                 // The indexed columns can be out of order.
                 .index => |idx| idx,

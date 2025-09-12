@@ -1564,6 +1564,12 @@ declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+interface AbortSignal extends EventTarget {
+  readonly aborted: boolean;
+  onabort: ((this: AbortSignal, ev: Event) => any) | null;
+  readonly reason: any;
+  throwIfAborted(): void;
+}
 declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   "AbortSignal",
   {
@@ -1948,3 +1954,21 @@ declare namespace fetch {
   ): void;
 }
 //#endregion
+
+interface RegExpConstructor {
+  /**
+   * Escapes any potential regex syntax characters in a string, and returns a
+   * new string that can be safely used as a literal pattern for the RegExp()
+   * constructor.
+   *
+   * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/escape)
+   *
+   * @example
+   * ```ts
+   * const re = new RegExp(RegExp.escape("foo.bar"));
+   * re.test("foo.bar"); // true
+   * re.test("foo!bar"); // false
+   * ```
+   */
+  escape(string: string): string;
+}

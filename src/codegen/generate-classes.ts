@@ -775,12 +775,14 @@ ${
 function renderCachedFieldsHeader(typeName, klass, proto, values) {
   const rows: string[] = [];
   for (const name in klass) {
+    if (name.startsWith("@@")) continue; // Skip symbol properties
     if (("cache" in klass[name] && klass[name].cache === true) || klass[name]?.internal) {
       rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
     }
   }
 
   for (const name in proto) {
+    if (name.startsWith("@@")) continue; // Skip symbol properties
     if (proto[name]?.cache === true || klass[name]?.internal) {
       rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
     }
@@ -1066,7 +1068,9 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
   }
 
   for (const name in proto) {
-    if ("cache" in proto[name] || proto[name]?.internal) {
+    // Skip symbol properties except for functions that need callbacks generated
+    if (name.startsWith("@@") && !("fn" in proto[name])) continue;
+    if (("cache" in proto[name] || proto[name]?.internal) && !name.startsWith("@@")) {
       const cacheName = typeof proto[name].cache === "string" ? `m_${proto[name].cache}` : `m_${name}`;
       if ("cache" in proto[name]) {
         if (!supportsObjectCreate) {
@@ -1148,7 +1152,10 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
         }
       }
       rows.push(writeBarrier(symbolName, typeName, name, cacheName));
-    } else if ("getter" in proto[name] || ("accessor" in proto[name] && proto[name].getter)) {
+    } else if (
+      ("getter" in proto[name] || ("accessor" in proto[name] && proto[name].getter)) &&
+      !name.startsWith("@@")
+    ) {
       if (!supportsObjectCreate) {
         rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
@@ -1199,7 +1206,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
       }
     }
 
-    if ("setter" in proto[name] || ("accessor" in proto[name] && proto[name].setter)) {
+    if (("setter" in proto[name] || ("accessor" in proto[name] && proto[name].setter)) && !name.startsWith("@@")) {
       rows.push(
         `
 JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
@@ -1320,6 +1327,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 function allCachedValues(obj: ClassDefinition) {
   let values = (obj.values ?? []).slice().map(name => [name, `m_${name}`]);
   for (const name in obj.proto) {
+    if (name.startsWith("@@")) continue; // Skip symbol properties
     let cacheName = obj.proto[name].cache;
     if (cacheName === true) {
       cacheName = "m_" + name;
@@ -1338,6 +1346,11 @@ function allCachedValues(obj: ClassDefinition) {
 var extraIncludes = [];
 function generateClassHeader(typeName, obj: ClassDefinition) {
   var { klass, proto, JSType = "ObjectType", values = [], callbacks = {}, zigOnly = false } = obj;
+
+  // Override JSType for Error inheritance
+  if (obj.inheritsFromError) {
+    JSType = "ErrorInstanceType";
+  }
 
   if (zigOnly) return "";
 
@@ -1396,9 +1409,9 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   const final = obj.final ?? true;
 
   return `
-  class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
+  class ${name}${final ? " final" : ""} : public ${obj.inheritsFromError ? "JSC::ErrorInstance" : "JSC::JSDestructibleObject"} {
     public:
-        using Base = JSC::JSDestructibleObject;
+        using Base = ${obj.inheritsFromError ? "JSC::ErrorInstance" : "JSC::JSDestructibleObject"};
         static constexpr unsigned StructureFlags = Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""};
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
 
@@ -1407,12 +1420,17 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         {
             if constexpr (mode == JSC::SubspaceAccess::Concurrently)
                 return nullptr;
-            return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
+            return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::${obj.inheritsFromError ? "Yes" : "No"}>(
                 vm,
                 [](auto& spaces) { return spaces.${clientSubspaceFor(typeName)}.get(); },
                 [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(typeName)} = std::forward<decltype(space)>(space); },
                 [](auto& spaces) { return spaces.${subspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = std::forward<decltype(space)>(space); });
+                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = std::forward<decltype(space)>(space); }${
+                  obj.inheritsFromError
+                    ? `,
+                [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeFor${name}; }`
+                    : ""
+                });
         }
 
         static void destroy(JSC::JSCell*);
@@ -1454,7 +1472,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
 
         ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
-            : Base(vm, structure)
+            : Base(vm, structure${obj.inheritsFromError ? ", JSC::ErrorType::Error" : ""})
         {
             m_ctx = sinkPtr;
             ${weakInit.trim()}
@@ -1493,6 +1511,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 function domJITTypeCheckFields(proto, klass) {
   var output = "#if BUN_DEBUG\n";
   for (const name in proto) {
+    if (name.startsWith("@@")) continue; // Skip symbol properties
     const { DOMJIT, fn } = proto[name];
     if (!DOMJIT) continue;
     output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
@@ -1695,7 +1714,7 @@ const ClassInfo ${name}::s_info = { "${typeName}"_s, &Base::s_info, ${obj.hasOwn
 
 void ${name}::finishCreation(VM& vm)
 {
-    Base::finishCreation(vm);
+    Base::finishCreation(vm${obj.inheritsFromError ? ", WTF::emptyString(), JSC::jsUndefined()" : ""});
     ASSERT(inherits(info()));
 }
 
@@ -1786,7 +1805,7 @@ ${
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, globalObject->objectPrototype());
+    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.inheritsFromError ? "globalObject->errorPrototype()" : "globalObject->objectPrototype()"});
     structure->setMayBePrototype(true);
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }
@@ -1899,7 +1918,9 @@ function generateZig(
   const gc_fields = Object.entries({
     ...proto,
     ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
-  }).filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal);
+  }).filter(
+    ([name, { cache, internal }]) => !name.startsWith("@@") && ((cache && typeof cache !== "string") || internal),
+  );
 
   const cached_values_string =
     gc_fields.length > 0

@@ -703,7 +703,7 @@ describe("unhandled errors between tests are reported", () => {
 import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe} from "bun:test";
 
 ${stage}(async () => {
-  Bun.sleep(1).then(() => {
+  Promise.resolve().then(() => {
     throw new Error('## stage ${stage} ##');
   });
   await Bun.sleep(1);
@@ -741,14 +741,9 @@ test("my-test", () => {
         expect(stackLines[0]).toContain(`<dir>/my-test.test.js:5:11`.replace("<dir>", test_dir));
       }
 
-      if (stage === "beforeEach") {
-        expect(output).toContain("0 pass");
-        expect(output).toContain("1 fail");
-      } else {
-        expect(output).toContain("1 pass");
-        expect(output).toContain("0 fail");
-        expect(output).toContain("1 error");
-      }
+      expect(output).toContain("1 pass"); // since the error is unhandled and in a hook, the error does not get attributed to the hook and the test is still allowed to run
+      expect(output).toContain("0 fail");
+      expect(output).toContain("1 error");
 
       expect(output).toContain("Ran 1 test across 1 file");
     });

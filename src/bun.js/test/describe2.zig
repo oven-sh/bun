@@ -467,6 +467,18 @@ pub const BunTest = struct {
         }
     }
 
+    fn drain(globalThis: *jsc.JSGlobalObject) void {
+        const bun_vm = globalThis.bunVM();
+        bun_vm.drainMicrotasks();
+        var count = bun_vm.unhandled_error_counter;
+        bun_vm.global.handleRejectedPromises();
+        while (bun_vm.unhandled_error_counter > count) {
+            count = bun_vm.unhandled_error_counter;
+            bun_vm.drainMicrotasks();
+            bun_vm.global.handleRejectedPromises();
+        }
+    }
+
     /// if sync, the result is queued and appended later
     pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!void {
         group.begin(@src());
@@ -488,15 +500,7 @@ pub const BunTest = struct {
             group.log("callTestCallback -> error", .{});
             break :blk null;
         };
-        const bun_vm = globalThis.bunVM();
-        bun_vm.drainMicrotasks();
-        var count = bun_vm.unhandled_error_counter;
-        bun_vm.global.handleRejectedPromises();
-        while (bun_vm.unhandled_error_counter > count) {
-            count = bun_vm.unhandled_error_counter;
-            bun_vm.drainMicrotasks();
-            bun_vm.global.handleRejectedPromises();
-        }
+        drain(globalThis);
 
         var dcb_ref: ?*RefData = null;
         if (done_callback) |dcb| {

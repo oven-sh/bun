@@ -408,7 +408,7 @@ Regular:
 
 # Real:
 
-- [ ] test/js/bun/shell/bunshell.test.ts
+- [x] test/js/bun/shell/bunshell.test.ts
 - [ ] test/integration/next-pages/test/dev-server.test.ts
 
 # Flaky failure:

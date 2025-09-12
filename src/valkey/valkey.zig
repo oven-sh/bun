@@ -655,14 +655,28 @@ pub const ValkeyClient = struct {
                 const subs_ctx = p.getOrCreateSubscriptionCtxEnteringSubscriptionMode();
                 const sub_count = subs_ctx.channelsSubscribedToCount(globalThis);
 
-                if (std.mem.eql(u8, push.kind, "subscribe")) {
-                    this.onValkeySubscribe(value);
-                    promise_ptr.promise.resolve(globalThis, .jsNumber(sub_count));
-                    return .handled;
-                } else if (std.mem.eql(u8, push.kind, "unsubscribe")) {
-                    this.onValkeyUnsubscribe(value);
-                    promise_ptr.promise.resolve(globalThis, .js_undefined);
-                    return .handled;
+                if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
+                    switch (msg_type) {
+                        .subscribe => {
+                            this.onValkeySubscribe(value);
+                            promise_ptr.promise.resolve(globalThis, .jsNumber(sub_count));
+                            return .handled;
+                        },
+                        .unsubscribe => {
+                            this.onValkeyUnsubscribe(value);
+                            promise_ptr.promise.resolve(globalThis, .js_undefined);
+                            return .handled;
+                        },
+                        else => {
+                            // Other push messages (message, pmessage, etc) are not handled here
+                            @branchHint(.cold);
+                            this.fail(
+                                "Push message is not a subscription message.",
+                                protocol.RedisError.InvalidResponseType,
+                            );
+                            return .fallthrough;
+                        }
+                    }
                 } else {
                     // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,
                     // then this is an unexpected path.
@@ -801,22 +815,26 @@ pub const ValkeyClient = struct {
                     return;
                 },
                 .Push => |push| {
-                    if (std.mem.eql(u8, push.kind, "message")) {
-                        @branchHint(.likely);
-                        debug("Received a message.", .{});
-                        this.onValkeyMessage(push.data);
-                        return;
-                    } else if (std.mem.eql(u8, push.kind, "subscribe")) {
-                        @branchHint(.cold);
-                        debug("Received subscription message without promise: {any}", .{push.data});
-                        return;
-                    } else if (std.mem.eql(u8, push.kind, "unsubscribe")) {
-                        @branchHint(.cold);
-                        debug("Received unsubscribe message without promise: {any}", .{push.data});
-                        return;
+                    if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
+                        switch (msg_type) {
+                            .message => {
+                                @branchHint(.likely);
+                                debug("Received a message.", .{});
+                                this.onValkeyMessage(push.data);
+                                return;
+                            },
+                            else => {
+                                @branchHint(.cold);
+                                debug("Received non-message push without promise: {any}", .{push.data});
+                                return;
+                            },
+                        }
                     } else {
                         @branchHint(.cold);
-                        this.fail("Unexpected push message kind without promise", protocol.RedisError.InvalidResponseType);
+                        this.fail(
+                            "Unexpected push message kind without promise",
+                            protocol.RedisError.InvalidResponseType,
+                        );
                         return;
                     }
                 },

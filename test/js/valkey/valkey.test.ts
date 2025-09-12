@@ -1,8 +1,8 @@
 import { randomUUIDv7, RedisClient } from "bun";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  ConnectionType,
   awaitableCounter,
+  ConnectionType,
   createClient,
   ctx,
   DEFAULT_REDIS_URL,

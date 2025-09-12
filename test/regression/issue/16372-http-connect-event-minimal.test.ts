@@ -1,13 +1,13 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { createServer } from "node:http";
 import net from "node:net";
 
 test("node:http server emits 'connect' event for CONNECT method", async () => {
   let connectEventEmitted = false;
   let receivedRequest = null;
-  
+
   const server = createServer();
-  
+
   server.on("connect", (req, socket, head) => {
     connectEventEmitted = true;
     receivedRequest = {
@@ -19,7 +19,7 @@ test("node:http server emits 'connect' event for CONNECT method", async () => {
     socket.end();
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     server.listen(0, "127.0.0.1", () => {
       resolve();
     });
@@ -34,14 +34,14 @@ test("node:http server emits 'connect' event for CONNECT method", async () => {
     client.write("\r\n");
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     client.on("end", () => {
       resolve();
     });
     client.on("error", () => {
       resolve();
     });
-    
+
     // Timeout to prevent hanging
     setTimeout(() => {
       client.destroy();

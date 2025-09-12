@@ -1,13 +1,12 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
 import { createServer } from "node:http";
 import net from "node:net";
 
 test("node:http server should emit 'connect' event for CONNECT method", async () => {
   let connectCalled = false;
-  
+
   const server = createServer();
-  
+
   server.on("connect", (req, socket, head) => {
     connectCalled = true;
     // Respond with 200 Connection Established
@@ -15,7 +14,7 @@ test("node:http server should emit 'connect' event for CONNECT method", async ()
     socket.end();
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     server.listen(0, "127.0.0.1", () => {
       resolve();
     });
@@ -32,11 +31,11 @@ test("node:http server should emit 'connect' event for CONNECT method", async ()
   });
 
   let response = "";
-  client.on("data", (data) => {
+  client.on("data", data => {
     response += data.toString();
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     client.on("end", () => {
       resolve();
     });
@@ -44,7 +43,7 @@ test("node:http server should emit 'connect' event for CONNECT method", async ()
 
   // Verify the connect event was called
   expect(connectCalled).toBe(true);
-  
+
   // Verify proper response
   expect(response).toContain("200 Connection Established");
 
@@ -54,10 +53,10 @@ test("node:http server should emit 'connect' event for CONNECT method", async ()
 
 test("node:http server should respond with 400 if no connect handler", async () => {
   const server = createServer();
-  
+
   // No connect event handler - should return 400
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     server.listen(0, "127.0.0.1", () => {
       resolve();
     });
@@ -73,11 +72,11 @@ test("node:http server should respond with 400 if no connect handler", async () 
   });
 
   let response = "";
-  client.on("data", (data) => {
+  client.on("data", data => {
     response += data.toString();
   });
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     client.on("end", () => {
       resolve();
     });

@@ -593,7 +593,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           if (server.listenerCount("connect") > 0) {
             // For CONNECT, emit the event and let the handler respond
             server.emit("connect", http_req, socket, kEmptyBuffer);
-            
+
             // Don't assign the socket to a response for CONNECT
             // The handler should write the raw response
           } else {
@@ -1018,8 +1018,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       // Try to write directly to the socket handle
       try {
         // Convert string to buffer if needed
-        if (typeof chunk === 'string') {
-          chunk = Buffer.from(chunk, encoding || 'utf8');
+        if (typeof chunk === "string") {
+          chunk = Buffer.from(chunk, encoding || "utf8");
         }
         // Write raw data
         handle.write(chunk);

@@ -833,10 +833,16 @@ pub const PackageJSON = struct {
                         glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
 
                         while (array.next()) |item| {
-                            if (item.asString(allocator)) |name| {
+                            if (item.asString(allocator)) |name_raw| {
                                 // Skip CSS files as they're not relevant for tree-shaking
-                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                if (strings.eqlComptime(std.fs.path.extension(name_raw), ".css"))
                                     continue;
+
+                                // Strip leading "./" for proper path joining
+                                const name = if (strings.hasPrefixComptime(name_raw, "./"))
+                                    name_raw[2..]
+                                else
+                                    name_raw;
 
                                 // Store the pattern relative to the package directory
                                 var joined = [_]string{
@@ -864,10 +870,16 @@ pub const PackageJSON = struct {
                         // Only glob patterns
                         glob_list.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
                         while (array.next()) |item| {
-                            if (item.asString(allocator)) |name| {
+                            if (item.asString(allocator)) |name_raw| {
                                 // Skip CSS files as they're not relevant for tree-shaking
-                                if (strings.eqlComptime(std.fs.path.extension(name), ".css"))
+                                if (strings.eqlComptime(std.fs.path.extension(name_raw), ".css"))
                                     continue;
+
+                                // Strip leading "./" for proper path joining
+                                const name = if (strings.hasPrefixComptime(name_raw, "./"))
+                                    name_raw[2..]
+                                else
+                                    name_raw;
 
                                 // Store the pattern relative to the package directory
                                 var joined = [_]string{
@@ -886,7 +898,13 @@ pub const PackageJSON = struct {
                         // Only exact matches
                         map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
                         while (array.next()) |item| {
-                            if (item.asString(allocator)) |name| {
+                            if (item.asString(allocator)) |name_raw| {
+                                // Strip leading "./" for proper path joining
+                                const name = if (strings.hasPrefixComptime(name_raw, "./"))
+                                    name_raw[2..]
+                                else
+                                    name_raw;
+
                                 var joined = [_]string{
                                     json_source.path.name.dirWithTrailingSlash(),
                                     name,

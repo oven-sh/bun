@@ -35,7 +35,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     } else {
         // error is only reported for the first done() call
         if (was_error) {
-            globalThis.reportUncaughtExceptionFromError(globalThis.throwValue(value));
+            _ = globalThis.bunVM().uncaughtException(globalThis, value, false);
         }
     }
     this.called = true;

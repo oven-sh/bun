@@ -1150,7 +1150,10 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     uint32_t* result)
 {
     NAPI_PREAMBLE(env);
-    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    // napi_reference_unref is safe to call during GC as it only decrements
+    // a counter and doesn't allocate memory or trigger GC operations.
+    // Some native modules call this from finalizers, so we allow it.
+    // NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
 
     NapiRef* napiRef = toJS(ref);

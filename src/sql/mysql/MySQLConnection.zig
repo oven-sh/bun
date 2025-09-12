@@ -962,7 +962,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 }
 
 pub fn deinit(this: *MySQLConnection) void {
-    this.disconnect();
     this.stopTimers();
     debug("MySQLConnection deinit", .{});
 
@@ -973,10 +972,7 @@ pub fn deinit(this: *MySQLConnection) void {
     // Clear any pending requests first
     for (requests.readableSlice(0)) |request| {
         this.finishRequest(request);
-        request.onError(.{
-            .error_code = 2013,
-            .error_message = .{ .temporary = "Connection closed" },
-        }, this.globalObject);
+        request.deref();
     }
     this.write_buffer.deinit(bun.default_allocator);
     this.read_buffer.deinit(bun.default_allocator);

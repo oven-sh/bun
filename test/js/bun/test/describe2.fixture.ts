@@ -88,13 +88,10 @@ describe("actual tests", () => {
 describe.concurrent("concurrent describe 1", () => {
   test("item 1", async () => {});
   test("item 2", async () => {});
-  test("snapshot in concurrent group", async () => {
+  test.failing("snapshot in concurrent group", async () => {
+    console.log("snapshot in concurrent group");
     // this is a technical limitation of not using async context. in the future, we could allow thisa
-    try {
-      expect("hello").toMatchSnapshot();
-    } catch (e) {
-      throw (e as Error).message;
-    }
+    expect("hello").toMatchSnapshot();
   });
 });
 
@@ -258,7 +255,7 @@ describe("done parameter", () => {
       throw "promise error";
     });
   });
-  test("second call of done callback still triggers error", done => {
+  test("second call of done callback ignores triggers error", done => {
     done();
     done("uh oh!");
   });

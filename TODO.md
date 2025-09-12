@@ -385,7 +385,7 @@ Regular:
 - [ ] (flaky) test/js/bun/s3/s3.leak.test.ts
 - [ ] (flaky) test/js/bun/s3/s3.test.ts
 - [ ] (flaky) test/napi/napi.test.ts
-- [ ] test/js/bun/test/test-test.test.ts
+- [x] test/js/bun/test/test-test.test.ts
 - [x] test/cli/install/bun-install-patch.test.ts
 - [x] test/js/node/net/node-net-server.test.ts
 - [x] (maybe flaky?) test/cli/install/bun-install-registry.test.ts

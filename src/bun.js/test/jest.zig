@@ -65,7 +65,11 @@ pub const TestLineFilter = struct {
     line: u32,
 
     pub fn hash(self: TestLineFilter) u32 {
-        return @truncate(std.hash.Wyhash.hash(self.line, self.path));
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(self.path);
+        hasher.update("-------");
+        hasher.update(std.mem.asBytes(&self.line));
+        return @truncate(hasher.digest());
     }
 
     pub fn eql(a: TestLineFilter, b: TestLineFilter) bool {

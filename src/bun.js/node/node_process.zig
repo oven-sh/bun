@@ -346,22 +346,11 @@ pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
 
 pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
 pub export const Bun__version_with_sha: [*:0]const u8 = "v" ++ bun.Global.package_json_version_with_sha;
-pub export const Bun__versions_boringssl: [*:0]const u8 = bun.Global.versions.boringssl;
-pub export const Bun__versions_libarchive: [*:0]const u8 = bun.Global.versions.libarchive;
-pub export const Bun__versions_mimalloc: [*:0]const u8 = bun.Global.versions.mimalloc;
-pub export const Bun__versions_picohttpparser: [*:0]const u8 = bun.Global.versions.picohttpparser;
+// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
+// The C++ code in BunProcess.cpp uses the generated header directly
 pub export const Bun__versions_uws: [*:0]const u8 = bun.Environment.git_sha;
-pub export const Bun__versions_webkit: [*:0]const u8 = bun.Global.versions.webkit;
-pub export const Bun__versions_zig: [*:0]const u8 = bun.Global.versions.zig;
-pub export const Bun__versions_zlib: [*:0]const u8 = bun.Global.versions.zlib;
-pub export const Bun__versions_tinycc: [*:0]const u8 = bun.Global.versions.tinycc;
-pub export const Bun__versions_lolhtml: [*:0]const u8 = bun.Global.versions.lolhtml;
-pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
-pub export const Bun__versions_libdeflate: [*:0]const u8 = bun.Global.versions.libdeflate;
 pub export const Bun__versions_usockets: [*:0]const u8 = bun.Environment.git_sha;
 pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
-pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;
-pub export const Bun__versions_zstd: [*:0]const u8 = bun.Global.versions.zstd;
 
 const std = @import("std");
 

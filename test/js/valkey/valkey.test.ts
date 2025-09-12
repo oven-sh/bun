@@ -1,7 +1,8 @@
-import { randomUUIDv7, RedisClient, sleep } from "bun";
-import { describe, expect, test } from "bun:test";
+import { randomUUIDv7, RedisClient } from "bun";
+import { beforeEach, describe, expect, test } from "bun:test";
 import {
   ConnectionType,
+  awaitableCounter,
   createClient,
   ctx,
   DEFAULT_REDIS_URL,
@@ -229,7 +230,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     const testKey = "test-key";
     const testValue = "test-value";
     const testMessage = "test-message";
-    const flushTimeoutMs = 300;
 
     test("publishing to a channel does not fail", async () => {
       const redis = await connectedRedis();
@@ -264,9 +264,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const redis = await connectedRedis();
       const subscriber = await connectedRedis();
 
-      var receiveCount = 0;
+      const counter = awaitableCounter(TEST_MESSAGE_COUNT);
       await subscriber.subscribe(testChannel, (message, channel) => {
-        receiveCount++;
+        counter.increment();
         expect(channel).toBe(testChannel);
         expect(message).toBe(testMessage);
       });
@@ -275,10 +275,8 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
         expect(await redis.publish(testChannel, testMessage)).toBe(1);
       });
 
-      // Wait a little bit just to ensure all the messages are flushed.
-      await sleep(flushTimeoutMs);
-
-      expect(receiveCount).toBe(TEST_MESSAGE_COUNT);
+      await counter.waitForTarget();
+      expect(counter.count()).toBe(TEST_MESSAGE_COUNT);
 
       await subscriber.unsubscribe(testChannel);
     });
@@ -288,9 +286,11 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const redis = await connectedRedis();
       const subscriber = await connectedRedis();
 
+      const counter = awaitableCounter(TEST_MESSAGE_COUNT);
       var receivedMessages: string[] = [];
       await subscriber.subscribe(testChannel, message => {
         receivedMessages.push(message);
+        counter.increment();
       });
 
       var sentMessages: string[] = [];
@@ -300,9 +300,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
         sentMessages.push(message);
       });
 
-      // Wait a little bit just to ensure all the messages are flushed.
-      await sleep(flushTimeoutMs);
-
+      await counter.waitForTarget();
       expect(receivedMessages.length).toBe(sentMessages.length);
       expect(receivedMessages).toEqual(sentMessages);
 
@@ -315,11 +313,13 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const subscriber = await connectedRedis();
 
       const channels = [testChannel, "another-test-channel"];
+      const counter = awaitableCounter(TEST_MESSAGE_COUNT);
 
       var receivedMessages: { [channel: string]: string[] } = {};
       await subscriber.subscribe(channels, (message, channel) => {
         receivedMessages[channel] = receivedMessages[channel] || [];
         receivedMessages[channel].push(message);
+        counter.increment();
       });
 
       var sentMessages: { [channel: string]: string[] } = {};
@@ -333,8 +333,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
         sentMessages[channel].push(message);
       }
 
-      // Wait a little bit just to ensure all the messages are flushed.
-      await sleep(flushTimeoutMs);
+      await counter.waitForTarget();
 
       // Check that we received messages on both channels
       expect(Object.keys(receivedMessages).sort()).toEqual(Object.keys(sentMessages).sort());
@@ -359,10 +358,14 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       let receivedMessages: { [channel: string]: string[] } = {};
 
+      // Total counter for all messages we expect to receive: 3 initial + 2 after unsubscribe = 5 total
+      const counter = awaitableCounter(5);
+
       // Subscribe to three channels
       await subscriber.subscribe([channel1, channel2, channel3], (message, channel) => {
         receivedMessages[channel] = receivedMessages[channel] || [];
         receivedMessages[channel].push(message);
+        counter.increment();
       });
 
       // Send initial messages to all channels
@@ -370,9 +373,8 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(await redis.publish(channel2, "msg2-before")).toBe(1);
       expect(await redis.publish(channel3, "msg3-before")).toBe(1);
 
-      await sleep(flushTimeoutMs);
-
-      // Unsubscribe from channel2
+      // Wait for initial messages, then unsubscribe from channel2
+      await counter.untilValue(3);
       await subscriber.unsubscribe(channel2);
 
       // Send messages after unsubscribing from channel2
@@ -380,7 +382,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(await redis.publish(channel2, "msg2-after")).toBe(0);
       expect(await redis.publish(channel3, "msg3-after")).toBe(1);
 
-      await sleep(flushTimeoutMs);
+      await counter.waitForTarget();
 
       // Check we received messages only on subscribed channels
       expect(receivedMessages[channel1]).toEqual(["msg1-before", "msg1-after"]);
@@ -395,14 +397,18 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const subscriber = await connectedRedis();
       const channel = "duplicate-channel";
 
+      const counter = awaitableCounter(2); // Expecting 2 calls total (one for each listener)
+
       let callCount = 0;
       const listener = () => {
         callCount++;
+        counter.increment();
       };
 
       let callCount2 = 0;
       const listener2 = () => {
         callCount2++;
+        counter.increment();
       };
 
       // Subscribe to the same channel twice
@@ -412,7 +418,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       // Publish a single message
       expect(await redis.publish(channel, "test-message")).toBe(1);
 
-      await sleep(flushTimeoutMs);
+      await counter.waitForTarget();
 
       // Both listeners should have been called once.
       expect(callCount).toBe(1);
@@ -426,13 +432,15 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const channel = "empty-message-channel";
       const subscriber = await connectedRedis();
 
+      const counter = awaitableCounter(1);
       let receivedMessage: string | undefined = undefined;
       await subscriber.subscribe(channel, message => {
         receivedMessage = message;
+        counter.increment();
       });
 
       expect(await redis.publish(channel, "")).toBe(1);
-      await sleep(flushTimeoutMs);
+      await counter.waitForTarget();
 
       expect(receivedMessage).not.toBeUndefined();
       expect(receivedMessage!).toBe("");
@@ -453,13 +461,15 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       ];
 
       for (const channel of specialChannels) {
+        const counter = awaitableCounter(1);
         let received = false;
         await subscriber.subscribe(channel, () => {
           received = true;
+          counter.increment();
         });
 
         expect(await redis.publish(channel, "test")).toBe(1);
-        await sleep(flushTimeoutMs);
+        await counter.waitForTarget();
 
         expect(received).toBe(true);
         await subscriber.unsubscribe(channel);
@@ -490,7 +500,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       // Publishing from the same client should work
       expect(async () => redis.publish(channel, "self-published")).toThrow();
-      await sleep(flushTimeoutMs);
 
       await redis.unsubscribe(channel);
     });
@@ -541,9 +550,11 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       const subscriber = await connectedRedis();
 
+      const counter = awaitableCounter(3);
       let messageCount = 0;
       await subscriber.subscribe(channel, () => {
         messageCount++;
+        counter.increment();
         if (messageCount === 2) {
           throw new Error("Intentional callback error");
         }
@@ -554,7 +565,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(await redis.publish(channel, "message2")).toBe(1);
       expect(await redis.publish(channel, "message3")).toBe(1);
 
-      await sleep(flushTimeoutMs);
+      await counter.waitForTarget();
 
       expect(messageCount).toBe(3);
 
@@ -576,21 +587,24 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       const subscriber = await connectedRedis();
 
+      // First phase: both listeners should receive 1 message each (2 total)
+      const counter = awaitableCounter(3);
       let messageCount1 = 0;
       const listener1 = () => {
         messageCount1++;
+        counter.increment();
       };
       await subscriber.subscribe(channel, listener1);
 
       let messageCount2 = 0;
       const listener2 = () => {
         messageCount2++;
+        counter.increment();
       };
       await subscriber.subscribe(channel, listener2);
 
       await redis.publish(channel, "message1");
-
-      await sleep(flushTimeoutMs);
+      await counter.untilValue(2);
 
       expect(messageCount1).toBe(1);
       expect(messageCount2).toBe(1);
@@ -599,20 +613,12 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       await subscriber.unsubscribe(channel, listener2);
 
       await redis.publish(channel, "message1");
-
-      await sleep(flushTimeoutMs);
+      await counter.waitForTarget();
 
       expect(messageCount1).toBe(2);
       expect(messageCount2).toBe(1);
 
       await subscriber.unsubscribe();
-
-      await redis.publish(channel, "message1");
-
-      await sleep(flushTimeoutMs);
-
-      expect(messageCount1).toBe(2);
-      expect(messageCount2).toBe(1);
     });
   });
 

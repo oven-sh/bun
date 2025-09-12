@@ -804,3 +804,38 @@ export async function restartRedisContainer(): Promise<void> {
 export function randomCoinFlip(): boolean {
   return Math.floor(Math.random() * 2) == 0;
 }
+
+export function awaitableCounter(targetCount: number) {
+  let count = 0;
+
+  let resolve: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+
+  const increment = () => {
+    count++;
+    if (count >= targetCount) {
+      resolve();
+    }
+  };
+
+  return {
+    increment,
+    count: () => count,
+    waitForTarget: () => promise,
+    untilValue: (value: number) => new Promise<void>((res) => {
+      if (count >= value) {
+        res();
+      } else {
+        const interval = setInterval(() => {
+          if (count >= value) {
+            clearInterval(interval);
+            res();
+          }
+        }, 10);
+      }
+    }),
+  };
+};
+

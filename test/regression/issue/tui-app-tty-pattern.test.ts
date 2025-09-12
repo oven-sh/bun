@@ -4,6 +4,11 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 // This test replicates the pattern used by TUI apps
 // where they read piped stdin first, then reopen /dev/tty for interactive input
 test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
+  // Skip on Windows - no /dev/tty
+  if (process.platform === "win32") {
+    return;
+  }
+
   // Check if 'script' command is available for TTY simulation
   const scriptPath = Bun.which("script");
   if (!scriptPath) {
@@ -96,9 +101,11 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
 test("tty.ReadStream handles non-TTY file descriptors correctly", () => {
   const fs = require("fs");
   const tty = require("tty");
-
-  // Create a regular file
-  const tempFile = "/tmp/test-regular-file.txt";
+  const path = require("path");
+  const os = require("os");
+  
+  // Create a regular file in the system temp directory
+  const tempFile = path.join(os.tmpdir(), "test-regular-file-" + Date.now() + ".txt");
   fs.writeFileSync(tempFile, "test content");
 
   try {
@@ -111,10 +118,14 @@ test("tty.ReadStream handles non-TTY file descriptors correctly", () => {
     // ref/unref should still exist (for compatibility) but may be no-ops
     expect(typeof stream.ref).toBe("function");
     expect(typeof stream.unref).toBe("function");
-
+    
+    // Clean up - only destroy the stream, don't double-close the fd
     stream.destroy();
-    fs.closeSync(fd);
   } finally {
-    fs.unlinkSync(tempFile);
+    try {
+      fs.unlinkSync(tempFile);
+    } catch (e) {
+      // Ignore cleanup errors
+    }
   }
 });

@@ -39,6 +39,11 @@ test("tty.ReadStream should have ref/unref methods when opened on /dev/tty", () 
 });
 
 test("tty.ReadStream ref/unref should behave like Node.js", async () => {
+  // Skip on Windows - no /dev/tty
+  if (process.platform === "win32") {
+    return;
+  }
+
   // Create a test script that uses tty.ReadStream with ref/unref
   const script = `
     const fs = require('fs');
@@ -72,14 +77,20 @@ test("tty.ReadStream ref/unref should behave like Node.js", async () => {
     
     // Process should exit immediately since both stream and timer are unref'd
     console.log('SUCCESS');
+    
+    // Clean up properly
+    stream.destroy();
   `;
 
   // Write the test script to a temporary file
-  await Bun.write("/tmp/test-tty-ref-unref.js", script);
+  const path = require("path");
+  const os = require("os");
+  const tempFile = path.join(os.tmpdir(), "test-tty-ref-unref-" + Date.now() + ".js");
+  await Bun.write(tempFile, script);
 
   // Run the script with bun
   const proc = Bun.spawn({
-    cmd: [bunExe(), "/tmp/test-tty-ref-unref.js"],
+    cmd: [bunExe(), tempFile],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

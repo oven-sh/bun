@@ -14,11 +14,6 @@
  * ```
  */
 declare module "bun:test" {
-  /**
-   * -- Mocks --
-   *
-   * @category Testing
-   */
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   export const mock: {
@@ -588,7 +583,9 @@ declare module "bun:test" {
      * @param customFailMessage an optional custom message to display if the test fails.
      * */
 
-    <T = unknown>(actual?: T, customFailMessage?: string): Matchers<T>;
+    (actual?: never, customFailMessage?: string): Matchers<undefined>;
+    <T = unknown>(actual: T, customFailMessage?: string): Matchers<T>;
+    <T = unknown>(actual?: T, customFailMessage?: string): Matchers<T | undefined>;
 
     /**
      * Access to negated asymmetric matchers.
@@ -906,6 +903,7 @@ declare module "bun:test" {
      * @param message the message to display if the test fails (optional)
      */
     pass: (message?: string) => void;
+
     /**
      * Assertion which fails.
      *
@@ -917,6 +915,7 @@ declare module "bun:test" {
      * expect().not.fail("hi");
      */
     fail: (message?: string) => void;
+
     /**
      * Asserts that a value equals what is expected.
      *
@@ -930,9 +929,15 @@ declare module "bun:test" {
      * expect([123]).toBe([123]); // fail, use toEqual()
      * expect(3 + 0.14).toBe(3.14); // fail, use toBeCloseTo()
      *
+     * // TypeScript errors:
+     * expect("hello").toBe(3.14); // typescript error + fail
+     * expect("hello").toBe<number>(3.14); // no typescript error, but still fails
+     *
      * @param expected the expected value
      */
     toBe(expected: T): void;
+    toBe<X = T>(expected: NoInfer<X>): void;
+
     /**
      * Asserts that a number is odd.
      *
@@ -942,6 +947,7 @@ declare module "bun:test" {
      * expect(2).not.toBeOdd();
      */
     toBeOdd(): void;
+
     /**
      * Asserts that a number is even.
      *
@@ -951,6 +957,7 @@ declare module "bun:test" {
      * expect(1).not.toBeEven();
      */
     toBeEven(): void;
+
     /**
      * Asserts that value is close to the expected by floating point precision.
      *
@@ -969,6 +976,7 @@ declare module "bun:test" {
      * @param numDigits the number of digits to check after the decimal point. Default is `2`
      */
     toBeCloseTo(expected: number, numDigits?: number): void;
+
     /**
      * Asserts that a value is deeply equal to what is expected.
      *
@@ -981,6 +989,8 @@ declare module "bun:test" {
      * @param expected the expected value
      */
     toEqual(expected: T): void;
+    toEqual<X = T>(expected: NoInfer<X>): void;
+
     /**
      * Asserts that a value is deeply and strictly equal to
      * what is expected.
@@ -1005,6 +1015,8 @@ declare module "bun:test" {
      * @param expected the expected value
      */
     toStrictEqual(expected: T): void;
+    toStrictEqual<X = T>(expected: NoInfer<X>): void;
+
     /**
      * Asserts that the value is deep equal to an element in the expected array.
      *
@@ -1017,7 +1029,9 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: Array<unknown> | Iterable<unknown>): void;
+    toBeOneOf(expected: Iterable<T>): void;
+    toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): void;
+
     /**
      * Asserts that a value contains what is expected.
      *
@@ -1031,7 +1045,9 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContain(expected: unknown): void;
+    toContain(expected: T extends Iterable<infer U> ? U : T): void;
+    toContain<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
+
     /**
      * Asserts that an `object` contains a key.
      *
@@ -1045,7 +1061,9 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKey(expected: unknown): void;
+    toContainKey(expected: keyof T): void;
+    toContainKey<X = T>(expected: NoInfer<keyof X>): void;
+
     /**
      * Asserts that an `object` contains all the provided keys.
      *
@@ -1060,7 +1078,9 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAllKeys(expected: unknown): void;
+    toContainAllKeys(expected: Array<keyof T>): void;
+    toContainAllKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
+
     /**
      * Asserts that an `object` contains at least one of the provided keys.
      * Asserts that an `object` contains all the provided keys.
@@ -1075,12 +1095,16 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAnyKeys(expected: unknown): void;
+    toContainAnyKeys(expected: Array<keyof T>): void;
+    toContainAnyKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
 
     /**
      * Asserts that an `object` contain the provided value.
      *
-     * The value must be an object
+     * This method is deep and will look through child properties to find the
+     * expected value.
+     *
+     * The input value must be an object.
      *
      * @example
      * const shallow = { hello: "world" };
@@ -1104,10 +1128,15 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
+    // Contributor note: In theory we could type this better but it would be a
+    // slow union to compute...
     toContainValue(expected: unknown): void;
 
     /**
      * Asserts that an `object` contain the provided value.
+     *
+     * This is the same as {@link toContainValue}, but accepts an array of
+     * values instead.
      *
      * The value must be an object
      *
@@ -1118,7 +1147,7 @@ declare module "bun:test" {
      * expect(o).not.toContainValues(['qux', 'foo']);
      * @param expected the expected value
      */
-    toContainValues(expected: unknown): void;
+    toContainValues(expected: Array<unknown>): void;
 
     /**
      * Asserts that an `object` contain all the provided values.
@@ -1132,7 +1161,7 @@ declare module "bun:test" {
      * expect(o).not.toContainAllValues(['bar', 'foo']);
      * @param expected the expected value
      */
-    toContainAllValues(expected: unknown): void;
+    toContainAllValues(expected: Array<unknown>): void;
 
     /**
      * Asserts that an `object` contain any provided value.
@@ -1147,7 +1176,7 @@ declare module "bun:test" {
      * expect(o).not.toContainAnyValues(['qux']);
      * @param expected the expected value
      */
-    toContainAnyValues(expected: unknown): void;
+    toContainAnyValues(expected: Array<unknown>): void;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1159,7 +1188,9 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKeys(expected: unknown): void;
+    toContainKeys(expected: Array<keyof T>): void;
+    toContainKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
+
     /**
      * Asserts that a value contains and equals what is expected.
      *
@@ -1172,7 +1203,9 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainEqual(expected: unknown): void;
+    toContainEqual(expected: T extends Iterable<infer U> ? U : T): void;
+    toContainEqual<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
+
     /**
      * Asserts that a value has a `.length` property
      * that is equal to the expected length.
@@ -1184,6 +1217,7 @@ declare module "bun:test" {
      * @param length the expected length
      */
     toHaveLength(length: number): void;
+
     /**
      * Asserts that a value has a property with the
      * expected name, and value if provided.
@@ -1198,6 +1232,7 @@ declare module "bun:test" {
      * @param value the expected property value, if provided
      */
     toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknown): void;
+
     /**
      * Asserts that a value is "truthy".
      *
@@ -1210,6 +1245,7 @@ declare module "bun:test" {
      * expect({}).toBeTruthy();
      */
     toBeTruthy(): void;
+
     /**
      * Asserts that a value is "falsy".
      *
@@ -1222,6 +1258,7 @@ declare module "bun:test" {
      * expect({}).toBeTruthy();
      */
     toBeFalsy(): void;
+
     /**
      * Asserts that a value is defined. (e.g. is not `undefined`)
      *
@@ -1230,6 +1267,7 @@ declare module "bun:test" {
      * expect(undefined).toBeDefined(); // fail
      */
     toBeDefined(): void;
+
     /**
      * Asserts that the expected value is an instance of value
      *
@@ -1238,6 +1276,7 @@ declare module "bun:test" {
      * expect(null).toBeInstanceOf(Array); // fail
      */
     toBeInstanceOf(value: unknown): void;
+
     /**
      * Asserts that a value is `undefined`.
      *
@@ -1246,6 +1285,7 @@ declare module "bun:test" {
      * expect(null).toBeUndefined(); // fail
      */
     toBeUndefined(): void;
+
     /**
      * Asserts that a value is `null`.
      *
@@ -1254,6 +1294,7 @@ declare module "bun:test" {
      * expect(undefined).toBeNull(); // fail
      */
     toBeNull(): void;
+
     /**
      * Asserts that a value is `NaN`.
      *
@@ -1265,6 +1306,7 @@ declare module "bun:test" {
      * expect("notanumber").toBeNaN(); // fail
      */
     toBeNaN(): void;
+
     /**
      * Asserts that a value is a `number` and is greater than the expected value.
      *
@@ -1276,6 +1318,7 @@ declare module "bun:test" {
      * @param expected the expected number
      */
     toBeGreaterThan(expected: number | bigint): void;
+
     /**
      * Asserts that a value is a `number` and is greater than or equal to the expected value.
      *
@@ -1287,6 +1330,7 @@ declare module "bun:test" {
      * @param expected the expected number
      */
     toBeGreaterThanOrEqual(expected: number | bigint): void;
+
     /**
      * Asserts that a value is a `number` and is less than the expected value.
      *
@@ -1298,6 +1342,7 @@ declare module "bun:test" {
      * @param expected the expected number
      */
     toBeLessThan(expected: number | bigint): void;
+
     /**
      * Asserts that a value is a `number` and is less than or equal to the expected value.
      *
@@ -1309,6 +1354,7 @@ declare module "bun:test" {
      * @param expected the expected number
      */
     toBeLessThanOrEqual(expected: number | bigint): void;
+
     /**
      * Asserts that a function throws an error.
      *
@@ -1329,6 +1375,7 @@ declare module "bun:test" {
      * @param expected the expected error, error message, or error pattern
      */
     toThrow(expected?: unknown): void;
+
     /**
      * Asserts that a function throws an error.
      *
@@ -1350,6 +1397,7 @@ declare module "bun:test" {
      * @alias toThrow
      */
     toThrowError(expected?: unknown): void;
+
     /**
      * Asserts that a value matches a regular expression or includes a substring.
      *
@@ -1360,6 +1408,7 @@ declare module "bun:test" {
      * @param expected the expected substring or pattern.
      */
     toMatch(expected: string | RegExp): void;
+
     /**
      * Asserts that a value matches the most recent snapshot.
      *
@@ -1368,6 +1417,7 @@ declare module "bun:test" {
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toMatchSnapshot(hint?: string): void;
+
     /**
      * Asserts that a value matches the most recent snapshot.
      *
@@ -1380,6 +1430,7 @@ declare module "bun:test" {
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toMatchSnapshot(propertyMatchers?: object, hint?: string): void;
+
     /**
      * Asserts that a value matches the most recent inline snapshot.
      *
@@ -1390,6 +1441,7 @@ declare module "bun:test" {
      * @param value The latest automatically-updated snapshot value.
      */
     toMatchInlineSnapshot(value?: string): void;
+
     /**
      * Asserts that a value matches the most recent inline snapshot.
      *
@@ -1405,6 +1457,7 @@ declare module "bun:test" {
      * @param value The latest automatically-updated snapshot value.
      */
     toMatchInlineSnapshot(propertyMatchers?: object, value?: string): void;
+
     /**
      * Asserts that a function throws an error matching the most recent snapshot.
      *
@@ -1418,6 +1471,7 @@ declare module "bun:test" {
      * @param value The latest automatically-updated snapshot value.
      */
     toThrowErrorMatchingSnapshot(hint?: string): void;
+
     /**
      * Asserts that a function throws an error matching the most recent snapshot.
      *
@@ -1431,6 +1485,7 @@ declare module "bun:test" {
      * @param value The latest automatically-updated snapshot value.
      */
     toThrowErrorMatchingInlineSnapshot(value?: string): void;
+
     /**
      * Asserts that an object matches a subset of properties.
      *
@@ -1441,6 +1496,7 @@ declare module "bun:test" {
      * @param subset Subset of properties to match with.
      */
     toMatchObject(subset: object): void;
+
     /**
      * Asserts that a value is empty.
      *
@@ -1451,6 +1507,7 @@ declare module "bun:test" {
      * expect(new Set()).toBeEmpty();
      */
     toBeEmpty(): void;
+
     /**
      * Asserts that a value is an empty `object`.
      *
@@ -1459,6 +1516,7 @@ declare module "bun:test" {
      * expect({ a: 'hello' }).not.toBeEmptyObject();
      */
     toBeEmptyObject(): void;
+
     /**
      * Asserts that a value is `null` or `undefined`.
      *
@@ -1467,6 +1525,7 @@ declare module "bun:test" {
      * expect(undefined).toBeNil();
      */
     toBeNil(): void;
+
     /**
      * Asserts that a value is a `array`.
      *
@@ -1477,6 +1536,7 @@ declare module "bun:test" {
      * expect({}).not.toBeArray();
      */
     toBeArray(): void;
+
     /**
      * Asserts that a value is a `array` of a certain length.
      *
@@ -1488,6 +1548,7 @@ declare module "bun:test" {
      * expect({}).not.toBeArrayOfSize(0);
      */
     toBeArrayOfSize(size: number): void;
+
     /**
      * Asserts that a value is a `boolean`.
      *
@@ -1498,6 +1559,7 @@ declare module "bun:test" {
      * expect(0).not.toBeBoolean();
      */
     toBeBoolean(): void;
+
     /**
      * Asserts that a value is `true`.
      *
@@ -1507,6 +1569,7 @@ declare module "bun:test" {
      * expect(1).not.toBeTrue();
      */
     toBeTrue(): void;
+
     /**
      * Asserts that a value matches a specific type.
      *
@@ -1517,6 +1580,7 @@ declare module "bun:test" {
      * expect([]).not.toBeTypeOf("boolean");
      */
     toBeTypeOf(type: "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined"): void;
+
     /**
      * Asserts that a value is `false`.
      *
@@ -1526,6 +1590,7 @@ declare module "bun:test" {
      * expect(0).not.toBeFalse();
      */
     toBeFalse(): void;
+
     /**
      * Asserts that a value is a `number`.
      *
@@ -1536,6 +1601,7 @@ declare module "bun:test" {
      * expect(BigInt(1)).not.toBeNumber();
      */
     toBeNumber(): void;
+
     /**
      * Asserts that a value is a `number`, and is an integer.
      *
@@ -1545,6 +1611,7 @@ declare module "bun:test" {
      * expect(NaN).not.toBeInteger();
      */
     toBeInteger(): void;
+
     /**
      * Asserts that a value is an `object`.
      *
@@ -1554,6 +1621,7 @@ declare module "bun:test" {
      * expect(NaN).not.toBeObject();
      */
     toBeObject(): void;
+
     /**
      * Asserts that a value is a `number`, and is not `NaN` or `Infinity`.
      *
@@ -1564,6 +1632,7 @@ declare module "bun:test" {
      * expect(Infinity).not.toBeFinite();
      */
     toBeFinite(): void;
+
     /**
      * Asserts that a value is a positive `number`.
      *
@@ -1573,6 +1642,7 @@ declare module "bun:test" {
      * expect(NaN).not.toBePositive();
      */
     toBePositive(): void;
+
     /**
      * Asserts that a value is a negative `number`.
      *
@@ -1582,6 +1652,7 @@ declare module "bun:test" {
      * expect(NaN).not.toBeNegative();
      */
     toBeNegative(): void;
+
     /**
      * Asserts that a value is a number between a start and end value.
      *
@@ -1589,6 +1660,7 @@ declare module "bun:test" {
      * @param end the end number (exclusive)
      */
     toBeWithin(start: number, end: number): void;
+
     /**
      * Asserts that a value is equal to the expected string, ignoring any whitespace.
      *
@@ -1599,6 +1671,7 @@ declare module "bun:test" {
      * @param expected the expected string
      */
     toEqualIgnoringWhitespace(expected: string): void;
+
     /**
      * Asserts that a value is a `symbol`.
      *
@@ -1607,6 +1680,7 @@ declare module "bun:test" {
      * expect("foo").not.toBeSymbol();
      */
     toBeSymbol(): void;
+
     /**
      * Asserts that a value is a `function`.
      *
@@ -1614,6 +1688,7 @@ declare module "bun:test" {
      * expect(() => {}).toBeFunction();
      */
     toBeFunction(): void;
+
     /**
      * Asserts that a value is a `Date` object.
      *
@@ -1625,6 +1700,7 @@ declare module "bun:test" {
      * expect("2020-03-01").not.toBeDate();
      */
     toBeDate(): void;
+
     /**
      * Asserts that a value is a valid `Date` object.
      *
@@ -1634,6 +1710,7 @@ declare module "bun:test" {
      * expect("2020-03-01").not.toBeValidDate();
      */
     toBeValidDate(): void;
+
     /**
      * Asserts that a value is a `string`.
      *
@@ -1643,6 +1720,7 @@ declare module "bun:test" {
      * expect(123).not.toBeString();
      */
     toBeString(): void;
+
     /**
      * Asserts that a value includes a `string`.
      *
@@ -1651,12 +1729,14 @@ declare module "bun:test" {
      * @param expected the expected substring
      */
     toInclude(expected: string): void;
+
     /**
      * Asserts that a value includes a `string` {times} times.
      * @param expected the expected substring
      * @param times the number of times the substring should occur
      */
     toIncludeRepeated(expected: string, times: number): void;
+
     /**
      * Checks whether a value satisfies a custom condition.
      * @param {Function} predicate - The custom condition to be satisfied. It should be a function that takes a value as an argument (in this case the value from expect) and returns a boolean.
@@ -1668,18 +1748,21 @@ declare module "bun:test" {
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/toSatisfy
      */
     toSatisfy(predicate: (value: T) => boolean): void;
+
     /**
      * Asserts that a value starts with a `string`.
      *
      * @param expected the string to start with
      */
     toStartWith(expected: string): void;
+
     /**
      * Asserts that a value ends with a `string`.
      *
      * @param expected the string to end with
      */
     toEndWith(expected: string): void;
+
     /**
      * Ensures that a mock function has returned successfully at least once.
      *
@@ -1720,42 +1803,51 @@ declare module "bun:test" {
      * Ensures that a mock function is called.
      */
     toHaveBeenCalled(): void;
+
     /**
      * Ensures that a mock function is called an exact number of times.
      * @alias toHaveBeenCalled
      */
     toBeCalled(): void;
+
     /**
      * Ensures that a mock function is called an exact number of times.
      */
     toHaveBeenCalledTimes(expected: number): void;
+
     /**
      * Ensure that a mock function is called with specific arguments.
      * @alias toHaveBeenCalledTimes
      */
     toBeCalledTimes(expected: number): void;
+
     /**
      * Ensure that a mock function is called with specific arguments.
      */
     toHaveBeenCalledWith(...expected: unknown[]): void;
+
     /**
      * Ensure that a mock function is called with specific arguments.
      * @alias toHaveBeenCalledWith
      */
     toBeCalledWith(...expected: unknown[]): void;
+
     /**
      * Ensure that a mock function is called with specific arguments for the last call.
      */
     toHaveBeenLastCalledWith(...expected: unknown[]): void;
+
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
      * @alias toHaveBeenCalledWith
      */
     lastCalledWith(...expected: unknown[]): void;
+
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
      */
     toHaveBeenNthCalledWith(n: number, ...expected: unknown[]): void;
+
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
      * @alias toHaveBeenCalledWith

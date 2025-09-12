@@ -269,10 +269,8 @@ pub const ThreadPool = struct {
         pub const WorkerData = struct {
             log: *Logger.Log,
             estimated_input_lines_of_code: usize = 0,
-            macro_context: js_ast.Macro.MacroContext,
-            transpiler: Transpiler = undefined,
-            other_transpiler: Transpiler = undefined,
-            has_loaded_other_transpiler: bool = false,
+            transpiler: Transpiler,
+            other_transpiler: ?Transpiler = null,
         };
 
         pub fn init(worker: *Worker, v2: *BundleV2) void {
@@ -294,9 +292,8 @@ pub const ThreadPool = struct {
             this.ast_memory_allocator.reset();
 
             this.data = WorkerData{
-                .log = allocator.create(Logger.Log) catch unreachable,
-                .estimated_input_lines_of_code = 0,
-                .macro_context = undefined,
+                .log = bun.handleOom(allocator.create(Logger.Log)),
+                .transpiler = undefined,
             };
             this.data.log.* = Logger.Log.init(allocator);
             this.ctx = ctx;
@@ -313,20 +310,22 @@ pub const ThreadPool = struct {
             transpiler.setAllocator(allocator);
             transpiler.linker.resolver = &transpiler.resolver;
             transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
-            this.data.macro_context = transpiler.macro_context.?;
             const CacheSet = @import("../cache.zig");
             transpiler.resolver.caches = CacheSet.Set.init(allocator);
         }
 
         pub fn transpilerForTarget(this: *Worker, target: bun.options.Target) *Transpiler {
             if (target == .browser and this.data.transpiler.options.target != target) {
-                if (!this.data.has_loaded_other_transpiler) {
-                    this.data.has_loaded_other_transpiler = true;
-                    this.initializeTranspiler(&this.data.other_transpiler, this.ctx.client_transpiler.?, this.allocator);
-                }
-
-                bun.debugAssert(this.data.other_transpiler.options.target == target);
-                return &this.data.other_transpiler;
+                const other_transpiler = if (this.data.other_transpiler) |*other|
+                    other
+                else blk: {
+                    this.data.other_transpiler = undefined;
+                    const other = &this.data.other_transpiler.?;
+                    this.initializeTranspiler(other, this.ctx.client_transpiler.?, this.allocator);
+                    break :blk other;
+                };
+                bun.debugAssert(other_transpiler.options.target == target);
+                return other_transpiler;
             }
 
             return &this.data.transpiler;

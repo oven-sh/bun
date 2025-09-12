@@ -6,6 +6,7 @@ pub fn installIsolatedPackages(
     command_ctx: Command.Context,
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
+    packages_to_install: ?[]const PackageID,
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
@@ -168,38 +169,65 @@ pub fn installIsolatedPackages(
             );
 
             peer_dep_ids.clearRetainingCapacity();
-            for (dep_ids_sort_buf.items) |dep_id| {
-                if (Tree.isFilteredDependencyOrWorkspace(
-                    dep_id,
-                    entry.pkg_id,
-                    workspace_filters,
-                    install_root_dependencies,
-                    manager,
-                    lockfile,
-                )) {
-                    continue;
+
+            queue_deps: {
+                if (packages_to_install) |packages| {
+                    if (node_id == .root) { // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
+                        for (dep_ids_sort_buf.items) |dep_id| {
+                            const pkg_id = resolutions[dep_id];
+                            if (pkg_id == invalid_package_id) {
+                                continue;
+                            }
+
+                            for (packages) |package_to_install| {
+                                if (package_to_install == pkg_id) {
+                                    node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
+                                    try node_queue.writeItem(.{
+                                        .parent_id = node_id,
+                                        .dep_id = dep_id,
+                                        .pkg_id = pkg_id,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        break :queue_deps;
+                    }
                 }
 
-                const pkg_id = resolutions[dep_id];
-                const dep = dependencies[dep_id];
+                for (dep_ids_sort_buf.items) |dep_id| {
+                    if (Tree.isFilteredDependencyOrWorkspace(
+                        dep_id,
+                        entry.pkg_id,
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                    )) {
+                        continue;
+                    }
 
-                // TODO: handle duplicate dependencies. should be similar logic
-                // like we have for dev dependencies in `hoistDependency`
+                    const pkg_id = resolutions[dep_id];
+                    const dep = dependencies[dep_id];
 
-                if (!dep.behavior.isPeer()) {
-                    // simple case:
-                    // - add it as a dependency
-                    // - queue it
-                    node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
-                    try node_queue.writeItem(.{
-                        .parent_id = node_id,
-                        .dep_id = dep_id,
-                        .pkg_id = pkg_id,
-                    });
-                    continue;
+                    // TODO: handle duplicate dependencies. should be similar logic
+                    // like we have for dev dependencies in `hoistDependency`
+
+                    if (!dep.behavior.isPeer()) {
+                        // simple case:
+                        // - add it as a dependency
+                        // - queue it
+                        node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
+                        try node_queue.writeItem(.{
+                            .parent_id = node_id,
+                            .dep_id = dep_id,
+                            .pkg_id = pkg_id,
+                        });
+                        continue;
+                    }
+
+                    try peer_dep_ids.append(dep_id);
                 }
-
-                try peer_dep_ids.append(dep_id);
             }
 
             next_peer: for (peer_dep_ids.items) |peer_dep_id| {
@@ -652,7 +680,6 @@ pub fn installIsolatedPackages(
 
         // add the pending task count upfront
         manager.incrementPendingTasks(@intCast(store.entries.len));
-
         for (0..store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
 
@@ -805,6 +832,7 @@ pub fn installIsolatedPackages(
 
                     const dep_id = node_dep_ids[node_id.get()];
                     const dep = lockfile.buffers.dependencies.items[dep_id];
+
                     switch (pkg_res_tag) {
                         .npm => {
                             manager.enqueuePackageForDownload(

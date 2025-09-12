@@ -1819,6 +1819,7 @@ declare module "bun" {
           whitespace?: boolean;
           syntax?: boolean;
           identifiers?: boolean;
+          keepNames?: boolean;
         };
 
     /**

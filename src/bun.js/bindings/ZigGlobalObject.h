@@ -57,6 +57,7 @@ class GlobalInternals;
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
+#include "WriteBarrierList.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -735,8 +736,8 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
-    WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+    Bun::WriteBarrierList<JSC::JSFunction> m_ffiFunctions;
 };
 
 class EvalGlobalObject : public GlobalObject {

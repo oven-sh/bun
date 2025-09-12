@@ -419,12 +419,12 @@ fn getAST(
                 }, Logger.Loc{ .start = 0 }),
             };
             require_args[1] = Expr.init(E.Object, E.Object{
-                .properties = G.Property.List.init(object_properties),
+                .properties = G.Property.List.fromOwnedSlice(object_properties),
                 .is_single_line = true,
             }, Logger.Loc{ .start = 0 });
             const require_call = Expr.init(E.Call, E.Call{
                 .target = require_property,
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             const root = Expr.init(E.Dot, E.Dot{
@@ -460,7 +460,7 @@ fn getAST(
 
             const root = Expr.init(E.Call, E.Call{
                 .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .{ .start = 0 } },
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             unique_key_for_additional_file.* = .{
@@ -1075,7 +1075,7 @@ fn runWithSourceCode(
 
     var transpiler = this.transpilerForTarget(task.known_target);
     errdefer transpiler.resetStore();
-    var resolver: *Resolver = &transpiler.resolver;
+    const resolver: *Resolver = &transpiler.resolver;
     const file_path = &task.path;
     const loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
@@ -1130,19 +1130,14 @@ fn runWithSourceCode(
     else
         .none;
 
-    if (
-    // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
-    // this is not done when there is one server graph because it is easier for plugins to deal with.
-    (use_directive == .client and
+    if (use_directive == .client and
         task.known_target != .bake_server_components_ssr and
-        this.ctx.framework.?.server_components.?.separate_ssr_graph) or
-        // set the target to the client when bundling client-side files
-        ((transpiler.options.server_components or transpiler.options.dev_server != null) and
-            task.known_target == .browser))
+        this.ctx.framework.?.server_components.?.separate_ssr_graph and
+        task.known_target != .browser)
     {
-        transpiler = this.ctx.client_transpiler.?;
-        resolver = &transpiler.resolver;
-        bun.assert(transpiler.options.target == .browser);
+        // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
+        // this is not done when there is one server graph because it is easier for plugins to deal with.
+        transpiler = this.transpilerForTarget(.browser);
     }
 
     const source = &Logger.Source{
@@ -1163,7 +1158,7 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
-    opts.macro_context = &this.data.macro_context;
+    opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 
     opts.features.allow_runtime = !source.index.isRuntime();
@@ -1175,6 +1170,8 @@ fn runWithSourceCode(
     opts.output_format = output_format;
     opts.features.minify_syntax = transpiler.options.minify_syntax;
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
+    opts.features.minify_keep_names = transpiler.options.keep_names;
+    opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();

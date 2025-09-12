@@ -18,7 +18,7 @@ pub fn deinit(this: *HTMLScanner) void {
     for (this.import_records.slice()) |*record| {
         this.allocator.free(record.path.text);
     }
-    this.import_records.deinitWithAllocator(this.allocator);
+    this.import_records.deinit(this.allocator);
 }
 
 fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKind) !void {
@@ -44,7 +44,7 @@ fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKi
         .range = logger.Range.None,
     };
 
-    try this.import_records.push(this.allocator, record);
+    try this.import_records.append(this.allocator, record);
 }
 
 const debug = bun.Output.scoped(.HTMLScanner, .hidden);

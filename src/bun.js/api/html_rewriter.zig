@@ -277,7 +277,7 @@ pub const HTMLRewriter = struct {
                 return;
             }
 
-            const write_result = this.output.write(.{ .temporary = bun.ByteList.init(bytes) });
+            const write_result = this.output.write(.{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(bytes) });
 
             switch (write_result) {
                 .err => |err| {
@@ -346,7 +346,7 @@ pub const HTMLRewriter = struct {
                     .path = bun.handleOom(bun.default_allocator.dupe(u8, LOLHTML.HTMLString.lastError().slice())),
                 };
             };
-            if (comptime deinit_) bytes.listManaged(bun.default_allocator).deinit();
+            if (comptime deinit_) bytes.deinit(bun.default_allocator);
             return null;
         }
 

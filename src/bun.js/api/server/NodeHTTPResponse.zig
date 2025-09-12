@@ -257,7 +257,7 @@ pub fn shouldRequestBePending(this: *const NodeHTTPResponse) bool {
 
 pub fn dumpRequestBody(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame, thisValue: jsc.JSValue) bun.JSError!jsc.JSValue {
     if (this.buffered_request_body_data_during_pause.cap > 0) {
-        this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
+        this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
     }
     if (!this.flags.request_has_completed) {
         this.clearOnDataCallback(thisValue, globalObject);
@@ -273,7 +273,7 @@ fn markRequestAsDone(this: *NodeHTTPResponse) void {
     this.clearOnDataCallback(this.getThisValue(), jsc.VirtualMachine.get().global);
     this.upgrade_context.deinit();
 
-    this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
+    this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
     const server = this.server;
     this.js_ref.unref(jsc.VirtualMachine.get());
     this.deref();
@@ -705,7 +705,10 @@ pub fn abort(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame)
 
 fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
     log("onBufferRequestBodyWhilePaused({d}, {})", .{ chunk.len, last });
-    bun.handleOom(this.buffered_request_body_data_during_pause.append(bun.default_allocator, chunk));
+    bun.handleOom(this.buffered_request_body_data_during_pause.appendSlice(
+        bun.default_allocator,
+        chunk,
+    ));
     if (last) {
         this.flags.is_data_buffered_during_pause_last = true;
         if (this.body_read_ref.has) {
@@ -743,7 +746,7 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
         const bytes: jsc.JSValue = brk: {
             if (chunk.len > 0 and this.buffered_request_body_data_during_pause.len > 0) {
                 const buffer = jsc.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch return; // TODO: properly propagate exception upwards
-                this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
+                this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
                 if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
                     var input = array_buffer.slice();
                     @memcpy(input[0..this.buffered_request_body_data_during_pause.len], this.buffered_request_body_data_during_pause.slice());
@@ -1134,7 +1137,7 @@ fn deinit(this: *NodeHTTPResponse) void {
     bun.debugAssert(!this.flags.is_request_pending);
     bun.debugAssert(this.flags.socket_closed or this.flags.request_has_completed);
 
-    this.buffered_request_body_data_during_pause.deinitWithAllocator(bun.default_allocator);
+    this.buffered_request_body_data_during_pause.deinit(bun.default_allocator);
     this.js_ref.unref(jsc.VirtualMachine.get());
     this.body_read_ref.unref(jsc.VirtualMachine.get());
 

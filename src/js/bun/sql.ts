@@ -32,6 +32,7 @@ function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
     case "postgres":
       return new PostgresAdapter(options);
     case "mysql":
+    case "mariadb":
       return new MySQLAdapter(options);
     case "sqlite":
       return new SQLiteAdapter(options);

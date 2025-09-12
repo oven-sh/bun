@@ -309,7 +309,7 @@ pub fn getConnected(this: *MySQLConnection, _: *jsc.JSGlobalObject) JSValue {
 pub fn doClose(this: *MySQLConnection, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalObject;
     this.disconnect();
-    this.write_buffer.deinit(bun.default_allocator);
+    this.write_buffer.clearAndFree(bun.default_allocator);
 
     return .js_undefined;
 }
@@ -352,7 +352,7 @@ pub fn stopTimers(this: *@This()) void {
 }
 
 pub fn getQueriesArray(this: *const @This()) JSValue {
-    return js.queriesGetCached(this.js_value) orelse .zero;
+    return js.queriesGetCached(this.js_value) orelse .js_undefined;
 }
 pub fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
     const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
@@ -1913,7 +1913,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
 fn close(this: *@This()) void {
     this.disconnect();
     this.unregisterAutoFlusher();
-    this.write_buffer.deinit(bun.default_allocator);
+    this.write_buffer.clearAndFree(bun.default_allocator);
 }
 
 pub fn closeStatement(this: *MySQLConnection, statement: *MySQLStatement) !void {

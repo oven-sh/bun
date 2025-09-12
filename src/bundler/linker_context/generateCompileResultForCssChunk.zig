@@ -68,7 +68,9 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
         },
         .external_path => {
-            var import_records = BabyList(ImportRecord).init(css_import.condition_import_records.sliceConst());
+            var import_records = BabyList(ImportRecord).fromBorrowedSliceDangerous(
+                css_import.condition_import_records.sliceConst(),
+            );
             const printer_options = bun.css.PrinterOptions{
                 // TODO: make this more configurable
                 .minify = c.options.minify_whitespace,

@@ -264,7 +264,7 @@ pub const Report = struct {
     pub fn deinit(this: *Report, allocator: std.mem.Allocator) void {
         this.executable_lines.deinit(allocator);
         this.lines_which_have_executed.deinit(allocator);
-        this.line_hits.deinitWithAllocator(allocator);
+        this.line_hits.deinit(allocator);
         this.functions.deinit(allocator);
         this.stmts.deinit(allocator);
         this.functions_which_have_executed.deinit(allocator);
@@ -445,7 +445,7 @@ pub const ByteRangeMapping = struct {
             const line_hits_slice = line_hits.slice();
             @memset(line_hits_slice, 0);
 
-            errdefer line_hits.deinitWithAllocator(allocator);
+            errdefer line_hits.deinit(allocator);
 
             for (blocks, 0..) |block, i| {
                 if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
@@ -535,7 +535,7 @@ pub const ByteRangeMapping = struct {
             line_hits.len = line_count;
             const line_hits_slice = line_hits.slice();
             @memset(line_hits_slice, 0);
-            errdefer line_hits.deinitWithAllocator(allocator);
+            errdefer line_hits.deinit(allocator);
 
             for (blocks, 0..) |block, i| {
                 if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything

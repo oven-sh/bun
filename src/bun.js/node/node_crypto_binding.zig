@@ -257,8 +257,6 @@ const random = struct {
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
 
         if (!callback.isUndefined()) {
-            callback = callback.withAsyncContextIfNeeded(global);
-
             try callback.callNextTick(global, [2]JSValue{ .js_undefined, JSValue.jsNumber(res) });
             return .js_undefined;
         }

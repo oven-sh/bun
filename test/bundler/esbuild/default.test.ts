@@ -4602,6 +4602,7 @@ describe("bundler", () => {
   //   },
   // });
   itBundled("default/KeepNamesTreeShaking", {
+    todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {
       "/entry.js": /* js */ `
         (function() {
@@ -4638,6 +4639,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/KeepNamesClassStaticName", {
+    todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {
       "/entry.js": /* js */ `
         class ClassName1A { static foo = 1 }

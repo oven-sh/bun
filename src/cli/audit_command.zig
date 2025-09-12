@@ -552,10 +552,23 @@ fn findDependencyPaths(
                 .is_direct = false,
             };
 
-            var trace = current;
+            var trace = current.*;
+            var seen_in_trace = bun.StringHashMap(void).init(allocator);
+            defer seen_in_trace.deinit();
+
             while (true) {
-                try path.path.insert(0, try allocator.dupe(u8, trace.*));
-                if (parent_map.get(trace.*)) |*parent| {
+                // Check for cycle before processing
+                if (seen_in_trace.contains(trace)) {
+                    // Cycle detected, stop tracing
+                    break;
+                }
+
+                // Add to path and mark as seen
+                try path.path.insert(0, try allocator.dupe(u8, trace));
+                try seen_in_trace.put(trace, {});
+
+                // Get parent for next iteration
+                if (parent_map.get(trace)) |parent| {
                     trace = parent;
                 } else {
                     break;

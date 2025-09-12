@@ -258,13 +258,6 @@ pub fn slice(self: *MutableString) []u8 {
     return self.list.items;
 }
 
-/// Take ownership of the existing value without discarding excess capacity.
-pub fn move(self: *MutableString) []u8 {
-    const out = self.list.items;
-    self.list = .{};
-    return out;
-}
-
 /// Appends `0` if needed
 pub fn sliceWithSentinel(self: *MutableString) [:0]u8 {
     if (self.list.items.len > 0 and self.list.items[self.list.items.len - 1] != 0) {

@@ -260,11 +260,11 @@ pub fn deinit(this: *ServerConfig) void {
         ssl_config.deinit();
         this.ssl_config = null;
     }
-    if (this.sni) |sni| {
+    if (this.sni) |*sni| {
         for (sni.slice()) |*ssl_config| {
             ssl_config.deinit();
         }
-        this.sni.?.deinitWithAllocator(bun.default_allocator);
+        sni.deinit(bun.default_allocator);
         this.sni = null;
     }
 
@@ -939,7 +939,7 @@ pub fn fromJS(
                                 args.sni = bun.handleOom(bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1));
                             }
 
-                            bun.handleOom(args.sni.?.push(bun.default_allocator, ssl_config));
+                            bun.handleOom(args.sni.?.append(bun.default_allocator, ssl_config));
                         }
                     }
                 }

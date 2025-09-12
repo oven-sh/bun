@@ -79,6 +79,10 @@ export default [
         fn: "hmset",
         length: 3,
       },
+      hget: {
+        fn: "hget",
+        length: 2,
+      },
       hmget: {
         fn: "hmget",
         length: 2,

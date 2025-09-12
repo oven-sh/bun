@@ -775,7 +775,7 @@ pub const Transpiler = struct {
             bun.perf.trace("JSPrinter.print");
         defer tracer.end();
 
-        const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
+        const symbols = js_ast.Symbol.NestedList.fromBorrowedSliceDangerous(&.{ast.symbols});
 
         return switch (format) {
             .cjs => try js_printer.printCommonJS(
@@ -1199,13 +1199,18 @@ pub const Transpiler = struct {
                         const properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
                         if (properties.len > 0) {
                             var stmts = allocator.alloc(js_ast.Stmt, 3) catch return null;
-                            var decls = allocator.alloc(js_ast.G.Decl, properties.len) catch return null;
+                            var decls = std.ArrayListUnmanaged(js_ast.G.Decl).initCapacity(
+                                allocator,
+                                properties.len,
+                            ) catch |err| bun.handleOom(err);
+                            decls.expandToCapacity();
+
                             symbols = allocator.alloc(js_ast.Symbol, properties.len) catch return null;
                             var export_clauses = allocator.alloc(js_ast.ClauseItem, properties.len) catch return null;
                             var duplicate_key_checker = bun.StringHashMap(u32).init(allocator);
                             defer duplicate_key_checker.deinit();
                             var count: usize = 0;
-                            for (properties, decls, symbols, 0..) |*prop, *decl, *symbol, i| {
+                            for (properties, decls.items, symbols, 0..) |*prop, *decl, *symbol, i| {
                                 const name = prop.key.?.data.e_string.slice(allocator);
                                 // Do not make named exports for "default" exports
                                 if (strings.eqlComptime(name, "default"))
@@ -1213,7 +1218,7 @@ pub const Transpiler = struct {
 
                                 const visited = duplicate_key_checker.getOrPut(name) catch continue;
                                 if (visited.found_existing) {
-                                    decls[visited.value_ptr.*].value = prop.value.?;
+                                    decls.items[visited.value_ptr.*].value = prop.value.?;
                                     continue;
                                 }
                                 visited.value_ptr.* = @truncate(i);
@@ -1241,10 +1246,11 @@ pub const Transpiler = struct {
                                 count += 1;
                             }
 
+                            decls.shrinkRetainingCapacity(count);
                             stmts[0] = js_ast.Stmt.alloc(
                                 js_ast.S.Local,
                                 js_ast.S.Local{
-                                    .decls = js_ast.G.Decl.List.init(decls[0..count]),
+                                    .decls = js_ast.G.Decl.List.moveFromList(&decls),
                                     .kind = .k_var,
                                 },
                                 logger.Loc{
@@ -1297,7 +1303,7 @@ pub const Transpiler = struct {
                     }
                 };
                 var ast = js_ast.Ast.fromParts(parts);
-                ast.symbols = js_ast.Symbol.List.init(symbols);
+                ast.symbols = js_ast.Symbol.List.fromOwnedSlice(symbols);
 
                 return ParseResult{
                     .ast = ast,
@@ -1324,7 +1330,7 @@ pub const Transpiler = struct {
                 parts[0] = js_ast.Part{ .stmts = stmts };
 
                 return ParseResult{
-                    .ast = js_ast.Ast.initTest(parts),
+                    .ast = js_ast.Ast.fromParts(parts),
                     .source = source.*,
                     .loader = loader,
                     .input_fd = input_fd,

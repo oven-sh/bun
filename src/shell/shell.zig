@@ -4098,8 +4098,8 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
             pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
                 var list = bun.handleOom(bun.BabyList(T).initCapacity(bun.default_allocator, n));
-                bun.handleOom(list.append(bun.default_allocator, this.items[0..INLINED_MAX]));
-                bun.handleOom(list.push(bun.default_allocator, new));
+                bun.handleOom(list.appendSlice(bun.default_allocator, this.items[0..INLINED_MAX]));
+                bun.handleOom(list.append(bun.default_allocator, new));
                 return list;
             }
 
@@ -4244,7 +4244,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                     this.inlined.len += 1;
                 },
                 .heap => {
-                    bun.handleOom(this.heap.push(bun.default_allocator, new));
+                    bun.handleOom(this.heap.append(bun.default_allocator, new));
                 },
             }
         }

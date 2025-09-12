@@ -160,7 +160,7 @@ static constexpr int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLIT
 static inline JSC::JSValue jsNumberFromSQLite(sqlite3_stmt* stmt, unsigned int i)
 {
     int64_t num = sqlite3_column_int64(stmt, i);
-    return num > INT_MAX || num < INT_MIN ? JSC::jsDoubleNumber(static_cast<double>(num)) : JSC::jsNumber(static_cast<int>(num));
+    return JSC::jsNumber(num);
 }
 
 static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, unsigned int i)
@@ -561,7 +561,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         }
     }
     case SQLITE_FLOAT: {
-        return jsDoubleNumber(sqlite3_column_double(stmt, i));
+        return jsNumber(sqlite3_column_double(stmt, i));
     }
     // > Note that the SQLITE_TEXT constant was also used in SQLite version
     // > 2 for a completely different meaning. Software that links against

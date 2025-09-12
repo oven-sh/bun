@@ -126,7 +126,7 @@ export interface PostgresDotZig {
     password: string,
     databae: string,
     sslmode: SSLMode,
-    tls: Bun.TLSOptions | boolean | null, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
+    tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
     query: string,
     path: string,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
@@ -293,7 +293,7 @@ function onQueryFinish(this: PooledPostgresConnection, onClose: (err: Error) => 
 
 class PooledPostgresConnection {
   private static async createConnection(
-    options: Bun.SQL.__internal.DefinedPostgresOptions,
+    options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
     onClose: (err: Error | null) => void,
   ): Promise<$ZigGeneratedClasses.PostgresSQLConnection | null> {
@@ -309,8 +309,6 @@ class PooledPostgresConnection {
       connectionTimeout = 30 * 1000,
       maxLifetime = 0,
       prepare = true,
-
-      // @ts-expect-error path is currently removed from the types
       path,
     } = options;
 
@@ -319,10 +317,10 @@ class PooledPostgresConnection {
     try {
       if (typeof password === "function") {
         password = password();
+      }
 
-        if (password && $isPromise(password)) {
-          password = await password;
-        }
+      if (password && $isPromise(password)) {
+        password = await password;
       }
 
       return createPostgresConnection(
@@ -358,7 +356,7 @@ class PooledPostgresConnection {
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
-  connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
+  connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
@@ -425,7 +423,7 @@ class PooledPostgresConnection {
     this.adapter.release(this, true);
   }
 
-  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions, adapter: PostgresAdapter) {
+  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions, adapter: PostgresAdapter) {
     this.state = PooledConnectionState.pending;
     this.adapter = adapter;
     this.connectionInfo = connectionInfo;
@@ -509,7 +507,7 @@ export class PostgresAdapter
       $ZigGeneratedClasses.PostgresSQLQuery
     >
 {
-  public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions;
+  public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledPostgresConnection[];
   public readonly readyConnections: Set<PooledPostgresConnection>;
@@ -522,7 +520,7 @@ export class PostgresAdapter
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
 
-  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOptions) {
+  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
     this.readyConnections = new Set();
@@ -850,7 +848,7 @@ export class PostgresAdapter
     return Promise.all(promises);
   }
 
-  async close(options?: { timeout?: number }) {
+  async close(options?: { timeout?: number }): Promise<void> {
     if (this.closed) {
       return;
     }
@@ -869,7 +867,7 @@ export class PostgresAdapter
         return;
       }
 
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve } = Promise.withResolvers<void>();
       const timer = setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
@@ -892,7 +890,7 @@ export class PostgresAdapter
       }
 
       // gracefully close the pool
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve } = Promise.withResolvers<void>();
 
       this.onAllQueriesFinished = () => {
         // everything is closed, lets close the pool

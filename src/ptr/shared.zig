@@ -139,7 +139,12 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// Creates a weak clone of this shared pointer.
         pub const cloneWeak = if (options.allow_weak) struct {
             pub fn cloneWeak(self: Self) Self.Weak {
-                return .{ .#pointer = self.#pointer };
+                const data = if (comptime info.isOptional())
+                    self.getData() orelse return
+                else
+                    self.getData();
+                data.incrementWeak();
+                return .{ .#pointer = &data.value };
             }
         }.cloneWeak;
 
@@ -178,6 +183,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// `deinit` on `self`.
         pub const take = if (info.isOptional()) struct {
             pub fn take(self: *Self) ?SharedNonOptional {
+                defer self.* = .initNull();
                 return .{ .#pointer = self.#pointer orelse return null };
             }
         }.take;
@@ -267,7 +273,7 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
             else
                 self.getData();
             if (!data.tryIncrementStrong()) return null;
-            data.incrementWeak();
+            data.decrementWeak();
             return .{ .#pointer = &data.value };
         }
 

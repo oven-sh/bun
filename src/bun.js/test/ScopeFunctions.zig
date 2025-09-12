@@ -82,7 +82,9 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     const this = ScopeFunctions.fromJS(callFrame.callee()) orelse return globalThis.throw("Expected callee to be ScopeFunctions", .{});
     const line_no = addLineNumberToCfg(this.cfg, globalThis, callFrame).line_no;
 
-    const bunTest = try describe2.js_fns.getActive(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
+    var buntest_strong = try describe2.js_fns.cloneActiveStrong(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
+    defer buntest_strong.deinit();
+    const bunTest = buntest_strong.get();
 
     const callback_mode: CallbackMode = switch (this.cfg.self_mode) {
         .skip, .todo => .allow,

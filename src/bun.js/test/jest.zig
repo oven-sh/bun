@@ -277,7 +277,10 @@ pub const Jest = struct {
 
 pub const on_unhandled_rejection = struct {
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
-        if (bun.jsc.Jest.describe2.getActiveStrong()) |buntest_strong| {
+        if (bun.jsc.Jest.describe2.cloneActiveStrong()) |buntest_strong_| {
+            var buntest_strong = buntest_strong_;
+            defer buntest_strong.deinit();
+
             const buntest = buntest_strong.get();
             var current_state_data = buntest.getCurrentStateData(); // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             if (current_state_data.entry(buntest)) |entry| {

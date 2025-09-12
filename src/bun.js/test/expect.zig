@@ -346,7 +346,11 @@ pub const Expect = struct {
             return globalThis.throwOutOfMemory();
         };
 
-        const active_execution_entry_ref = if (bun.jsc.Jest.describe2.getActiveStrong()) |buntest_strong| bun.jsc.Jest.describe2.BunTest.ref(buntest_strong, buntest_strong.get().getCurrentStateData()) else null;
+        const active_execution_entry_ref = if (bun.jsc.Jest.describe2.cloneActiveStrong()) |buntest_strong_| blk: {
+            var buntest_strong = buntest_strong_;
+            defer buntest_strong.deinit();
+            break :blk bun.jsc.Jest.describe2.BunTest.ref(buntest_strong, buntest_strong.get().getCurrentStateData());
+        } else null;
         errdefer if (active_execution_entry_ref) |entry_ref| entry_ref.deinit();
 
         expect.* = .{
@@ -1140,7 +1144,9 @@ pub const Expect = struct {
         _ = callFrame;
         defer globalThis.bunVM().autoGarbageCollect();
 
-        const buntest = bun.jsc.Jest.describe2.getActive() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        var buntest_strong = bun.jsc.Jest.describe2.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        defer buntest_strong.deinit();
+        const buntest = buntest_strong.get();
         const state_data = buntest.getCurrentStateData();
         const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", .{});
         if (execution.expect_assertions != .exact) {
@@ -1175,7 +1181,9 @@ pub const Expect = struct {
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
-        const buntest = bun.jsc.Jest.describe2.getActive() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        var buntest_strong = bun.jsc.Jest.describe2.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        defer buntest_strong.deinit();
+        const buntest = buntest_strong.get();
         const state_data = buntest.getCurrentStateData();
         const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", .{});
         execution.expect_assertions = .{ .exact = unsigned_expected_assertions };

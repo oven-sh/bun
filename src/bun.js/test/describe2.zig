@@ -1,10 +1,6 @@
-pub fn getActiveStrong() ?BunTestPtr {
+pub fn cloneActiveStrong() ?BunTestPtr {
     const runner = bun.jsc.Jest.Jest.runner orelse return null;
-    return runner.describe2Root.active_file.take();
-}
-pub fn getActive() ?*BunTest {
-    const active_strong = getActiveStrong() orelse return null;
-    return active_strong.get();
+    return runner.describe2Root.cloneActiveFile();
 }
 
 pub const DoneCallback = @import("./DoneCallback.zig");
@@ -32,9 +28,9 @@ pub const js_fns = struct {
         }
         return bunTestRoot;
     }
-    pub fn getActive(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTest {
+    pub fn cloneActiveStrong(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!BunTestPtr {
         const bunTestRoot = try getActiveTestRoot(globalThis, cfg);
-        const bunTest = bunTestRoot.active_file.get() orelse {
+        const bunTest = bunTestRoot.cloneActiveFile() orelse {
             return globalThis.throw("Cannot use {s} outside of a test file.", .{cfg.signature});
         };
 
@@ -140,6 +136,10 @@ pub const BunTestRoot = struct {
             return null;
         }
         return this.active_file.get();
+    }
+    pub fn cloneActiveFile(this: *BunTestRoot) ?BunTestPtr {
+        var clone = this.active_file.clone();
+        return clone.take();
     }
 };
 
@@ -268,7 +268,7 @@ pub const BunTest = struct {
             buntest_weak.deinit();
         }
         pub fn bunTest(this: *RefData) ?*BunTest {
-            var buntest_strong = this.buntest_weak.upgrade() orelse return null;
+            var buntest_strong = this.buntest_weak.clone().upgrade() orelse return null;
             defer buntest_strong.deinit();
             return buntest_strong.get();
         }
@@ -329,7 +329,7 @@ pub const BunTest = struct {
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
         defer refdata.deref();
         const has_one_ref = refdata.ref_count.hasOneRef();
-        var this_strong = refdata.buntest_weak.upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
+        var this_strong = refdata.buntest_weak.clone().upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
         defer this_strong.deinit();
         const this = this_strong.get();
 

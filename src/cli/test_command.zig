@@ -1841,10 +1841,11 @@ pub const TestCommand = struct {
                 defer bun.jsc.Jest.describe2.debug.group.end();
 
                 // Check if describe2 is available and has tests to run
-                const buntest_strong = describe2Root.active_file.take() orelse {
+                var buntest_strong = describe2Root.cloneActiveFile() orelse {
                     bun.assert(false);
                     break :blk;
                 };
+                defer buntest_strong.deinit();
                 const buntest = buntest_strong.get();
 
                 // Automatically execute describe2 tests

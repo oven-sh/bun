@@ -613,7 +613,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
   describe("duplicate()", () => {
     test("should create duplicate of unconnected client that remains unconnected", async () => {
-      expect(ctx.redis.connected).toBe(false);
+      ctx.redis.close();
+      const redis = ctx.redis;
+      expect(redis.connected).toBe(false);
 
       const duplicate = await ctx.redis.duplicate();
       expect(duplicate.connected).toBe(false);

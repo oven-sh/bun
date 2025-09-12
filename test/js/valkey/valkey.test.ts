@@ -1,14 +1,13 @@
 import { randomUUIDv7, RedisClient } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
-  ConnectionType,
-  DEFAULT_REDIS_URL,
   awaitableCounter,
+  ConnectionType,
   createClient,
   ctx,
+  DEFAULT_REDIS_URL,
   expectType,
-  isEnabled,
-  overrideRedisUrl, // Commented out in the file, but useful for local testing...
+  isEnabled, // Commented out in the file, but useful for local testing...
   randomCoinFlip,
 } from "./test-utils";
 
@@ -224,11 +223,19 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   });
 
   describe("PUB/SUB", () => {
-    var i = 0
-    const testChannel = () => { return `test-channel-${i++}`; };
-    const testKey = () => { return `test-key-${i++}`; };
-    const testValue = () => { return `test-value-${i++}`; };
-    const testMessage = () => { return `test-message-${i++}`; };
+    var i = 0;
+    const testChannel = () => {
+      return `test-channel-${i++}`;
+    };
+    const testKey = () => {
+      return `test-key-${i++}`;
+    };
+    const testValue = () => {
+      return `test-value-${i++}`;
+    };
+    const testMessage = () => {
+      return `test-message-${i++}`;
+    };
 
     beforeEach(async () => {
       // The PUB/SUB tests expect that ctx.redis is connected but not in subscriber mode.
@@ -286,7 +293,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     test("messages are received in order", async () => {
       const channel = testChannel();
 
-      await ctx.redis.set("START-TEST", "1")
+      await ctx.redis.set("START-TEST", "1");
       const TEST_MESSAGE_COUNT = 1024;
       const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
 
@@ -312,7 +319,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       await subscriber.unsubscribe(channel);
 
-      await ctx.redis.set("STOP-TEST", "1")
+      await ctx.redis.set("STOP-TEST", "1");
     });
 
     test("subscribing to multiple channels receives messages", async () => {

@@ -1917,7 +1917,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 const resp = this.resp;
                                 this.detachResponse();
 
-                                const new_request_ctx = server.request_pool_allocator.tryGet() catch bun.outOfMemory();
+                                const new_request_ctx = server.request_pool_allocator.tryGet() catch |err| bun.handleOom(err);
                                 new_request_ctx.* = .{
                                     .allocator = server.allocator,
                                     .resp = resp,
@@ -1936,7 +1936,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                     .request_context = AnyRequestContext.init(new_request_ctx),
                                     .https = ssl_enabled,
                                     .signal = if (signal) |s| s.ref() else null,
-                                    .body = server.vm.initRequestBodyValue(body) catch bun.outOfMemory(),
+                                    .body = server.vm.initRequestBodyValue(body) catch |err| bun.handleOom(err),
                                     .url = url,
                                 });
 

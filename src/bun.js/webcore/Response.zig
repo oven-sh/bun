@@ -551,7 +551,7 @@ pub fn constructRender(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(2);
+    const arguments = callframe.argumentsAsArray(2);
     const vm = globalThis.bunVM();
 
     // Check if dev server async local_storage is set
@@ -566,7 +566,7 @@ pub fn constructRender(
         return globalThis.throwInvalidArguments("Response.render() requires at least a path argument", .{});
     }
 
-    const path_arg = arguments.ptr[0];
+    const path_arg = arguments[0];
     if (!path_arg.isString()) {
         return globalThis.throwInvalidArguments("Response.render() path must be a string", .{});
     }

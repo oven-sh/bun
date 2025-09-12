@@ -446,7 +446,7 @@ pub fn GlobWalker_(
                                 .err => |e| {
                                     if (e.getErrno() == bun.sys.E.NOTDIR) {
                                         // This means that the glob pattern is an absolute file path
-                                        const directory_idx = std.mem.lastIndexOfScalar(u8, this.walker.pattern, if (bun.Environment.isWindows) '\\' else '/');
+                                        const directory_idx = bun.strings.lastIndexOfChar(this.walker.pattern, std.fs.path.sep);
                                         path_without_special_syntax =
                                             if (directory_idx) |idx| path_without_special_syntax[0 .. idx + 1] else if (!bun.Environment.isWindows) "/" else ResolvePath.windowsFilesystemRoot(this.walker.cwd);
                                         starting_component_idx -= 1;

@@ -262,8 +262,6 @@ for (const entrypoint of bundledEntryPoints) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
 
-  captured += `\n//# sourceURL=${path.join(JS_DIR, file_path.replace(".ts", ".js"))}\n`;
-
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);

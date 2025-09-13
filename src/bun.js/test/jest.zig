@@ -60,6 +60,34 @@ const CurrentFile = struct {
     }
 };
 
+pub const TestLineFilter = struct {
+    path: []const u8,
+    line: u32,
+
+    pub fn hash(self: TestLineFilter) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(self.path);
+        hasher.update("-------");
+        hasher.update(std.mem.asBytes(&self.line));
+        return @truncate(hasher.final());
+    }
+
+    pub fn eql(a: TestLineFilter, b: TestLineFilter) bool {
+        return a.line == b.line and bun.strings.eql(a.path, b.path);
+    }
+
+    pub const HashContext = struct {
+        pub fn hash(_: HashContext, key: TestLineFilter) u32 {
+            return key.hash();
+        }
+        pub fn eql(_: HashContext, a: TestLineFilter, b: TestLineFilter) bool {
+            return TestLineFilter.eql(a, b);
+        }
+    };
+
+    pub const Map = std.HashMapUnmanaged(TestLineFilter, void, HashContext, 80);
+};
+
 pub const TestRunner = struct {
     current_file: CurrentFile = CurrentFile{},
     tests: TestRunner.Test.List = .{},
@@ -105,6 +133,8 @@ pub const TestRunner = struct {
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
 
+    line_filters: TestLineFilter.Map = .{},
+
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
@@ -135,8 +165,57 @@ pub const TestRunner = struct {
         }
     }
 
-    pub fn hasTestFilter(this: *const TestRunner) bool {
-        return this.filter_regex != null;
+    pub inline fn hasTestFilter(this: *const TestRunner) bool {
+        return this.filter_regex != null or this.hasTestLineFilter();
+    }
+
+    pub inline fn hasTestLineFilter(this: *const TestRunner) bool {
+        return this.line_filters.count() > 0;
+    }
+
+    pub inline fn needsTestLineNumber(this: *const TestRunner) bool {
+        return this.test_options.file_reporter == .junit or this.hasTestLineFilter();
+    }
+
+    pub inline fn shouldSkipBasedOnLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
+        return this.hasTestLineFilter() and !this.matchesLineFilter(line_number, parent);
+    }
+
+    pub fn matchesLineFilter(this: *const TestRunner, line_number: u32, parent: *DescribeScope) bool {
+        if (this.line_filters.count() == 0) return true;
+
+        const file_path = this.files.items(.source)[parent.file_id].path.text;
+
+        var has_filters_for_file = false;
+        var iter = this.line_filters.keyIterator();
+        while (iter.next()) |entry| {
+            if (bun.strings.eql(entry.path, file_path)) {
+                has_filters_for_file = true;
+                break;
+            }
+        }
+        if (!has_filters_for_file) return true;
+
+        const direct_filter = TestLineFilter{ .path = file_path, .line = line_number };
+        if (this.line_filters.contains(direct_filter)) return true;
+
+        var current_parent: ?*DescribeScope = parent;
+        while (current_parent) |p| {
+            if (p.line_number > 0) {
+                const parent_filter = TestLineFilter{ .path = file_path, .line = p.line_number };
+                if (this.line_filters.contains(parent_filter)) {
+                    return true;
+                }
+            }
+            current_parent = p.parent;
+        }
+
+        return false;
+    }
+
+    pub fn addLineFilter(this: *TestRunner, file_path: []const u8, line: u32) void {
+        const filter = TestLineFilter{ .path = file_path, .line = line };
+        bun.handleOom(this.line_filters.put(this.allocator, filter, {}));
     }
 
     pub fn setTimeout(
@@ -1990,6 +2069,8 @@ inline fn createScope(
         (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
+    const line_number = captureTestLineNumber(callframe, globalThis);
+
     if (is_test) {
         // Apply filter to all tests, including skipped and todo tests
         if (Jest.runner) |runner| {
@@ -2004,6 +2085,11 @@ inline fn createScope(
                     is_skip = true;
                     tag_to_use = .skipped_because_label;
                 }
+            }
+
+            if (runner.shouldSkipBasedOnLineFilter(line_number, parent)) {
+                is_skip = true;
+                tag_to_use = .skipped_because_label;
             }
         }
 
@@ -2031,7 +2117,7 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
-            .line_number = captureTestLineNumber(callframe, globalThis),
+            .line_number = line_number,
             .test_id_for_debugger = brk: {
                 const vm = globalThis.bunVM();
                 if (vm.debugger) |*debugger| {
@@ -2058,7 +2144,7 @@ inline fn createScope(
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
-            .line_number = captureTestLineNumber(callframe, globalThis),
+            .line_number = line_number,
             .test_id_for_debugger = brk: {
                 const vm = globalThis.bunVM();
                 if (vm.debugger) |*debugger| {
@@ -2380,6 +2466,11 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                         tag_to_use = .skipped_because_label;
                     }
                 }
+
+                if (Jest.runner.?.shouldSkipBasedOnLineFilter(each_data.line_number, parent)) {
+                    is_skip = true;
+                    tag_to_use = .skipped_because_label;
+                }
             }
 
             if (is_skip) {
@@ -2434,6 +2525,7 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
+                    .line_number = each_data.line_number,
                     .test_id_for_debugger = brk: {
                         const vm = globalThis.bunVM();
                         if (vm.debugger) |*debugger| {
@@ -2504,7 +2596,7 @@ extern fn Bun__CallFrame__getLineNumber(callframe: *jsc.CallFrame, globalObject:
 
 fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit) {
+        if (runner.needsTestLineNumber()) {
             return Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }

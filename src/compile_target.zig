@@ -233,7 +233,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                     // Return error without printing - let caller handle the messaging
                     return error.InvalidResponse;
                 };
-                gunzip.readAll() catch {
+                gunzip.readAll(true) catch {
                     node.end();
                     // Return error without printing - let caller handle the messaging
                     return error.InvalidResponse;

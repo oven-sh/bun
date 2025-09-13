@@ -116,6 +116,7 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
+    clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
@@ -166,6 +167,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
     clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
     clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+    clap.parseParam("--keep-names                     Preserve original function and class names when minifying") catch unreachable,
     clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
     clap.parseParam("--dump-environment-variables") catch unreachable,
     clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
@@ -387,6 +389,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     if (cmd == .RunCommand or cmd == .AutoCommand) {
         ctx.filters = args.options("--filter");
+        ctx.workspaces = args.flag("--workspaces");
+        ctx.if_present = args.flag("--if-present");
 
         if (args.option("--elide-lines")) |elide_lines| {
             if (elide_lines.len > 0) {
@@ -798,6 +802,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
         ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
         ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+        ctx.bundler_options.keep_names = args.flag("--keep-names");
 
         ctx.bundler_options.css_chunking = args.flag("--css-chunking");
 

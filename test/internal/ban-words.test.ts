@@ -1,6 +1,7 @@
 import { file, Glob } from "bun";
 import { readdirSync } from "fs";
 import path from "path";
+import "../../scripts/glob-sources.mjs";
 
 // prettier-ignore
 const words: Record<string, { reason: string; regex?: boolean }> = {

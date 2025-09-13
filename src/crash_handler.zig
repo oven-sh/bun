@@ -1667,9 +1667,10 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         var sfa = std.heap.stackFallback(16384, arena.allocator());
         spawnSymbolizer(program, sfa.get(), &trace) catch |err| switch (err) {
             // try next program if this one wasn't found
-            error.FileNotFound => {},
-            else => return,
+            error.FileNotFound => continue,
+            else => {},
         };
+        return;
     }
 }
 
@@ -1706,16 +1707,11 @@ fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *cons
     child.progress_node = std.Progress.Node.none;
 
     const stderr = std.io.getStdErr().writer();
-    child.spawn() catch |err| {
+    const result = child.spawnAndWait() catch |err| {
         stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
         if (bun.Environment.isWindows) {
             stderr.print("(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n", .{}) catch {};
         }
-        return err;
-    };
-
-    const result = child.spawnAndWait() catch |err| {
-        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
         return err;
     };
 

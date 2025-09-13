@@ -371,7 +371,7 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 ## Regular:
 
-- [ ] test/js/bun/net/tcp-server.test.ts
+- [x] test/js/bun/net/tcp-server.test.ts
 - [ ] test/js/bun/test/describe2.test.ts
 - [ ] test/js/sql/sql-mysql.test.ts
 - [ ] test/regression/issue/21311.test.ts

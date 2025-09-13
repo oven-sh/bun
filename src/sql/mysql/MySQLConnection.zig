@@ -244,7 +244,7 @@ pub fn doHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
     return false;
 }
 
-pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) void {
+pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) !void {
     this.#flags.is_processing_data = true;
     defer this.#flags.is_processing_data = false;
     // Clear the timeout.
@@ -275,8 +275,7 @@ pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) void {
                 if (comptime bun.Environment.allow_assert) {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 }
-                const connection = this.getJSConnection();
-                connection.onError(null, err);
+                return err;
             }
         };
         return;
@@ -294,9 +293,7 @@ pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) void {
                         debug("Error: {s}\n{}", .{ @errorName(err), trace });
                     }
                 }
-                const connection = this.getJSConnection();
-                connection.onError(null, err);
-                return;
+                return err;
             }
 
             if (comptime bun.Environment.allow_assert) {

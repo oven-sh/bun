@@ -155,6 +155,7 @@ pub fn enqueueRequest(this: *@This(), item: *JSMySQLQuery) void {
 
 pub fn close(this: *@This()) void {
     this.ref();
+    this.stopTimers();
     this.unregisterAutoFlusher();
     defer {
         this.updateReferenceType();
@@ -269,7 +270,7 @@ fn SocketHandler(comptime ssl: bool) type {
                 // reset the connection timeout after we're done processing the data
                 this.resetConnectionTimeout();
             }
-            if (!this.#vm.isShuttingDown()) {
+            if (this.#vm.isShuttingDown()) {
                 // we are shutting down lets not process the data
                 return;
             }
@@ -278,7 +279,9 @@ fn SocketHandler(comptime ssl: bool) type {
             event_loop.enter();
             defer event_loop.exit();
 
-            this.#connection.readAndProcessData(data);
+            this.#connection.readAndProcessData(data) catch |err| {
+                this.onError(null, err);
+            };
         }
 
         pub fn onWritable(this: *JSMySQLConnection, _: SocketType) void {
@@ -290,12 +293,17 @@ fn SocketHandler(comptime ssl: bool) type {
 
 fn updateReferenceType(this: *@This()) void {
     if (this.#js_value.isNotEmpty()) {
-        if (this.#connection.isActive()) {
+        if (this.#connection.isActive() and this.#js_value == .weak) {
             this.#js_value.upgrade(this.#globalObject);
+            this.#poll_ref.ref(this.#vm);
             return;
         }
-        this.#js_value.downgrade();
+        if (this.#js_value == .strong) {
+            this.#js_value.downgrade();
+            this.#poll_ref.unref(this.#vm);
+        }
     }
+    this.#poll_ref.unref(this.#vm);
 }
 
 pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

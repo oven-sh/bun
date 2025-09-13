@@ -551,7 +551,8 @@ namespace uWS
                 return ConsumeRequestLineResult::shortRead();
             }
 
-            if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
+            if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1 || 
+                    ((data - start) == 7 && memcmp(start, "CONNECT", 7) == 0))) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
                 if(!isValidMethod(header.key, useStrictMethodValidation)) {

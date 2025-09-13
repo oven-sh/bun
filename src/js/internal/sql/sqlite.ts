@@ -311,6 +311,36 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
     this.mode = mode;
   }
 
+  private formatValue(value: unknown): string {
+    if (value === null || value === undefined) {
+      return "null";
+    }
+    if (typeof value === "string") {
+      // Escape quotes and wrap in quotes
+      return `"${value.replace(/"/g, '\\"').replace(/\\/g, "\\\\")}"`;
+    }
+    if (typeof value === "number") {
+      return String(value);
+    }
+    if (typeof value === "boolean") {
+      return value ? "true" : "false";
+    }
+    if (value instanceof Date) {
+      return `"${value.toISOString()}"`;
+    }
+    if (Array.isArray(value)) {
+      return `[${value.map(v => this.formatValue(v)).join(", ")}]`;
+    }
+    if (typeof value === "object") {
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return `"${String(value)}"`;
+      }
+    }
+    return `"${String(value)}"`;
+  }
+
   run(db: BunSQLiteModule.Database, query: Query<any, any>) {
     if (!db) {
       throw new SQLiteError("SQLite database not initialized", {
@@ -318,6 +348,10 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
         errno: 0,
       });
     }
+
+    // Get logging flag from database connection
+    const shouldLog = (db as any).log_enabled === true;
+    const startTime = shouldLog ? performance.now() : 0;
 
     const { sql, values, mode, parsedInfo } = this;
 
@@ -363,7 +397,22 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
 
         query.resolve(sqlResult);
       }
+
+      // Log successful query completion
+      if (shouldLog && startTime > 0) {
+        const duration = performance.now() - startTime;
+        const valuesStr = values && values.length > 0 ? ` [${values.map(v => this.formatValue(v)).join(", ")}]` : "";
+        console.log(`[\x1b[1;32mSQLITE\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr}`);
+      }
     } catch (err) {
+      // Log failed query
+      if (shouldLog && startTime > 0) {
+        const duration = performance.now() - startTime;
+        const valuesStr = values && values.length > 0 ? ` [${values.map(v => this.formatValue(v)).join(", ")}]` : "";
+        console.log(
+          `[\x1b[1;32mSQLITE\x1b[0m] \x1b[33m(${duration.toFixed(1)}ms)\x1b[0m ${sql}${valuesStr} \x1b[31mERROR: ${err instanceof Error ? err.message : String(err)}\x1b[0m`,
+        );
+      }
       // Convert bun:sqlite errors to SQLiteError
       if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
         // Extract SQLite error properties
@@ -417,6 +466,11 @@ export class SQLiteAdapter
       }
 
       this.db = new SQLiteModule.Database(filename, options);
+
+      // Set logging flag on the database instance
+      if (this.connectionInfo.log) {
+        (this.db as any).log_enabled = true;
+      }
 
       try {
         const onconnect = this.connectionInfo.onconnect;

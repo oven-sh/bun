@@ -135,6 +135,7 @@ export interface PostgresDotZig {
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    log: boolean,
   ) => $ZigGeneratedClasses.PostgresSQLConnection;
   createQuery: (
     sql: string,
@@ -343,6 +344,7 @@ class PooledPostgresConnection {
         connectionTimeout,
         maxLifetime,
         !prepare,
+        options.log ?? false,
       );
     } catch (e) {
       onClose(e as Error);

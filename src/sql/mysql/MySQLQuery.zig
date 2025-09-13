@@ -262,16 +262,17 @@ pub inline fn getStatement(this: *@This()) ?*MySQLStatement {
     return this.#statement;
 }
 
-const bun = @import("bun");
+const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
+const MySQLConnection = @import("./js/JSMySQLConnection.zig");
+const MySQLRequest = @import("./MySQLRequest.zig");
 const MySQLStatement = @import("./MySQLStatement.zig");
+const PreparedStatement = @import("./protocol/PreparedStatement.zig");
+const Signature = @import("./protocol/Signature.zig");
+const bun = @import("bun");
 const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const Status = @import("./QueryStatus.zig").Status;
-const MySQLConnection = @import("./js/JSMySQLConnection.zig");
-const MySQLRequest = @import("./MySQLRequest.zig");
-const Signature = @import("./protocol/Signature.zig");
-const JSValue = bun.jsc.JSValue;
-const JSGlobalObject = bun.jsc.JSGlobalObject;
-const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
-const PreparedStatement = @import("./protocol/PreparedStatement.zig");
 const Value = @import("./MySQLTypes.zig").Value;
+
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;

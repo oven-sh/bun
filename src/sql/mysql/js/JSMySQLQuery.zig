@@ -375,9 +375,6 @@ comptime {
     @export(&jsc.toJSHostFn(createInstance), .{ .name = "MySQLQuery__createInstance" });
 }
 
-const bun = @import("bun");
-const std = @import("std");
-
 pub const js = jsc.Codegen.JSMySQLQuery;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -385,13 +382,16 @@ pub const toJS = js.toJS;
 
 const debug = bun.Output.scoped(.MySQLQuery, .visible);
 
+const AnyMySQLError = @import("../protocol/AnyMySQLError.zig");
+const MySQLConnection = @import("./JSMySQLConnection.zig");
+const MySQLQuery = @import("../MySQLQuery.zig");
+const MySQLQueryResult = @import("../MySQLQueryResult.zig");
+const MySQLStatement = @import("../MySQLStatement.zig");
+const bun = @import("bun");
+const std = @import("std");
+const CommandTag = @import("../../postgres/CommandTag.zig").CommandTag;
+const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+
 const jsc = bun.jsc;
 const JSRef = jsc.JSRef;
 const JSValue = jsc.JSValue;
-const MySQLQuery = @import("../MySQLQuery.zig");
-const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
-const AnyMySQLError = @import("../protocol/AnyMySQLError.zig");
-const MySQLQueryResult = @import("../MySQLQueryResult.zig");
-const CommandTag = @import("../../postgres/CommandTag.zig").CommandTag;
-const MySQLConnection = @import("./JSMySQLConnection.zig");
-const MySQLStatement = @import("../MySQLStatement.zig");

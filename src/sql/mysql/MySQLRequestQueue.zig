@@ -193,11 +193,12 @@ pub fn deinit(this: *@This()) void {
     this.#requests.deinit();
 }
 
-const std = @import("std");
+const Queue = std.fifo.LinearFifo(*JSMySQLQuery, .Dynamic);
+
+const JSMySQLQuery = @import("./js/JSMySQLQuery.zig");
+const MySQLConnection = @import("./js/JSMySQLConnection.zig");
 const bun = @import("bun");
+const std = @import("std");
+
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const JSMySQLQuery = @import("./js/JSMySQLQuery.zig");
-const Queue = std.fifo.LinearFifo(*JSMySQLQuery, .Dynamic);
-const MySQLConnection = @import("./js/JSMySQLConnection.zig");
-const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection

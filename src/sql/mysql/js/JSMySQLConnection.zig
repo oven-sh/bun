@@ -748,29 +748,31 @@ pub fn getStatementFromSignatureHash(this: *@This(), signature_hash: u64) !MySQL
     return try this.#connection.statements.getOrPut(bun.default_allocator, signature_hash);
 }
 
-const std = @import("std");
-const bun = @import("bun");
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const SSLMode = @import("../SSLMode.zig").SSLMode;
 pub const js = jsc.Codegen.JSMySQLConnection;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
+pub const Writer = MySQLConnection.Writer;
+
+const AnyMySQLError = @import("../protocol/AnyMySQLError.zig");
+const CachedStructure = @import("../../shared/CachedStructure.zig");
+const ErrorPacket = @import("../protocol/ErrorPacket.zig");
 const JSMySQLQuery = @import("./JSMySQLQuery.zig");
 const MySQLConnection = @import("../MySQLConnection.zig");
-const AutoFlusher = jsc.WebCore.AutoFlusher;
-const uws = bun.uws;
-const AnyMySQLError = @import("../protocol/AnyMySQLError.zig");
-const NewWriter = @import("../protocol/NewWriter.zig").NewWriter;
-pub const Writer = MySQLConnection.Writer;
-const MySQLQuery = @import("../MySQLQuery.zig");
-const ErrorPacket = @import("../protocol/ErrorPacket.zig");
+const MySQLQueryResult = @import("../MySQLQueryResult.zig");
 const MySQLStatement = @import("../MySQLStatement.zig");
 const ResultSet = @import("../protocol/ResultSet.zig");
+const std = @import("std");
 const NewReader = @import("../protocol/NewReader.zig").NewReader;
-const CachedStructure = @import("../../shared/CachedStructure.zig");
-const MySQLQueryResult = @import("../MySQLQueryResult.zig");
+const NewWriter = @import("../protocol/NewWriter.zig").NewWriter;
+const SSLMode = @import("../SSLMode.zig").SSLMode;
+
+const bun = @import("bun");
+const uws = bun.uws;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const AutoFlusher = jsc.WebCore.AutoFlusher;

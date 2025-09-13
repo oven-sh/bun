@@ -1024,24 +1024,26 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *MySQLStatement, bun.IdentityContext(u64), 80);
 const debug = bun.Output.scoped(.MySQLConnection, .visible);
 
+pub const ErrorPacket = @import("./protocol/ErrorPacket.zig");
+
+const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
+pub const PreparedStatementsMapGetOrPutResult = PreparedStatementsMap.GetOrPutResult;
+
 const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const Auth = @import("./protocol/Auth.zig");
 const AuthSwitchRequest = @import("./protocol/AuthSwitchRequest.zig");
 const AuthSwitchResponse = @import("./protocol/AuthSwitchResponse.zig");
-const CachedStructure = @import("../shared/CachedStructure.zig");
 const Capabilities = @import("./Capabilities.zig");
 const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
-pub const ErrorPacket = @import("./protocol/ErrorPacket.zig");
 const HandshakeResponse41 = @import("./protocol/HandshakeResponse41.zig");
 const HandshakeV10 = @import("./protocol/HandshakeV10.zig");
-const LocalInfileRequest = @import("./protocol/LocalInfileRequest.zig");
+const JSMySQLConnection = @import("./js/JSMySQLConnection.zig");
 const JSMySQLQuery = @import("./js/JSMySQLQuery.zig");
-const MySQLRequest = @import("./MySQLRequest.zig");
+const LocalInfileRequest = @import("./protocol/LocalInfileRequest.zig");
+const MySQLRequestQueue = @import("./MySQLRequestQueue.zig");
 const MySQLStatement = @import("./MySQLStatement.zig");
 const OKPacket = @import("./protocol/OKPacket.zig");
 const PacketHeader = @import("./protocol/PacketHeader.zig");
-const PreparedStatement = @import("./protocol/PreparedStatement.zig");
-const ResultSet = @import("./protocol/ResultSet.zig");
 const ResultSetHeader = @import("./protocol/ResultSetHeader.zig");
 const SSLRequest = @import("./protocol/SSLRequest.zig");
 const SocketMonitor = @import("../postgres/SocketMonitor.zig");
@@ -1068,7 +1070,3 @@ const JSValue = jsc.JSValue;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
-const MySQLRequestQueue = @import("./MySQLRequestQueue.zig");
-const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
-pub const PreparedStatementsMapGetOrPutResult = PreparedStatementsMap.GetOrPutResult;
-const JSMySQLConnection = @import("./js/JSMySQLConnection.zig");

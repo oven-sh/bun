@@ -565,6 +565,7 @@ async function runTests() {
             };
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
               env.BUN_JSC_validateExceptionChecks = "1";
+              env.BUN_JSC_dumpSimulatedThrows = "1";
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1288,6 +1289,7 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
+    env.BUN_JSC_dumpSimulatedThrows = "1";
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {

@@ -195,12 +195,12 @@ Click the link in the right column to jump to the associated documentation.
 ---
 
 - Parsing & Formatting
-- [`Bun.semver`](https://bun.com/docs/api/semver), `Bun.TOML.parse`, [`Bun.color`](https://bun.com/docs/api/color)
+- [`Bun.semver`](https://bun.com/docs/api/semver), `Bun.TOML.parse`, [`Bun.YAML.parse`](https://bun.com/docs/api/yaml), [`Bun.color`](https://bun.com/docs/api/color)
 
 ---
 
 - Low-level / Internals
-- `Bun.mmap`, `Bun.gc`, `Bun.generateHeapSnapshot`, [`bun:jsc`](https://bun.com/docs/api/bun-jsc)
+- `Bun.mmap`, `Bun.gc`, `Bun.generateHeapSnapshot`, [`bun:jsc`](https://bun.com/reference/bun/jsc)
 
 ---
 

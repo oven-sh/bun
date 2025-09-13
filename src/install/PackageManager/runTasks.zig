@@ -194,7 +194,7 @@ pub fn runTasks(
                                 manager.allocator,
                                 fmt,
                                 .{ @errorName(err), name.slice() },
-                            ) catch bun.outOfMemory();
+                            ) catch |e| bun.handleOom(e);
                         } else {
                             manager.log.addWarningFmt(
                                 null,
@@ -202,7 +202,7 @@ pub fn runTasks(
                                 manager.allocator,
                                 fmt,
                                 .{ @errorName(err), name.slice() },
-                            ) catch bun.outOfMemory();
+                            ) catch |e| bun.handleOom(e);
                         }
 
                         if (manager.subcommand != .remove) {
@@ -250,7 +250,7 @@ pub fn runTasks(
                             manager.allocator,
                             "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                             .{ metadata.url, response.status_code },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -258,7 +258,7 @@ pub fn runTasks(
                             manager.allocator,
                             "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
                             .{ metadata.url, response.status_code },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
                     if (manager.subcommand != .remove) {
                         for (manager.update_requests) |*request| {
@@ -390,7 +390,7 @@ pub fn runTasks(
                                 extract.name.slice(),
                                 extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -402,7 +402,7 @@ pub fn runTasks(
                                 extract.name.slice(),
                                 extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     }
                     if (manager.subcommand != .remove) {
                         for (manager.update_requests) |*request| {
@@ -454,7 +454,7 @@ pub fn runTasks(
                                 metadata.url,
                                 response.status_code,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -465,7 +465,7 @@ pub fn runTasks(
                                 metadata.url,
                                 response.status_code,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
                     if (manager.subcommand != .remove) {
                         for (manager.update_requests) |*request| {
@@ -540,7 +540,7 @@ pub fn runTasks(
                                 @errorName(err),
                                 name.slice(),
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     }
 
                     continue;
@@ -610,7 +610,7 @@ pub fn runTasks(
                                 @errorName(err),
                                 alias,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     }
                     continue;
                 }
@@ -730,7 +730,7 @@ pub fn runTasks(
                                 @errorName(err),
                                 name,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     }
                     continue;
                 }
@@ -804,7 +804,7 @@ pub fn runTasks(
                             @errorName(err),
                             alias.slice(),
                         },
-                    ) catch bun.outOfMemory();
+                    ) catch |e| bun.handleOom(e);
 
                     continue;
                 }
@@ -1009,7 +1009,7 @@ pub fn allocGitHubURL(this: *const PackageManager, repository: *const Repository
 }
 
 pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: Task.Id, is_required: bool) bool {
-    const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
+    const gpe = bun.handleOom(this.network_dedupe_map.getOrPut(task_id));
 
     // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
     gpe.value_ptr.is_required = if (!gpe.found_existing)
@@ -1063,7 +1063,7 @@ pub fn generateNetworkTaskForTarball(
                 this.lockfile.str(&package.name),
                 *FileSystem.FilenameStore,
                 FileSystem.FilenameStore.instance,
-            ) catch bun.outOfMemory(),
+            ) catch |err| bun.handleOom(err),
             .resolution = package.resolution,
             .cache_dir = this.getCacheDirectory(),
             .temp_dir = this.getTemporaryDirectory(),
@@ -1073,7 +1073,7 @@ pub fn generateNetworkTaskForTarball(
                 url,
                 *FileSystem.FilenameStore,
                 FileSystem.FilenameStore.instance,
-            ) catch bun.outOfMemory(),
+            ) catch |err| bun.handleOom(err),
         },
         scope,
         authorization,

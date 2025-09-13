@@ -984,8 +984,7 @@ pub fn spawnMaybeSync(
         if (comptime !Environment.isWindows) {
             // Since the event loop is recursively called, we need to check if it's safe to recurse.
             if (!bun.StackCheck.init().isSafeToRecurse()) {
-                globalThis.throwStackOverflow();
-                return error.JSError;
+                return globalThis.throwStackOverflow();
             }
         }
     }
@@ -1737,8 +1736,8 @@ pub fn spawnMaybeSync(
     sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
     sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
     sync_value.put(globalThis, jsc.ZigString.static("resourceUsage"), resource_usage);
-    if (timeout != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) jsc.JSValue.true else jsc.JSValue.false);
-    if (maxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) jsc.JSValue.true else jsc.JSValue.false);
+    if (timeout != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) .true else .false);
+    if (maxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) .true else .false);
     sync_value.put(globalThis, jsc.ZigString.static("pid"), resultPid);
 
     return sync_value;
@@ -1746,7 +1745,7 @@ pub fn spawnMaybeSync(
 
 fn throwCommandNotFound(globalThis: *jsc.JSGlobalObject, command: []const u8) bun.JSError {
     const err = jsc.SystemError{
-        .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
+        .message = bun.handleOom(bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command})),
         .code = bun.String.static("ENOENT"),
         .errno = -bun.sys.UV_E.NOENT,
         .path = bun.String.cloneUTF8(command),
@@ -1802,7 +1801,7 @@ pub fn handleIPCClose(this: *Subprocess) void {
 
         // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
         if (consumeOnDisconnectCallback(this_jsvalue, globalThis)) |callback| {
-            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{JSValue.jsBoolean(true)});
+            globalThis.bunVM().eventLoop().runCallback(callback, globalThis, this_jsvalue, &.{.true});
         }
     }
 }

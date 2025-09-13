@@ -242,14 +242,60 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                         line_offset.advance(space);
                     } else {
                         // Multi-part case (3+ parts) - generate nested nullish coalescing
-                        // For now, fall back to simple (invalid) output
-                        // TODO: Implement full nested support
-                        j.pushStatic(c.options.global_name);
+                        // Example: "globalThis.my.lib" -> "((globalThis ||= {}).my ||= {}).lib = "
+                        
+                        // Split rest into individual parts
+                        var iter = std.mem.tokenizeScalar(u8, rest, '.');
+                        var rest_parts = std.ArrayList([]const u8).init(worker.allocator);
+                        defer rest_parts.deinit();
+                        
+                        while (iter.next()) |part| {
+                            rest_parts.append(part) catch {};
+                        }
+                        
+                        // Total parts = 1 (first_part) + rest_parts.len
+                        // We need (total_parts - 1) opening parens = rest_parts.len opening parens
+                        var i: usize = 0;
+                        while (i < rest_parts.items.len) : (i += 1) {
+                            j.pushStatic("(");
+                            line_offset.advance("(");
+                        }
+                        
+                        // Start with first part
+                        j.pushStatic(first_part);
+                        line_offset.advance(first_part);
+                        
+                        // Process all parts except the last
+                        for (rest_parts.items[0..rest_parts.items.len - 1]) |part| {
+                            j.pushStatic(space);
+                            j.pushStatic("||=");
+                            j.pushStatic(space);
+                            j.pushStatic("{}).");
+                            j.pushStatic(part);
+                            
+                            line_offset.advance(space);
+                            line_offset.advance("||=");
+                            line_offset.advance(space);
+                            line_offset.advance("{}).");
+                            line_offset.advance(part);
+                        }
+                        
+                        // Last part
+                        const last_part = rest_parts.items[rest_parts.items.len - 1];
+                        j.pushStatic(space);
+                        j.pushStatic("||=");
+                        j.pushStatic(space);
+                        j.pushStatic("{}).");
+                        j.pushStatic(last_part);
                         j.pushStatic(space);
                         j.pushStatic("=");
                         j.pushStatic(space);
                         
-                        line_offset.advance(c.options.global_name);
+                        line_offset.advance(space);
+                        line_offset.advance("||=");
+                        line_offset.advance(space);
+                        line_offset.advance("{}).");
+                        line_offset.advance(last_part);
                         line_offset.advance(space);
                         line_offset.advance("=");
                         line_offset.advance(space);

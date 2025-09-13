@@ -3,7 +3,7 @@
 // This test is expected to CRASH/ABORT when the finalizer runs
 // This is a regression test for https://github.com/oven-sh/bun/issues/22596
 
-#define NAPI_VERSION NAPI_VERSION_EXPERIMENTAL
+// NAPI_VERSION_EXPERIMENTAL is defined in binding.gyp
 #define NAPI_EXPERIMENTAL
 
 #include <assert.h>
@@ -92,7 +92,7 @@ static void finalizer_unref(napi_env env, void *data, void *hint) {
 static napi_value test_reference_unref_in_finalizer_experimental(napi_env env, napi_callback_info info) {
   (void)info;
   
-  printf("Starting experimental NAPI test (version %d)\n", NAPI_VERSION_EXPERIMENTAL);
+  printf("Starting experimental NAPI test\n");
   printf("This test is expected to CRASH when finalizers run.\n");
   printf("If you see 'SUCCESS' below, the test has FAILED.\n");
   
@@ -143,29 +143,6 @@ static napi_value init(napi_env env, napi_value exports) {
   return exports;
 }
 
-// Instead of using NAPI_MODULE, manually define a module with experimental version
-// This needs to work on both Unix and Windows
-static napi_module _module = {
-  NAPI_VERSION_EXPERIMENTAL, // Use experimental version here!!!
-  0,
-  __FILE__,
-  init,
-  "test_reference_unref_in_finalizer_experimental",
-  NULL,
-  {0},
-};
-
-// Windows and Unix have different ways to register constructors
-#if defined(_MSC_VER)
-#pragma section(".CRT$XCU", read)
-static void __cdecl _register_test_reference_unref_in_finalizer_experimental(void);
-__declspec(allocate(".CRT$XCU")) void(__cdecl *_register_test_reference_unref_in_finalizer_experimental_)(void) = _register_test_reference_unref_in_finalizer_experimental;
-static void __cdecl _register_test_reference_unref_in_finalizer_experimental(void) {
-  napi_module_register(&_module);
-}
-#else
-static void _register_test_reference_unref_in_finalizer_experimental(void) __attribute__((constructor));
-static void _register_test_reference_unref_in_finalizer_experimental(void) {
-  napi_module_register(&_module);
-}
-#endif
+// Use NAPI_MODULE macro for proper registration
+// The experimental version is already set via the #define at the top
+NAPI_MODULE(NODE_GYP_MODULE_NAME, init)

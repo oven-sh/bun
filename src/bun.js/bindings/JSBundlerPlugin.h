@@ -143,9 +143,6 @@ public:
 
     ~BundlerPlugin()
     {
-        if (virtualModules) {
-            delete virtualModules;
-        }
     }
 
     NamespaceList onLoad = {};
@@ -154,7 +151,7 @@ public:
     BunPluginTarget target { BunPluginTargetBrowser };
 
     WriteBarrierList<JSC::JSPromise> deferredPromises = {};
-    VirtualModuleMap* virtualModules { nullptr };
+    VirtualModuleMap virtualModules {};
     WriteBarrierList<JSC::JSObject> virtualModulesList = {};
 
     JSBundlerPluginAddErrorCallback addError;

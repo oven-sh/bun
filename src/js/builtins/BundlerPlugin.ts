@@ -377,10 +377,9 @@ export function runSetupFunction(
         return this; // idempotent - same callback already registered
       }
 
-      self.virtualModules.set(specifier, callback);
-
-      // Register the virtual module with the C++ side
+      // Register with native first; update JS map only on success
       self.addVirtualModule(specifier, callback);
+      self.virtualModules.set(specifier, callback);
 
       return this;
     },
@@ -431,9 +430,8 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
     var { onResolve, onLoad, virtualModules } = this;
 
-    // Check for virtual modules first
-    if (virtualModules && virtualModules.has(inputPath)) {
-      // Return the virtual module with file namespace
+    // Check for virtual modules first (in file namespace or empty namespace)
+    if (virtualModules && (!inputNamespace || inputNamespace === "file") && virtualModules.has(inputPath)) {
       this.onResolveAsync(internalID, inputPath, "file", false);
       return null;
     }
@@ -444,6 +442,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     }
 
     var results = onResolve.$get(inputNamespace);
+    
     if (!results) {
       this.onResolveAsync(internalID, null, null, null);
       return null;
@@ -572,14 +571,38 @@ export function runOnLoadPlugins(
         }
 
         try {
+          // Unwrap/await promises like onLoad
+          while (
+            result &&
+            $isPromise(result) &&
+            ($getPromiseInternalField(result, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
+          ) {
+            result = $getPromiseInternalField(result, $promiseFieldReactionsOrResult);
+          }
+          if (result && $isPromise(result)) {
+            result = await result;
+          }
           if (!result || !$isObject(result)) {
             throw new TypeError(`Virtual module "${path}" must return an object with "contents" property`);
           }
 
-          var { contents, loader = "js" } = result;
+          var { contents, loader = "js" } = result as any;
+          if ((loader as any) === "object") {
+            if (!("exports" in result)) {
+              throw new TypeError('Virtual module returning loader: "object" must have "exports" property');
+            }
+            try {
+              contents = JSON.stringify(result.exports);
+              loader = "json";
+            } catch (e) {
+              throw new TypeError("Virtual module must return a JSON-serializable object when using loader: \"object\": " + e);
+            }
+          }
 
-          if (!(typeof contents === "string")) {
-            throw new TypeError(`Virtual module "${path}" must return an object with "contents" as a string`);
+          if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
+            throw new TypeError(
+              `Virtual module "${path}" must return an object with "contents" as a string or Uint8Array`,
+            );
           }
 
           if (!(typeof loader === "string")) {
@@ -591,7 +614,7 @@ export function runOnLoadPlugins(
             throw new TypeError(`Virtual module "${path}": Loader ${loader} is not supported.`);
           }
 
-          this.onLoadAsync(internalID, contents, chosenLoader);
+          this.onLoadAsync(internalID, contents as any, chosenLoader);
           return null;
         } catch (e) {
           this.addError(internalID, e, 1);

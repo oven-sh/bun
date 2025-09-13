@@ -105,9 +105,14 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
 {
     auto pathString = path->toWTFString(BunString::ZeroCopy);
 
-    // Check virtual modules for both onLoad and onResolve
-    if (this->virtualModules && this->virtualModules->contains(pathString)) {
-        return true;
+    // Check virtual modules for both onLoad and onResolve (only in "file" namespace)
+    if (!this->virtualModules.isEmpty()) {
+        // Virtual modules only work in the "file" namespace or empty namespace (defaults to "file")
+        bool isFileNamespace = !namespaceStr || namespaceStr->isEmpty() || 
+                               namespaceStr->toWTFString(BunString::ZeroCopy) == "file"_s;
+        if (isFileNamespace && this->virtualModules.contains(pathString)) {
+            return true;
+        }
     }
 
     if (isOnLoad) {
@@ -119,17 +124,17 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
 
 bool BundlerPlugin::hasVirtualModule(const String& path) const
 {
-    return virtualModules && virtualModules->contains(path);
+    return !virtualModules.isEmpty() && virtualModules.contains(path);
 }
 
 JSC::JSObject* BundlerPlugin::getVirtualModule(const String& path)
 {
-    if (!virtualModules) {
+    if (virtualModules.isEmpty()) {
         return nullptr;
     }
 
-    auto it = virtualModules->find(path);
-    if (it != virtualModules->end()) {
+    auto it = virtualModules.find(path);
+    if (it != virtualModules.end()) {
         unsigned index = it->value;
         if (index < virtualModulesList.list().size()) {
             return virtualModulesList.list()[index].get();
@@ -140,22 +145,15 @@ JSC::JSObject* BundlerPlugin::getVirtualModule(const String& path)
 
 void BundlerPlugin::addVirtualModule(JSC::VM& vm, JSC::JSCell* owner, const String& path, JSC::JSObject* moduleFunction)
 {
-    if (!virtualModules) {
-        virtualModules = new VirtualModuleMap();
-    }
-
     unsigned index = virtualModulesList.list().size();
     virtualModulesList.append(vm, owner, moduleFunction);
-    virtualModules->set(path, index);
+    virtualModules.set(path, index);
 }
 
 void BundlerPlugin::tombstone()
 {
     tombstoned = true;
-    if (virtualModules) {
-        delete virtualModules;
-        virtualModules = nullptr;
-    }
+    virtualModules.clear();
     // virtualModulesList will be cleaned up by destructor
 }
 
@@ -771,13 +769,6 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
-
-    // Clear virtual modules when tombstoning
-    if (plugin->plugin.virtualModules) {
-        plugin->plugin.virtualModules->clear();
-        delete plugin->plugin.virtualModules;
-        plugin->plugin.virtualModules = nullptr;
-    }
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)

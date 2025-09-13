@@ -35,7 +35,7 @@
   "std.enums.tagName(": 2,
   "std.fs.Dir": 170,
   "std.fs.File": 62,
-  "std.fs.cwd": 104,
+  "std.fs.cwd": 106,
   "std.log": 1,
   "std.mem.indexOfAny(u8": 0,
   "std.unicode": 27,

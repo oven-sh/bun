@@ -107,8 +107,8 @@ pub fn canFlush(this: *@This()) bool {
             if (this.queue.current()) |request| request.isPending() else false);
 }
 
-pub fn hasPendingRequests(this: *@This()) bool {
-    return this.queue.current() != null or this.#write_buffer.len() > 0;
+pub fn isIdle(this: *@This()) bool {
+    return this.queue.current() == null and this.#write_buffer.len() == 0;
 }
 
 pub fn enqueueRequest(this: *@This(), request: *JSMySQLQuery) void {

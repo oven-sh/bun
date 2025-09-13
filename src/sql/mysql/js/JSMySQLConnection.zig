@@ -81,7 +81,7 @@ fn stopTimers(this: *@This()) void {
 fn getTimeoutInterval(this: *@This()) u32 {
     return switch (this.#connection.status) {
         .connected => {
-            if (this.#connection.hasPendingRequests()) {
+            if (this.#connection.isIdle()) {
                 return this.idle_timeout_interval_ms;
             }
             return 0;

@@ -4,6 +4,7 @@ pub const MySQLRequestQueue = @This();
 
 #pipelined_requests: u32 = 0,
 #nonpipelinable_requests: u32 = 0,
+// TODO: refactor to ENUM
 #waiting_to_prepare: bool = false,
 #is_ready_for_query: bool = true,
 
@@ -115,15 +116,16 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
             offset += 1;
             continue;
         };
-        if (request.isRunning()) {
+        if (request.isBeingPrepared()) {
+            debug("isBeingPrepared", .{});
+            this.#is_ready_for_query = false;
+            this.#waiting_to_prepare = true;
+            return;
+        } else if (request.isRunning()) {
             connection.resetConnectionTimeout();
             debug("isRunning after run", .{});
             this.#is_ready_for_query = false;
-            if (request.isBeingPrepared()) {
-                debug("isBeingPrepared", .{});
-                this.#waiting_to_prepare = true;
-                return;
-            }
+
             if (request.isPipelined()) {
                 this.#pipelined_requests += 1;
                 if (this.canPipeline(connection)) {
@@ -150,16 +152,16 @@ pub fn isEmpty(this: *@This()) bool {
 
 pub fn add(this: *@This(), request: *JSMySQLQuery) void {
     debug("add", .{});
-    if (request.isRunning()) {
+    if (request.isBeingPrepared()) {
         this.#is_ready_for_query = false;
-        if (request.isBeingPrepared()) {
-            this.#waiting_to_prepare = true;
+        this.#waiting_to_prepare = true;
+    } else if (request.isRunning()) {
+        this.#is_ready_for_query = false;
+
+        if (request.isPipelined()) {
+            this.#pipelined_requests += 1;
         } else {
-            if (request.isPipelined()) {
-                this.#pipelined_requests += 1;
-            } else {
-                this.#nonpipelinable_requests += 1;
-            }
+            this.#nonpipelinable_requests += 1;
         }
     }
     request.ref();

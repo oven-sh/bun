@@ -300,8 +300,8 @@ pub inline fn isPending(this: *@This()) bool {
 pub inline fn isBeingPrepared(this: *@This()) bool {
     return this.#query.isBeingPrepared();
 }
-pub inline fn wasPipelined(this: *@This()) bool {
-    return this.#query.wasPipelined();
+pub inline fn isPipelined(this: *@This()) bool {
+    return this.#query.isPipelined();
 }
 pub inline fn isSimple(this: *@This()) bool {
     return this.#query.isSimple();

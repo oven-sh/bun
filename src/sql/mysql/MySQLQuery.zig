@@ -232,7 +232,7 @@ pub inline fn isBeingPrepared(this: *@This()) bool {
     return this.#status == .pending and this.#statement != null and this.#statement.?.status == .parsing;
 }
 
-pub inline fn wasPipelined(this: *const @This()) bool {
+pub inline fn isPipelined(this: *const @This()) bool {
     return this.#flags.pipelined;
 }
 pub inline fn isSimple(this: *const @This()) bool {
@@ -260,8 +260,6 @@ pub inline fn getStatement(this: *const @This()) ?*MySQLStatement {
     return this.#statement;
 }
 
-const debug = bun.Output.scoped(.MySQLQuery, .visible);
-
 const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const MySQLConnection = @import("./js/JSMySQLConnection.zig");
 const MySQLRequest = @import("./MySQLRequest.zig");
@@ -276,3 +274,5 @@ const Value = @import("./MySQLTypes.zig").Value;
 
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
+
+const debug = bun.Output.scoped(.MySQLQuery, .visible);

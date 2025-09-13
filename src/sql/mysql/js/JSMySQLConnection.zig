@@ -662,7 +662,7 @@ pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStat
     var row = ResultSet.Row{
         .globalObject = this.#globalObject,
         .columns = statement.columns,
-        .binary = request.isSimple(),
+        .binary = !request.isSimple(),
         .raw = result_mode == .raw,
         .bigint = request.bigintSupported(),
     };
@@ -692,7 +692,6 @@ pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStat
     if (this.#globalObject.tryTakeException()) |err| {
         this.#connection.queue.markCurrentRequestAsFinished(request);
         request.rejectWithJSValue(this.getQueriesArray(), err);
-        this.#connection.queue.advance(this);
         return;
     }
     statement.result_count += 1;

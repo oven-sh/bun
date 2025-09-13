@@ -948,7 +948,7 @@ fn getJSConnection(this: *MySQLConnection) *JSMySQLConnection {
     return @fieldParentPtr("#connection", this);
 }
 
-pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
+fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
     const first_byte = try reader.int(u8);
     debug("handleResultSet: {x:0>2}", .{first_byte});
 

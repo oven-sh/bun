@@ -216,10 +216,13 @@ pub fn reject(this: *@This(), queries_array: JSValue, err: AnyMySQLError.Error) 
         this.markAsFailed();
         return;
     }
-
-    const instance = AnyMySQLError.mysqlErrorToJS(this.#globalObject, "Failed to bind query", err);
-    instance.ensureStillAlive();
-    this.rejectWithJSValue(queries_array, instance);
+    if (this.#globalObject.tryTakeException()) |err_| {
+        this.rejectWithJSValue(queries_array, err_);
+    } else {
+        const instance = AnyMySQLError.mysqlErrorToJS(this.#globalObject, "Failed to bind query", err);
+        instance.ensureStillAlive();
+        this.rejectWithJSValue(queries_array, instance);
+    }
 }
 
 pub fn rejectWithJSValue(this: *@This(), queries_array: JSValue, err: JSValue) void {

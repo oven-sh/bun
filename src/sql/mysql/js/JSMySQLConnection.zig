@@ -171,6 +171,7 @@ pub fn close(this: *@This()) void {
         this.#connection.cleanQueueAndClose(null, this.getQueriesArray());
     }
 }
+
 fn drainInternal(this: *@This()) void {
     if (this.#vm.isShuttingDown()) return this.close();
     this.ref();
@@ -178,6 +179,7 @@ fn drainInternal(this: *@This()) void {
     const event_loop = this.#vm.eventLoop();
     event_loop.enter();
     defer event_loop.exit();
+    this.ensureJSValueIsAlive();
     this.#connection.flushQueue() catch |err| {
         bun.assert_eql(err, error.AuthenticationFailed);
         this.fail("Authentication failed", err);
@@ -193,9 +195,13 @@ pub fn deinit(this: *@This()) void {
     bun.destroy(this);
 }
 
+fn ensureJSValueIsAlive(this: *@This()) void {
+    if (this.#js_value.tryGet()) |value| {
+        value.ensureStillAlive();
+    }
+}
 pub fn finalize(this: *@This()) void {
     debug("finalize", .{});
-    this.stopTimers();
     this.#js_value.finalize();
     this.deref();
 }
@@ -283,6 +289,7 @@ fn SocketHandler(comptime ssl: bool) type {
             const event_loop = vm.eventLoop();
             event_loop.enter();
             defer event_loop.exit();
+            this.ensureJSValueIsAlive();
 
             this.#connection.readAndProcessData(data) catch |err| {
                 this.onError(null, err);
@@ -555,9 +562,6 @@ fn consumeOnConnectCallback(this: *const @This(), globalObject: *jsc.JSGlobalObj
     if (this.#js_value.tryGet()) |value| {
         const on_connect = js.onconnectGetCached(value) orelse return null;
         js.onconnectSetCached(value, globalObject, .zero);
-        if (on_connect == .zero) {
-            return null;
-        }
         return on_connect;
     }
     return null;
@@ -568,9 +572,6 @@ fn consumeOnCloseCallback(this: *const @This(), globalObject: *jsc.JSGlobalObjec
     if (this.#js_value.tryGet()) |value| {
         const on_close = js.oncloseGetCached(value) orelse return null;
         js.oncloseSetCached(value, globalObject, .zero);
-        if (on_close == .zero) {
-            return null;
-        }
         return on_close;
     }
     return null;
@@ -612,20 +613,20 @@ fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]co
 }
 
 fn failWithJSValue(this: *@This(), value: JSValue) void {
-    defer this.updateReferenceType();
-    this.stopTimers();
-    if (this.#connection.status == .failed) return;
-
     this.ref();
+
     defer {
-        // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         if (this.#vm.isShuttingDown()) {
             this.#connection.close();
         } else {
             this.#connection.cleanQueueAndClose(value, this.getQueriesArray());
         }
+        this.updateReferenceType();
         this.deref();
     }
+    this.stopTimers();
+
+    if (this.#connection.status == .failed) return;
 
     this.#connection.status = .failed;
     if (this.#vm.isShuttingDown()) return;
@@ -633,9 +634,9 @@ fn failWithJSValue(this: *@This(), value: JSValue) void {
     const on_close = this.consumeOnCloseCallback(this.#globalObject) orelse return;
     on_close.ensureStillAlive();
     const loop = this.#vm.eventLoop();
-    loop.enter();
-    defer loop.exit();
-
+    // loop.enter();
+    // defer loop.exit();
+    this.ensureJSValueIsAlive();
     var js_error = value.toError() orelse value;
     if (js_error == .zero) {
         js_error = AnyMySQLError.mysqlErrorToJS(this.#globalObject, "Connection closed", error.ConnectionClosed);
@@ -644,7 +645,8 @@ fn failWithJSValue(this: *@This(), value: JSValue) void {
 
     const queries_array = this.getQueriesArray();
     queries_array.ensureStillAlive();
-    this.#globalObject.queueMicrotask(on_close, &[_]JSValue{ js_error, queries_array });
+    // this.#globalObject.queueMicrotask(on_close, &[_]JSValue{ js_error, queries_array });
+    loop.runCallback(on_close, this.#globalObject, .js_undefined, &[_]JSValue{ js_error, queries_array });
 }
 
 fn fail(this: *@This(), message: []const u8, err: AnyMySQLError.Error) void {
@@ -657,7 +659,9 @@ pub fn onConnectionEstabilished(this: *@This()) void {
     on_connect.ensureStillAlive();
     var js_value = this.#js_value.tryGet() orelse .js_undefined;
     js_value.ensureStillAlive();
-    this.#globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
+    // this.#globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
+    const loop = this.#vm.eventLoop();
+    loop.runCallback(on_connect, this.#globalObject, .js_undefined, &[_]JSValue{ JSValue.jsNull(), js_value });
     this.#poll_ref.unref(this.#vm);
 }
 pub fn onQueryResult(this: *@This(), request: *JSMySQLQuery, result: MySQLQueryResult) void {
@@ -731,7 +735,11 @@ pub fn onError(this: *@This(), request: ?*JSMySQLQuery, err: AnyMySQLError.Error
             this.close();
             return;
         }
-        this.fail("Connection closed", err);
+        if (this.#globalObject.tryTakeException()) |err_| {
+            this.failWithJSValue(err_);
+        } else {
+            this.fail("Connection closed", err);
+        }
     }
 }
 pub fn onErrorPacket(
@@ -743,14 +751,22 @@ pub fn onErrorPacket(
         if (this.#vm.isShuttingDown()) {
             _request.markAsFailed();
         } else {
-            _request.rejectWithJSValue(this.getQueriesArray(), err.toJS(this.#globalObject));
+            if (this.#globalObject.tryTakeException()) |err_| {
+                this.failWithJSValue(err_);
+            } else {
+                _request.rejectWithJSValue(this.getQueriesArray(), err.toJS(this.#globalObject));
+            }
         }
     } else {
         if (this.#vm.isShuttingDown()) {
             this.close();
             return;
         }
-        this.failWithJSValue(err.toJS(this.#globalObject));
+        if (this.#globalObject.tryTakeException()) |err_| {
+            this.failWithJSValue(err_);
+        } else {
+            this.failWithJSValue(err.toJS(this.#globalObject));
+        }
     }
 }
 

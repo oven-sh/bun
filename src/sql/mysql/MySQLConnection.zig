@@ -215,10 +215,16 @@ pub fn setSocket(this: *MySQLConnection, socket: uws.AnySocket) void {
     this.#socket = socket;
 }
 pub fn isActive(this: *MySQLConnection) bool {
-    if (!this.queue.isEmpty() or (this.status != .disconnected and this.status != .failed)) {
+    if (this.status == .disconnected or this.status == .failed) {
+        return false;
+    }
+
+    if (this.status != .connected) {
+        // keep alive the connection until it is connected or failed
         return true;
     }
-    return false;
+
+    return (!this.queue.isEmpty() or this.#write_buffer.len() > 0);
 }
 pub inline fn isConnected(this: *MySQLConnection) bool {
     return this.status == .connected;

@@ -502,7 +502,6 @@ pub const BunTest = struct {
             group.log("callTestCallback -> error", .{});
             break :blk null;
         };
-        drain(globalThis);
 
         var dcb_ref: ?*RefData = null;
         if (done_callback) |dcb| {
@@ -520,16 +519,19 @@ pub const BunTest = struct {
             group.log("callTestCallback -> promise: data {}", .{cfg.data});
             const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg.data);
             result.?.then(globalThis, this_ref, bunTestThen, bunTestCatch);
+            drain(globalThis);
             return;
         }
 
         if (dcb_ref) |_| {
             // completed asynchronously
             group.log("callTestCallback -> wait for done callback", .{});
+            drain(globalThis);
             return;
         }
 
         group.log("callTestCallback -> sync", .{});
+        drain(globalThis);
         this.addResult(cfg.data);
         return;
     }

@@ -372,7 +372,7 @@ Regular:
 
 - [ ] test/js/bun/test/describe2.test.ts
 - [ ] test/cli/update_interactive_formatting.test.ts
-- [ ] test/js/bun/bun-object/write.spec.ts
+- [x] test/js/bun/bun-object/write.spec.ts
 - [ ] test/cli/install/isolated-install.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
 - [ ] test/cli/install/catalogs.test.ts
@@ -424,7 +424,7 @@ Regular:
 
 # Add features:
 
-- [ ] The error is duplicated:
+- [x] The error is duplicated:
   ```js
   test("abc", async () => {
     await (async () => {

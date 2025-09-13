@@ -57,6 +57,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .bundler_options = {},
         .allocation_scope = {},
         .broadcast_console_log_from_browser_to_server = {},
+        .enable_uncaught_exception_reporting_from_browser_to_terminal = {},
         // to be counted.
         .root = {
             other_bytes += dev.root.len;

@@ -80,9 +80,16 @@ fn stopTimers(this: *@This()) void {
 }
 fn getTimeoutInterval(this: *@This()) u32 {
     return switch (this.#connection.status) {
-        .connected => this.idle_timeout_interval_ms,
+        .connected => {
+            if (this.#connection.hasPendingRequests()) {
+                return this.idle_timeout_interval_ms;
+            }
+            return 0;
+        },
         .failed => 0,
-        else => this.connection_timeout_ms,
+        else => {
+            return this.connection_timeout_ms;
+        },
     };
 }
 pub fn resetConnectionTimeout(this: *@This()) void {
@@ -748,7 +755,7 @@ pub fn onErrorPacket(
             _request.markAsFailed();
         } else {
             if (this.#globalObject.tryTakeException()) |err_| {
-                this.failWithJSValue(err_);
+                _request.rejectWithJSValue(this.getQueriesArray(), err_);
             } else {
                 _request.rejectWithJSValue(this.getQueriesArray(), err.toJS(this.#globalObject));
             }

@@ -64,6 +64,7 @@ fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLStatement
 
 fn runSimpleQuery(this: *@This(), connection: *MySQLConnection) !void {
     if (this.#status != .pending or !connection.canExecuteQuery()) {
+        debug("cannot execute query", .{});
         // cannot execute query
         return;
     }
@@ -148,7 +149,9 @@ fn runPreparedQuery(
                 this.#flags.pipelined = true;
             }
         },
-        .parsing => {},
+        .parsing => {
+            debug("parsing", .{});
+        },
         .pending => {
             if (connection.canPrepareQuery()) {
                 debug("prepareRequest", .{});
@@ -177,9 +180,10 @@ pub fn init(query: bun.String, bigint: bool, simple: bool) @This() {
 
 pub fn runQuery(this: *@This(), connection: *MySQLConnection, globalObject: *JSGlobalObject, columns_value: JSValue, binding_value: JSValue) !void {
     if (this.#flags.simple) {
+        debug("runSimpleQuery", .{});
         return try this.runSimpleQuery(connection);
     }
-
+    debug("runPreparedQuery", .{});
     return try this.runPreparedQuery(
         connection,
         globalObject,

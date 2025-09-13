@@ -11,7 +11,8 @@ pub const MySQLRequestQueue = @This();
 pub inline fn canExecuteQuery(this: *@This(), connection: *MySQLConnection) bool {
     return connection.isAbleToWrite() and
         this.#is_ready_for_query and
-        this.current() == null;
+        this.#nonpipelinable_requests == 0 and
+        this.#pipelined_requests == 0;
 }
 pub inline fn canPrepareQuery(this: *@This(), connection: *MySQLConnection) bool {
     return connection.isAbleToWrite() and
@@ -43,17 +44,16 @@ pub inline fn canPipeline(this: *@This(), connection: *MySQLConnection) bool {
 }
 
 pub fn markCurrentRequestAsFinished(this: *@This(), item: *JSMySQLQuery) void {
-    if (item.isRunning()) {
+    this.#waiting_to_prepare = false;
+    if (item.isBeingPrepared()) {
+        debug("markCurrentRequestAsFinished markAsPrepared", .{});
+        item.markAsPrepared();
+    } else if (item.isRunning()) {
         if (item.isPipelined()) {
             this.#pipelined_requests -= 1;
         } else {
             this.#nonpipelinable_requests -= 1;
         }
-    }
-    if (item.isBeingPrepared()) {
-        debug("markCurrentRequestAsFinished markAsPrepared", .{});
-        item.markAsPrepared();
-        this.#waiting_to_prepare = false;
     }
 }
 

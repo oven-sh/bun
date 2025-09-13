@@ -107,6 +107,10 @@ pub fn canFlush(this: *@This()) bool {
             if (this.queue.current()) |request| request.isPending() else false);
 }
 
+pub fn hasPendingRequests(this: *@This()) bool {
+    return this.queue.current() != null or this.#write_buffer.len() > 0;
+}
+
 pub fn enqueueRequest(this: *@This(), request: *JSMySQLQuery) void {
     this.queue.add(request);
 }
@@ -133,7 +137,6 @@ fn flushData(this: *@This()) void {
 
     const chunk = this.#write_buffer.remaining();
     if (chunk.len == 0) {
-        debug("flushData: no data to flush", .{});
         return;
     }
 
@@ -900,6 +903,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
         },
 
         .ERROR => {
+            debug("handlePreparedStatement ERROR", .{});
             var err = ErrorPacket{};
             try err.decode(reader);
             defer err.deinit();
@@ -908,10 +912,10 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
                 this.queue.advance(connection);
             }
             this.#flags.is_ready_for_query = true;
-            this.queue.markAsReadyForQuery();
-            this.queue.markCurrentRequestAsFinished(request);
             statement.status = .failed;
             statement.error_response = err;
+            this.queue.markAsReadyForQuery();
+            this.queue.markCurrentRequestAsFinished(request);
 
             connection.onErrorPacket(request, err);
         },

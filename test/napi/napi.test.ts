@@ -567,41 +567,41 @@ describe("napi", () => {
     // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
     // The process should crash/abort when this is attempted
     // This matches Node.js behavior for experimental modules
-    
+
     // Note: Node.js may not enforce this check for manually-registered experimental modules
     // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
     // But Bun should still enforce it for safety
-    
+
     // Test with Bun - should crash
     // Use the wrapper script that kills the process after seeing the crash messages
     // to avoid hanging on llvm-symbolizer
     const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
     const bunProc = spawn({
       cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
-      env: { 
-        ...rest, 
+      env: {
+        ...rest,
         BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
         // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
         // Otherwise ASAN will hang trying to create a core dump or symbolize
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0"
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
       },
       stdout: "pipe",
       stderr: "pipe",
     });
-    
+
     const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
       bunProc.stdout.text(),
       bunProc.stderr.text(),
       bunProc.exited,
     ]);
-    
+
     // The wrapper script should exit with 0 if the test passed
     expect(bunExitCode).toBe(0);
     expect(bunStdout + bunStderr).toContain("Loading experimental module");
     expect(bunStdout + bunStderr).toContain("Created");
     expect(bunStderr).toContain("FATAL ERROR");
     expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
-    
+
     // The error message should NOT contain "Did not crash"
     expect(bunStdout + bunStderr).not.toContain("ERROR: Did not crash");
   });

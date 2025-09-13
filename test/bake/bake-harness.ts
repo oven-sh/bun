@@ -971,10 +971,10 @@ export class Client extends EventEmitter {
       this.suppressInteractivePrompt = true;
       let retries = 0;
       let hasVisibleModal = false;
-      while (retries < 5) {
+      while (retries < 500) {
         hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
         if (hasVisibleModal) break;
-        await Bun.sleep(200);
+        // await Bun.sleep(200);
         retries++;
       }
       this.suppressInteractivePrompt = false;

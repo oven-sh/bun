@@ -38,6 +38,7 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
   ": [^=]+= undefined,$": { reason: "Do not default a struct field to undefined", regex: true },
+  "^\\s*_[a-zA-Z_][^:]*:.*[,=]": { reason: "Use `#` instead of `_` to denote private struct fields in Zig (e.g., `#foo` instead of `_foo`). The Zig compiler has been extended to support this feature!", regex: true },
   "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },

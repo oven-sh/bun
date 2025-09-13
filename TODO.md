@@ -417,6 +417,17 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Add features:
 
+- [ ] change DoneCallback and ScopeFunctions to both use bound functions
+  - DoneCallback will hold a jsvalue with the data
+  - ScopeFunctions could be implemented by using 3 jsvalues and packing the data
+  - A prototype can be set on a bound function for ScopeFunctions
+  - We will want to make and reuse a structure (faster than setting the prototype every time?)
+  - Easiest way is to change scopefunctions and donecallback to not be callable, then use those as the jsvalues in the binding
+  - Implementation path:
+    - add a binding for `.bind()`
+    - add the function
+    - figure out the structure stuff
+    - revert the bindgen changes
 - [x] The error is duplicated:
   ```js
   test("abc", async () => {

@@ -194,22 +194,84 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         .iife => {
             // Bun does not do arrow function lowering. So the wrapper can be an arrow.
             if (c.options.global_name.len > 0) {
-                // For now, just output simple identifiers correctly
-                // Dot expressions will generate invalid JS (will be fixed later)
-                if (c.options.minify_whitespace) {
+                // Parse the global name and generate the proper prefix like esbuild
+                const space = if (c.options.minify_whitespace) "" else " ";
+                const join = if (c.options.minify_whitespace) ";" else ";\n";
+                
+                // Find the first dot to split the global name
+                const first_dot = std.mem.indexOfScalar(u8, c.options.global_name, '.');
+                
+                if (first_dot) |dot_index| {
+                    // Has dot expression: e.g., "window.MyLib" or "globalThis.my.lib"
+                    const first_part = c.options.global_name[0..dot_index];
+                    const rest = c.options.global_name[dot_index + 1..];
+                    
+                    // Generate: var window;
                     j.pushStatic("var ");
-                    j.pushStatic(c.options.global_name);
-                    j.pushStatic("=(()=>{");
+                    j.pushStatic(first_part);
+                    j.pushStatic(join);
                     line_offset.advance("var ");
-                    line_offset.advance(c.options.global_name);
-                    line_offset.advance("=(()=>{");
+                    line_offset.advance(first_part);
+                    line_offset.advance(join);
+                    
+                    // For simplicity, handle only 2-part names properly for now
+                    // e.g., "window.MyLib" -> "(window ||= {}).MyLib = "
+                    const second_dot = std.mem.indexOfScalar(u8, rest, '.');
+                    if (second_dot == null) {
+                        // Simple 2-part case: window.MyLib
+                        j.pushStatic("(");
+                        j.pushStatic(first_part);
+                        j.pushStatic(space);
+                        j.pushStatic("||=");
+                        j.pushStatic(space);
+                        j.pushStatic("{}).");
+                        j.pushStatic(rest);
+                        j.pushStatic(space);
+                        j.pushStatic("=");
+                        j.pushStatic(space);
+                        
+                        line_offset.advance("(");
+                        line_offset.advance(first_part);
+                        line_offset.advance(space);
+                        line_offset.advance("||=");
+                        line_offset.advance(space);
+                        line_offset.advance("{}).");
+                        line_offset.advance(rest);
+                        line_offset.advance(space);
+                        line_offset.advance("=");
+                        line_offset.advance(space);
+                    } else {
+                        // Multi-part case (3+ parts) - generate nested nullish coalescing
+                        // For now, fall back to simple (invalid) output
+                        // TODO: Implement full nested support
+                        j.pushStatic(c.options.global_name);
+                        j.pushStatic(space);
+                        j.pushStatic("=");
+                        j.pushStatic(space);
+                        
+                        line_offset.advance(c.options.global_name);
+                        line_offset.advance(space);
+                        line_offset.advance("=");
+                        line_offset.advance(space);
+                    }
+                    
+                    j.pushStatic(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
+                    line_offset.advance(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
                 } else {
+                    // Simple identifier: e.g., "MyLib"
                     j.pushStatic("var ");
                     j.pushStatic(c.options.global_name);
-                    j.pushStatic(" = (() => {\n");
+                    j.pushStatic(space);
+                    j.pushStatic("=");
+                    j.pushStatic(space);
+                    j.pushStatic(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
+                    
                     line_offset.advance("var ");
                     line_offset.advance(c.options.global_name);
-                    line_offset.advance(" = (() => {\n");
+                    line_offset.advance(space);
+                    line_offset.advance("=");
+                    line_offset.advance(space);
+                    line_offset.advance(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
                 }
             } else {
                 const start = if (c.options.minify_whitespace) "(()=>{" else "(() => {\n";

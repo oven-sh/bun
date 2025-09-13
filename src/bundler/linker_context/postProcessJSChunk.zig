@@ -197,15 +197,15 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                 // Parse the global name and generate the proper prefix like esbuild
                 const space = if (c.options.minify_whitespace) "" else " ";
                 const join = if (c.options.minify_whitespace) ";" else ";\n";
-                
+
                 // Find the first dot to split the global name
                 const first_dot = std.mem.indexOfScalar(u8, c.options.global_name, '.');
-                
+
                 if (first_dot) |dot_index| {
                     // Has dot expression: e.g., "window.MyLib" or "globalThis.my.lib"
                     const first_part = c.options.global_name[0..dot_index];
-                    const rest = c.options.global_name[dot_index + 1..];
-                    
+                    const rest = c.options.global_name[dot_index + 1 ..];
+
                     // Generate: var window;
                     j.pushStatic("var ");
                     j.pushStatic(first_part);
@@ -213,7 +213,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                     line_offset.advance("var ");
                     line_offset.advance(first_part);
                     line_offset.advance(join);
-                    
+
                     // For simplicity, handle only 2-part names properly for now
                     // e.g., "window.MyLib" -> "(window ||= {}).MyLib = "
                     const second_dot = std.mem.indexOfScalar(u8, rest, '.');
@@ -229,7 +229,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                         j.pushStatic(space);
                         j.pushStatic("=");
                         j.pushStatic(space);
-                        
+
                         line_offset.advance("(");
                         line_offset.advance(first_part);
                         line_offset.advance(space);
@@ -243,16 +243,16 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                     } else {
                         // Multi-part case (3+ parts) - generate nested nullish coalescing
                         // Example: "globalThis.my.lib" -> "((globalThis ||= {}).my ||= {}).lib = "
-                        
+
                         // Split rest into individual parts
                         var iter = std.mem.tokenizeScalar(u8, rest, '.');
                         var rest_parts = std.ArrayList([]const u8).init(worker.allocator);
                         defer rest_parts.deinit();
-                        
+
                         while (iter.next()) |part| {
                             rest_parts.append(part) catch {};
                         }
-                        
+
                         // Total parts = 1 (first_part) + rest_parts.len
                         // We need (total_parts - 1) opening parens = rest_parts.len opening parens
                         var i: usize = 0;
@@ -260,26 +260,26 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                             j.pushStatic("(");
                             line_offset.advance("(");
                         }
-                        
+
                         // Start with first part
                         j.pushStatic(first_part);
                         line_offset.advance(first_part);
-                        
+
                         // Process all parts except the last
-                        for (rest_parts.items[0..rest_parts.items.len - 1]) |part| {
+                        for (rest_parts.items[0 .. rest_parts.items.len - 1]) |part| {
                             j.pushStatic(space);
                             j.pushStatic("||=");
                             j.pushStatic(space);
                             j.pushStatic("{}).");
                             j.pushStatic(part);
-                            
+
                             line_offset.advance(space);
                             line_offset.advance("||=");
                             line_offset.advance(space);
                             line_offset.advance("{}).");
                             line_offset.advance(part);
                         }
-                        
+
                         // Last part
                         const last_part = rest_parts.items[rest_parts.items.len - 1];
                         j.pushStatic(space);
@@ -290,7 +290,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                         j.pushStatic(space);
                         j.pushStatic("=");
                         j.pushStatic(space);
-                        
+
                         line_offset.advance(space);
                         line_offset.advance("||=");
                         line_offset.advance(space);
@@ -300,7 +300,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                         line_offset.advance("=");
                         line_offset.advance(space);
                     }
-                    
+
                     j.pushStatic(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
                     line_offset.advance(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
                 } else {
@@ -311,7 +311,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                     j.pushStatic("=");
                     j.pushStatic(space);
                     j.pushStatic(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
-                    
+
                     line_offset.advance("var ");
                     line_offset.advance(c.options.global_name);
                     line_offset.advance(space);

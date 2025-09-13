@@ -1042,12 +1042,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--global-name must be a valid JavaScript identifier or dot expression, got: {s}", .{global_name});
                 Global.exit(1);
             };
-            
+
             if (parsed == null) {
                 Output.errGeneric("--global-name must be a valid JavaScript identifier or dot expression, got: {s}", .{global_name});
                 Global.exit(1);
             }
-            
+
             // We can store the original string and parse it later when needed
             ctx.bundler_options.global_name = global_name;
         }

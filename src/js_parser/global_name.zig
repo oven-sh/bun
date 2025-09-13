@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("../bun.zig");
-const strings = bun.strings;
-const js_lexer = bun.js_lexer;
-
 pub const ParsedGlobalName = struct {
     /// List of identifiers in the global name path
     /// e.g., "window.MyLib.v1" -> ["window", "MyLib", "v1"]
@@ -30,7 +25,7 @@ pub const ParsedGlobalName = struct {
     /// e.g., "window.MyLib.v1" -> "(((window ||= {}).MyLib ||= {}).v1 = "
     pub fn generateAssignment(self: ParsedGlobalName, writer: anytype, minify: bool) !void {
         if (self.parts.len == 0) return;
-        
+
         if (self.parts.len == 1) {
             // Simple case: just "globalName"
             try writer.writeAll(self.parts[0]);
@@ -86,7 +81,7 @@ pub fn parseGlobalName(allocator: std.mem.Allocator, text: []const u8) !?ParsedG
     defer parts.deinit();
 
     var iter = std.mem.tokenizeScalar(u8, text, '.');
-    
+
     while (iter.next()) |part| {
         // Each part must be a valid identifier
         if (!js_lexer.isIdentifier(part)) {
@@ -111,7 +106,7 @@ pub fn parseGlobalName(allocator: std.mem.Allocator, text: []const u8) !?ParsedG
 
 test "parseGlobalName" {
     const allocator = std.testing.allocator;
-    
+
     // Simple identifier
     {
         var parsed = try parseGlobalName(allocator, "myLib");
@@ -120,7 +115,7 @@ test "parseGlobalName" {
         try std.testing.expectEqual(@as(usize, 1), parsed.?.parts.len);
         try std.testing.expectEqualStrings("myLib", parsed.?.parts[0]);
     }
-    
+
     // Dot expression
     {
         var parsed = try parseGlobalName(allocator, "window.myLib");
@@ -130,7 +125,7 @@ test "parseGlobalName" {
         try std.testing.expectEqualStrings("window", parsed.?.parts[0]);
         try std.testing.expectEqualStrings("myLib", parsed.?.parts[1]);
     }
-    
+
     // Nested dot expression
     {
         var parsed = try parseGlobalName(allocator, "globalThis.my.lib.v1");
@@ -142,22 +137,27 @@ test "parseGlobalName" {
         try std.testing.expectEqualStrings("lib", parsed.?.parts[2]);
         try std.testing.expectEqualStrings("v1", parsed.?.parts[3]);
     }
-    
+
     // Invalid: starts with number
     {
         const parsed = try parseGlobalName(allocator, "123invalid");
         try std.testing.expect(parsed == null);
     }
-    
+
     // Invalid: contains invalid identifier
     {
         const parsed = try parseGlobalName(allocator, "window.123");
         try std.testing.expect(parsed == null);
     }
-    
+
     // Invalid: empty parts
     {
         const parsed = try parseGlobalName(allocator, "window..lib");
         try std.testing.expect(parsed == null);
     }
 }
+
+const std = @import("std");
+
+const bun = @import("../bun.zig");
+const js_lexer = bun.js_lexer;

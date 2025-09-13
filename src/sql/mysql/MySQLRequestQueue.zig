@@ -43,7 +43,7 @@ pub inline fn canPipeline(this: *@This(), connection: *MySQLConnection) bool {
 
 pub fn markCurrentRequestAsFinished(this: *@This(), item: *JSMySQLQuery) void {
     if (item.isRunning()) {
-        if (item.wasPipelined()) {
+        if (item.isPipelined()) {
             this.#pipelined_requests -= 1;
         } else {
             this.#nonpipelinable_requests -= 1;
@@ -124,7 +124,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
                 this.#waiting_to_prepare = true;
                 return;
             }
-            if (request.wasPipelined()) {
+            if (request.isPipelined()) {
                 this.#pipelined_requests += 1;
                 if (this.canPipeline(connection)) {
                     debug("pipelined requests", .{});
@@ -155,7 +155,7 @@ pub fn add(this: *@This(), request: *JSMySQLQuery) void {
         if (request.isBeingPrepared()) {
             this.#waiting_to_prepare = true;
         } else {
-            if (request.wasPipelined()) {
+            if (request.isPipelined()) {
                 this.#pipelined_requests += 1;
             } else {
                 this.#nonpipelinable_requests += 1;

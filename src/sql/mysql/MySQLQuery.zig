@@ -238,7 +238,7 @@ pub inline fn wasPipelined(this: *const @This()) bool {
 pub inline fn isSimple(this: *const @This()) bool {
     return this.#flags.simple;
 }
-pub inline fn bigintSupported(this: *const @This()) bool {
+pub inline fn isBigintSupported(this: *const @This()) bool {
     return this.#flags.bigint;
 }
 pub inline fn getResultMode(this: *const @This()) SQLQueryResultMode {

@@ -306,8 +306,8 @@ pub inline fn wasPipelined(this: *@This()) bool {
 pub inline fn isSimple(this: *@This()) bool {
     return this.#query.isSimple();
 }
-pub inline fn bigintSupported(this: *@This()) bool {
-    return this.#query.bigintSupported();
+pub inline fn isBigintSupported(this: *@This()) bool {
+    return this.#query.isBigintSupported();
 }
 pub inline fn getResultMode(this: *@This()) SQLQueryResultMode {
     return this.#query.getResultMode();

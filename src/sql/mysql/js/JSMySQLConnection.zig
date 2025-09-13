@@ -215,7 +215,6 @@ fn SocketHandler(comptime ssl: bool) type {
                 this.#connection.status = .handshaking;
                 this.ref(); // keep a ref for the socket
             }
-            this.#poll_ref.ref(this.#vm);
             this.updateReferenceType();
         }
 
@@ -531,13 +530,11 @@ pub fn setOnClose(_: *@This(), thisValue: jsc.JSValue, globalObject: *jsc.JSGlob
 
 pub fn doRef(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.#poll_ref.ref(this.#vm);
-    this.updateReferenceType();
     return .js_undefined;
 }
 
 pub fn doUnref(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.#poll_ref.unref(this.#vm);
-    this.updateReferenceType();
     return .js_undefined;
 }
 
@@ -551,7 +548,6 @@ pub fn doClose(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFr
     this.stopTimers();
 
     defer this.updateReferenceType();
-    this.#poll_ref.unref(this.#vm);
     this.#connection.cleanQueueAndClose(null, this.getQueriesArray());
     return .js_undefined;
 }

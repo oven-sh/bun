@@ -107,8 +107,10 @@ const response = await fetch("http://example.com");
 
 const stream = response.body;
 
-const reader = stream.getReader();
-const { value, done } = await reader.read();
+// Use async iteration to process stream chunks
+for await (const chunk of stream) {
+  console.log("Received chunk:", chunk);
+}
 ```
 
 ### Streaming request bodies

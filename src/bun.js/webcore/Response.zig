@@ -74,11 +74,11 @@ const SSRKind = enum(u8) {
     render = 2,
 };
 
-extern "C" fn Response__createForSSR(globalObject: *JSGlobalObject, this: *Response, kind: SSRKind) JSValue;
+extern "C" fn Response__createForSSR(globalObject: *JSGlobalObject, this: *Response, kind: u8) callconv(jsc.conv) jsc.JSValue;
 
 pub fn toJSForSSR(this: *Response, globalObject: *JSGlobalObject, kind: SSRKind) JSValue {
     this.calculateEstimatedByteSize();
-    return Response__createForSSR(globalObject, this, kind);
+    return Response__createForSSR(globalObject, this, @enumFromInt(kind));
 }
 
 pub fn getBodyValue(

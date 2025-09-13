@@ -359,68 +359,61 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Test failures:
 
-Problematic:
+## Problematic:
 
 - [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
+  - Instead of this vvvv, we will modify our node:test implementation to support this.
   - Execution: first: \*ConcurrentGroup, current: \*ConcurrentGroup
   - ConcurrentGroup: next: \*ConcurrentGroup, memory-pool
   - ExecutionSequence: first: \*ExecutionEntry, current: \*ExecutionEntry
   - ExecutionEntry: next_orig: \*ExecutionEntry, next: \*ExecutionEntry (on reset, set it back to next_orig)
   - or use indices?
 
-Regular:
+## Regular:
 
+- [ ] test/js/bun/net/tcp-server.test.ts
 - [ ] test/js/bun/test/describe2.test.ts
-- [ ] test/cli/update_interactive_formatting.test.ts
-- [x] test/js/bun/bun-object/write.spec.ts
-- [x] test/cli/install/isolated-install.test.ts
+- [ ] test/js/sql/sql-mysql.test.ts
+- [ ] test/regression/issue/21311.test.ts
+- [ ] test/regression/issue/08964/08964.test.ts
+- [ ] test/regression/issue/19850/19850.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
-- [x] test/cli/install/catalogs.test.ts
-- [x] test/js/node/test/parallel/test-worker-uncaught-exception-async.js
+- [ ] test/bake/dev/ssg-pages-router.test.ts
+- [ ] test/js/bun/http/bun-serve-file.test.ts
 - [ ] test/js/bun/spawn/spawn-pipe-leak.test.ts
-- [x] test/cli/install/npmrc.test.ts
-- [x] test/cli/inspect/BunFrontendDevServer.test.ts
+- [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
+- [ ] test/cli/inspect/BunFrontendDevServer.test.ts
 - [ ] test/bake/dev/stress.test.ts
-- [ ] test/js/bun/test/test-failing.test.ts
+- [ ] test/js/node/http2/node-http2.test.js
+- [ ] test/js/web/fetch/abort-signal-leak.test.ts
+- [ ] vendor/elysia/test/validator/params.test.ts
 - [ ] test/cli/test/bun-test.test.ts
-- [ ] test/bake/dev/hot.test.ts
-- [ ] test/integration/svelte/client-side.test.ts
+- [ ] test/js/bun/util/inspect-error.test.js
 - [ ] test/bake/dev-and-prod.test.ts
-- [ ] test/bake/dev/react-spa.test.ts
-- [ ] test/bake/dev/css.test.ts
-- [ ] test/bake/dev/html.test.ts
-- [ ] test/cli/install/bun-publish.test.ts
+- [ ] test/bake/dev/esm.test.ts
+- [ ] test/js/bun/util/bun-file.test.ts
 - [ ] test/js/web/websocket/autobahn.test.ts
-- [ ] test/js/node/buffer.test.js
+- [ ] test/js/bun/net/socket.test.ts
 - [ ] test/js/junit-reporter/junit.test.js
-- [ ] test/js/bun/test/expect.test.js
-- [ ] test/cli/install/bun-lock.test.ts
+- [ ] test/js/third_party/@duckdb/node-api/duckdb.test.ts
+- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
 - [ ] test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts
+- [ ] test/js/third_party/prisma/prisma.test.ts
 - [ ] test/cli/install/bun-install-registry.test.ts
-- [ ] test/cli/install/bun-install-lifecycle-scripts.test.ts
-- [ ] test/js/node/dns/node-dns.test.js
 - [ ] test/js/bun/s3/s3.test.ts
-- [ ] test/cli/install/bunx.test.ts
-- [ ] test/cli/run/transpiler-cache.test.ts
-- [ ] test/cli/install/bun-lockb.test.ts
-- [ ] test/cli/install/bun-workspaces.test.ts
 - [ ] test/cli/test/test-timeout-behavior.test.ts
-
-# Real:
-
-- [x] test/js/bun/shell/bunshell.test.ts
-- [ ] test/integration/next-pages/test/dev-server.test.ts
-
-# Flaky failure:
-
-- [ ] test/bundler/bundler_npm.test.ts
-
-# Flaky warning:
-
-- [ ] test/js/web/fetch/fetch.stream.test.ts
-- [ ] test/cli/run/require-cache.test.ts
+- [ ] test/js/bun/test/stack.test.ts
+- [ ] test/js/bun/http/serve.test.ts
+- [ ] test/js/bun/shell/leak.test.ts
+- [ ] test/js/node/watch/fs.watchFile.test.ts
 - [ ] test/regression/issue/09041.test.ts
 - [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
+
+## Real:
+
+## Flaky failure:
+
+## Flaky warning:
 
 # Add features:
 

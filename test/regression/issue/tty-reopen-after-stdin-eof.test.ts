@@ -79,9 +79,9 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
       return;
     }
 
-    // Otherwise check results
-    expect(exitCode).toBe(0);
-    expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+    // Otherwise check results - snapshot first to see what happened
+    const output = stdout + (stderr ? "\nSTDERR:\n" + stderr : "");
+    expect(normalizeBunSnapshot(output, dir)).toMatchInlineSnapshot(`
       "GOT_INPUT:test input
       OPENED_TTY:true
       CREATED_STREAM:true
@@ -90,13 +90,20 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
       SET_RAW_MODE:true
       SUCCESS:true"
     `);
+    expect(exitCode).toBe(0);
     return;
   }
 
   // Use script command to provide a PTY environment
   // This simulates a real terminal where /dev/tty is available
+  // macOS and Linux have different script command syntax
+  const isMacOS = process.platform === "darwin";
+  const scriptCmd = isMacOS
+    ? ["script", "-q", "/dev/null", "sh", "-c", `echo "test input" | ${bunExe()} ${scriptPath}`]
+    : ["script", "-q", "-c", `echo "test input" | ${bunExe()} ${scriptPath}`, "/dev/null"];
+
   await using proc = Bun.spawn({
-    cmd: ["script", "-q", "-c", `echo "test input" | ${bunExe()} ${scriptPath}`, "/dev/null"],
+    cmd: scriptCmd,
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -105,10 +112,10 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Check that the test succeeded
-  expect(exitCode).toBe(0);
-  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
-    "GOT_INPUT:test input
+  // First snapshot the combined output to see what actually happened
+  const output = stdout + (stderr ? "\nSTDERR:\n" + stderr : "");
+  expect(normalizeBunSnapshot(output, dir)).toMatchInlineSnapshot(`
+    "^D\b\bGOT_INPUT:test input
     OPENED_TTY:true
     CREATED_STREAM:true
     POS:undefined
@@ -116,6 +123,9 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
     SET_RAW_MODE:true
     SUCCESS:true"
   `);
+
+  // Then check exit code
+  expect(exitCode).toBe(0);
 });
 
 // Skip on Windows as it doesn't have /dev/tty
@@ -189,20 +199,28 @@ test.skipIf(isWindows)("TTY ReadStream should not set position for character dev
       return;
     }
 
-    expect(exitCode).toBe(0);
-    expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+    // Snapshot first to see what happened
+    const output = stdout + (stderr ? "\nSTDERR:\n" + stderr : "");
+    expect(normalizeBunSnapshot(output, dir)).toMatchInlineSnapshot(`
       "POS_TYPE:undefined
       START_TYPE:undefined
       POSITION_PASSED:NOT_CALLED
       POSITION_TYPE:string
       READ_CALLED:false"
     `);
+    expect(exitCode).toBe(0);
     return;
   }
 
   // Use script command to provide a PTY environment
+  // macOS and Linux have different script command syntax
+  const isMacOS = process.platform === "darwin";
+  const scriptCmd = isMacOS
+    ? ["script", "-q", "/dev/null", bunExe(), scriptPath]
+    : ["script", "-q", "-c", `${bunExe()} ${scriptPath}`, "/dev/null"];
+
   await using proc = Bun.spawn({
-    cmd: ["script", "-q", "-c", `${bunExe()} ${scriptPath}`, "/dev/null"],
+    cmd: scriptCmd,
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -211,13 +229,16 @@ test.skipIf(isWindows)("TTY ReadStream should not set position for character dev
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
-  // The critical properties that must be undefined for TTY streams to work
-  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
-    "POS_TYPE:undefined
+  // First snapshot the combined output to see what actually happened
+  const output = stdout + (stderr ? "\nSTDERR:\n" + stderr : "");
+  expect(normalizeBunSnapshot(output, dir)).toMatchInlineSnapshot(`
+    "^D\b\bPOS_TYPE:undefined
     START_TYPE:undefined
     POSITION_PASSED:NOT_CALLED
     POSITION_TYPE:string
     READ_CALLED:false"
   `);
+
+  // Then check exit code
+  expect(exitCode).toBe(0);
 });

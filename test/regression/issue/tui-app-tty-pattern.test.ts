@@ -78,10 +78,10 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
 
   // Create a simple test that pipes input
   // macOS and Linux have different script command syntax
-  const isLinux = process.platform === "linux";
-  const cmd = isLinux
-    ? [scriptPath, "-q", "-c", `echo "piped content" | ${bunExe()} tui-app-sim.js`, "/dev/null"]
-    : [scriptPath, "-q", "/dev/null", "sh", "-c", `echo "piped content" | ${bunExe()} tui-app-sim.js`];
+  const isMacOS = process.platform === "darwin";
+  const cmd = isMacOS
+    ? [scriptPath, "-q", "/dev/null", "sh", "-c", `echo "piped content" | ${bunExe()} tui-app-sim.js`]
+    : [scriptPath, "-q", "-c", `echo "piped content" | ${bunExe()} tui-app-sim.js`, "/dev/null"];
 
   const proc = Bun.spawn({
     cmd,
@@ -93,17 +93,17 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
 
   const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
 
-  // The test should successfully read piped input and reopen TTY
-  // On some platforms script may exit with 1 even on success
-  if (exitCode !== 0 && !stdout.includes("TTY_REOPENED:SUCCESS")) {
-    // If the test didn't work with script, skip it
-    return;
-  }
+  // First snapshot the combined output to see what actually happened
+  const output = stdout + (stderr ? "\nSTDERR:\n" + stderr : "");
+  expect(normalizeBunSnapshot(output, dir)).toMatchInlineSnapshot(`
+    "^D\b\bPIPED_INPUT:piped content
+    TTY_REOPENED:SUCCESS"
+  `);
 
-  // Normalize and check output
-  const output = normalizeBunSnapshot(stdout, dir);
-  expect(output).toContain("PIPED_INPUT:piped content");
-  expect(output).toContain("TTY_REOPENED:SUCCESS");
+  // Then check exit code - On some platforms script may exit with 1 even on success
+  if (exitCode !== 0 && !stdout.includes("TTY_REOPENED:SUCCESS")) {
+    throw new Error(`Test failed with exit code ${exitCode}`);
+  }
 });
 
 // Test that tty.ReadStream works correctly with various file descriptors

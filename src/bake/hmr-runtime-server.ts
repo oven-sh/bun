@@ -3,10 +3,23 @@
 import type { Bake } from "bun";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
+// import { AsyncLocalStorage } from "node:async_hooks";
+const { AsyncLocalStorage } = require("node:async_hooks");
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
+
+export type RequestContext = {
+  responseOptions: ResponseInit;
+  streaming: boolean;
+  streamingStarted?: boolean;
+  renderAbort?: (path: string, params: Record<string, any> | null) => never;
+};
+
+// Create the AsyncLocalStorage instance for propagating response options
+const responseOptionsALS = new AsyncLocalStorage();
+let asyncLocalStorageWasSet = false;
 
 interface Exports {
   handleRequest: (
@@ -16,6 +29,7 @@ interface Exports {
     clientEntryUrl: string,
     styles: string[],
     params: Record<string, string> | null,
+    setAsyncLocalStorage: Function,
   ) => any;
   registerUpdate: (
     modules: any,
@@ -26,7 +40,12 @@ interface Exports {
 
 declare let server_exports: Exports;
 server_exports = {
-  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params) {
+  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params, setAsyncLocalStorage) {
+    if (!asyncLocalStorageWasSet) {
+      asyncLocalStorageWasSet = true;
+      setAsyncLocalStorage(responseOptionsALS);
+    }
+
     if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
       console.log("handleRequest", {
         routeModules,
@@ -48,20 +67,48 @@ server_exports = {
     }
 
     const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
-    const response = await serverRenderer(req, {
-      styles: styles,
-      modules: [clientEntryUrl],
-      layouts,
-      pageModule,
-      modulepreload: [],
-      params,
-    });
 
-    if (!(response instanceof Response)) {
-      throw new Error(`Server-side request handler was expected to return a Response object.`);
+    let requestWithCookies = req;
+
+    let storeValue: RequestContext = {
+      responseOptions: {},
+      streaming: pageModule.streaming ?? false,
+    };
+
+    try {
+      // Run the renderer inside the AsyncLocalStorage context
+      // This allows Response constructors to access the stored options
+      const response = await responseOptionsALS.run(storeValue, async () => {
+        return await serverRenderer(
+          requestWithCookies,
+          {
+            styles: styles,
+            modules: [clientEntryUrl],
+            layouts,
+            pageModule,
+            modulepreload: [],
+            params,
+            // Pass request in metadata when mode is 'ssr'
+            request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
+          },
+          responseOptionsALS,
+        );
+      });
+
+      if (!(response instanceof Response)) {
+        throw $ERR_SSR_RESPONSE_EXPECTED(`Server-side request handler was expected to return a Response object.`);
+      }
+
+      return response;
+    } catch (error) {
+      // For `Response.render(...)`/`Response.redirect(...)` we throw the
+      // response to stop React from rendering
+      if (error instanceof Response) {
+        return error;
+      }
+
+      throw error;
     }
-
-    return response;
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
     replaceModules(modules);

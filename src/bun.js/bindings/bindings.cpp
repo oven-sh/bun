@@ -20,6 +20,7 @@
 
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
+#include "WebCoreJSBuiltins.h"
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/BytecodeIndex.h"
@@ -49,6 +50,7 @@
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/ProxyObject.h"
@@ -2348,7 +2350,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         return 0;
     }
 
-    case WebCore::JSDOMWrapperType: {
+    case JSDOMWrapperType: {
         if (jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -5975,6 +5977,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();

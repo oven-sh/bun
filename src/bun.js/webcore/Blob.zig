@@ -1351,6 +1351,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 .Empty,
                 .Blob,
                 .Null,
+                .Render,
                 => {
                     break :brk response.body.use();
                 },
@@ -1412,6 +1413,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                 .Empty,
                 .Blob,
                 .Null,
+                .Render,
                 => {
                     break :brk request.body.value.use();
                 },

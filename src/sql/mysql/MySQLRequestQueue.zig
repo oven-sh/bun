@@ -8,14 +8,12 @@ pub const MySQLRequestQueue = @This();
 #is_ready_for_query: bool = false,
 
 pub inline fn canExecuteQuery(this: *@This(), connection: *MySQLConnection) bool {
-    return connection.status == .connected and
-        connection.isAbleToWrite() and
+    return connection.isAbleToWrite() and
         this.#is_ready_for_query and
         this.current() == null;
 }
 pub inline fn canPrepareQuery(this: *@This(), connection: *MySQLConnection) bool {
-    return connection.status == .connected and
-        connection.isAbleToWrite() and
+    return connection.isAbleToWrite() and
         this.#is_ready_for_query and
         !this.#waiting_to_prepare and
         this.#pipelined_requests == 0;
@@ -31,8 +29,7 @@ pub inline fn canPipeline(this: *@This(), connection: *MySQLConnection) bool {
         return false;
     }
 
-    return connection.status == .connected and
-        this.#is_ready_for_query and
+    return this.#is_ready_for_query and
         this.#nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
         !this.#waiting_to_prepare and
         connection.isAbleToWrite();
@@ -67,8 +64,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
         }
     }
 
-    while (this.#requests.readableLength() > offset and !connection.flags.has_backpressure) {
-        if (connection.vm.isShuttingDown()) return connection.close();
+    while (this.#requests.readableLength() > offset and !connection.isAbleToWrite()) {
         var request: *JSMySQLQuery = this.#requests.peekItem(offset);
 
         if (request.isCompleted()) {
@@ -97,11 +93,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
         }
 
         request.run(connection) catch |err| {
-            if (connection.globalObject.tryTakeException()) |err_| {
-                request.rejectWithJSValue(connection.getQueriesArray(), err_);
-            } else {
-                request.reject(connection.getQueriesArray(), err);
-            }
+            connection.onError(request, err);
             if (offset == 0) {
                 this.#requests.discard(1);
                 request.deref();
@@ -136,7 +128,7 @@ pub fn isEmpty(this: *@This()) bool {
     return this.#requests.readableLength() == 0;
 }
 
-pub fn add(this: *@This(), request: *JSMySQLQuery, connection: *MySQLConnection) void {
+pub fn add(this: *@This(), request: *JSMySQLQuery) void {
     if (request.isRunning()) {
         this.#is_ready_for_query = false;
         if (request.isBeingPrepared()) {
@@ -151,7 +143,6 @@ pub fn add(this: *@This(), request: *JSMySQLQuery, connection: *MySQLConnection)
     }
     request.ref();
     bun.handleOom(this.#requests.writeItem(request));
-    connection.flushDataAndResetTimeout();
 }
 
 // pub fn cleanupWithJSValueReason(this: *@This(), reason: ?jsc.JSValue) void {
@@ -208,5 +199,5 @@ const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const JSMySQLQuery = @import("./js/JSMySQLQuery.zig");
 const Queue = std.fifo.LinearFifo(*JSMySQLQuery, .Dynamic);
-const MySQLConnection = @import("./MySQLConnection.zig");
+const MySQLConnection = @import("./js/JSMySQLConnection.zig");
 const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection

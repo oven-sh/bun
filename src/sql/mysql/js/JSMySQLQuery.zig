@@ -393,5 +393,5 @@ const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQue
 const AnyMySQLError = @import("../protocol/AnyMySQLError.zig");
 const MySQLQueryResult = @import("../MySQLQueryResult.zig");
 const CommandTag = @import("../../postgres/CommandTag.zig").CommandTag;
-const MySQLConnection = @import("../MySQLConnection.zig");
+const MySQLConnection = @import("./JSMySQLConnection.zig");
 const MySQLStatement = @import("../MySQLStatement.zig");

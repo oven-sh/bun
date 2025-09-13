@@ -2,7 +2,6 @@ const MySQLQuery = @This();
 
 #statement: ?*MySQLStatement = null,
 #query: bun.String,
-// #cursor_name: bun.String = bun.String.empty,
 
 #status: Status,
 #flags: packed struct(u8) {
@@ -70,7 +69,7 @@ fn runSimpleQuery(this: *@This(), connection: *MySQLConnection) !void {
     }
     var query_str = this.#query.toUTF8(bun.default_allocator);
     defer query_str.deinit();
-    const writer = connection.writer();
+    const writer = connection.getWriter();
     if (this.#statement == null) {
         const stmt = bun.new(MySQLStatement, .{
             .signature = Signature.empty(),
@@ -102,7 +101,7 @@ fn runPreparedQuery(
             return error.JSError;
         };
         errdefer signature.deinit();
-        const entry = connection.statements.getOrPut(bun.default_allocator, bun.hash(signature.name)) catch |err| {
+        const entry = connection.getStatementFromSignatureHash(bun.hash(signature.name)) catch |err| {
             return globalObject.throwError(err, "failed to allocate statement");
         };
 
@@ -137,7 +136,7 @@ fn runPreparedQuery(
         },
         .prepared => {
             if (connection.canPipeline()) {
-                const writer = connection.writer();
+                const writer = connection.getWriter();
                 this.bindAndExecute(writer, stmt, globalObject, binding_value, columns_value) catch |err| {
                     if (!globalObject.hasException())
                         return globalObject.throwValue(AnyMySQLError.mysqlErrorToJS(globalObject, "failed to bind and execute query", err));
@@ -149,7 +148,7 @@ fn runPreparedQuery(
         .parsing => {},
         .pending => {
             if (connection.canPrepareQuery() and this.#status == .pending) {
-                const writer = connection.writer();
+                const writer = connection.getWriter();
                 const query = query_str orelse this.#query.toUTF8(bun.default_allocator);
                 MySQLRequest.prepareRequest(query.slice(), MySQLConnection.Writer, writer) catch |err| {
                     return globalObject.throwError(err, "failed to prepare query");
@@ -268,7 +267,7 @@ const MySQLStatement = @import("./MySQLStatement.zig");
 const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 const SQLQueryResultMode = @import("../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
 const Status = @import("./QueryStatus.zig").Status;
-const MySQLConnection = @import("./MySQLConnection.zig");
+const MySQLConnection = @import("./js/JSMySQLConnection.zig");
 const MySQLRequest = @import("./MySQLRequest.zig");
 const Signature = @import("./protocol/Signature.zig");
 const JSValue = bun.jsc.JSValue;

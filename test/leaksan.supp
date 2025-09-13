@@ -6,7 +6,6 @@ leak:Zig__GlobalObject__create
 leak:_objc_msgSend_uncached
 leak:WTF::fastMalloc
 leak:WTF::AutomaticThread::start
-leak:CryptoObject__create
 leak:Bun__transpileFile
 leak:WTF::SymbolRegistry::symbolForKey
 leak:js_printer.printAst__anon
@@ -19,3 +18,4 @@ leak:JSC::Parser<JSC::Lexer<unsigned char>>::parseStatement
 leak:JSCInitialize
 leak:getaddrinfo_send_reply
 leak:start_wqthread
+leak:CRYPTO_set_thread_local

@@ -492,9 +492,11 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     }
 
     if (!derBuffer.tryAppend(std::span<uint8_t> { buf.data, buf.len })) {
+        OPENSSL_free(buf.data);
         return false;
     }
 
+    OPENSSL_free(buf.data);
     return true;
 }
 

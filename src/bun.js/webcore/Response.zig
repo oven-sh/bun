@@ -78,7 +78,7 @@ extern "C" fn Response__createForSSR(globalObject: *JSGlobalObject, this: *Respo
 
 pub fn toJSForSSR(this: *Response, globalObject: *JSGlobalObject, kind: SSRKind) JSValue {
     this.calculateEstimatedByteSize();
-    return Response__createForSSR(globalObject, this, @enumFromInt(kind));
+    return Response__createForSSR(globalObject, this, @intFromEnum(kind));
 }
 
 pub fn getBodyValue(

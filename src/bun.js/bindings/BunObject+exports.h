@@ -79,6 +79,7 @@
     macro(pascalCase) \
     macro(snakeCase) \
     macro(kebabCase) \
+    macro(screamingSnakeCase) \
     macro(constantCase) \
     macro(dotCase) \
     macro(capitalCase) \

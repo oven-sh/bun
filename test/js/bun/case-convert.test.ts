@@ -58,18 +58,29 @@ test("Bun.kebabCase", () => {
   expect(Bun.kebabCase("XMLParser")).toBe("xml-parser");
 });
 
-test("Bun.constantCase", () => {
+test("Bun.screamingSnakeCase", () => {
+  expect(Bun.screamingSnakeCase("two words")).toBe("TWO_WORDS");
+  expect(Bun.screamingSnakeCase("hello world")).toBe("HELLO_WORLD");
+  expect(Bun.screamingSnakeCase("hello_world")).toBe("HELLO_WORLD");
+  expect(Bun.screamingSnakeCase("kebab-case")).toBe("KEBAB_CASE");
+  expect(Bun.screamingSnakeCase("camelCase")).toBe("CAMEL_CASE");
+  expect(Bun.screamingSnakeCase("PascalCase")).toBe("PASCAL_CASE");
+  expect(Bun.screamingSnakeCase("multiple   spaces")).toBe("MULTIPLE_SPACES");
+  expect(Bun.screamingSnakeCase("123-numbers-456")).toBe("123_NUMBERS_456");
+  expect(Bun.screamingSnakeCase("")).toBe("");
+  expect(Bun.screamingSnakeCase("ALREADY_CONSTANT_CASE")).toBe("ALREADY_CONSTANT_CASE");
+  expect(Bun.screamingSnakeCase("XMLParser")).toBe("XML_PARSER");
+});
+
+test("Bun.constantCase (alias for screamingSnakeCase)", () => {
+  // constantCase should work as an alias for backward compatibility
   expect(Bun.constantCase("two words")).toBe("TWO_WORDS");
-  expect(Bun.constantCase("hello world")).toBe("HELLO_WORLD");
-  expect(Bun.constantCase("hello_world")).toBe("HELLO_WORLD");
-  expect(Bun.constantCase("kebab-case")).toBe("KEBAB_CASE");
   expect(Bun.constantCase("camelCase")).toBe("CAMEL_CASE");
-  expect(Bun.constantCase("PascalCase")).toBe("PASCAL_CASE");
-  expect(Bun.constantCase("multiple   spaces")).toBe("MULTIPLE_SPACES");
-  expect(Bun.constantCase("123-numbers-456")).toBe("123_NUMBERS_456");
-  expect(Bun.constantCase("")).toBe("");
-  expect(Bun.constantCase("ALREADY_CONSTANT_CASE")).toBe("ALREADY_CONSTANT_CASE");
-  expect(Bun.constantCase("XMLParser")).toBe("XML_PARSER");
+  // Both should produce the same output
+  const testCases = ["hello world", "camelCase", "PascalCase", "snake_case", "kebab-case"];
+  for (const testCase of testCases) {
+    expect(Bun.constantCase(testCase)).toBe(Bun.screamingSnakeCase(testCase));
+  }
 });
 
 test("Bun.dotCase", () => {
@@ -159,7 +170,8 @@ test("case conversion error handling", () => {
   expect(() => (Bun as any).pascalCase()).toThrow();
   expect(() => (Bun as any).snakeCase()).toThrow();
   expect(() => (Bun as any).kebabCase()).toThrow();
-  expect(() => (Bun as any).constantCase()).toThrow();
+  expect(() => (Bun as any).screamingSnakeCase()).toThrow();
+  expect(() => (Bun as any).constantCase()).toThrow(); // Should still work as alias
   expect(() => (Bun as any).dotCase()).toThrow();
   expect(() => (Bun as any).capitalCase()).toThrow();
   expect(() => (Bun as any).trainCase()).toThrow();

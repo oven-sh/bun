@@ -207,8 +207,8 @@ pub fn kebabCase(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     return result.toOwnedSlice();
 }
 
-/// Convert string to CONSTANT_CASE: "two words" -> "TWO_WORDS"
-pub fn constantCase(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+/// Convert string to SCREAMING_SNAKE_CASE: "two words" -> "TWO_WORDS"
+pub fn screamingSnakeCase(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     const words = try splitIntoWords(allocator, input);
     defer words.deinit();
 
@@ -231,6 +231,9 @@ pub fn constantCase(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
 
     return result.toOwnedSlice();
 }
+
+/// Alias for screamingSnakeCase for compatibility
+pub const constantCase = screamingSnakeCase;
 
 /// Convert string to dot.case: "two words" -> "two.words"
 pub fn dotCase(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
@@ -361,9 +364,12 @@ pub fn jsKebabCase(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) b
     return convertCase(globalThis, callFrame, kebabCase);
 }
 
-pub fn jsConstantCase(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
-    return convertCase(globalThis, callFrame, constantCase);
+pub fn jsScreamingSnakeCase(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
+    return convertCase(globalThis, callFrame, screamingSnakeCase);
 }
+
+// Alias for compatibility
+pub const jsConstantCase = jsScreamingSnakeCase;
 
 pub fn jsDotCase(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
     return convertCase(globalThis, callFrame, dotCase);

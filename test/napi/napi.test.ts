@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, isCI, isMacOS, isMusl, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -563,7 +563,10 @@ describe("napi", () => {
     expect(result).toContain("Test completed:");
   });
 
-  it("napi_reference_unref is blocked from finalizers in experimental modules", async () => {
+  it.todoIf(
+    // The test does not properly avoid the non-zero exit code on Windows.
+    isWindows,
+  )("napi_reference_unref is blocked from finalizers in experimental modules", async () => {
     // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
     // The process should crash/abort when this is attempted
     // This matches Node.js behavior for experimental modules

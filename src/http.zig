@@ -4,6 +4,7 @@ const HTTPClient = @This();
 pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
+pub var ftp_context: ?*FTPContext = null;
 
 //TODO: this needs to be freed when Worker Threads are implemented
 pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
@@ -2509,6 +2510,7 @@ pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");
 pub const HeaderValueIterator = @import("./http/HeaderValueIterator.zig");
+pub const FTPContext = @import("./http/ftp_socket.zig").FTPContext;
 
 const string = []const u8;
 

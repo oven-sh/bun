@@ -85,7 +85,7 @@ fn getTimeoutInterval(this: *@This()) u32 {
         else => this.connection_timeout_ms,
     };
 }
-fn resetConnectionTimeout(this: *@This()) void {
+pub fn resetConnectionTimeout(this: *@This()) void {
     debug("resetConnectionTimeout", .{});
     const interval = this.getTimeoutInterval();
     if (this.timer.state == .ACTIVE) {

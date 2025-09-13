@@ -115,6 +115,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
             continue;
         };
         if (request.isRunning()) {
+            connection.resetConnectionTimeout();
             debug("isRunning after run", .{});
             this.#is_ready_for_query = false;
             if (request.isBeingPrepared()) {

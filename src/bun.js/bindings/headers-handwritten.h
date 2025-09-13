@@ -181,6 +181,7 @@ typedef struct ZigStackFrame {
     BunString source_url;
     ZigStackFramePosition position;
     ZigStackFrameCode code_type;
+    bool is_async;
     bool remapped;
 } ZigStackFrame;
 
@@ -374,21 +375,9 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
-// Used in process.versions
-extern "C" const char* Bun__versions_boringssl;
-extern "C" const char* Bun__versions_libarchive;
-extern "C" const char* Bun__versions_mimalloc;
-extern "C" const char* Bun__versions_picohttpparser;
+// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
+// Only keep the ones still exported from Zig
 extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_webkit;
-extern "C" const char* Bun__versions_libdeflate;
-extern "C" const char* Bun__versions_zig;
-extern "C" const char* Bun__versions_zlib;
-extern "C" const char* Bun__versions_tinycc;
-extern "C" const char* Bun__versions_lolhtml;
-extern "C" const char* Bun__versions_c_ares;
-extern "C" const char* Bun__versions_lshpack;
-extern "C" const char* Bun__versions_zstd;
 extern "C" const char* Bun__versions_usockets;
 
 extern "C" const char* Bun__version_sha;

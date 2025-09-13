@@ -78,6 +78,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
                 .line_start_byte = 0,
             },
             .code_type = .None,
+            .is_async = false,
             .remapped = false,
         });
     }

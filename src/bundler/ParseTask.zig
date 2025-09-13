@@ -1170,6 +1170,7 @@ fn runWithSourceCode(
     opts.output_format = output_format;
     opts.features.minify_syntax = transpiler.options.minify_syntax;
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
+    opts.features.minify_keep_names = transpiler.options.keep_names;
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;

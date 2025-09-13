@@ -43,6 +43,9 @@ include(SetupEsbuild)
 include(SetupZig)
 include(SetupRust)
 
+# Generate dependency versions header
+include(GenerateDependencyVersions)
+
 # --- Targets ---
 
 include(BuildBun)

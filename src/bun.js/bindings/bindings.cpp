@@ -3453,6 +3453,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
     JSC::EncodedJSValue encoedValue, bool handled)
 {
     JSC::JSValue value = JSC::JSValue::decode(encoedValue);
+
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
@@ -3463,10 +3464,28 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
 
         promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
         auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
+        auto microtaskFunction = globalObject->performMicrotaskFunction();
+        auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
+
+        auto asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+
+#if ASSERT_ENABLED
+        ASSERT_WITH_MESSAGE(microtaskFunction, "Invalid microtask function");
+        ASSERT_WITH_MESSAGE(rejectPromiseFunction, "Invalid microtask callback");
+        ASSERT_WITH_MESSAGE(!value.isEmpty(), "Invalid microtask value");
+#endif
+
+        if (asyncContext.isEmpty()) {
+            asyncContext = jsUndefined();
+        }
+
+        if (value.isEmpty()) {
+            value = jsUndefined();
+        }
 
         globalObject->queueMicrotask(
-            globalObject->performMicrotaskFunction(),
-            globalObject->rejectPromiseFunction(),
+            microtaskFunction,
+            rejectPromiseFunction,
             globalObject->m_asyncContextData.get()->getInternalField(0),
             promise,
             value);
@@ -6129,8 +6148,9 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     if (microtaskArgs[3].isEmpty()) {
         microtaskArgs[3] = jsUndefined();
     }
-
+    auto microTaskFunction = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
+    ASSERT_WITH_MESSAGE(microTaskFunction, "Invalid microtask function");
     auto& vm = globalObject->vm();
     if (microtaskArgs[0].isCell()) {
         JSC::Integrity::auditCellFully(vm, microtaskArgs[0].asCell());
@@ -6147,10 +6167,11 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     if (microtaskArgs[3].isCell()) {
         JSC::Integrity::auditCellFully(vm, microtaskArgs[3].asCell());
     }
+
 #endif
 
     globalObject->queueMicrotask(
-        globalObject->performMicrotaskFunction(),
+        microTaskFunction,
         WTFMove(microtaskArgs[0]),
         WTFMove(microtaskArgs[1]),
         WTFMove(microtaskArgs[2]),

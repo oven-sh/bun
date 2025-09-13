@@ -316,7 +316,6 @@ test/js/node/crypto/node-crypto.test.js
 test/js/third_party/pg/pg.test.ts
 test/regression/issue/01466.test.ts
 test/regression/issue/21311.test.ts
-test/js/bun/glob/import-meta-glob.test.ts
 
 
 test/regression/issue/ctrl-c.test.ts
@@ -328,3 +327,5 @@ test/cli/install/bun-repl.test.ts
 test/bundler/esbuild/default.test.ts
 test/integration/vite-build/vite-build.test.ts
 test/cli/inspect/HTTPServerAgent.test.ts
+test/js/bun/glob/import-meta-glob.test.ts
+test/bundler/bundler_loader.test.ts

@@ -13,7 +13,7 @@ import.meta.main;  // `true` if this file is directly executed by `bun run`
 
 import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/index.js"
 
-import.meta.glob("./models/*.js"); // => { "./models/user.js": [Async Function], ... }
+import.meta.glob("./dir/*.ts"); // => { "./dir/a.ts": () => import("./dir/a.ts"), ... }
 ```
 
 {% table %}

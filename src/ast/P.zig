@@ -6034,19 +6034,20 @@ pub fn NewParser_(
                 }
             }.lessThan);
 
-            // Create properties
+            // Create dynamic imports
             var properties: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, matched_files.items.len));
 
             for (matched_files.items, 0..) |file_path, i| {
-                const base_import_path: []const u8 = if (base_path) |base|
-                    bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}/{s}", .{ base, file_path }))
+                // add the base path and/or query string to the import path
+                const import_path: []const u8 = if (base_path) |base|
+                    if (query) |q|
+                        bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}/{s}{s}", .{ base, file_path, q }))
+                    else
+                        bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}/{s}", .{ base, file_path }))
+                else if (query) |q|
+                    bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}{s}", .{ file_path, q }))
                 else
                     file_path;
-
-                const import_path = if (query) |q|
-                    bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}{s}", .{ base_import_path, q }))
-                else
-                    base_import_path;
 
                 const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
                 bun.handleOom(p.import_records_for_current_part.append(p.allocator, import_record_index));

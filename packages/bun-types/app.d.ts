@@ -83,46 +83,51 @@ declare module "bun:app" {
      * @default {}
      */
     bundlerOptions?: BundlerOptions | undefined;
+
     /**
-     * The translation of files to routes is unopinionated and left to
-     * framework authors. This interface allows most flexibility between the
-     * already established conventions while allowing new ideas to be explored
-     * too.
+     * The translation of files to routes is unopinionated and left to framework
+     * authors. This interface allows most flexibility between the already
+     * established conventions while allowing new ideas to be explored too.
      * @default []
      */
     fileSystemRouterTypes?: FrameworkFileSystemRouterType[];
+
     /**
-     * A list of directories that should be served statically. If the
-     * directory does not exist in the user's project, it is ignored.
+     * A list of directories that should be served statically. If the directory
+     * does not exist in the user's project, it is ignored.
      *
      * Example: 'public' or 'static'
      *
-     * Different frameworks have different opinions, some use 'static', some
-     * use 'public'.
+     * Different frameworks have different opinions, some use 'static', some use
+     * 'public'.
      * @default []
      */
     staticRouters?: Array<StaticRouter> | undefined;
+
     /**
-     * Add extra modules. This can be used to, for example, replace `react`
-     * with a different resolution.
+     * Add extra modules. This can be used to, for example, replace `react` with
+     * a different resolution.
      *
-     * Internally, Bun's `react-server-components` framework uses this to
-     * embed its files in the `bun` binary.
+     * Internally, Bun's `react-server-components` framework uses this to embed
+     * its files in the `bun` binary.
      * @default {}
      */
     builtInModules?: BuiltInModule[] | undefined;
+
     /**
      * Bun offers integration for React's Server Components with an interface
      * that is generic enough to adapt to any framework.
      * @default undefined
      */
     serverComponents?: ServerComponentsOptions | undefined;
+
     /**
-     * While it is unlikely that Fast Refresh is useful outside of
-     * React, it can be enabled regardless.
+     * While it is unlikely that Fast Refresh is useful outside of React, it can
+     * be enabled regardless.
      * @default false
      */
     reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
+
     /** Framework bundler plugins load before the user-provided ones. */
     plugins?: Bun.BunPlugin[] | undefined;
 

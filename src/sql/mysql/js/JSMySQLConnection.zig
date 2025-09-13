@@ -756,6 +756,8 @@ pub const toJS = js.toJS;
 
 pub const Writer = MySQLConnection.Writer;
 
+const debug = bun.Output.scoped(.MySQLConnection, .visible);
+
 const AnyMySQLError = @import("../protocol/AnyMySQLError.zig");
 const CachedStructure = @import("../../shared/CachedStructure.zig");
 const ErrorPacket = @import("../protocol/ErrorPacket.zig");
@@ -776,4 +778,3 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const AutoFlusher = jsc.WebCore.AutoFlusher;
-const debug = bun.Output.scoped(.MySQLConnection, .visible);

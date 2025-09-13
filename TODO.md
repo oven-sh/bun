@@ -373,7 +373,7 @@ Regular:
 - [ ] test/js/bun/test/describe2.test.ts
 - [ ] test/cli/update_interactive_formatting.test.ts
 - [x] test/js/bun/bun-object/write.spec.ts
-- [ ] test/cli/install/isolated-install.test.ts
+- [x] test/cli/install/isolated-install.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
 - [ ] test/cli/install/catalogs.test.ts
 - [ ] test/js/node/test/parallel/test-worker-uncaught-exception-async.js

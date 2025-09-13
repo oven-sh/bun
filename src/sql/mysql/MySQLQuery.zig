@@ -244,7 +244,10 @@ pub inline fn getResultMode(this: *@This()) SQLQueryResultMode {
 pub inline fn markAsPrepared(this: *@This()) void {
     if (this.#status == .pending) {
         if (this.#statement) |statement| {
-            if (statement.status == .parsing) {
+            if (statement.status == .parsing and
+                statement.params.len == statement.params_received and
+                statement.statement_id > 0)
+            {
                 statement.status = .prepared;
             }
         }

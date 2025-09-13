@@ -23,7 +23,7 @@ pub const ZigStackTrace = extern struct {
             .source_lines_to_collect = 0,
 
             .frames_ptr = frames_slice.ptr,
-            .frames_len = 0,
+            .frames_len = @min(frames_slice.len, std.math.maxInt(u8)),
             .frames_cap = @min(frames_slice.len, std.math.maxInt(u8)),
 
             .referenced_source_provider = null,

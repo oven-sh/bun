@@ -50,6 +50,10 @@
     __ZNK2v814ObjectTemplate18InternalFieldCountEv;
     __ZNK2v85Value10FullIsTrueEv;
     __ZNK2v85Value10IsFunctionEv;
+    __ZNK2v85Value5IsMapEv;
+    __ZNK2v85Value7IsArrayEv;
+    __ZNK2v85Value7IsInt32Ev;
+    __ZNK2v85Value8IsBigIntEv;
     __ZNK2v85Value11FullIsFalseEv;
     __ZNK2v85Value11IsUndefinedEv;
     __ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE;

@@ -260,6 +260,8 @@ pub inline fn getStatement(this: *const @This()) ?*MySQLStatement {
     return this.#statement;
 }
 
+const debug = bun.Output.scoped(.MySQLQuery, .visible);
+
 const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const MySQLConnection = @import("./js/JSMySQLConnection.zig");
 const MySQLRequest = @import("./MySQLRequest.zig");
@@ -274,5 +276,3 @@ const Value = @import("./MySQLTypes.zig").Value;
 
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-
-const debug = bun.Output.scoped(.MySQLQuery, .visible);

@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 async function testFailureSkip(failurePoints: string[]): Promise<string[]> {
   const result = await Bun.spawn({

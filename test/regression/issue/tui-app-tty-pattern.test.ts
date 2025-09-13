@@ -82,7 +82,7 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
   const cmd = isLinux
     ? [scriptPath, "-q", "-c", `echo "piped content" | ${bunExe()} tui-app-sim.js`, "/dev/null"]
     : [scriptPath, "-q", "/dev/null", "sh", "-c", `echo "piped content" | ${bunExe()} tui-app-sim.js`];
-  
+
   const proc = Bun.spawn({
     cmd,
     env: bunEnv,
@@ -99,7 +99,7 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
     // If the test didn't work with script, skip it
     return;
   }
-  
+
   // Normalize and check output
   const output = normalizeBunSnapshot(stdout, dir);
   expect(output).toContain("PIPED_INPUT:piped content");

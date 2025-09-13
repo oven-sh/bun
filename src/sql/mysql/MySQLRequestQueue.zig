@@ -64,7 +64,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
         }
     }
 
-    while (this.#requests.readableLength() > offset and !connection.isAbleToWrite()) {
+    while (this.#requests.readableLength() > offset and connection.isAbleToWrite()) {
         var request: *JSMySQLQuery = this.#requests.peekItem(offset);
 
         if (request.isCompleted()) {

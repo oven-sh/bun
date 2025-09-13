@@ -70,6 +70,7 @@ fn unregisterAutoFlusher(this: *@This()) void {
 }
 
 fn stopTimers(this: *@This()) void {
+    debug("stopTimers", .{});
     if (this.timer.state == .ACTIVE) {
         this.#vm.timer.remove(&this.timer);
     }
@@ -85,15 +86,14 @@ fn getTimeoutInterval(this: *@This()) u32 {
     };
 }
 fn resetConnectionTimeout(this: *@This()) void {
-    // if we are processing data, don't reset the timeout, wait for the data to be processed
-    if (this.#connection.isProcessingData()) return;
+    debug("resetConnectionTimeout", .{});
     const interval = this.getTimeoutInterval();
     if (this.timer.state == .ACTIVE) {
         this.#vm.timer.remove(&this.timer);
     }
-    if (interval == 0) {
-        return;
-    }
+    if (this.#connection.status == .failed or
+        this.#connection.isProcessingData() or
+        interval == 0) return;
 
     this.timer.next = bun.timespec.msFromNow(@intCast(interval));
     this.#vm.timer.insert(&this.timer);
@@ -101,9 +101,12 @@ fn resetConnectionTimeout(this: *@This()) void {
 
 pub fn onConnectionTimeout(this: *@This()) bun.api.Timer.EventLoopTimer.Arm {
     this.timer.state = .FIRED;
+
     if (this.#connection.isProcessingData()) {
         return .disarm;
     }
+
+    if (this.#connection.status == .failed) return .disarm;
 
     if (this.getTimeoutInterval() == 0) {
         this.resetConnectionTimeout();
@@ -181,15 +184,17 @@ fn drainInternal(this: *@This()) void {
     };
 }
 pub fn deinit(this: *@This()) void {
+    this.stopTimers();
     this.#poll_ref.unref(this.#vm);
     this.unregisterAutoFlusher();
 
-    this.stopTimers();
     this.#connection.cleanup();
     bun.destroy(this);
 }
 
 pub fn finalize(this: *@This()) void {
+    debug("finalize", .{});
+    this.stopTimers();
     this.#js_value.finalize();
     this.deref();
 }
@@ -257,6 +262,8 @@ fn SocketHandler(comptime ssl: bool) type {
             const vm = this.#vm;
 
             defer {
+                // reset the connection timeout after we're done processing the data
+                this.resetConnectionTimeout();
                 this.updateReferenceType();
                 this.registerAutoFlusher();
                 if (!this.#connection.isActive()) {
@@ -266,8 +273,6 @@ fn SocketHandler(comptime ssl: bool) type {
                     // Keep the process alive if there's something to do.
                     this.#poll_ref.ref(this.#vm);
                 }
-                // reset the connection timeout after we're done processing the data
-                this.resetConnectionTimeout();
             }
             if (this.#vm.isShuttingDown()) {
                 // we are shutting down lets not process the data
@@ -771,3 +776,4 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const AutoFlusher = jsc.WebCore.AutoFlusher;
+const debug = bun.Output.scoped(.MySQLConnection, .visible);

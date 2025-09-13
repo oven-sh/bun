@@ -114,7 +114,6 @@ if (docker) {
         test("Idle timeout works at start", async () => {
           const onClosePromise = Promise.withResolvers();
           const onclose = mock(err => {
-            console.log("onclose", err);
             onClosePromise.resolve(err);
           });
           const onconnect = mock();

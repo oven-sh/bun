@@ -185,7 +185,7 @@ pub fn deinit(this: *@This()) void {
     this.unregisterAutoFlusher();
 
     this.stopTimers();
-    this.#connection.deinit();
+    this.#connection.cleanup();
     bun.destroy(this);
 }
 
@@ -456,10 +456,6 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
         if (path.len > 0) {
             ptr.#connection.setSocket(.{
                 .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
                     ptr.deinit();
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
@@ -467,10 +463,6 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
         } else {
             ptr.#connection.setSocket(.{
                 .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
                     ptr.deinit();
                     return globalObject.throwError(err, "failed to connect to mysql");
                 },

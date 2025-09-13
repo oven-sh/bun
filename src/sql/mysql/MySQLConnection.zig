@@ -159,22 +159,35 @@ pub fn cleanQueueAndClose(this: *@This(), js_reason: ?jsc.JSValue, js_queries_ar
     this.close();
 }
 
-pub fn deinit(this: *MySQLConnection) void {
+pub fn cleanup(this: *MySQLConnection) void {
     var queue = this.queue;
     defer queue.deinit();
     this.queue = MySQLRequestQueue.init();
+    var write_buffer = this.#write_buffer;
+    var read_buffer = this.#read_buffer;
+    var statements = this.statements;
+    var tls_config = this.#tls_config;
+    const options_buf = this.#options_buf;
+    this.#write_buffer = .{};
+    this.#read_buffer = .{};
+    this.statements = PreparedStatementsMap{};
+    this.#tls_config = .{};
+    this.#options_buf = "";
+    write_buffer.deinit(bun.default_allocator);
 
-    this.#write_buffer.deinit(bun.default_allocator);
-    this.#read_buffer.deinit(bun.default_allocator);
-    this.statements.deinit(bun.default_allocator);
+    read_buffer.deinit(bun.default_allocator);
+
+    statements.deinit(bun.default_allocator);
+
+    tls_config.deinit();
     this.#auth_data.deinit();
-    this.#tls_config.deinit();
     if (this.#tls_ctx) |ctx| {
+        this.#tls_ctx = null;
         ctx.deinit(true);
     }
-    if (this.#options_buf.len > 0) {
-        bun.default_allocator.free(this.#options_buf);
-        this.#options_buf = "";
+
+    if (options_buf.len > 0) {
+        bun.default_allocator.free(options_buf);
     }
 }
 

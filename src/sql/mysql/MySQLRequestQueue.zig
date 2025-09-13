@@ -5,7 +5,7 @@ pub const MySQLRequestQueue = @This();
 #pipelined_requests: u32 = 0,
 #nonpipelinable_requests: u32 = 0,
 #waiting_to_prepare: bool = false,
-#is_ready_for_query: bool = false,
+#is_ready_for_query: bool = true,
 
 pub inline fn canExecuteQuery(this: *@This(), connection: *MySQLConnection) bool {
     return connection.isAbleToWrite() and
@@ -144,12 +144,6 @@ pub fn add(this: *@This(), request: *JSMySQLQuery) void {
     request.ref();
     bun.handleOom(this.#requests.writeItem(request));
 }
-
-// pub fn cleanupWithJSValueReason(this: *@This(), reason: ?jsc.JSValue) void {
-//     while (this.#requests.pop()) |request| {
-//         request.failWithJSValue(reason);
-//     }
-// }
 
 pub fn current(this: *@This()) ?*JSMySQLQuery {
     if (this.#requests.readableLength() == 0) {

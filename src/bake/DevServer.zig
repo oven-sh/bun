@@ -397,6 +397,20 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     dev.framework = resolved_framework;
 
+    // Log framework configuration details
+    Output.prettyln("  <d>Framework initialized successfully<r>", .{});
+    if (dev.framework.server_components) |sc| {
+        Output.prettyln("  <d>Server Components: enabled<r>", .{});
+        Output.prettyln("  <d>Separate SSR graph: {}<r>", .{sc.separate_ssr_graph});
+    }
+    if (dev.framework.react_fast_refresh) |_| {
+        Output.prettyln("  <d>React Fast Refresh: enabled<r>", .{});
+    }
+    if (dev.framework.file_system_router_types.len > 0) {
+        Output.prettyln("  <d>File system router: {d} type(s) configured<r>", .{dev.framework.file_system_router_types.len});
+    }
+    Output.flush();
+
     errdefer dev.route_lookup.clearAndFree(alloc);
     errdefer dev.client_graph.deinit();
     errdefer dev.server_graph.deinit();
@@ -493,8 +507,11 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             const buf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(buf);
             const joined_root = bun.path.joinAbsStringBuf(dev.root, buf, &.{fsr.root}, .auto);
-            const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
+            Output.prettyln("  <d>Looking for routes in: {s}<r>", .{joined_root});
+            const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse {
+                Output.prettyln("  <d>Directory not found: {s}<r>", .{joined_root});
                 continue;
+            };
 
             const server_file = try dev.server_graph.insertStaleExtra(fsr.entry_server, false, true);
 
@@ -732,11 +749,15 @@ fn initServerRuntime(dev: *DevServer) void {
 
 /// Deferred one tick so that the server can be up faster
 fn scanInitialRoutes(dev: *DevServer) !void {
+    Output.prettyln("  <d>Scanning for routes...<r>", .{});
+    Output.flush();
     try dev.router.scanAll(
         dev.allocator(),
         &dev.server_transpiler.resolver,
         FrameworkRouter.InsertionContext.wrap(DevServer, dev),
     );
+    Output.prettyln("  <d>Found {d} routes<r>", .{dev.route_bundles.items.len});
+    Output.flush();
 
     try dev.server_graph.ensureStaleBitCapacity(true);
     try dev.client_graph.ensureStaleBitCapacity(true);

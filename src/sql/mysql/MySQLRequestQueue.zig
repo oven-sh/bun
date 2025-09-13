@@ -21,9 +21,11 @@ pub inline fn canPrepareQuery(this: *@This(), connection: *MySQLConnection) bool
 
 pub inline fn markAsReadyForQuery(this: *@This()) void {
     this.#is_ready_for_query = true;
+}
+pub inline fn markAsPrepared(this: *@This()) void {
     this.#waiting_to_prepare = false;
     if (this.current()) |request| {
-        debug("markAsReadyForQuery markAsPrepared", .{});
+        debug("markAsPrepared markAsPrepared", .{});
         request.markAsPrepared();
     }
 }

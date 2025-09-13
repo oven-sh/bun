@@ -836,6 +836,7 @@ fn checkIfPreparedStatementIsDone(this: *MySQLConnection, statement: *MySQLState
         this.#flags.waiting_to_prepare = false;
         this.#flags.is_ready_for_query = true;
         this.queue.markAsReadyForQuery();
+        this.queue.markAsPrepared();
         statement.reset();
         this.queue.advance(this.getJSConnection());
     }

@@ -305,9 +305,11 @@ fn SocketHandler(comptime ssl: bool) type {
 
 fn updateReferenceType(this: *@This()) void {
     if (this.#js_value.isNotEmpty()) {
-        if (this.#connection.isActive() and this.#js_value == .weak) {
-            this.#js_value.upgrade(this.#globalObject);
-            this.#poll_ref.ref(this.#vm);
+        if (this.#connection.isActive()) {
+            if (this.#js_value == .weak) {
+                this.#js_value.upgrade(this.#globalObject);
+                this.#poll_ref.ref(this.#vm);
+            }
             return;
         }
         if (this.#js_value == .strong) {

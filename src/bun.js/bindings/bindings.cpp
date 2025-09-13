@@ -4758,7 +4758,7 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
 
 #define SYNTAX_ERROR_CODE 4
 
-static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
+static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
     JSC::JSValue val, PopulateStackTraceFlags flags)
 {
@@ -4768,53 +4768,53 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, except->stack, global, flags);
+        populateStackTrace(vm, *stackTrace, except.stack, global, flags);
 
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(vm, *err->stackTrace(), except->stack, global, flags);
+        populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags);
 
     } else {
         getFromSourceURL = true;
     }
-    except->type = (unsigned char)err->errorType();
+    except.type = (unsigned char)err->errorType();
     if (err->isStackOverflowError()) {
-        except->type = 253;
+        except.type = 253;
     }
     if (err->isOutOfMemoryError()) {
-        except->type = 8;
+        except.type = 8;
     }
-    if (except->type == SYNTAX_ERROR_CODE) {
-        except->message = Bun::toStringRef(err->sanitizedMessageString(global));
+    if (except.type == SYNTAX_ERROR_CODE) {
+        except.message = Bun::toStringRef(err->sanitizedMessageString(global));
 
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        except->message = Bun::toStringRef(global, message);
+        except.message = Bun::toStringRef(global, message);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
     } else {
 
-        except->message = Bun::toStringRef(err->sanitizedMessageString(global));
+        except.message = Bun::toStringRef(err->sanitizedMessageString(global));
     }
 
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
         return;
     }
 
-    except->name = Bun::toStringRef(err->sanitizedNameString(global));
+    except.name = Bun::toStringRef(err->sanitizedNameString(global));
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
         return;
     }
 
-    except->runtime_type = err->runtimeTypeForCause();
+    except.runtime_type = err->runtimeTypeForCause();
 
     const auto& names = builtinNames(vm);
-    if (except->type != SYNTAX_ERROR_CODE) {
+    if (except.type != SYNTAX_ERROR_CODE) {
 
         JSC::JSValue syscall = getNonObservable(vm, global, obj, names.syscallPublicName());
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (syscall) {
             if (syscall.isString()) {
-                except->syscall = Bun::toStringRef(global, syscall);
+                except.syscall = Bun::toStringRef(global, syscall);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
             }
@@ -4825,7 +4825,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             return;
         if (code) {
             if (code.isString() || code.isNumber()) {
-                except->system_code = Bun::toStringRef(global, code);
+                except.system_code = Bun::toStringRef(global, code);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
             }
@@ -4836,7 +4836,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             return;
         if (path) {
             if (path.isString()) {
-                except->path = Bun::toStringRef(global, path);
+                except.path = Bun::toStringRef(global, path);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
             }
@@ -4847,7 +4847,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             return;
         if (fd) {
             if (fd.isNumber()) {
-                except->fd = fd.toInt32(global);
+                except.fd = fd.toInt32(global);
             }
         }
 
@@ -4856,7 +4856,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             return;
         if (errno_) {
             if (errno_.isNumber()) {
-                except->errno_ = errno_.toInt32(global);
+                except.errno_ = errno_.toInt32(global);
             }
         }
     }
@@ -4879,13 +4879,13 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 if (!stack.isEmpty()) {
 
                     V8StackTraceIterator iterator(stack);
-                    const uint8_t frame_count = except->stack.frames_cap;
+                    const uint8_t frame_count = except.stack.frames_cap;
 
-                    except->stack.frames_len = 0;
+                    except.stack.frames_len = 0;
 
                     iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
-                        ASSERT(except->stack.frames_len < frame_count);
-                        auto& current = except->stack.frames_ptr[except->stack.frames_len];
+                        ASSERT(except.stack.frames_len < frame_count);
+                        auto& current = except.stack.frames_ptr[except.stack.frames_len];
                         current = {};
 
                         String functionName = frame.functionName.toString();
@@ -4904,28 +4904,28 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                             current.code_type = ZigStackFrameCodeGlobal;
                         }
 
-                        except->stack.frames_len += 1;
+                        except.stack.frames_len += 1;
 
-                        stop = except->stack.frames_len >= frame_count;
+                        stop = except.stack.frames_len >= frame_count;
                     });
 
-                    if (except->stack.frames_len > 0) {
+                    if (except.stack.frames_len > 0) {
                         getFromSourceURL = false;
-                        except->remapped = true;
+                        except.remapped = true;
                     }
                 }
             }
         }
     }
 
-    if (except->stack.frames_len == 0 && getFromSourceURL) {
+    if (except.stack.frames_len == 0 && getFromSourceURL) {
 
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (sourceURL) {
             if (sourceURL.isString()) {
-                except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+                except.stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
 
@@ -4936,7 +4936,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                     return;
                 if (column) {
                     if (column.isNumber()) {
-                        except->stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
+                        except.stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
                     }
                 }
 
@@ -4945,7 +4945,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                     return;
                 if (line) {
                     if (line.isNumber()) {
-                        except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+                        except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
 
                         JSC::JSValue lineText = getNonObservable(vm, global, obj, builtinNames(vm).lineTextPublicName());
                         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
@@ -4954,10 +4954,10 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                             if (lineText.isString()) {
                                 if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
                                     auto str = jsStr->value(global);
-                                    except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                                    except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line();
-                                    except->stack.source_lines_len = 1;
-                                    except->remapped = true;
+                                    except.stack.source_lines_ptr[0] = Bun::toStringRef(str);
+                                    except.stack.source_lines_numbers[0] = except.stack.frames_ptr[0].position.line();
+                                    except.stack.source_lines_len = 1;
+                                    except.remapped = true;
                                 }
                             }
                         }
@@ -4966,9 +4966,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
 
             {
-                except->stack.frames_len = 1;
+                except.stack.frames_len = 1;
                 PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
-                except->stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
+                except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
             }
@@ -4976,10 +4976,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
 }
 
-except->exception = err;
-}
-
-void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobalObject* global)
+void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobalObject* global)
 {
     auto& vm = JSC::getVM(global);
     if (vm.hasPendingTerminationException()) [[unlikely]] {
@@ -4998,23 +4995,23 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         if (name_value) {
             if (name_value.isString()) {
                 auto name_str = name_value.toWTFString(global);
-                except->name = Bun::toStringRef(name_str);
+                except.name = Bun::toStringRef(name_str);
                 if (name_str == "Error"_s) {
-                    except->type = JSErrorCodeError;
+                    except.type = JSErrorCodeError;
                 } else if (name_str == "EvalError"_s) {
-                    except->type = JSErrorCodeEvalError;
+                    except.type = JSErrorCodeEvalError;
                 } else if (name_str == "RangeError"_s) {
-                    except->type = JSErrorCodeRangeError;
+                    except.type = JSErrorCodeRangeError;
                 } else if (name_str == "ReferenceError"_s) {
-                    except->type = JSErrorCodeReferenceError;
+                    except.type = JSErrorCodeReferenceError;
                 } else if (name_str == "SyntaxError"_s) {
-                    except->type = JSErrorCodeSyntaxError;
+                    except.type = JSErrorCodeSyntaxError;
                 } else if (name_str == "TypeError"_s) {
-                    except->type = JSErrorCodeTypeError;
+                    except.type = JSErrorCodeTypeError;
                 } else if (name_str == "URIError"_s) {
-                    except->type = JSErrorCodeURIError;
+                    except.type = JSErrorCodeURIError;
                 } else if (name_str == "AggregateError"_s) {
-                    except->type = JSErrorCodeAggregateError;
+                    except.type = JSErrorCodeAggregateError;
                 }
             }
         }
@@ -5025,44 +5022,46 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         }
         if (message) {
             if (message.isString()) {
-                except->message = Bun::toStringRef(message.toWTFString(global));
+                except.message = Bun::toStringRef(message.toWTFString(global));
             }
         }
 
-        auto sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL);
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
-        }
-        if (sourceURL) {
-            if (sourceURL.isString()) {
-                except->stack.frames_ptr[0].source_url = Bun::toStringRef(sourceURL.toWTFString(global));
-                except->stack.frames_len = 1;
+        if (except.stack.frames_len == 0) {
+            auto sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL);
+            if (scope.exception()) [[unlikely]] {
+                scope.clearExceptionExceptTermination();
             }
-        }
-
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
-        }
-
-        auto line = obj->getIfPropertyExists(global, vm.propertyNames->line);
-        if (scope.exception()) [[unlikely]] {
-            scope.clearExceptionExceptTermination();
-        }
-        if (line) {
-            if (line.isNumber()) {
-                except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
-
-                // TODO: don't sourcemap it twice
-                auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
-                if (scope.exception()) [[unlikely]] {
-                    scope.clearExceptionExceptTermination();
+            if (sourceURL) {
+                if (sourceURL.isString()) {
+                    except.stack.frames_ptr[0].source_url = Bun::toStringRef(sourceURL.toWTFString(global));
+                    except.stack.frames_len = 1;
                 }
-                if (originalLine) {
-                    if (originalLine.isNumber()) {
-                        except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
+            }
+
+            if (scope.exception()) [[unlikely]] {
+                scope.clearExceptionExceptTermination();
+            }
+
+            auto line = obj->getIfPropertyExists(global, vm.propertyNames->line);
+            if (scope.exception()) [[unlikely]] {
+                scope.clearExceptionExceptTermination();
+            }
+            if (line) {
+                if (line.isNumber()) {
+                    except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+
+                    // TODO: don't sourcemap it twice
+                    auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
+                    if (scope.exception()) [[unlikely]] {
+                        scope.clearExceptionExceptTermination();
                     }
+                    if (originalLine) {
+                        if (originalLine.isNumber()) {
+                            except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
+                        }
+                    }
+                    except.stack.frames_len = 1;
                 }
-                except->stack.frames_len = 1;
             }
         }
 
@@ -5082,9 +5081,9 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         case JSC::SymbolType: {
             auto* symbol = asSymbol(cell);
             if (symbol->description().isEmpty()) {
-                except->message = BunStringEmpty;
+                except.message = BunStringEmpty;
             } else {
-                except->message = Bun::toStringRef(symbol->description());
+                except.message = Bun::toStringRef(symbol->description());
             }
             return;
         }
@@ -5101,7 +5100,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
         return;
     }
 
-    except->message = Bun::toStringRef(str);
+    except.message = Bun::toStringRef(str);
 }
 
 extern "C" JSC::EncodedJSValue JSC__Exception__asJSValue(JSC::Exception* exception)
@@ -5264,7 +5263,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
         JSValue unwrapped = jscException->value();
 
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(unwrapped)) {
-            fromErrorInstance(exception, global, error, &jscException->stack(), unwrapped, PopulateStackTraceFlags::OnlyPosition);
+            fromErrorInstance(*exception, global, error, &jscException->stack(), unwrapped, PopulateStackTraceFlags::OnlyPosition);
             return;
         }
 
@@ -5272,16 +5271,16 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
             populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlyPosition);
         }
 
-        exceptionFromString(exception, unwrapped, global);
+        exceptionFromString(*exception, unwrapped, global);
         return;
     }
 
     if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
-        fromErrorInstance(exception, global, error, nullptr, value, PopulateStackTraceFlags::OnlyPosition);
+        fromErrorInstance(*exception, global, error, nullptr, value, PopulateStackTraceFlags::OnlyPosition);
         return;
     }
 
-    exceptionFromString(exception, value, global);
+    exceptionFromString(*exception, value, global);
 }
 
 void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
@@ -5299,7 +5298,7 @@ void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGl
             populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
         }
 
-        exceptionFromString(exception, unwrapped, global);
+        exceptionFromString(*exception, unwrapped, global);
         return;
     }
 

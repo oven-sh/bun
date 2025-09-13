@@ -146,6 +146,31 @@ pub fn incr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     return promise.toJS();
 }
 
+// Implement incrby (increment key by integer value)
+pub fn incrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const key = try callframe.argument(0).toBunString(globalObject);
+    defer key.deref();
+    const value = try callframe.argument(1).toBunString(globalObject);
+    defer value.deref();
+    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
+    defer key_slice.deinit();
+    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
+    defer value_slice.deinit();
+
+    // Send INCRBY command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "INCRBY",
+            .args = .{ .slices = &.{ key_slice, value_slice } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send INCRBY command", err);
+    };
+    return promise.toJS();
+}
+
 pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("decr", "key", "string or buffer");
@@ -162,6 +187,31 @@ pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send DECR command", err);
+    };
+    return promise.toJS();
+}
+
+// Implement decrby (decrement key by integer value)
+pub fn decrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const key = try callframe.argument(0).toBunString(globalObject);
+    defer key.deref();
+    const value = try callframe.argument(1).toBunString(globalObject);
+    defer value.deref();
+    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
+    defer key_slice.deinit();
+    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
+    defer value_slice.deinit();
+
+    // Send DECRBY command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "DECRBY",
+            .args = .{ .slices = &.{ key_slice, value_slice } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send DECRBY command", err);
     };
     return promise.toJS();
 }

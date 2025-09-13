@@ -9,7 +9,7 @@ void generateNativeModule_BunTest(
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-    JSObject* object = globalObject->lazyPreloadTestModuleObject();
+    JSObject* object = globalObject->lazyTestModuleObject();
 
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(object);

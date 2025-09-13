@@ -16,18 +16,7 @@ pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type {
 pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
     return struct {
         pub fn function(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            if (Environment.allow_assert and Environment.is_canary) {
-                const value = functionToWrap(globalThis, callframe) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(globalThis, value, functionToWrap);
-                return value;
-            }
-            return @call(.always_inline, functionToWrap, .{ globalThis, callframe }) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
+            return toJSHostFnResult(globalThis, functionToWrap(globalThis, callframe));
         }
     }.function;
 }
@@ -35,16 +24,23 @@ pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
 pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHostFnZigWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
     return struct {
         pub fn function(ctx: *ContextType, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(globalThis, value, Function);
-            }
-            return value;
+            return toJSHostFnResult(globalThis, Function(ctx, globalThis, callframe));
         }
     }.function;
+}
+pub fn toJSHostFnResult(globalThis: *JSGlobalObject, result: bun.JSError!JSValue) JSValue {
+    if (Environment.allow_assert and Environment.is_canary) {
+        const value = result catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+        };
+        debugExceptionAssertion(globalThis, value, "_unknown_".*);
+        return value;
+    }
+    return result catch |err| switch (err) {
+        error.JSError => .zero,
+        error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+    };
 }
 
 fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime func: anytype) void {

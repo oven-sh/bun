@@ -11,7 +11,7 @@ pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *
     const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalled", "");
 
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
@@ -41,7 +41,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

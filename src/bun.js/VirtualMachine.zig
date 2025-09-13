@@ -202,10 +202,7 @@ pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
     return this.unhandledRejectionsMode() != .bun;
 }
 pub fn unhandledRejectionsMode(this: *VirtualMachine) api.UnhandledRejections {
-    return this.transpiler.options.transform_options.unhandled_rejections orelse switch (bun.FeatureFlags.breaking_changes_1_3) {
-        false => .bun,
-        true => .throw,
-    };
+    return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;
 }
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: jsc.WebCore.Body.Value) !*Body.Value.HiveRef {
@@ -2016,6 +2013,9 @@ pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
 }
 
 fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
+    bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this
+    defer bun.jsc.Jest.describe2.debug.group.end();
+
     this.is_in_preload = true;
     defer this.is_in_preload = false;
 

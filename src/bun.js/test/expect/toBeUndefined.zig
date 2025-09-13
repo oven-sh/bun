@@ -3,7 +3,7 @@ pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     const thisValue = callFrame.this();
     const value: JSValue = try this.getValue(globalThis, thisValue, "toBeUndefined", "");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const not = this.flags.not;
     var pass = false;
@@ -33,7 +33,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

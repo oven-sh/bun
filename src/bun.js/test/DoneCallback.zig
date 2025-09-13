@@ -1,0 +1,97 @@
+/// value = not called yet. null = done already called, no-op.
+ref: ?*describe2.BunTest.RefData,
+called: bool = false,
+
+const DoneCallbackTask = struct {
+    ref: *describe2.BunTest.RefData,
+    globalThis: *JSGlobalObject,
+    was_error: bool,
+
+    pub fn call(this: *DoneCallbackTask) void {
+        defer bun.destroy(this);
+        defer this.ref.deref();
+        const has_one_ref = this.ref.ref_count.hasOneRef();
+        var strong = this.ref.buntest_weak.clone().upgrade() orelse return;
+        defer strong.deinit();
+        BunTest.bunTestDoneCallback(strong, this.globalThis, this.ref.phase, has_one_ref, this.was_error) catch |e| {
+            strong.get().onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.ref.phase);
+        };
+    }
+};
+
+pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    const this = DoneCallback.fromJS(callFrame.callee()) orelse return globalThis.throw("Expected callee to be DoneCallback", .{});
+
+    const value = callFrame.argumentsAsArray(1)[0];
+
+    const was_error = !value.isEmptyOrUndefinedOrNull();
+    if (this.called) {
+        // in Bun 1.2.20, this is a no-op
+        // in Jest, this is "Expected done to be called once, but it was called multiple times."
+        // Vitest does not support done callbacks
+    } else {
+        // error is only reported for the first done() call
+        if (was_error) {
+            _ = globalThis.bunVM().uncaughtException(globalThis, value, false);
+        }
+    }
+    this.called = true;
+    const ref = this.ref orelse return .js_undefined;
+    defer this.ref = null;
+    defer ref.deref();
+
+    // dupe the ref and enqueue a task to call the done callback.
+    // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
+    const ref_clone = ref.dupe();
+    errdefer ref_clone.deref();
+    const done_callback_test = bun.new(DoneCallbackTask, .{ .ref = ref_clone, .globalThis = globalThis, .was_error = was_error });
+    errdefer bun.destroy(done_callback_test);
+    const task = jsc.ManagedTask.New(DoneCallbackTask, DoneCallbackTask.call).init(done_callback_test);
+    jsc.VirtualMachine.get().enqueueTask(task);
+
+    return .js_undefined;
+}
+
+pub const js = jsc.Codegen.JSDoneCallback;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
+pub fn finalize(
+    this: *DoneCallback,
+) callconv(.C) void {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    if (this.ref) |ref| ref.deref();
+    VirtualMachine.get().allocator.destroy(this);
+}
+
+pub fn create(globalThis: *JSGlobalObject) JSValue {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    var done_callback = bun.handleOom(globalThis.bunVM().allocator.create(DoneCallback));
+    done_callback.* = .{ .ref = null };
+
+    var done_callback_copy = bun.String.static("done");
+    const value = done_callback.toJS(globalThis, 1, &done_callback_copy);
+    value.ensureStillAlive();
+    return value;
+}
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+
+const describe2 = jsc.Jest.describe2;
+const BunTest = describe2.BunTest;
+const DoneCallback = describe2.DoneCallback;
+const groupLog = describe2.debug.group;

@@ -9,7 +9,7 @@ pub fn toBeGreaterThanOrEqual(this: *Expect, globalThis: *JSGlobalObject, callFr
         return globalThis.throwInvalidArguments("toBeGreaterThanOrEqual() requires 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const other_value = arguments[0];
     other_value.ensureStillAlive();
@@ -64,7 +64,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

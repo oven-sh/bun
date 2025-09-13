@@ -4,7 +4,7 @@ const { join } = require("node:path");
 const assert = require("node:assert");
 
 const expectedFile = readFileSync(join(__dirname, "02-hooks.json"), "utf-8");
-const { node, bun } = JSON.parse(expectedFile);
+const { node } = JSON.parse(expectedFile);
 const order = [];
 
 before(() => {
@@ -130,7 +130,7 @@ describe("execution order", () => {
 });
 
 after(() => {
-  // FIXME: Due to subtle differences between how Node.js and Bun (using `bun test`) run tests,
-  // this is a snapshot test. You must look at the snapshot to verify the output makes sense.
-  assert.deepEqual(order, "Bun" in globalThis ? bun : node);
+  console.log("%AFTER%");
+  Bun.jest("/").expect(order).toEqual(node);
+  assert.deepEqual(order, node);
 });

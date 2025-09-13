@@ -442,6 +442,11 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
     externs += `extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")}) SYSV_ABI;` + "\n";
   }
 
+  if (obj.instanceCallable) {
+    externs +=
+      `extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${symbolName(typeName, "callAsFunction")}) SYSV_ABI;` + "\n";
+  }
+
   for (const name in protoFields) {
     if ("value" in protoFields[name]) {
       const { value } = protoFields[name];
@@ -1394,13 +1399,17 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   }
 
   const final = obj.final ?? true;
+  const baseClass = obj.instanceCallable ? "JSC::InternalFunction" : "JSC::JSDestructibleObject";
+  const structureFlags = obj.instanceCallable
+    ? `Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""}`
+    : `Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""}`;
 
   return `
-  class ${name}${final ? " final" : ""} : public JSC::JSDestructibleObject {
+  class ${name}${final ? " final" : ""} : public ${baseClass} {
     public:
-        using Base = JSC::JSDestructibleObject;
-        static constexpr unsigned StructureFlags = Base::StructureFlags${obj.hasOwnProperties() ? ` | HasStaticPropertyTable` : ""};
-        static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+        using Base = ${baseClass};
+        static constexpr unsigned StructureFlags = ${structureFlags};
+        static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.instanceCallable ? `, unsigned int length, const String& name` : ``});
 
         DECLARE_EXPORT_INFO;
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -1418,7 +1427,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         static void destroy(JSC::JSCell*);
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
-            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(${JSType}), StructureFlags), info());
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(${obj.instanceCallable ? "JSC::InternalFunctionType" : `static_cast<JSC::JSType>(${JSType})`}, StructureFlags), info());
         }
 
         static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
@@ -1452,15 +1461,21 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         void* m_ctx { nullptr };
 
-
+        ${
+          obj.instanceCallable
+            ? `
+        ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr);
+        `
+            : `
         ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
             ${weakInit.trim()}
+        }`
         }
 
-        void finishCreation(JSC::VM&);
+        void finishCreation(JSC::VM&${obj.instanceCallable ? `, unsigned int length, const String& name` : ``});
 
         ${Object.entries(obj.custom ?? {})
           .map(([fieldName, field]) => {
@@ -1693,16 +1708,28 @@ void ${name}::destroy(JSCell* cell)
 
 const ClassInfo ${name}::s_info = { "${typeName}"_s, &Base::s_info, ${obj.hasOwnProperties() ? `&${typeName}Table` : "nullptr"}, nullptr, CREATE_METHOD_TABLE(${name}) };
 
-void ${name}::finishCreation(VM& vm)
+void ${name}::finishCreation(VM& vm${obj.instanceCallable ? `, unsigned int length, const String& name` : ``})
 {
-    Base::finishCreation(vm);
+    Base::finishCreation(vm${obj.instanceCallable ? `, length, name` : ``});
     ASSERT(inherits(info()));
 }
 
+${
+  obj.instanceCallable
+    ? `
+${name}::${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+            : Base(vm, structure, ${symbolName(typeName, "callAsFunction")}, nullptr)
+        {
+            m_ctx = sinkPtr;
+        }
+`
+    : ""
+}
 
-${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
+
+${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.instanceCallable ? `, unsigned int length, const String& name` : ``}) {
   ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx);
-  ptr->finishCreation(vm);
+  ptr->finishCreation(vm${obj.instanceCallable ? `, length, name` : ``});
   return ptr;
 }
 
@@ -1786,15 +1813,15 @@ ${
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, globalObject->objectPrototype());
+    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.instanceCallable ? "globalObject->functionPrototype()" : "globalObject->objectPrototype()"});
     structure->setMayBePrototype(true);
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }
 
-extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {
+extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr${obj.instanceCallable ? `, unsigned int length, BunString* name` : ``}) {
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
+  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.instanceCallable ? `, length, name->toWTFString()` : ``});
   ${
     obj.estimatedSize
       ? `
@@ -1868,6 +1895,7 @@ function generateZig(
     hasPendingActivity = false,
     structuredClone = false,
     getInternalProperties = false,
+    instanceCallable = false,
     callbacks = {},
   } = {} as ClassDefinition,
 ) {
@@ -2057,6 +2085,15 @@ const JavaScriptCoreBindings = struct {
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_call("${typeName}", callFrame);
           return @call(.always_inline, jsc.toJSHostFn(${typeName}.call), .{globalObject, callFrame});
+        }
+      `;
+    }
+    if (instanceCallable) {
+      exports.set("callAsFunction", symbolName(typeName, "callAsFunction"));
+      output += `
+        pub fn ${symbolName(typeName, "callAsFunction")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
+          if (comptime Environment.enable_logs) log_zig_call("${typeName} (instance call)", callFrame);
+          return jsc.toJSHostFnResult(globalObject, ${typeName}.callAsFunction(globalObject, callFrame));
         }
       `;
     }
@@ -2277,14 +2314,14 @@ pub const ${className(typeName)} = struct {
       !overridesToJS
         ? `
     /// Create a new instance of ${typeName}
-    pub fn toJS(this: *${typeName}, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *${typeName}, globalObject: *jsc.JSGlobalObject${instanceCallable ? `, length: c_uint, name: *bun.String` : ``}) jsc.JSValue {
         if (comptime Environment.enable_logs) log_zig_to_js("${typeName}");
         if (comptime Environment.allow_assert) {
-            const value__ = ${symbolName(typeName, "create")}(globalObject, this);
+            const value__ = ${symbolName(typeName, "create")}(globalObject, this${instanceCallable ? `, length, name` : ``});
             @import("bun").assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
-            return ${symbolName(typeName, "create")}(globalObject, this);
+            return ${symbolName(typeName, "create")}(globalObject, this${instanceCallable ? `, length, name` : ``});
         }
     }`
         : ""
@@ -2305,7 +2342,7 @@ pub const ${className(typeName)} = struct {
     extern fn ${symbolName(typeName, "fromJS")}(jsc.JSValue) callconv(jsc.conv) ?*${typeName};
     extern fn ${symbolName(typeName, "fromJSDirect")}(jsc.JSValue) callconv(jsc.conv) ?*${typeName};
     extern fn ${symbolName(typeName, "getConstructor")}(*jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
-    extern fn ${symbolName(typeName, "create")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}) callconv(jsc.conv) jsc.JSValue;
+    extern fn ${symbolName(typeName, "create")}(globalObject: *jsc.JSGlobalObject, ptr: ?*${typeName}${instanceCallable ? `, length: c_uint, name: *bun.String` : ``}) callconv(jsc.conv) jsc.JSValue;
 
     /// Create a new instance of ${typeName} without validating it works.
     pub const toJSUnchecked = ${symbolName(typeName, "create")};

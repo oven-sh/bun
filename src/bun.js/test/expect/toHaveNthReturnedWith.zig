@@ -16,7 +16,7 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
         return globalThis.throwInvalidArguments("toHaveNthReturnedWith() n must be greater than 0", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
     const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
     if (!returns.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -92,8 +92,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 const mock = bun.jsc.Expect.mock;
 
 const Expect = bun.jsc.Expect.Expect;

@@ -113,6 +113,13 @@ export class ClassDefinition {
    */
   call?: boolean;
   /**
+   * Make instances of this class callable like functions.
+   * When true, the generated class will extend InternalFunction instead of
+   * JSDestructibleObject/JSNonFinalObject, allowing instances to be called.
+   * The Zig implementation must provide a `callAsFunction` method.
+   */
+  instanceCallable?: boolean;
+  /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
    *

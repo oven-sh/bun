@@ -6,7 +6,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
     defer this.postMatch(globalThis);
     const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastCalledWith", "<green>...expected<r>");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
     if (!calls.jsType().isArray()) {
@@ -86,7 +86,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

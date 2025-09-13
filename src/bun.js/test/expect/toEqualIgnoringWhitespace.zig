@@ -9,7 +9,7 @@ pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, cal
         return globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected = arguments[0];
     const value: JSValue = try this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>");
@@ -86,7 +86,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

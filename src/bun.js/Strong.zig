@@ -147,5 +147,7 @@ const Impl = opaque {
     extern fn Bun__StrongRef__clear(this: *Impl) void;
 };
 
+pub const Safe = @import("./SafeStrong.zig");
+
 const bun = @import("bun");
 const jsc = bun.jsc;

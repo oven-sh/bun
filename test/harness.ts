@@ -60,6 +60,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
+  WANTS_QUIET: "1",
 };
 
 const ciEnv = { ...bunEnv };

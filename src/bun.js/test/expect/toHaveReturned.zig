@@ -7,7 +7,7 @@ inline fn toHaveReturnedTimesFn(this: *Expect, globalThis: *JSGlobalObject, call
 
     const value: JSValue = try this.getValue(globalThis, thisValue, @tagName(mode), "<green>expected<r>");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     var returns = try mock.jestMockIterator(globalThis, value);
 
@@ -84,8 +84,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 const mock = bun.jsc.Expect.mock;
 
 const Expect = bun.jsc.Expect.Expect;

@@ -608,41 +608,15 @@ pub const Lexer = struct {
                     lexer.token = T.t_comma;
                 },
                 ';' => {
-                    if (lexer.has_newline_before) {
-                        lexer.step();
-
-                        singleLineComment: while (true) {
-                            lexer.step();
-                            switch (lexer.code_point) {
-                                '\r', '\n', 0x2028, 0x2029 => {
-                                    break :singleLineComment;
-                                },
-                                -1 => {
-                                    break :singleLineComment;
-                                },
-                                else => {},
-                            }
-                        }
-                        continue;
+                    if (!lexer.has_newline_before) {
+                        try lexer.addDefaultError("Unexpected semicolon");
                     }
 
-                    try lexer.addDefaultError("Unexpected semicolon");
+                    lexer.discardTilEndOfLine();
+                    continue;
                 },
                 '#' => {
-                    lexer.step();
-
-                    singleLineComment: while (true) {
-                        lexer.step();
-                        switch (lexer.code_point) {
-                            '\r', '\n', 0x2028, 0x2029 => {
-                                break :singleLineComment;
-                            },
-                            -1 => {
-                                break :singleLineComment;
-                            },
-                            else => {},
-                        }
-                    }
+                    lexer.discardTilEndOfLine();
                     continue;
                 },
 
@@ -1141,10 +1115,22 @@ pub const Lexer = struct {
         }
     }
 
+    pub fn discardTilEndOfLine(lexer: *Lexer) void {
+        while (true) {
+            lexer.step();
+            switch (lexer.code_point) {
+                '\r', '\n', 0x2028, 0x2029, -1 => {
+                    return;
+                },
+                else => {},
+            }
+        }
+    }
+
     /// Valid times:
     /// * HH:MM:SS
     /// * HH:MM:SS.FRACTION, where the fractional portion must account for ms at minimum.
-    pub fn parseTime(_: Lexer) !void {}
+    pub fn parseTime(_: *Lexer) !void {}
 
     /// The TOML v1.0.0 spec allows three possible date configurations:
     /// * local date
@@ -1164,8 +1150,8 @@ pub const Lexer = struct {
         var hour: i8 = 2;
         var minute: i8 = 2;
         var second: i8 = 2;
-        // var offset_hour: i8 = 2;
-        // var offset_minute: i8 = 2;
+        var offset_hour: i8 = 2;
+        var offset_minute: i8 = 2;
 
         // non-numerics
         var expect_colon: bool = false;
@@ -1223,10 +1209,27 @@ pub const Lexer = struct {
                         second -= 1;
                         if (second == 0) {
                             expect_maybe_dot = true;
+                            expect_maybe_offset = true;
                         }
                         continue;
                     }
 
+                    if (offset_hour > 0) {
+                        offset_hour -= 1;
+                        if (offset_hour == 0) {
+                            expect_colon = true;
+                        }
+                        continue;
+                    }
+
+                    if (offset_minute > 0) {
+                        offset_minute -= 1;
+                        if (offset_minute == 0) {
+                            // last possible character of a datetime
+                            break;
+                        }
+                        continue;
+                    }
                 },
                 '-' => {
                     // '-' is overloaded as a date separator as well as an offset +/-
@@ -1239,7 +1242,7 @@ pub const Lexer = struct {
                     expect_maybe_offset = false;
                 },
                 'z', 'Z' => {
-                    if (!expect_maybe_offset) {
+                    if (!expect_maybe_offset and !expect_maybe_dot) {
                         std.log.debug("Got an unexpected 'Z' while parsing datetime.", .{});
                         try lexer.syntaxError();
                     }
@@ -1253,6 +1256,7 @@ pub const Lexer = struct {
                     expect_colon = false;
                 },
                 ' ', 't', 'T' => {
+                    // TODO (jcromer): consider the case where a comment starts here
                     if (!expect_maybe_space_or_t) {
                         std.log.debug("Got an unexpected ' ' or 'T' while parsing datetime.", .{});
                         try lexer.syntaxError();
@@ -1261,7 +1265,7 @@ pub const Lexer = struct {
                     continue;
                 },
                 '\n' => {
-                    if (!expect_maybe_offset and !expect_maybe_space_or_t) {
+                    if (!expect_maybe_offset and !expect_maybe_space_or_t and !expect_maybe_dot) {
                         std.log.debug("Got an unexpected newline while parsing datetime.", .{});
                         try lexer.syntaxError();
                     }

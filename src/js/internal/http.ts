@@ -199,14 +199,6 @@ function validateMsecs(numberlike: any, field: string) {
   return numberlike;
 }
 
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-    this.name = "ConnResetException";
-  }
-}
-
 const METHODS = [
   "ACL",
   "BIND",
@@ -348,6 +340,20 @@ function hasServerResponseFinished(self, chunk, callback) {
   return false;
 }
 
+let utcCache;
+function utcDate() {
+  if (!utcCache) cache();
+  return utcCache;
+}
+function cache() {
+  const d = new Date();
+  utcCache = d.toUTCString();
+  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
+}
+function resetCache() {
+  utcCache = undefined;
+}
+
 function emitErrorNt(msg, err, callback) {
   if ($isCallable(callback)) {
     callback(err);
@@ -359,9 +365,10 @@ function emitErrorNt(msg, err, callback) {
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
+const kNeedDrain = Symbol("kNeedDrain");
+const kBunServer = Symbol("kBunServer");
 
 export {
-  ConnResetException,
   Headers,
   METHODS,
   STATUS_CODES,
@@ -393,6 +400,7 @@ export {
   kAbortController,
   kAgent,
   kBodyChunks,
+  kBunServer,
   kClearTimeout,
   kCloseCallback,
   kDeferredTimeouts,
@@ -406,6 +414,7 @@ export {
   kMaxHeaderSize,
   kMaxHeadersCount,
   kMethod,
+  kNeedDrain,
   kOptions,
   kOutHeaders,
   kParser,
@@ -439,6 +448,7 @@ export {
   timeoutTimerSymbol,
   tlsSymbol,
   typeSymbol,
+  utcDate,
   validateMsecs,
   webRequestOrResponse,
   webRequestOrResponseHasBodyValue,

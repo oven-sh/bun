@@ -193,7 +193,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         const versions_array = bun.ast.Expr.init(
             bun.ast.E.Array,
             bun.ast.E.Array{
-                .items = .init(keys),
+                .items = .fromOwnedSlice(keys),
             },
             .{ .start = -1 },
         );

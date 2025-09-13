@@ -4369,45 +4369,45 @@ bool JSC__JSValue__stringIncludes(JSC::EncodedJSValue value, JSC::JSGlobalObject
     return stringToSearchIn.find(searchString, 0) != WTF::notFound;
 }
 
-static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
+static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const JSC::StackFrame& stackFrame, ZigStackFrame& frame)
 {
 
-    if (stackFrame->isWasmFrame()) {
-        frame->code_type = ZigStackFrameCodeWasm;
+    if (stackFrame.isWasmFrame()) {
+        frame.code_type = ZigStackFrameCodeWasm;
 
-        auto name = Zig::functionName(vm, globalObject, *stackFrame, false, nullptr);
+        auto name = Zig::functionName(vm, globalObject, stackFrame, false, nullptr);
         if (!name.isEmpty()) {
-            frame->function_name = Bun::toStringRef(name);
+            frame.function_name = Bun::toStringRef(name);
         }
 
-        auto sourceURL = Zig::sourceURL(vm, *stackFrame);
+        auto sourceURL = Zig::sourceURL(vm, stackFrame);
         if (sourceURL != "[wasm code]"_s) {
             // [wasm code] is a useless source URL, so we don't bother to set it.
             // It is the default value JSC returns.
-            frame->source_url = Bun::toStringRef(sourceURL);
+            frame.source_url = Bun::toStringRef(sourceURL);
         }
         return;
     }
 
-    auto sourceURL = Zig::sourceURL(vm, *stackFrame);
-    frame->source_url = Bun::toStringRef(sourceURL);
-    auto m_codeBlock = stackFrame->codeBlock();
+    auto sourceURL = Zig::sourceURL(vm, stackFrame);
+    frame.source_url = Bun::toStringRef(sourceURL);
+    auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode: {
-            frame->code_type = ZigStackFrameCodeEval;
+            frame.code_type = ZigStackFrameCodeEval;
             return;
         }
         case JSC::ModuleCode: {
-            frame->code_type = ZigStackFrameCodeModule;
+            frame.code_type = ZigStackFrameCodeModule;
             return;
         }
         case JSC::GlobalCode: {
-            frame->code_type = ZigStackFrameCodeGlobal;
+            frame.code_type = ZigStackFrameCodeGlobal;
             return;
         }
         case JSC::FunctionCode: {
-            frame->code_type = !m_codeBlock->isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
+            frame.code_type = !m_codeBlock->isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
             break;
         }
         default:
@@ -4415,7 +4415,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
         }
     }
 
-    auto calleeCell = stackFrame->callee();
+    auto calleeCell = stackFrame.callee();
     if (!calleeCell)
         return;
 
@@ -4425,17 +4425,17 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
     WTF::String functionName = Zig::functionName(vm, globalObject, callee);
     if (!functionName.isEmpty()) {
-        frame->function_name = Bun::toStringRef(functionName);
+        frame.function_name = Bun::toStringRef(functionName);
     }
 
-    frame->is_async = stackFrame->isAsyncFrame();
+    frame.is_async = stackFrame.isAsyncFrame();
 }
 
-static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
+static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition* position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
+    ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
-    auto code = stackFrame->codeBlock();
+    auto code = stackFrame.codeBlock();
     if (!code)
         return;
 
@@ -4448,19 +4448,19 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     if (sourceString.isNull()) [[unlikely]]
         return;
 
-    if (!stackFrame->hasBytecodeIndex()) {
-        if (stackFrame->hasLineAndColumnInfo()) {
-            auto lineColumn = stackFrame->computeLineAndColumn();
-            position->line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-            position->column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+    if (!stackFrame.hasBytecodeIndex()) {
+        if (stackFrame.hasLineAndColumnInfo()) {
+            auto lineColumn = stackFrame.computeLineAndColumn();
+            position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+            position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
         }
 
-        position->byte_position = -1;
+        position.byte_position = -1;
         return;
     }
 
-    auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame->bytecodeIndex());
-    *position = location;
+    auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex());
+    memcpy(&position, &location, sizeof(ZigStackFramePosition));
     if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;
 
@@ -4528,18 +4528,18 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     }
 }
 
-static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::StackFrame* stackFrame,
-    ZigStackFrame* frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
+static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::StackFrame& stackFrame,
+    ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         populateStackFrameMetadata(vm, globalObject, stackFrame, frame);
         populateStackFramePosition(stackFrame, nullptr,
             nullptr,
-            0, &frame->position, referenced_source_provider, flags);
+            0, frame.position, referenced_source_provider, flags);
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
-        populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
-            is_top ? trace->source_lines_numbers : nullptr,
-            is_top ? trace->source_lines_to_collect : 0, &frame->position, referenced_source_provider, flags);
+        populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
+            is_top ? trace.source_lines_numbers : nullptr,
+            is_top ? trace.source_lines_to_collect : 0, frame.position, referenced_source_provider, flags);
     }
 }
 
@@ -4716,27 +4716,27 @@ public:
     }
 };
 
-static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
+static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
 {
     uint8_t frame_i = 0;
     size_t stack_frame_i = 0;
     const size_t total_frame_count = frames.size();
-    const uint8_t frame_count = total_frame_count < trace->frames_len ? total_frame_count : trace->frames_len;
+    const uint8_t frame_count = total_frame_count < trace.frames_cap ? total_frame_count : trace.frames_cap;
 
     while (frame_i < frame_count && stack_frame_i < total_frame_count) {
         // Skip native frames
-        while (stack_frame_i < total_frame_count && !(&frames.at(stack_frame_i))->hasLineAndColumnInfo() && !(&frames.at(stack_frame_i))->isWasmFrame()) {
+        while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
             stack_frame_i++;
         }
         if (stack_frame_i >= total_frame_count)
             break;
 
-        ZigStackFrame* frame = &trace->frames_ptr[frame_i];
-        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0, &trace->referenced_source_provider, globalObject, flags);
+        ZigStackFrame& frame = trace.frames_ptr[frame_i];
+        populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags);
         stack_frame_i++;
         frame_i++;
     }
-    trace->frames_len = frame_i;
+    trace.frames_len = frame_i;
 }
 
 static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* obj, const JSC::PropertyName& propertyName)
@@ -4768,10 +4768,10 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, &except->stack, global, flags);
+        populateStackTrace(vm, *stackTrace, except->stack, global, flags);
 
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(vm, *err->stackTrace(), &except->stack, global, flags);
+        populateStackTrace(vm, *err->stackTrace(), except->stack, global, flags);
 
     } else {
         getFromSourceURL = true;
@@ -4863,63 +4863,62 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
     if (getFromSourceURL) {
 
-        {
-            // we don't want to serialize JSC::StackFrame longer than we need to
-            // so in this case, we parse the stack trace as a string
+        // we don't want to serialize JSC::StackFrame longer than we need to
+        // so in this case, we parse the stack trace as a string
 
-            // This one intentionally calls getters.
-            JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
-            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-                return;
-            if (stackValue) {
-                if (stackValue.isString()) {
-                    WTF::String stack = stackValue.toWTFString(global);
-                    if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
-                        return;
-                    }
-                    if (!stack.isEmpty()) {
+        // This one intentionally calls getters.
+        JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+            return;
+        if (stackValue) {
+            if (stackValue.isString()) {
+                WTF::String stack = stackValue.toWTFString(global);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+                    return;
+                }
+                if (!stack.isEmpty()) {
 
-                        V8StackTraceIterator iterator(stack);
-                        const uint8_t frame_count = except->stack.frames_len;
+                    V8StackTraceIterator iterator(stack);
+                    const uint8_t frame_count = except->stack.frames_cap;
 
-                        except->stack.frames_len = 0;
+                    except->stack.frames_len = 0;
 
-                        iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
-                            ASSERT(except->stack.frames_len < frame_count);
-                            auto& current = except->stack.frames_ptr[except->stack.frames_len];
-                            current = {};
+                    iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
+                        ASSERT(except->stack.frames_len < frame_count);
+                        auto& current = except->stack.frames_ptr[except->stack.frames_len];
+                        current = {};
 
-                            String functionName = frame.functionName.toString();
-                            String sourceURL = frame.sourceURL.toString();
-                            current.function_name = Bun::toStringRef(functionName);
-                            current.source_url = Bun::toStringRef(sourceURL);
-                            current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
-                            current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
+                        String functionName = frame.functionName.toString();
+                        String sourceURL = frame.sourceURL.toString();
+                        current.function_name = Bun::toStringRef(functionName);
+                        current.source_url = Bun::toStringRef(sourceURL);
+                        current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
+                        current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
 
-                            current.remapped = true;
-                            current.is_async = frame.isAsync;
+                        current.remapped = true;
+                        current.is_async = frame.isAsync;
 
-                            if (frame.isConstructor) {
-                                current.code_type = ZigStackFrameCodeConstructor;
-                            } else if (frame.isGlobalCode) {
-                                current.code_type = ZigStackFrameCodeGlobal;
-                            }
-
-                            except->stack.frames_len += 1;
-
-                            stop = except->stack.frames_len >= frame_count;
-                        });
-
-                        if (except->stack.frames_len > 0) {
-                            getFromSourceURL = false;
-                            except->remapped = true;
-                        } else {
-                            except->stack.frames_len = frame_count;
+                        if (frame.isConstructor) {
+                            current.code_type = ZigStackFrameCodeConstructor;
+                        } else if (frame.isGlobalCode) {
+                            current.code_type = ZigStackFrameCodeGlobal;
                         }
+
+                        except->stack.frames_len += 1;
+
+                        stop = except->stack.frames_len >= frame_count;
+                    });
+
+                    if (except->stack.frames_len > 0) {
+                        getFromSourceURL = false;
+                        except->remapped = true;
                     }
                 }
             }
         }
+    }
+
+    if (except->stack.frames_len == 0 && getFromSourceURL) {
 
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
@@ -4975,8 +4974,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
         }
     }
+}
 
-    except->exception = err;
+except->exception = err;
 }
 
 void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobalObject* global)
@@ -5269,7 +5269,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
         }
 
         if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), &exception->stack, global, PopulateStackTraceFlags::OnlyPosition);
+            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlyPosition);
         }
 
         exceptionFromString(exception, unwrapped, global);
@@ -5296,7 +5296,7 @@ void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGl
         JSValue unwrapped = jscException->value();
 
         if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), &exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
         }
 
         exceptionFromString(exception, unwrapped, global);
@@ -5305,7 +5305,7 @@ void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGl
 
     if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
         if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
-            populateStackTrace(global->vm(), *error->stackTrace(), &exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
         }
         return;
     }
@@ -5377,7 +5377,7 @@ bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)
 {
-    populateStackTrace(arg0->vm(), arg0->stack(), trace, global, PopulateStackTraceFlags::OnlyPosition);
+    populateStackTrace(arg0->vm(), arg0->stack(), *trace, global, PopulateStackTraceFlags::OnlyPosition);
 }
 
 void JSC__VM__shrinkFootprint(JSC::VM* arg0)

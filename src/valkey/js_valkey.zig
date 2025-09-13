@@ -374,9 +374,6 @@ pub const JSValkeyClient = struct {
 
         this.client.status = .connecting;
 
-        // Set retry to 0 to avoid incremental backoff from previous attempts
-        this.client.retry_attempts = 0;
-
         // Ref the poll to keep event loop alive during connection
         this.poll_ref.disable();
         this.poll_ref = .{};
@@ -653,6 +650,7 @@ pub const JSValkeyClient = struct {
     pub const getex = fns.getex;
     pub const getset = fns.getset;
     pub const hgetall = fns.hgetall;
+    pub const hget = fns.hget;
     pub const hincrby = fns.hincrby;
     pub const hincrbyfloat = fns.hincrbyfloat;
     pub const hkeys = fns.hkeys;

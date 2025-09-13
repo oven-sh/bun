@@ -191,7 +191,9 @@ declare module "bun" {
      * };
      * ```
      */
-    export type SSGPage<Params extends SSGParamsLike = SSGParamsLike> = React.ComponentType<SSGPageProps<Params>>;
+    export type SSGPage<Params extends SSGParamsLike = SSGParamsLike> = import("react").ComponentType<
+      SSGPageProps<Params>
+    >;
 
     /**
      * getStaticPaths is Bun's implementation of SSG (Static Site Generation) path determination.

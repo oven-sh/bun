@@ -1245,7 +1245,7 @@ describe("fetch() with streaming", () => {
               expect((err as Error).code).toBe("BrotliDecompressionError");
             } else if (compression === "deflate-libdeflate") {
               expect((err as Error).name).toBe("Error");
-              expect((err as Error).code).toBe("ShortRead");
+              expect((err as Error).code).toBe("ZlibError");
             } else if (compression === "zstd") {
               expect((err as Error).name).toBe("Error");
               expect((err as Error).code).toBe("ZstdDecompressionError");

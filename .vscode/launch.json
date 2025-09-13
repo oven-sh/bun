@@ -22,6 +22,9 @@
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+        // "BUN_JSC_validateExceptionChecks": "1",
+        // "BUN_JSC_dumpSimulatedThrows": "1",
+        // "BUN_JSC_unexpectedExceptionStackTraceLimit": "20",
       },
       "console": "internalConsole",
       "sourceMap": {

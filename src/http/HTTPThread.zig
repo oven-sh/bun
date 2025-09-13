@@ -323,8 +323,8 @@ fn drainEvents(this: *@This()) void {
                             if (client.state.original_request_body == .stream) {
                                 var stream = &client.state.original_request_body.stream;
                                 stream.ended = ended;
-                                if (messageType == .endChunked) {
-                                    // only send the 0-length chunk if the request body is chunked
+                                if (messageType == .endChunked and client.flags.upgrade_state != .upgraded) {
+                                    // only send the 0-length chunk if the request body is chunked and not upgraded
                                     client.writeToStream(is_tls, socket, bun.http.end_of_chunked_http1_1_encoding_response_body);
                                 } else {
                                     client.flushStream(is_tls, socket);
@@ -406,7 +406,7 @@ pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {
         this.queued_shutdowns.append(bun.default_allocator, .{
             .async_http_id = http.async_http_id,
             .is_tls = http.client.isHTTPS(),
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -422,7 +422,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
                 .is_tls = http.client.isHTTPS(),
                 .type = messageType,
             },
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
@@ -431,7 +431,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
 pub fn scheduleProxyDeref(this: *@This(), proxy: *ProxyTunnel) void {
     // this is always called on the http thread
     {
-        this.queued_proxy_deref.append(bun.default_allocator, proxy) catch bun.outOfMemory();
+        bun.handleOom(this.queued_proxy_deref.append(bun.default_allocator, proxy));
     }
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();

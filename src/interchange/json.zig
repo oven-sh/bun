@@ -194,7 +194,7 @@ fn JSONLikeParser_(
                     }
                     try p.lexer.expect(.t_close_bracket);
                     return newExpr(E.Array{
-                        .items = ExprNodeList.fromList(exprs),
+                        .items = ExprNodeList.moveFromList(&exprs),
                         .is_single_line = is_single_line,
                         .was_originally_macro = comptime opts.was_originally_macro,
                     }, loc);
@@ -266,7 +266,7 @@ fn JSONLikeParser_(
                     }
                     try p.lexer.expect(.t_close_brace);
                     return newExpr(E.Object{
-                        .properties = G.Property.List.fromList(properties),
+                        .properties = G.Property.List.moveFromList(&properties),
                         .is_single_line = is_single_line,
                         .was_originally_macro = comptime opts.was_originally_macro,
                     }, loc);
@@ -552,21 +552,20 @@ pub fn toAST(
         },
         .@"struct" => |Struct| {
             const fields: []const std.builtin.Type.StructField = Struct.fields;
-            var properties = try allocator.alloc(js_ast.G.Property, fields.len);
-            var property_i: usize = 0;
+            var properties = try BabyList(js_ast.G.Property).initCapacity(allocator, fields.len);
+
             inline for (fields) |field| {
-                properties[property_i] = G.Property{
+                properties.appendAssumeCapacity(G.Property{
                     .key = Expr.init(E.String, E.String{ .data = field.name }, logger.Loc.Empty),
                     .value = try toAST(allocator, field.type, @field(value, field.name)),
-                };
-                property_i += 1;
+                });
             }
 
             return Expr.init(
                 js_ast.E.Object,
                 js_ast.E.Object{
-                    .properties = BabyList(G.Property).init(properties[0..property_i]),
-                    .is_single_line = property_i <= 1,
+                    .properties = properties,
+                    .is_single_line = properties.len <= 1,
                 },
                 logger.Loc.Empty,
             );

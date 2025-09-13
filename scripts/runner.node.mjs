@@ -164,10 +164,6 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
-    ["leaksan"]: {
-      type: "boolean",
-      default: false, // turn this true when more passes
-    },
   },
 });
 
@@ -590,13 +586,10 @@ async function runTests() {
               env.BUN_JSC_validateExceptionChecks = "1";
               env.BUN_JSC_dumpSimulatedThrows = "1";
             }
-            if (
-              (basename(execPath).includes("asan") || (!isCI && options["leaksan"])) &&
-              shouldValidateLeakSan(testPath)
-            ) {
+            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
               env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
               env["ASAN_OPTIONS=detect_leaks"] = "1";
-              env["LSAN_OPTIONS"] = "suppressions=test/leaksan.supp";
+              env["LSAN_OPTIONS"] = "malloc_context_size=100:suppressions=test/leaksan.supp";
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1322,10 +1315,10 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.BUN_JSC_validateExceptionChecks = "1";
     env.BUN_JSC_dumpSimulatedThrows = "1";
   }
-  if ((basename(execPath).includes("asan") || (!isCI && options["leaksan"])) && shouldValidateLeakSan(testPath)) {
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
     env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
     env["ASAN_OPTIONS=detect_leaks"] = "1";
-    env["LSAN_OPTIONS"] = "suppressions=test/leaksan.supp";
+    env["LSAN_OPTIONS"] = "malloc_context_size=100:suppressions=test/leaksan.supp";
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {

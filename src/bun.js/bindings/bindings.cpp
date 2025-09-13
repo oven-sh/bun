@@ -4917,6 +4917,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             return;
         if (sourceURL) {
             if (sourceURL.isString()) {
+                except->stack.frames_ptr[0].source_url.deref();
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
@@ -4958,6 +4959,11 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
 
             {
+                for (int i = 1; i < except->stack.frames_len; i++) {
+                    auto frame = except->stack.frames_ptr[i];
+                    frame.function_name.deref();
+                    frame.source_url.deref();
+                }
                 except->stack.frames_len = 1;
                 PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
                 except->stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);

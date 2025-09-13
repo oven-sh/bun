@@ -953,7 +953,7 @@ pub const StandaloneModuleGraph = struct {
                 }
 
                 // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
-                _ = file.writeAll(std.mem.asBytes(&bytes.len));
+                _ = file.writeAll(std.mem.asBytes(&total_byte_count));
                 if (comptime !Environment.isWindows) {
                     _ = file.fchmod(0o777);
                 }

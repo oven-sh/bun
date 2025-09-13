@@ -291,22 +291,21 @@ describe("change-case compatibility tests", () => {
         trainCase: "Special-Characters",
       },
     },
-    // Unicode (commented out - current implementation is ASCII-only)
-    // TODO: Add UTF-8 support for full compatibility
-    // {
-    //   input: "café_münchen",
-    //   expected: {
-    //     camelCase: "caféMünchen",
-    //     pascalCase: "CaféMünchen",
-    //     snakeCase: "café_münchen",
-    //     kebabCase: "café-münchen",
-    //     screamingSnakeCase: "CAFÉ_MÜNCHEN",
-    //     constantCase: "CAFÉ_MÜNCHEN",
-    //     dotCase: "café.münchen",
-    //     capitalCase: "Café München",
-    //     trainCase: "Café-München",
-    //   },
-    // },
+    // Unicode with accented characters
+    {
+      input: "café_münchen",
+      expected: {
+        camelCase: "caféMünchen",
+        pascalCase: "CaféMünchen",
+        snakeCase: "café_münchen",
+        kebabCase: "café-münchen",
+        screamingSnakeCase: "CAFÉ_MÜNCHEN",
+        constantCase: "CAFÉ_MÜNCHEN",
+        dotCase: "café.münchen",
+        capitalCase: "Café München",
+        trainCase: "Café-München",
+      },
+    },
     // Single letter
     {
       input: "a",

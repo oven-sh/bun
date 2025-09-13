@@ -3796,7 +3796,13 @@ pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: b
     }
 }
 
-pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+pub fn moveFileZWithHandle(
+    from_handle: bun.FileDescriptor,
+    from_dir: bun.FileDescriptor,
+    filename: [:0]const u8,
+    to_dir: bun.FileDescriptor,
+    destination: [:0]const u8,
+) !void {
     switch (renameat(from_dir, filename, to_dir, destination)) {
         .err => |err| {
             // allow over-writing an empty directory

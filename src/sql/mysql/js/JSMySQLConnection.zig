@@ -151,6 +151,7 @@ pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame)
 }
 
 pub fn enqueueRequest(this: *@This(), item: *JSMySQLQuery) void {
+    debug("enqueueRequest", .{});
     this.#connection.enqueueRequest(item);
     this.resetConnectionTimeout();
     this.registerAutoFlusher();
@@ -660,7 +661,7 @@ pub fn onConnectionEstabilished(this: *@This()) void {
 pub fn onQueryResult(this: *@This(), request: *JSMySQLQuery, result: MySQLQueryResult) void {
     request.resolve(this.getQueriesArray(), result);
 }
-pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStatement, Context: type, reader: NewReader(Context)) !void {
+pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStatement, Context: type, reader: NewReader(Context)) error{ShortRead}!void {
     const result_mode = request.getResultMode();
     var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = stack_fallback.get();
@@ -683,7 +684,14 @@ pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStat
         },
     }
     defer row.deinit(allocator);
-    try row.decode(allocator, reader);
+    row.decode(allocator, reader) catch |err| {
+        if (err == error.ShortRead) {
+            return error.ShortRead;
+        }
+        this.#connection.queue.markCurrentRequestAsFinished(request);
+        request.reject(this.getQueriesArray(), err);
+        return;
+    };
     const pending_value = request.getPendingValue() orelse .js_undefined;
     // Process row data
     const row_value = row.toJS(

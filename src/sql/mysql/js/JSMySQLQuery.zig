@@ -117,7 +117,7 @@ pub fn doRun(this: *@This(), globalObject: *jsc.JSGlobalObject, callframe: *jsc.
         }
         return error.JSError;
     };
-
+    connection.enqueueRequest(this);
     return .js_undefined;
 }
 pub fn doCancel(_: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
@@ -260,10 +260,12 @@ pub fn rejectWithJSValue(this: *@This(), queries_array: JSValue, err: JSValue) v
 
 pub fn run(this: *@This(), connection: *MySQLConnection) AnyMySQLError.Error!void {
     if (this.#vm.isShuttingDown()) {
+        debug("run cannot run a query if the VM is shutting down", .{});
         // cannot run a query if the VM is shutting down
         return;
     }
     if (!this.#query.isPending() or this.#query.isBeingPrepared()) {
+        debug("run already running or being prepared", .{});
         // already running or completed
         return;
     }
@@ -277,11 +279,11 @@ pub fn run(this: *@This(), connection: *MySQLConnection) AnyMySQLError.Error!voi
     const columns_value = this.getColumns() orelse .js_undefined;
     const binding_value = this.getBinding() orelse .js_undefined;
     this.#query.runQuery(connection, globalObject, columns_value, binding_value) catch |err| {
+        debug("run failed to execute query", .{});
         if (!globalObject.hasException())
             return globalObject.throwValue(AnyMySQLError.mysqlErrorToJS(globalObject, "failed to execute query", err));
         return error.JSError;
     };
-    connection.enqueueRequest(this);
 }
 pub inline fn isCompleted(this: *@This()) bool {
     return this.#query.isCompleted();

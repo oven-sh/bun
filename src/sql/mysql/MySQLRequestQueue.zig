@@ -22,6 +22,10 @@ pub inline fn canPrepareQuery(this: *@This(), connection: *MySQLConnection) bool
 pub inline fn markAsReadyForQuery(this: *@This()) void {
     this.#is_ready_for_query = true;
     this.#waiting_to_prepare = false;
+    if (this.current()) |request| {
+        debug("markAsReadyForQuery markAsPrepared", .{});
+        request.markAsPrepared();
+    }
 }
 pub inline fn canPipeline(this: *@This(), connection: *MySQLConnection) bool {
     if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
@@ -44,6 +48,8 @@ pub fn markCurrentRequestAsFinished(this: *@This(), item: *JSMySQLQuery) void {
         }
     }
     if (item.isBeingPrepared()) {
+        debug("markCurrentRequestAsFinished markAsPrepared", .{});
+        item.markAsPrepared();
         this.#waiting_to_prepare = false;
     }
 }
@@ -56,6 +62,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
             // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
             // so we do the cleanup her
             if (request.isCompleted()) {
+                debug("isCompleted discard after advance", .{});
                 this.#requests.discard(1);
                 request.deref();
                 continue;
@@ -73,16 +80,19 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
                 offset += 1;
                 continue;
             }
+            debug("isCompleted", .{});
             this.#requests.discard(1);
             request.deref();
             continue;
         }
 
         if (request.isBeingPrepared()) {
+            debug("isBeingPrepared", .{});
             // cannot continue the queue until the current request is marked as prepared
             return;
         }
         if (request.isRunning()) {
+            debug("isRunning", .{});
             const total_requests_running = this.#pipelined_requests + this.#nonpipelinable_requests;
             if (offset < total_requests_running) {
                 offset += total_requests_running;
@@ -93,13 +103,17 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
         }
 
         request.run(connection) catch |err| {
+            debug("run failed", .{});
             connection.onError(request, err);
             if (offset == 0) {
                 this.#requests.discard(1);
                 request.deref();
             }
+            offset += 1;
+            continue;
         };
         if (request.isRunning()) {
+            debug("isRunning after run", .{});
             this.#is_ready_for_query = false;
             if (request.isBeingPrepared()) {
                 this.#waiting_to_prepare = true;
@@ -108,12 +122,13 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
             if (request.wasPipelined()) {
                 this.#pipelined_requests += 1;
                 if (this.canPipeline(connection)) {
+                    debug("pipelined requests", .{});
                     offset += 1;
                     continue;
                 }
                 return;
             }
-
+            debug("nonpipelinable requests", .{});
             this.#nonpipelinable_requests += 1;
         }
         return;
@@ -129,6 +144,7 @@ pub fn isEmpty(this: *@This()) bool {
 }
 
 pub fn add(this: *@This(), request: *JSMySQLQuery) void {
+    debug("add", .{});
     if (request.isRunning()) {
         this.#is_ready_for_query = false;
         if (request.isBeingPrepared()) {
@@ -196,3 +212,4 @@ const std = @import("std");
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
+const debug = bun.Output.scoped(.MySQLRequestQueue, .visible);

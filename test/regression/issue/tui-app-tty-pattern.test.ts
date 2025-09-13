@@ -100,10 +100,8 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
     TTY_REOPENED:SUCCESS"
   `);
 
-  // Then check exit code - On some platforms script may exit with 1 even on success
-  if (exitCode !== 0 && !stdout.includes("TTY_REOPENED:SUCCESS")) {
-    throw new Error(`Test failed with exit code ${exitCode}`);
-  }
+  // Then check exit code
+  expect(exitCode).toBe(0);
 });
 
 // Test that tty.ReadStream works correctly with various file descriptors

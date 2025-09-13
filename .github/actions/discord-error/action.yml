@@ -1,0 +1,53 @@
+name: Discord Error Notification
+description: Send error notification to Discord webhook for release failures
+inputs:
+  job-name:
+    description: Name of the job that failed
+    required: true
+  step-name:
+    description: Name of the step that failed
+    required: true
+  version:
+    description: Version being released
+    required: true
+  webhook-url:
+    description: Discord webhook URL
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Send Discord Notification
+      shell: bash
+      run: |
+        # Generate timestamp
+        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+        
+        # Send notification silently (no output to prevent webhook URL exposure)
+        curl -s -X POST "${{ inputs.webhook-url }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "embeds": [{
+              "title": "❌ Release Workflow Failed",
+              "description": "**Job:** ${{ inputs.job-name }}\n**Step:** ${{ inputs.step-name }}\n**Version:** ${{ inputs.version }}",
+              "color": 15158332,
+              "fields": [
+                {
+                  "name": "Workflow",
+                  "value": "${{ github.workflow }}",
+                  "inline": true
+                },
+                {
+                  "name": "Run",
+                  "value": "[#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})",
+                  "inline": true
+                },
+                {
+                  "name": "Triggered By",
+                  "value": "${{ github.event_name }}",
+                  "inline": true
+                }
+              ],
+              "timestamp": "'"$TIMESTAMP"'"
+            }]
+          }' 2>/dev/null

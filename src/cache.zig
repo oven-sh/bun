@@ -14,7 +14,7 @@ pub const Set = struct {
         };
     }
 };
-const debug = Output.scoped(.fs, false);
+const debug = Output.scoped(.fs, .visible);
 pub const Fs = struct {
     pub const Entry = struct {
         contents: string,

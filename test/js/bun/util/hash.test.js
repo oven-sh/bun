@@ -44,6 +44,9 @@ it(`Bun.hash.xxHash64()`, () => {
   gcTick();
   expect(Bun.hash.xxHash64(new TextEncoder().encode("hello world"))).toBe(0x45ab6734b21e6968n);
   gcTick();
+  // Test with seed larger than u32
+  expect(Bun.hash.xxHash64("", 16269921104521594740n)).toBe(3224619365169652240n);
+  gcTick();
 });
 it(`Bun.hash.xxHash3()`, () => {
   expect(Bun.hash.xxHash3("hello world")).toBe(0xd447b1ea40e6988bn);

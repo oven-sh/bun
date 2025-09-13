@@ -582,7 +582,7 @@ pub const bitcount = compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key").c
 pub const dump = compile.@"(key: RedisKey)"("dump", "DUMP", "key").call;
 pub const expiretime = compile.@"(key: RedisKey)"("expiretime", "EXPIRETIME", "key").call;
 pub const getdel = compile.@"(key: RedisKey)"("getdel", "GETDEL", "key").call;
-pub const getex = compile.@"(key: RedisKey)"("getex", "GETEX", "key").call;
+pub const getex = compile.@"(...strings: string[])"("getex", "GETEX").call;
 pub const hgetall = compile.@"(key: RedisKey)"("hgetall", "HGETALL", "key").call;
 pub const hkeys = compile.@"(key: RedisKey)"("hkeys", "HKEYS", "key").call;
 pub const hlen = compile.@"(key: RedisKey)"("hlen", "HLEN", "key").call;
@@ -604,6 +604,7 @@ pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER",
 
 pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call;
 pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call;
+pub const hget = compile.@"(key: RedisKey, value: RedisValue)"("hget", "HGET", "key", "field").call;
 pub const lpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH").call;
 pub const lpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpushx", "LPUSHX").call;
 pub const pfadd = compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD", "key", "value").call;

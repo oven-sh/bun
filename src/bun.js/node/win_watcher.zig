@@ -4,7 +4,7 @@ var default_manager: ?*PathWatcherManager = null;
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
-    const log = Output.scoped(.PathWatcherManager, false);
+    const log = Output.scoped(.PathWatcherManager, .visible);
 
     watchers: bun.StringArrayHashMapUnmanaged(*PathWatcher) = .{},
     vm: *jsc.VirtualMachine,
@@ -71,7 +71,7 @@ pub const PathWatcher = struct {
 
     pub const new = bun.TrivialNew(PathWatcher);
 
-    const log = Output.scoped(.@"fs.watch", false);
+    const log = Output.scoped(.@"fs.watch", .visible);
 
     pub const ChangeEvent = struct {
         hash: Watcher.HashType = 0,
@@ -140,7 +140,7 @@ pub const PathWatcher = struct {
                 const ctx: *FSWatcher = @alignCast(@ptrCast(this.handlers.keys()[i]));
                 onPathUpdateFn(ctx, event_type.toEvent(switch (ctx.encoding) {
                     .utf8 => .{ .string = bun.String.cloneUTF8(path) },
-                    else => .{ .bytes_to_free = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory() },
+                    else => .{ .bytes_to_free = bun.handleOom(bun.default_allocator.dupeZ(u8, path)) },
                 }), is_file);
                 if (comptime bun.Environment.isDebug)
                     debug_count += 1;
@@ -176,7 +176,7 @@ pub const PathWatcher = struct {
             .result => |event_path| event_path,
         };
 
-        const watchers_entry = manager.watchers.getOrPut(bun.default_allocator, @as([]const u8, event_path)) catch bun.outOfMemory();
+        const watchers_entry = bun.handleOom(manager.watchers.getOrPut(bun.default_allocator, @as([]const u8, event_path)));
         if (watchers_entry.found_existing) {
             return .{ .result = watchers_entry.value_ptr.* };
         }
@@ -210,7 +210,7 @@ pub const PathWatcher = struct {
         uv.uv_unref(@ptrCast(&this.handle));
 
         watchers_entry.value_ptr.* = this;
-        watchers_entry.key_ptr.* = bun.default_allocator.dupeZ(u8, event_path) catch bun.outOfMemory();
+        watchers_entry.key_ptr.* = bun.handleOom(bun.default_allocator.dupeZ(u8, event_path));
 
         return .{ .result = this };
     }
@@ -285,7 +285,7 @@ pub fn watch(
         .err => |err| return .{ .err = err },
         .result => |watcher| watcher,
     };
-    watcher.handlers.put(bun.default_allocator, ctx, .{}) catch bun.outOfMemory();
+    bun.handleOom(watcher.handlers.put(bun.default_allocator, ctx, .{}));
     return .{ .result = watcher };
 }
 

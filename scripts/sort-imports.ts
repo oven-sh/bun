@@ -14,7 +14,7 @@ const usage = String.raw`
  /_____ \____/|__|   |__|   /_____ \__|__|_|  /   __/ \____/|__|   |__| /____  >
        \/                         \/        \/|__|                           \/
 
-Usage: bun scripts/sortImports [options] <files...>
+Usage: bun scripts/sort-imports [options] <files...>
 
 Options:
   --help         Show this help message
@@ -22,7 +22,7 @@ Options:
   --keep-unused  Don't remove unused imports
 
 Examples:
-  bun scripts/sortImports src
+  bun scripts/sort-imports src
 `.slice(1);
 if (args.includes("--help")) {
   console.log(usage);

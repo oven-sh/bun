@@ -34,15 +34,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         tcp: Socket,
         outgoing_websocket: ?*CppWebSocket,
         input_body_buf: []u8 = &[_]u8{},
-        client_protocol: []const u8 = "",
         to_send: []const u8 = "",
         read_length: usize = 0,
         headers_buf: [128]PicoHTTP.Header = undefined,
         body: std.ArrayListUnmanaged(u8) = .{},
-        websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         state: State = .initializing,
+        subprotocols: bun.StringSet,
 
         const State = enum { initializing, reading, failed };
 
@@ -90,7 +89,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             bun.assert(vm.event_loop_handle != null);
 
-            var client_protocol_hash: u64 = 0;
+            const extra_headers = NonUTF8Headers.init(header_names, header_values, header_count);
+
+            // Check if user provided a custom protocol for subprotocols validation
+            var protocol_for_subprotocols = client_protocol.*;
+            for (extra_headers.names, extra_headers.values) |name, value| {
+                if (strings.eqlCaseInsensitiveASCII(name.slice(), "sec-websocket-protocol", true)) {
+                    protocol_for_subprotocols = value;
+                    break;
+                }
+            }
+
             const body = buildRequestBody(
                 vm,
                 pathname,
@@ -98,8 +107,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 host,
                 port,
                 client_protocol,
-                &client_protocol_hash,
-                NonUTF8Headers.init(header_names, header_values, header_count),
+                extra_headers,
             ) catch return null;
 
             var client = bun.new(HTTPClient, .{
@@ -107,8 +115,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .tcp = .{ .socket = .{ .detached = {} } },
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
-                .websocket_protocol = client_protocol_hash,
                 .state = .initializing,
+                .subprotocols = brk: {
+                    var subprotocols = bun.StringSet.init(bun.default_allocator);
+                    var it = bun.http.HeaderValueIterator.init(protocol_for_subprotocols.slice());
+                    while (it.next()) |protocol| {
+                        subprotocols.insert(protocol) catch |e| bun.handleOom(e);
+                    }
+                    break :brk subprotocols;
+                },
             });
 
             var host_ = host.toSlice(bun.default_allocator);
@@ -162,6 +177,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn clearData(this: *HTTPClient) void {
             this.poll_ref.unref(jsc.VirtualMachine.get());
 
+            this.subprotocols.clearAndFree();
             this.clearInput();
             this.body.clearAndFree(bun.default_allocator);
         }
@@ -305,7 +321,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             var body = data;
             if (this.body.items.len > 0) {
-                this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
+                bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                 body = this.body.items;
             }
 
@@ -327,7 +343,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     error.ShortRead => {
                         if (this.body.items.len == 0) {
-                            this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
+                            bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                         }
                         return;
                     },
@@ -346,7 +362,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var upgrade_header = PicoHTTP.Header{ .name = "", .value = "" };
             var connection_header = PicoHTTP.Header{ .name = "", .value = "" };
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
-            var visited_protocol = this.websocket_protocol == 0;
+            var protocol_header_seen = false;
+
             // var visited_version = false;
             var deflate_result = DeflateNegotiationResult{};
 
@@ -382,11 +399,36 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     "Sec-WebSocket-Protocol".len => {
                         if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Protocol", false)) {
-                            if (this.websocket_protocol == 0 or bun.hash(header.value) != this.websocket_protocol) {
+                            const valid = brk: {
+                                // Can't have multiple protocol headers in the response.
+                                if (protocol_header_seen) break :brk false;
+
+                                protocol_header_seen = true;
+
+                                var iterator = bun.http.HeaderValueIterator.init(header.value);
+
+                                const protocol = iterator.next()
+                                    // Can't be empty.
+                                    orelse break :brk false;
+
+                                // Can't have multiple protocols.
+                                if (iterator.next() != null) break :brk false;
+
+                                // Protocol must be in the list of allowed protocols.
+                                if (!this.subprotocols.contains(protocol)) break :brk false;
+
+                                if (this.outgoing_websocket) |ws| {
+                                    var protocol_str = bun.String.init(protocol);
+                                    defer protocol_str.deref();
+                                    ws.setProtocol(&protocol_str);
+                                }
+                                break :brk true;
+                            };
+
+                            if (!valid) {
                                 this.terminate(ErrorCode.mismatch_client_protocol);
                                 return;
                             }
-                            visited_protocol = true;
                         }
                     },
                     "Sec-WebSocket-Extensions".len => {
@@ -466,11 +508,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (@min(websocket_accept_header.name.len, websocket_accept_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_websocket_accept_header);
-                return;
-            }
-
-            if (!visited_protocol) {
-                this.terminate(ErrorCode.mismatch_client_protocol);
                 return;
             }
 
@@ -622,28 +659,52 @@ fn buildRequestBody(
     host: *const jsc.ZigString,
     port: u16,
     client_protocol: *const jsc.ZigString,
-    client_protocol_hash: *u64,
     extra_headers: NonUTF8Headers,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
-    const input_rand_buf = vm.rareData().nextUUID().bytes;
-    const temp_buf_size = comptime std.base64.standard.Encoder.calcSize(16);
-    var encoded_buf: [temp_buf_size]u8 = undefined;
-    const accept_key = std.base64.standard.Encoder.encode(&encoded_buf, &input_rand_buf);
 
-    var static_headers = [_]PicoHTTP.Header{
-        .{
-            .name = "Sec-WebSocket-Key",
-            .value = accept_key,
-        },
-        .{
-            .name = "Sec-WebSocket-Protocol",
-            .value = client_protocol.slice(),
-        },
+    // Check for user overrides
+    var user_host: ?jsc.ZigString = null;
+    var user_key: ?jsc.ZigString = null;
+    var user_protocol: ?jsc.ZigString = null;
+
+    for (extra_headers.names, extra_headers.values) |name, value| {
+        const name_slice = name.slice();
+        if (user_host == null and strings.eqlCaseInsensitiveASCII(name_slice, "host", true)) {
+            user_host = value;
+        } else if (user_key == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key", true)) {
+            user_key = value;
+        } else if (user_protocol == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true)) {
+            user_protocol = value;
+        }
+    }
+
+    // Validate and use user key, or generate a new one
+    var encoded_buf: [24]u8 = undefined;
+    const key = blk: {
+        if (user_key) |k| {
+            const k_slice = k.slice();
+            // Validate that it's a valid base64-encoded 16-byte value
+            var decoded_buf: [24]u8 = undefined; // Max possible decoded size
+            const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(k_slice) catch {
+                // Invalid base64, fall through to generate
+                break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
+            };
+
+            if (decoded_len == 16) {
+                // Try to decode to verify it's valid base64
+                _ = std.base64.standard.Decoder.decode(&decoded_buf, k_slice) catch {
+                    // Invalid base64, fall through to generate
+                    break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
+                };
+                // Valid 16-byte key, use it as-is
+                break :blk k_slice;
+            }
+        }
+        // Generate a new key if user key is invalid or not provided
+        break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
     };
-
-    if (client_protocol.len > 0)
-        client_protocol_hash.* = bun.hash(static_headers[1].value);
+    const protocol = if (user_protocol) |p| p.slice() else client_protocol.slice();
 
     const pathname_ = pathname.toSlice(allocator);
     const host_ = host.toSlice(allocator);
@@ -657,8 +718,51 @@ fn buildRequestBody(
         .host = host_.slice(),
         .port = port,
     };
-    const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
+
+    var static_headers = [_]PicoHTTP.Header{
+        .{ .name = "Sec-WebSocket-Key", .value = key },
+        .{ .name = "Sec-WebSocket-Protocol", .value = protocol },
+    };
+
+    const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(protocol.len > 0))];
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
+
+    // Build extra headers string, skipping the ones we handle
+    var extra_headers_buf = std.ArrayList(u8).init(allocator);
+    defer extra_headers_buf.deinit();
+    const writer = extra_headers_buf.writer();
+
+    for (extra_headers.names, extra_headers.values) |name, value| {
+        const name_slice = name.slice();
+        if (strings.eqlCaseInsensitiveASCII(name_slice, "host", true) or
+            strings.eqlCaseInsensitiveASCII(name_slice, "connection", true) or
+            strings.eqlCaseInsensitiveASCII(name_slice, "upgrade", true) or
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-version", true) or
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-extensions", true) or
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key", true) or
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true))
+        {
+            continue;
+        }
+        try std.fmt.format(writer, "{any}: {any}\r\n", .{ name, value });
+    }
+
+    // Build request with user overrides
+    if (user_host) |h| {
+        return try std.fmt.allocPrint(
+            allocator,
+            "GET {s} HTTP/1.1\r\n" ++
+                "Host: {any}\r\n" ++
+                "Connection: Upgrade\r\n" ++
+                "Upgrade: websocket\r\n" ++
+                "Sec-WebSocket-Version: 13\r\n" ++
+                "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
+                "{s}" ++
+                "{s}" ++
+                "\r\n",
+            .{ pathname_.slice(), h, pico_headers, extra_headers_buf.items },
+        );
+    }
 
     return try std.fmt.allocPrint(
         allocator,
@@ -671,11 +775,11 @@ fn buildRequestBody(
             "{s}" ++
             "{s}" ++
             "\r\n",
-        .{ pathname_.slice(), host_fmt, pico_headers, extra_headers },
+        .{ pathname_.slice(), host_fmt, pico_headers, extra_headers_buf.items },
     );
 }
 
-const log = Output.scoped(.WebSocketUpgradeClient, false);
+const log = Output.scoped(.WebSocketUpgradeClient, .visible);
 
 const WebSocketDeflate = @import("./WebSocketDeflate.zig");
 const std = @import("std");

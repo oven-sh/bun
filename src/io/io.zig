@@ -8,7 +8,7 @@ pub const heap = @import("./heap.zig");
 pub const openForWriting = @import("./openForWriting.zig").openForWriting;
 pub const openForWritingImpl = @import("./openForWriting.zig").openForWritingImpl;
 
-const log = bun.Output.scoped(.loop, false);
+const log = bun.Output.scoped(.loop, .visible);
 
 pub const Source = @import("./source.zig").Source;
 
@@ -203,7 +203,7 @@ pub const Loop = struct {
             {
                 var pending_batch = this.pending.popBatch();
                 var pending = pending_batch.iterator();
-                events_list.ensureUnusedCapacity(pending.batch.count) catch bun.outOfMemory();
+                bun.handleOom(events_list.ensureUnusedCapacity(pending.batch.count));
                 @memset(std.mem.sliceAsBytes(events_list.items.ptr[0..events_list.capacity]), 0);
 
                 while (pending.next()) |request| {

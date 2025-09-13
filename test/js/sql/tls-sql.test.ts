@@ -9,7 +9,7 @@ for (const options of [
   {
     url: TLS_POSTGRES_DATABASE_URL,
     tls: true,
-    adapter: "postgresql",
+    adapter: "postgres",
     max: 1,
     bigint: true,
     prepare: true,
@@ -18,23 +18,27 @@ for (const options of [
   {
     url: PG_TRANSACTION_POOL_SUPABASE_URL,
     tls: true,
-    adapter: "postgresql",
+    adapter: "postgres",
     max: 1,
     bigint: true,
     prepare: false,
     transactionPool: true,
   },
-
   {
     url: TLS_POSTGRES_DATABASE_URL,
     tls: true,
-    adapter: "postgresql",
+    adapter: "postgres",
     max: 1,
     bigint: true,
     prepare: false,
     transactionPool: false,
   },
-]) {
+] satisfies (Bun.SQL.Options & { transactionPool?: boolean })[]) {
+  if (options.url === undefined) {
+    console.log("SKIPPING TEST", JSON.stringify(options), "BECAUSE MISSING THE URL SECRET");
+    continue;
+  }
+
   describe(`${options.transactionPool ? "Transaction Pooling" : `Prepared Statements (${options.prepare ? "on" : "off"})`}`, () => {
     test("default sql", async () => {
       expect(sql.reserve).toBeDefined();
@@ -79,6 +83,8 @@ for (const options of [
     test("Throws on illegal transactions", async () => {
       await using sql = new SQL({ ...options, max: 2 });
       const error = await sql`BEGIN`.catch(e => e);
+      expect(error).toBeInstanceOf(SQL.SQLError);
+      expect(error).toBeInstanceOf(SQL.PostgresError);
       return expect(error.code).toBe("ERR_POSTGRES_UNSAFE_TRANSACTION");
     });
 
@@ -198,7 +204,7 @@ for (const options of [
       expect(
         await sql
           .begin(sql => [sql`select wat`, sql`select current_setting('bun_sql.test') as x, ${1} as a`])
-          .catch(e => e.errno || e),
+          .catch(e => e.errno),
       ).toBe("42703");
     });
 

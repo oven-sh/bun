@@ -3,7 +3,7 @@ const WHITESPACE: []const u8 = " \t\n\r";
 // TODO: calculate this for different systems
 const PAGE_SIZE = 16384;
 
-const debug = bun.Output.scoped(.patch, false);
+const debug = bun.Output.scoped(.patch, .visible);
 
 /// All strings point to the original patch file text
 pub const PatchFilePart = union(enum) {
@@ -58,15 +58,15 @@ pub const PatchFile = struct {
             defer _ = arena.reset(.retain_capacity);
             switch (part.*) {
                 .file_deletion => {
-                    const pathz = arena.allocator().dupeZ(u8, part.file_deletion.path) catch bun.outOfMemory();
+                    const pathz = bun.handleOom(arena.allocator().dupeZ(u8, part.file_deletion.path));
 
                     if (bun.sys.unlinkat(patch_dir, pathz).asErr()) |e| {
                         return e.withoutPath();
                     }
                 },
                 .file_rename => {
-                    const from_path = arena.allocator().dupeZ(u8, part.file_rename.from_path) catch bun.outOfMemory();
-                    const to_path = arena.allocator().dupeZ(u8, part.file_rename.to_path) catch bun.outOfMemory();
+                    const from_path = bun.handleOom(arena.allocator().dupeZ(u8, part.file_rename.from_path));
+                    const to_path = bun.handleOom(arena.allocator().dupeZ(u8, part.file_rename.to_path));
 
                     if (std.fs.path.dirname(to_path)) |todir| {
                         const abs_patch_dir = switch (state.patchDirAbsPath(patch_dir)) {
@@ -90,7 +90,7 @@ pub const PatchFile = struct {
                     }
                 },
                 .file_creation => {
-                    const filepath = bun.PathString.init(arena.allocator().dupeZ(u8, part.file_creation.path) catch bun.outOfMemory());
+                    const filepath = bun.PathString.init(bun.handleOom(arena.allocator().dupeZ(u8, part.file_creation.path)));
                     const filedir = bun.path.dirname(filepath.slice(), .auto);
                     const mode = part.file_creation.mode;
 
@@ -136,7 +136,7 @@ pub const PatchFile = struct {
 
                     // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
                     const file_contents = brk: {
-                        var contents = file_alloc.alloc(u8, count) catch bun.outOfMemory();
+                        var contents = bun.handleOom(file_alloc.alloc(u8, count));
                         var i: usize = 0;
                         for (hunk.parts.items[0].lines.items, 0..) |line, idx| {
                             @memcpy(contents[i .. i + line.len], line);
@@ -166,7 +166,7 @@ pub const PatchFile = struct {
                 },
                 .file_mode_change => {
                     const newmode = part.file_mode_change.new_mode;
-                    const filepath = arena.allocator().dupeZ(u8, part.file_mode_change.path) catch bun.outOfMemory();
+                    const filepath = bun.handleOom(arena.allocator().dupeZ(u8, part.file_mode_change.path));
                     if (comptime bun.Environment.isPosix) {
                         if (bun.sys.fchmodat(patch_dir, filepath, newmode.toBunMode(), 0).asErr()) |e| {
                             return e.withoutPath();
@@ -210,7 +210,7 @@ pub const PatchFile = struct {
         patch_dir: bun.FileDescriptor,
         state: *ApplyState,
     ) bun.sys.Maybe(void) {
-        const file_path: [:0]const u8 = arena.allocator().dupeZ(u8, patch.path) catch bun.outOfMemory();
+        const file_path: [:0]const u8 = bun.handleOom(arena.allocator().dupeZ(u8, patch.path));
 
         // Need to get the mode of the original file
         // And also get the size to read file into memory
@@ -266,28 +266,45 @@ pub const PatchFile = struct {
         };
 
         // TODO: i hate this
-        var lines = std.ArrayListUnmanaged([]const u8).initCapacity(bun.default_allocator, lines_count) catch bun.outOfMemory();
+        var lines = bun.handleOom(std.ArrayListUnmanaged([]const u8).initCapacity(bun.default_allocator, lines_count));
         defer lines.deinit(bun.default_allocator);
         {
             var iter = std.mem.splitScalar(u8, filebuf, '\n');
             var i: usize = 0;
             while (iter.next()) |line| : (i += 1) {
-                lines.append(bun.default_allocator, line) catch bun.outOfMemory();
+                bun.handleOom(lines.append(bun.default_allocator, line));
             }
             bun.debugAssert(i == file_line_count);
         }
 
         for (patch.hunks.items) |*hunk| {
             var line_cursor = hunk.header.patched.start - 1;
+
+            // Validate hunk start position is within bounds
+            if (line_cursor > lines.items.len) {
+                return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+            }
+
             for (hunk.parts.items) |*part_| {
                 const part: *PatchMutationPart = part_;
                 switch (part.type) {
                     .context => {
                         // TODO: check if the lines match in the original file?
+
+                        // Validate context lines exist
+                        if (line_cursor + part.lines.items.len > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
                         line_cursor += @intCast(part.lines.items.len);
                     },
                     .insertion => {
-                        const lines_to_insert = lines.addManyAt(bun.default_allocator, line_cursor, part.lines.items.len) catch bun.outOfMemory();
+                        // Validate insertion position is within bounds
+                        if (line_cursor > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
+                        const lines_to_insert = bun.handleOom(lines.addManyAt(bun.default_allocator, line_cursor, part.lines.items.len));
                         @memcpy(lines_to_insert, part.lines.items);
                         line_cursor += @intCast(part.lines.items.len);
                         if (part.no_newline_at_end_of_file) {
@@ -296,9 +313,15 @@ pub const PatchFile = struct {
                     },
                     .deletion => {
                         // TODO: check if the lines match in the original file?
-                        lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{}) catch bun.outOfMemory();
+
+                        // Validate deletion range is within bounds
+                        if (line_cursor + part.lines.items.len > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
+                        bun.handleOom(lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{}));
                         if (part.no_newline_at_end_of_file) {
-                            lines.append(bun.default_allocator, "") catch bun.outOfMemory();
+                            bun.handleOom(lines.append(bun.default_allocator, ""));
                         }
                         // line_cursor -= part.lines.items.len;
                     },
@@ -317,7 +340,7 @@ pub const PatchFile = struct {
         };
         defer file_fd.close();
 
-        const contents = std.mem.join(bun.default_allocator, "\n", lines.items) catch bun.outOfMemory();
+        const contents = bun.handleOom(std.mem.join(bun.default_allocator, "\n", lines.items));
         defer bun.default_allocator.free(contents);
 
         var written: usize = 0;
@@ -394,15 +417,18 @@ pub const Hunk = struct {
 
     pub const Header = struct {
         original: struct {
-            start: u32,
+            start: u32 = 1,
             len: u32,
         },
         patched: struct {
-            start: u32,
+            start: u32 = 1,
             len: u32,
         },
 
-        pub const zeroes = std.mem.zeroes(Header);
+        pub const empty = Header{
+            .original = .{ .start = 1, .len = 0 },
+            .patched = .{ .start = 1, .len = 0 },
+        };
     };
 
     pub fn deinit(this: *Hunk, allocator: Allocator) void {
@@ -587,7 +613,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
-                                .header = Hunk.Header.zeroes,
+                                .header = Hunk.Header.empty,
                             };
                             break :brk bun.new(Hunk, value);
                         } else null,
@@ -608,7 +634,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
-                                .header = Hunk.Header.zeroes,
+                                .header = Hunk.Header.empty,
                             };
                             break :brk bun.new(Hunk, value);
                         } else null,
@@ -1224,7 +1250,7 @@ pub fn spawnOpts(
             "--full-index",
             "--no-index",
         };
-        const argv_buf = bun.default_allocator.alloc([]const u8, ARGV.len + 2) catch bun.outOfMemory();
+        const argv_buf = bun.handleOom(bun.default_allocator.alloc([]const u8, ARGV.len + 2));
         argv_buf[0] = git;
         for (1..ARGV.len) |i| {
             argv_buf[i] = ARGV[i];
@@ -1242,7 +1268,7 @@ pub fn spawnOpts(
             "USERPROFILE",
         };
         const PATH = bun.getenvZ("PATH");
-        const envp_buf = bun.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null) catch bun.outOfMemory();
+        const envp_buf = bun.handleOom(bun.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null));
         for (0..env_arr.len) |i| {
             envp_buf[i] = env_arr[i].ptr;
         }
@@ -1299,7 +1325,7 @@ pub fn gitDiffPreprocessPaths(
     const bump = if (sentinel) 1 else 0;
     const old_folder = if (comptime bun.Environment.isWindows) brk: {
         // backslash in the path fucks everything up
-        const cpy = allocator.alloc(u8, old_folder_.len + bump) catch bun.outOfMemory();
+        const cpy = bun.handleOom(allocator.alloc(u8, old_folder_.len + bump));
         @memcpy(cpy[0..old_folder_.len], old_folder_);
         std.mem.replaceScalar(u8, cpy, '\\', '/');
         if (sentinel) {
@@ -1309,7 +1335,7 @@ pub fn gitDiffPreprocessPaths(
         break :brk cpy;
     } else old_folder_;
     const new_folder = if (comptime bun.Environment.isWindows) brk: {
-        const cpy = allocator.alloc(u8, new_folder_.len + bump) catch bun.outOfMemory();
+        const cpy = bun.handleOom(allocator.alloc(u8, new_folder_.len + bump));
         @memcpy(cpy[0..new_folder_.len], new_folder_);
         std.mem.replaceScalar(u8, cpy, '\\', '/');
         if (sentinel) {
@@ -1321,8 +1347,8 @@ pub fn gitDiffPreprocessPaths(
 
     if (bun.Environment.isPosix and sentinel) {
         return .{
-            allocator.dupeZ(u8, old_folder) catch bun.outOfMemory(),
-            allocator.dupeZ(u8, new_folder) catch bun.outOfMemory(),
+            bun.handleOom(allocator.dupeZ(u8, old_folder)),
+            bun.handleOom(allocator.dupeZ(u8, new_folder)),
         };
     }
 

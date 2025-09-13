@@ -98,7 +98,7 @@ pub const Async = struct {
             );
             switch (result) {
                 .err => |err| {
-                    this.completion(this.completion_ctx, .{ .err = err.withPath(bun.default_allocator.dupe(u8, err.path) catch bun.outOfMemory()) });
+                    this.completion(this.completion_ctx, .{ .err = err.withPath(bun.handleOom(bun.default_allocator.dupe(u8, err.path))) });
                 },
                 .result => {
                     this.completion(this.completion_ctx, .success);
@@ -288,6 +288,8 @@ pub const Async = struct {
             }
 
             pub fn runFromJSThread(this: *Task) void {
+                defer this.deinit();
+
                 const globalObject = this.globalObject;
                 const success = @as(bun.sys.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
@@ -304,7 +306,6 @@ pub const Async = struct {
                 tracker.willDispatch(globalObject);
                 defer tracker.didDispatch(globalObject);
 
-                this.deinit();
                 switch (success) {
                     false => {
                         promise.reject(globalObject, result);
@@ -387,7 +388,13 @@ pub const Async = struct {
             }
 
             pub fn runFromJSThread(this: *Task) void {
+                defer this.deinit();
                 const globalObject = this.globalObject;
+
+                const tracker = this.tracker;
+                tracker.willDispatch(globalObject);
+                defer tracker.didDispatch(globalObject);
+
                 const success = @as(bun.sys.Maybe(ReturnType).Tag, this.result) == .result;
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
@@ -399,20 +406,14 @@ pub const Async = struct {
                 };
                 promise_value.ensureStillAlive();
 
-                const tracker = this.tracker;
-                tracker.willDispatch(globalObject);
-                defer tracker.didDispatch(globalObject);
-
                 if (have_abort_signal) check_abort: {
                     const signal = this.args.signal orelse break :check_abort;
                     if (signal.reasonIfAborted(globalObject)) |reason| {
-                        this.deinit();
                         promise.reject(globalObject, reason.toJS(globalObject));
                         return;
                     }
                 }
 
-                this.deinit();
                 switch (success) {
                     false => {
                         promise.reject(globalObject, result);
@@ -897,7 +898,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                         var path_buf = bun.default_allocator.alloc(
                             bun.OSPathChar,
                             src_dir_len + 1 + cname.len + 1 + dest_dir_len + 1 + cname.len + 1,
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
 
                         @memcpy(path_buf[0..src_dir_len], src_buf[0..src_dir_len]);
                         path_buf[src_dir_len] = std.fs.path.sep;
@@ -1019,7 +1020,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         var task = Subtask.new(
             .{
                 .readdir_task = readdir_task,
-                .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
+                .basename = bun.PathString.init(bun.handleOom(bun.default_allocator.dupeZ(u8, basename))),
             },
         );
         bun.assert(readdir_task.subtask_count.fetchAdd(1, .monotonic) > 0);
@@ -1038,7 +1039,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             .globalObject = globalObject,
             .tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
             .subtask_count = .{ .raw = 1 },
-            .root_path = PathString.init(bun.default_allocator.dupeZ(u8, args.path.slice()) catch bun.outOfMemory()),
+            .root_path = PathString.init(bun.handleOom(bun.default_allocator.dupeZ(u8, args.path.slice()))),
             .result_list = switch (args.tag()) {
                 .files => .{ .files = std.ArrayList(bun.String).init(bun.default_allocator) },
                 .with_file_types => .{ .with_file_types = .init(bun.default_allocator) },
@@ -1123,11 +1124,11 @@ pub const AsyncReaddirRecursiveTask = struct {
                 Buffer => .buffers,
                 else => @compileError("unreachable"),
             };
-            const list = bun.default_allocator.create(ResultListEntry) catch bun.outOfMemory();
+            const list = bun.handleOom(bun.default_allocator.create(ResultListEntry));
             errdefer {
                 bun.default_allocator.destroy(list);
             }
-            var clone = std.ArrayList(ResultType).initCapacity(bun.default_allocator, result.items.len) catch bun.outOfMemory();
+            var clone = bun.handleOom(std.ArrayList(ResultType).initCapacity(bun.default_allocator, result.items.len));
             clone.appendSliceAssumeCapacity(result.items);
             _ = this.result_list_count.fetchAdd(clone.items.len, .monotonic);
             list.* = ResultListEntry{ .next = null, .value = @unionInit(ResultListEntry.Value, @tagName(Field), clone) };
@@ -1170,7 +1171,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             switch (this.args.tag()) {
                 inline else => |tag| {
                     var results = &@field(this.result_list, @tagName(tag));
-                    results.ensureTotalCapacityPrecise(this.result_list_count.swap(0, .monotonic)) catch bun.outOfMemory();
+                    bun.handleOom(results.ensureTotalCapacityPrecise(this.result_list_count.swap(0, .monotonic)));
                     while (iter.next()) |val| {
                         if (to_destroy) |dest| {
                             bun.default_allocator.destroy(dest);
@@ -1338,7 +1339,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
+            const clone = bun.handleOom(bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items));
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -1392,7 +1393,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
+            const clone = bun.handleOom(bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items));
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -4128,14 +4129,14 @@ pub const NodeFS = struct {
                 } };
             }
             return .{
-                .result = jsc.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator) catch bun.outOfMemory(),
+                .result = bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator)),
             };
         }
 
         const rc = c.mkdtemp(prefix_buf);
         if (rc) |ptr| {
             return .{
-                .result = jsc.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator) catch bun.outOfMemory(),
+                .result = bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator)),
             };
         }
 
@@ -4477,13 +4478,13 @@ pub const NodeFS = struct {
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path,
                             .kind = current.kind,
-                        }) catch bun.outOfMemory();
+                        }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {
-                        entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        bun.handleOom(entries.append(bun.handleOom(Buffer.fromString(utf8_name, bun.default_allocator))));
                     },
                     bun.String => {
-                        entries.append(jsc.WebCore.encoding.toBunString(utf8_name, args.encoding)) catch bun.outOfMemory();
+                        bun.handleOom(entries.append(jsc.WebCore.encoding.toBunString(utf8_name, args.encoding)));
                     },
                     else => @compileError("unreachable"),
                 }
@@ -4496,16 +4497,16 @@ pub const NodeFS = struct {
                             .name = bun.String.cloneUTF16(utf16_name),
                             .path = dirent_path,
                             .kind = current.kind,
-                        }) catch bun.outOfMemory();
+                        }) catch |err| bun.handleOom(err);
                     },
                     bun.String => switch (args.encoding) {
                         .buffer => unreachable,
                         // in node.js, libuv converts to utf8 before node.js converts those bytes into other stuff
                         // all encodings besides hex, base64, and base64url are mis-interpreting filesystem bytes.
-                        .utf8 => entries.append(bun.String.cloneUTF16(utf16_name)) catch bun.outOfMemory(),
+                        .utf8 => bun.handleOom(entries.append(bun.String.cloneUTF16(utf16_name))),
                         else => |enc| {
                             const utf8_path = bun.strings.fromWPath(re_encoding_buffer.?, utf16_name);
-                            entries.append(jsc.WebCore.encoding.toBunString(utf8_path, enc)) catch bun.outOfMemory();
+                            bun.handleOom(entries.append(jsc.WebCore.encoding.toBunString(utf8_path, enc)));
                         },
                     },
                     else => @compileError("unreachable"),
@@ -4637,13 +4638,13 @@ pub const NodeFS = struct {
                         .name = bun.String.cloneUTF8(utf8_name),
                         .path = dirent_path_prev,
                         .kind = current.kind,
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
                 },
                 Buffer => {
-                    entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                    bun.handleOom(entries.append(bun.handleOom(Buffer.fromString(name_to_copy, bun.default_allocator))));
                 },
                 bun.String => {
-                    entries.append(bun.String.cloneUTF8(name_to_copy)) catch bun.outOfMemory();
+                    bun.handleOom(entries.append(bun.String.cloneUTF8(name_to_copy)));
                 },
                 else => bun.outOfMemory(),
             }
@@ -4776,13 +4777,13 @@ pub const NodeFS = struct {
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path_prev,
                             .kind = current.kind,
-                        }) catch bun.outOfMemory();
+                        }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {
-                        entries.append(Buffer.fromString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                        bun.handleOom(entries.append(bun.handleOom(Buffer.fromString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), bun.default_allocator))));
                     },
                     bun.String => {
-                        entries.append(jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), args.encoding)) catch bun.outOfMemory();
+                        bun.handleOom(entries.append(jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), args.encoding)));
                     },
                     else => @compileError(unreachable),
                 }
@@ -4935,7 +4936,7 @@ pub const NodeFS = struct {
                             return .{
                                 .result = .{
                                     .buffer = Buffer.fromBytes(
-                                        bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
+                                        bun.handleOom(bun.default_allocator.dupe(u8, file.contents)),
                                         bun.default_allocator,
                                         .Uint8Array,
                                     ),
@@ -4944,13 +4945,13 @@ pub const NodeFS = struct {
                         } else if (comptime string_type == .default)
                             return .{
                                 .result = .{
-                                    .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
+                                    .string = bun.handleOom(bun.default_allocator.dupe(u8, file.contents)),
                                 },
                             }
                         else
                             return .{
                                 .result = .{
-                                    .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
+                                    .null_terminated = bun.handleOom(bun.default_allocator.dupeZ(u8, file.contents)),
                                 },
                             };
                     }
@@ -5859,7 +5860,7 @@ pub const NodeFS = struct {
         bun.assert(flavor == .sync);
 
         const watcher = args.createStatWatcher() catch |err| {
-            const buf = std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}) catch bun.outOfMemory();
+            const buf = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((jsc.SystemError{
                 .message = bun.String.init(buf),
@@ -5928,9 +5929,6 @@ pub const NodeFS = struct {
             else
                 .success;
         }
-
-        bun.assert(args.mtime.nsec <= 1e9);
-        bun.assert(args.atime.nsec <= 1e9);
 
         return switch (Syscall.lutimes(args.path.sliceZ(&this.sync_error_buf), args.atime, args.mtime)) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },

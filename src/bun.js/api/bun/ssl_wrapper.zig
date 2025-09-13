@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.SSLWrapper, true);
+const log = bun.Output.scoped(.SSLWrapper, .hidden);
 
 /// Mimics the behavior of openssl.c in uSockets, wrapping data that can be received from any where (network, DuplexStream, etc)
 pub fn SSLWrapper(comptime T: type) type {

@@ -15,7 +15,7 @@ options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
 
-const log = bun.Output.scoped(.jest, true);
+const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
 const ScanEntry = struct {
     relative_dir: bun.StoredFileDescriptorType,
@@ -65,8 +65,8 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
         switch (err) {
             error.NotDir, error.ENOTDIR => {
                 if (this.isTestFile(path)) {
-                    const rel_path = bun.PathString.init(this.fs.filename_store.append([]const u8, path) catch bun.outOfMemory());
-                    this.test_files.append(this.allocator(), rel_path) catch bun.outOfMemory();
+                    const rel_path = bun.PathString.init(bun.handleOom(this.fs.filename_store.append([]const u8, path)));
+                    bun.handleOom(this.test_files.append(this.allocator(), rel_path));
                 }
             },
             error.ENOENT => return error.DoesNotExist,

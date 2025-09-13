@@ -127,19 +127,19 @@ pub const Repository = extern struct {
                 // A value can still be entered, but we need to find a workaround
                 // so the user can see what is being prompted. By default the settings
                 // below will cause no prompt and throw instead.
-                var cloned = other.map.cloneWithAllocator(allocator) catch bun.outOfMemory();
+                var cloned = bun.handleOom(other.map.cloneWithAllocator(allocator));
 
                 if (cloned.get("GIT_ASKPASS") == null) {
                     const config = SloppyGlobalGitConfig.get();
                     if (!config.has_askpass) {
-                        cloned.put("GIT_ASKPASS", "echo") catch bun.outOfMemory();
+                        bun.handleOom(cloned.put("GIT_ASKPASS", "echo"));
                     }
                 }
 
                 if (cloned.get("GIT_SSH_COMMAND") == null) {
                     const config = SloppyGlobalGitConfig.get();
                     if (!config.has_ssh_command) {
-                        cloned.put("GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory();
+                        bun.handleOom(cloned.put("GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new"));
                     }
                 }
 
@@ -229,7 +229,7 @@ pub const Repository = extern struct {
 
         if (name.len == 0) {
             const version_literal = dep.version.literal.slice(buf);
-            const name_buf = allocator.alloc(u8, bun.sha.EVP.SHA1.digest) catch bun.outOfMemory();
+            const name_buf = bun.handleOom(allocator.alloc(u8, bun.sha.EVP.SHA1.digest));
             var sha1 = bun.sha.SHA1.init();
             defer sha1.deinit();
             sha1.update(version_literal);
@@ -237,7 +237,7 @@ pub const Repository = extern struct {
             return name_buf[0..bun.sha.SHA1.digest];
         }
 
-        return allocator.dupe(u8, name) catch bun.outOfMemory();
+        return bun.handleOom(allocator.dupe(u8, name));
     }
 
     pub fn order(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {

@@ -249,4 +249,10 @@ extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)
 {
     WTFPrintBacktrace({ stack, stack_count });
 }
+
+extern "C" void WTF__releaseFastMallocFreeMemoryForThisThread()
+{
+    WTF::releaseFastMallocFreeMemoryForThisThread();
+}
+
 }

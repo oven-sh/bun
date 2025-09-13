@@ -10,7 +10,10 @@ pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
 pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
     @memcpy(buf[0..bun_hash_tag.len], bun_hash_tag);
-    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch bun.outOfMemory();
+    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch |err|
+        switch (err) {
+            error.NoSpaceLeft => unreachable,
+        };
     buf[bun_hash_tag.len + digits.len] = 0;
     const bunhashtag = buf[0 .. bun_hash_tag.len + digits.len :0];
     return bunhashtag;
@@ -69,9 +72,9 @@ pub fn initializeMiniStore() void {
         pub threadlocal var instance: ?*@This() = null;
     };
     if (MiniStore.instance == null) {
-        var mini_store = bun.default_allocator.create(MiniStore) catch bun.outOfMemory();
+        var mini_store = bun.handleOom(bun.default_allocator.create(MiniStore));
         mini_store.* = .{
-            .heap = bun.MimallocArena.init() catch bun.outOfMemory(),
+            .heap = bun.MimallocArena.init(),
             .memory_allocator = undefined,
         };
         mini_store.memory_allocator = .{ .allocator = mini_store.heap.allocator() };
@@ -82,7 +85,7 @@ pub fn initializeMiniStore() void {
         var mini_store = MiniStore.instance.?;
         if (mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.end_index >= mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.buffer.len -| 1) {
             mini_store.heap.deinit();
-            mini_store.heap = bun.MimallocArena.init() catch bun.outOfMemory();
+            mini_store.heap = bun.MimallocArena.init();
             mini_store.memory_allocator.allocator = mini_store.heap.allocator();
         }
         mini_store.memory_allocator.reset();
@@ -247,6 +250,7 @@ pub const TextLockfile = @import("./lockfile/bun.lock.zig");
 pub const Bin = @import("./bin.zig").Bin;
 pub const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
+pub const SecurityScanSubprocess = @import("./PackageManager/security_scanner.zig").SecurityScanSubprocess;
 pub const PackageInstall = @import("./PackageInstall.zig").PackageInstall;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Resolution = @import("./resolution.zig").Resolution;

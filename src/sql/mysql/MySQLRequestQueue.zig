@@ -90,6 +90,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
 
         if (request.isBeingPrepared()) {
             debug("isBeingPrepared", .{});
+            this.#waiting_to_prepare = true;
             // cannot continue the queue until the current request is marked as prepared
             return;
         }
@@ -119,6 +120,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
             debug("isRunning after run", .{});
             this.#is_ready_for_query = false;
             if (request.isBeingPrepared()) {
+                debug("isBeingPrepared", .{});
                 this.#waiting_to_prepare = true;
                 return;
             }

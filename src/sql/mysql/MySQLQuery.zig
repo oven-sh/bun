@@ -131,12 +131,14 @@ fn runPreparedQuery(
     const stmt = this.#statement.?;
     switch (stmt.status) {
         .failed => {
+            debug("failed", .{});
             const error_response = stmt.error_response.toJS(globalObject);
             // If the statement failed, we need to throw the error
             return globalObject.throwValue(error_response);
         },
         .prepared => {
             if (connection.canPipeline()) {
+                debug("bindAndExecute", .{});
                 const writer = connection.getWriter();
                 this.bindAndExecute(writer, stmt, globalObject, binding_value, columns_value) catch |err| {
                     if (!globalObject.hasException())
@@ -148,7 +150,8 @@ fn runPreparedQuery(
         },
         .parsing => {},
         .pending => {
-            if (connection.canPrepareQuery() and this.#status == .pending) {
+            if (connection.canPrepareQuery()) {
+                debug("prepareRequest", .{});
                 const writer = connection.getWriter();
                 const query = query_str orelse this.#query.toUTF8(bun.default_allocator);
                 MySQLRequest.prepareRequest(query.slice(), MySQLConnection.Writer, writer) catch |err| {
@@ -212,16 +215,16 @@ pub fn cleanup(this: *@This()) void {
     this.#query = bun.String.empty;
 }
 
-pub inline fn isCompleted(this: *@This()) bool {
+pub inline fn isCompleted(this: *const @This()) bool {
     return this.#status == .success or this.#status == .fail;
 }
-pub inline fn isRunning(this: *@This()) bool {
+pub inline fn isRunning(this: *const @This()) bool {
     switch (this.#status) {
         .running, .binding, .partial_response => return true,
         .success, .fail, .pending => return false,
     }
 }
-pub inline fn isPending(this: *@This()) bool {
+pub inline fn isPending(this: *const @This()) bool {
     return this.#status == .pending;
 }
 
@@ -229,16 +232,16 @@ pub inline fn isBeingPrepared(this: *@This()) bool {
     return this.#status == .pending and this.#statement != null and this.#statement.?.status == .parsing;
 }
 
-pub inline fn wasPipelined(this: *@This()) bool {
+pub inline fn wasPipelined(this: *const @This()) bool {
     return this.#flags.pipelined;
 }
-pub inline fn isSimple(this: *@This()) bool {
+pub inline fn isSimple(this: *const @This()) bool {
     return this.#flags.simple;
 }
-pub inline fn bigintSupported(this: *@This()) bool {
+pub inline fn bigintSupported(this: *const @This()) bool {
     return this.#flags.bigint;
 }
-pub inline fn getResultMode(this: *@This()) SQLQueryResultMode {
+pub inline fn getResultMode(this: *const @This()) SQLQueryResultMode {
     return this.#flags.result_mode;
 }
 pub inline fn markAsPrepared(this: *@This()) void {
@@ -253,7 +256,7 @@ pub inline fn markAsPrepared(this: *@This()) void {
         }
     }
 }
-pub inline fn getStatement(this: *@This()) ?*MySQLStatement {
+pub inline fn getStatement(this: *const @This()) ?*MySQLStatement {
     return this.#statement;
 }
 
@@ -271,3 +274,5 @@ const Value = @import("./MySQLTypes.zig").Value;
 
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
+
+const debug = bun.Output.scoped(.MySQLQuery, .visible);

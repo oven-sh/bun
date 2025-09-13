@@ -1626,6 +1626,15 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * The **`AbortController`** interface represents a controller object that allows you to abort one or more Web requests as and when desired.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortController)
+ */
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: any): void;
+}
 declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   "AbortController",
   {
@@ -1634,6 +1643,12 @@ declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+interface AbortSignal extends EventTarget {
+  readonly aborted: boolean;
+  onabort: ((this: AbortSignal, ev: Event) => any) | null;
+  readonly reason: any;
+  throwIfAborted(): void;
+}
 declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   "AbortSignal",
   {
@@ -1958,6 +1973,25 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   unix?: string;
+
+  /**
+   * Control automatic decompression of the response body.
+   * When set to `false`, the response body will not be automatically decompressed,
+   * and the `Content-Encoding` header will be preserved. This can improve performance
+   * when you need to handle compressed data manually or forward it as-is.
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @default true
+   * @example
+   * ```js
+   * // Disable automatic decompression for a proxy server
+   * const response = await fetch("https://example.com/api", {
+   *   decompress: false
+   * });
+   * // response.headers.get('content-encoding') might be 'gzip' or 'br'
+   * ```
+   */
+  decompress?: boolean;
 }
 
 /**
@@ -1999,3 +2033,21 @@ declare namespace fetch {
   ): void;
 }
 //#endregion
+
+interface RegExpConstructor {
+  /**
+   * Escapes any potential regex syntax characters in a string, and returns a
+   * new string that can be safely used as a literal pattern for the RegExp()
+   * constructor.
+   *
+   * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/escape)
+   *
+   * @example
+   * ```ts
+   * const re = new RegExp(RegExp.escape("foo.bar"));
+   * re.test("foo.bar"); // true
+   * re.test("foo!bar"); // false
+   * ```
+   */
+  escape(string: string): string;
+}

@@ -102,7 +102,7 @@ pub const StatWatcherScheduler = struct {
                 self.scheduler.setTimer(self.scheduler.getInterval());
             }
         };
-        const holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
+        const holder = bun.handleOom(bun.default_allocator.create(Holder));
         holder.* = .{
             .scheduler = this,
             .task = jsc.AnyTask.New(Holder, Holder.updateTimer).init(holder),

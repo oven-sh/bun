@@ -285,7 +285,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
 
             const needs_deref = !this.socket.isDetached();
             this.socket = Socket.detached;
@@ -368,7 +368,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn closeAndDetach(this: *This, code: uws.Socket.CloseCode) void {
             const socket = this.socket;
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
 
             this.socket.detach();
             this.detachNativeCallback();
@@ -418,7 +418,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         if (this.server_name) |server_name| {
                             const host = server_name;
                             if (host.len > 0) {
-                                const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                                const host__ = bun.handleOom(default_allocator.dupeZ(u8, host));
                                 defer default_allocator.free(host__);
                                 ssl_ptr.setHostname(host__);
                             }
@@ -426,7 +426,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                             if (connection == .host) {
                                 const host = connection.host.host;
                                 if (host.len > 0) {
-                                    const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                                    const host__ = bun.handleOom(default_allocator.dupeZ(u8, host));
                                     defer default_allocator.free(host__);
                                     ssl_ptr.setHostname(host__);
                                 }
@@ -883,7 +883,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn writeBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                 // TODO: should we separate unattached and detached? unattached shouldn't throw here
                 const err: jsc.SystemError = .{
                     .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
@@ -904,8 +904,8 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn endBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                return JSValue.jsBoolean(false);
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
+                return .false;
             }
 
             const args = callframe.argumentsUndef(2);
@@ -987,8 +987,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
-                            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                            this.buffered_data_for_node_net = .{};
+                            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                             break :brk rc;
                         }
 
@@ -1004,7 +1003,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                         }
 
                         if (remaining_in_input_data.len > 0) {
-                            this.buffered_data_for_node_net.append(bun.default_allocator, remaining_in_input_data) catch bun.outOfMemory();
+                            bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                                bun.default_allocator,
+                                remaining_in_input_data,
+                            ));
                         }
 
                         break :brk rc;
@@ -1012,15 +1014,17 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
 
                 // slower-path: clone the data, do one write.
-                this.buffered_data_for_node_net.append(bun.default_allocator, buffer.slice()) catch bun.outOfMemory();
+                bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                    bun.default_allocator,
+                    buffer.slice(),
+                ));
                 const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice());
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
                     // did we write everything?
                     // we can free this temporary buffer.
                     if (wrote == this.buffered_data_for_node_net.len) {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                        this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                     } else {
                         // Otherwise, let's move the temporary buffer back.
                         const len = @as(usize, @intCast(this.buffered_data_for_node_net.len)) - wrote;
@@ -1166,7 +1170,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
                 if (remaining.len > 0) {
-                    this.buffered_data_for_node_net.append(bun.default_allocator, remaining) catch bun.outOfMemory();
+                    bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                        bun.default_allocator,
+                        remaining,
+                    ));
                 }
             }
 
@@ -1203,8 +1210,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
                         this.buffered_data_for_node_net.len = @truncate(remaining.len);
                     } else {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                        this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                     }
                 }
             }
@@ -1293,7 +1299,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.markInactive();
             this.detachNativeCallback();
 
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.deinit(bun.default_allocator);
 
             this.poll_ref.unref(jsc.VirtualMachine.get());
             // need to deinit event without being attached
@@ -1453,7 +1459,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const ext_size = @sizeOf(WrappedSocket);
 
-            var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
             handlers.withAsyncContextIfNeeded(globalObject);
             handlers_ptr.* = handlers;
             handlers_ptr.protect();
@@ -1464,8 +1470,8 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .socket = TLSSocket.Socket.detached,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
-                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
-                .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+                .protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p[0..protos_len])) else null,
+                .server_name = if (socket_config.server_name) |server_name| bun.handleOom(bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)])) else null,
                 .socket_context = null, // only set after the wrapTLS
                 .flags = .{
                     .is_active = false,
@@ -1528,7 +1534,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.ref();
             const vm = handlers.vm;
 
-            var raw_handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var raw_handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
             raw_handlers_ptr.* = blk: {
                 const this_handlers = this.getHandlers();
                 break :blk .{
@@ -1976,7 +1982,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 
     const is_server = false; // A duplex socket is always handled as a client
 
-    var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
+    var handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
     handlers_ptr.* = handlers;
     handlers_ptr.is_server = is_server;
     handlers_ptr.withAsyncContextIfNeeded(globalObject);
@@ -1988,8 +1994,8 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .socket = TLSSocket.Socket.detached,
         .connection = null,
         .wrapped = .tls,
-        .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
-        .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+        .protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p[0..protos_len])) else null,
+        .server_name = if (socket_config.server_name) |server_name| bun.handleOom(bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)])) else null,
         .socket_context = null, // only set after the wrapTLS
     });
     const tls_js_value = tls.getThisValue(globalObject);
@@ -2044,7 +2050,7 @@ pub fn jsIsNamedPipeSocket(global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     } else if (socket.as(TLSSocket)) |this| {
         return jsc.JSValue.jsBoolean(this.socket.isNamedPipe());
     }
-    return jsc.JSValue.jsBoolean(false);
+    return .false;
 }
 
 pub fn jsGetBufferedAmount(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

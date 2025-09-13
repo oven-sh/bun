@@ -71,6 +71,9 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+// Security scanner module path
+security_scanner: ?[]const u8 = null,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -277,6 +280,11 @@ pub fn load(
 
         if (config.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (config.security_scanner) |security_scanner| {
+            this.security_scanner = security_scanner;
+            this.do.prefetch_resolved_tarballs = false;
         }
 
         if (config.cafile) |cafile| {

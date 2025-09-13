@@ -329,7 +329,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     bsd_socket_nodelay(fd, 1);
     apple_no_sigpipe(fd);
     bsd_set_nonblocking(fd);
-    us_internal_socket_context_link_socket(ctx, s);
+    us_internal_socket_context_link_socket(0, ctx, s);
 
     return s;
 #endif

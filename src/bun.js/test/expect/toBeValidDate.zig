@@ -4,7 +4,7 @@ pub fn toBeValidDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     const thisValue = callFrame.this();
     const value: JSValue = try this.getValue(globalThis, thisValue, "toBeValidDate", "");
 
-    bun.jsc.Expect.active_test_expectation_counter.actual += 1;
+    incrementExpectCallCounter();
 
     const not = this.flags.not;
     var pass = (value.isDate() and !std.math.isNan(value.getUnixTimestamp()));
@@ -32,6 +32,7 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
+const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

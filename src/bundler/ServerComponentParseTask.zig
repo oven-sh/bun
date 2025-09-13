@@ -31,7 +31,7 @@ fn taskCallbackWrap(thread_pool_task: *ThreadPoolLib.Task) void {
     defer worker.unget();
     var log = Logger.Log.init(worker.allocator);
 
-    const result = bun.default_allocator.create(ParseTask.Result) catch bun.outOfMemory();
+    const result = bun.handleOom(bun.default_allocator.create(ParseTask.Result));
     result.* = .{
         .ctx = task.ctx,
         .task = undefined,

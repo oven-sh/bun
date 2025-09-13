@@ -84,7 +84,7 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
-
+            SecurityScanSubprocess,
             SyncProcess,
         },
     );
@@ -113,6 +113,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
+                const subprocess = this.ptr.as(SecurityScanSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
@@ -1813,7 +1817,7 @@ pub const sync = struct {
                     .ignore => .ignore,
                     .buffer => .{
                         .buffer = if (Environment.isWindows)
-                            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory(),
+                            bun.handleOom(bun.default_allocator.create(bun.windows.libuv.Pipe)),
                     },
                 };
             }
@@ -1863,11 +1867,11 @@ pub const sync = struct {
         pub const new = bun.TrivialNew(@This());
 
         fn onAlloc(_: *SyncWindowsPipeReader, suggested_size: usize) []u8 {
-            return bun.default_allocator.alloc(u8, suggested_size) catch bun.outOfMemory();
+            return bun.handleOom(bun.default_allocator.alloc(u8, suggested_size));
         }
 
         fn onRead(this: *SyncWindowsPipeReader, data: []const u8) void {
-            this.chunks.append(@constCast(data)) catch bun.outOfMemory();
+            bun.handleOom(this.chunks.append(@constCast(data)));
         }
 
         fn onError(this: *SyncWindowsPipeReader, err: bun.sys.E) void {
@@ -2019,11 +2023,11 @@ pub const sync = struct {
             .status = this.status orelse @panic("Expected Process to have exited when waiting_count == 0"),
             .stdout = std.ArrayList(u8).fromOwnedSlice(
                 bun.default_allocator,
-                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stdout) catch bun.outOfMemory(),
+                bun.handleOom(flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stdout)),
             ),
             .stderr = std.ArrayList(u8).fromOwnedSlice(
                 bun.default_allocator,
-                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stderr) catch bun.outOfMemory(),
+                bun.handleOom(flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stderr)),
             ),
         };
         this.stdout = &.{};
@@ -2063,7 +2067,7 @@ pub const sync = struct {
 
         try string_builder.allocate(bun.default_allocator);
 
-        var args = std.ArrayList(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1) catch bun.outOfMemory();
+        var args = bun.handleOom(std.ArrayList(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1));
         defer args.deinit();
 
         for (argv) |arg| {
@@ -2197,7 +2201,7 @@ pub const sync = struct {
 
             if (out_fds_to_wait_for[1] != bun.invalid_fd) {
                 poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[0].cast());
+                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[1].cast());
             }
 
             if (poll_fds.len == 0) {
@@ -2246,10 +2250,12 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const PosixSpawn = bun.spawn;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;
+
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;
 
 const jsc = bun.jsc;
 const Subprocess = jsc.Subprocess;

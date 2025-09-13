@@ -545,7 +545,7 @@ pub const ShellRmTask = struct {
                 if (this.parent_task == null) {
                     var buf: bun.PathBuffer = undefined;
                     const cwd_path = switch (Syscall.getFdPath(this.task_manager.cwd, &buf)) {
-                        .result => |p| bun.default_allocator.dupeZ(u8, p) catch bun.outOfMemory(),
+                        .result => |p| bun.handleOom(bun.default_allocator.dupeZ(u8, p)),
                         .err => |err| {
                             debug("[runFromThreadPoolImpl:getcwd] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                             this.task_manager.err_mutex.lock();
@@ -680,7 +680,7 @@ pub const ShellRmTask = struct {
     };
 
     pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FileDescriptor, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
-        const task = bun.default_allocator.create(ShellRmTask) catch bun.outOfMemory();
+        const task = bun.handleOom(bun.default_allocator.create(ShellRmTask));
         task.* = ShellRmTask{
             .rm = rm,
             .opts = rm.opts,
@@ -730,7 +730,7 @@ pub const ShellRmTask = struct {
             return;
         }
 
-        var subtask = bun.default_allocator.create(DirTask) catch bun.outOfMemory();
+        var subtask = bun.handleOom(bun.default_allocator.create(DirTask));
         subtask.* = DirTask{
             .task_manager = this,
             .path = path,
@@ -760,8 +760,8 @@ pub const ShellRmTask = struct {
             debug("DirTask(0x{x}, {s}) Incrementing output count (deleted={s})", .{ @intFromPtr(dir_task), dir_task.path, path });
             _ = this.rm.state.exec.incrementOutputCount(.output_count);
         }
-        dir_task.deleted_entries.appendSlice(path[0..path.len]) catch bun.outOfMemory();
-        dir_task.deleted_entries.append('\n') catch bun.outOfMemory();
+        bun.handleOom(dir_task.deleted_entries.appendSlice(path[0..path.len]));
+        bun.handleOom(dir_task.deleted_entries.append('\n'));
         return .success;
     }
 
@@ -829,7 +829,7 @@ pub const ShellRmTask = struct {
         }
 
         if (!this.opts.recursive) {
-            return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(bun.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
+            return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, dir_task.path))));
         }
 
         const flags = bun.O.DIRECTORY | bun.O.RDONLY;
@@ -980,14 +980,14 @@ pub const ShellRmTask = struct {
 
         pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
             if (this.child_of_dir) {
-                this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir);
+                this.task.enqueueNoJoin(parent_dir_task, bun.handleOom(bun.default_allocator.dupeZ(u8, path)), .dir);
                 return .success;
             }
             return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
         }
 
         pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
-            if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir) };
+            if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, bun.handleOom(bun.default_allocator.dupeZ(u8, path)), .dir) };
             return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
         }
     };
@@ -1142,7 +1142,7 @@ pub const ShellRmTask = struct {
 
     fn errorWithPath(this: *ShellRmTask, err: Syscall.Error, path: [:0]const u8) Syscall.Error {
         _ = this;
-        return err.withPath(bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory());
+        return err.withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, path[0..path.len])));
     }
 
     inline fn join(this: *ShellRmTask, alloc: Allocator, subdir_parts: []const []const u8, is_absolute: bool) [:0]const u8 {
@@ -1150,10 +1150,10 @@ pub const ShellRmTask = struct {
         if (!is_absolute) {
             // If relative paths enabled, stdlib join is preferred over
             // ResolvePath.joinBuf because it doesn't try to normalize the path
-            return std.fs.path.joinZ(alloc, subdir_parts) catch bun.outOfMemory();
+            return bun.handleOom(std.fs.path.joinZ(alloc, subdir_parts));
         }
 
-        const out = alloc.dupeZ(u8, bun.path.join(subdir_parts, .auto)) catch bun.outOfMemory();
+        const out = bun.handleOom(alloc.dupeZ(u8, bun.path.join(subdir_parts, .auto)));
 
         return out;
     }

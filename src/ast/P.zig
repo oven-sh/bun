@@ -540,7 +540,7 @@ pub fn NewParser_(
 
             return p.newExpr(E.Call{
                 .target = require_resolve_ref,
-                .args = ExprNodeList.init(args),
+                .args = ExprNodeList.fromOwnedSlice(args),
             }, arg.loc);
         }
 
@@ -569,12 +569,12 @@ pub fn NewParser_(
 
         pub fn transposeRequire(noalias p: *P, arg: Expr, state: *const TransposeState) Expr {
             if (!p.options.features.allow_runtime) {
-                const args = p.allocator.alloc(Expr, 1) catch bun.outOfMemory();
+                const args = bun.handleOom(p.allocator.alloc(Expr, 1));
                 args[0] = arg;
                 return p.newExpr(
                     E.Call{
                         .target = p.valueForRequire(arg.loc),
-                        .args = ExprNodeList.init(args),
+                        .args = ExprNodeList.fromOwnedSlice(args),
                     },
                     arg.loc,
                 );
@@ -611,8 +611,8 @@ pub fn NewParser_(
 
                         // Note that this symbol may be completely removed later.
                         var path_name = fs.PathName.init(path.text);
-                        const name = path_name.nonUniqueNameString(p.allocator) catch bun.outOfMemory();
-                        const namespace_ref = p.newSymbol(.other, name) catch bun.outOfMemory();
+                        const name = bun.handleOom(path_name.nonUniqueNameString(p.allocator));
+                        const namespace_ref = bun.handleOom(p.newSymbol(.other, name));
 
                         p.imports_to_convert_from_require.append(p.allocator, .{
                             .namespace = .{
@@ -620,8 +620,8 @@ pub fn NewParser_(
                                 .loc = arg.loc,
                             },
                             .import_record_id = import_record_index,
-                        }) catch bun.outOfMemory();
-                        p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch bun.outOfMemory();
+                        }) catch |err| bun.handleOom(err);
+                        bun.handleOom(p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)));
                         p.recordUsage(namespace_ref);
 
                         if (!state.is_require_immediately_assigned_to_decl) {
@@ -652,7 +652,7 @@ pub fn NewParser_(
                     return p.newExpr(
                         E.Call{
                             .target = p.valueForRequire(arg.loc),
-                            .args = ExprNodeList.init(args),
+                            .args = ExprNodeList.fromOwnedSlice(args),
                         },
                         arg.loc,
                     );
@@ -959,7 +959,7 @@ pub fn NewParser_(
                             .e_identifier => |ident| {
                                 // is this a require("something")
                                 if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
+                                    _ = p.addImportRecord(.require, loc, call.args.at(0).data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },
                             else => {},
@@ -975,7 +975,7 @@ pub fn NewParser_(
                             .e_identifier => |ident| {
                                 // is this a require("something")
                                 if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
+                                    _ = p.addImportRecord(.require, loc, call.args.at(0).data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },
                             else => {},
@@ -1254,7 +1254,7 @@ pub fn NewParser_(
                 .ref = namespace_ref,
                 .is_top_level = true,
             });
-            try p.module_scope.generated.push(allocator, namespace_ref);
+            try p.module_scope.generated.append(allocator, namespace_ref);
             for (imports, clause_items) |alias, *clause_item| {
                 const ref = symbols.get(alias) orelse unreachable;
                 const alias_name = if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias;
@@ -1309,7 +1309,7 @@ pub fn NewParser_(
             parts.append(js_ast.Part{
                 .stmts = stmts,
                 .declared_symbols = declared_symbols,
-                .import_record_indices = bun.BabyList(u32).init(import_records),
+                .import_record_indices = bun.BabyList(u32).fromOwnedSlice(import_records),
                 .tag = .runtime,
             }) catch unreachable;
         }
@@ -1364,7 +1364,7 @@ pub fn NewParser_(
                 .ref = namespace_ref,
                 .is_top_level = true,
             });
-            try p.module_scope.generated.push(allocator, namespace_ref);
+            try p.module_scope.generated.append(allocator, namespace_ref);
 
             for (clauses) |entry| {
                 if (entry.enabled) {
@@ -1378,7 +1378,7 @@ pub fn NewParser_(
                         .name = LocRef{ .ref = entry.ref, .loc = logger.Loc{} },
                     });
                     declared_symbols.appendAssumeCapacity(.{ .ref = entry.ref, .is_top_level = true });
-                    try p.module_scope.generated.push(allocator, entry.ref);
+                    try p.module_scope.generated.append(allocator, entry.ref);
                     try p.is_import_item.put(allocator, entry.ref, {});
                     try p.named_imports.put(allocator, entry.ref, .{
                         .alias = entry.name,
@@ -1998,6 +1998,9 @@ pub fn NewParser_(
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
                 p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+                p.jest.xit = try p.declareCommonJSSymbol(.unbound, "xit");
+                p.jest.xtest = try p.declareCommonJSSymbol(.unbound, "xtest");
+                p.jest.xdescribe = try p.declareCommonJSSymbol(.unbound, "xdescribe");
             }
 
             if (p.options.features.react_fast_refresh) {
@@ -2023,7 +2026,7 @@ pub fn NewParser_(
         fn ensureRequireSymbol(p: *P) void {
             if (p.runtime_imports.__require != null) return;
             const static_symbol = generatedSymbolName("__require");
-            p.runtime_imports.__require = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true) catch bun.outOfMemory();
+            p.runtime_imports.__require = bun.handleOom(declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true));
             p.runtime_imports.put("__require", p.runtime_imports.__require.?);
         }
 
@@ -2114,7 +2117,7 @@ pub fn NewParser_(
                             //
                             const hoisted_ref = p.newSymbol(.hoisted, symbol.original_name) catch unreachable;
                             symbols = p.symbols.items;
-                            scope.generated.push(p.allocator, hoisted_ref) catch unreachable;
+                            bun.handleOom(scope.generated.append(p.allocator, hoisted_ref));
                             p.hoisted_ref_for_sloppy_mode_block_fn.put(p.allocator, value.ref, hoisted_ref) catch unreachable;
                             value.ref = hoisted_ref;
                             symbol = &symbols[hoisted_ref.innerIndex()];
@@ -2236,8 +2239,8 @@ pub fn NewParser_(
             {
                 p.log.level = .verbose;
 
-                p.log.addDebugFmt(p.source, loc, p.allocator, "Expected this scope (.{s})", .{@tagName(kind)}) catch bun.outOfMemory();
-                p.log.addDebugFmt(p.source, order.loc, p.allocator, "Found this scope (.{s})", .{@tagName(order.scope.kind)}) catch bun.outOfMemory();
+                bun.handleOom(p.log.addDebugFmt(p.source, loc, p.allocator, "Expected this scope (.{s})", .{@tagName(kind)}));
+                bun.handleOom(p.log.addDebugFmt(p.source, order.loc, p.allocator, "Found this scope (.{s})", .{@tagName(order.scope.kind)}));
 
                 p.panic("Scope mismatch while visiting", .{});
             }
@@ -2259,7 +2262,7 @@ pub fn NewParser_(
                 .generated = .{},
             };
 
-            try parent.children.push(allocator, scope);
+            try parent.children.append(allocator, scope);
             scope.strict_mode = parent.strict_mode;
 
             p.current_scope = scope;
@@ -2284,8 +2287,8 @@ pub fn NewParser_(
                     if (p.scopes_in_order.items[last_i]) |prev_scope| {
                         if (prev_scope.loc.start >= loc.start) {
                             p.log.level = .verbose;
-                            p.log.addDebugFmt(p.source, prev_scope.loc, p.allocator, "Previous Scope", .{}) catch bun.outOfMemory();
-                            p.log.addDebugFmt(p.source, loc, p.allocator, "Next Scope", .{}) catch bun.outOfMemory();
+                            bun.handleOom(p.log.addDebugFmt(p.source, prev_scope.loc, p.allocator, "Previous Scope", .{}));
+                            bun.handleOom(p.log.addDebugFmt(p.source, loc, p.allocator, "Next Scope", .{}));
                             p.panic("Scope location {d} must be greater than {d}", .{ loc.start, prev_scope.loc.start });
                         }
                     }
@@ -2570,7 +2573,7 @@ pub fn NewParser_(
                 const name = try strings.append(p.allocator, "import_", try path_name.nonUniqueNameString(p.allocator));
                 stmt.namespace_ref = try p.newSymbol(.other, name);
                 var scope: *Scope = p.current_scope;
-                try scope.generated.push(p.allocator, stmt.namespace_ref);
+                try scope.generated.append(p.allocator, stmt.namespace_ref);
             }
 
             var item_refs = ImportItemForNamespaceMap.init(p.allocator);
@@ -2762,7 +2765,7 @@ pub fn NewParser_(
 
             var scope = p.current_scope;
 
-            try scope.generated.push(p.allocator, name.ref.?);
+            try scope.generated.append(p.allocator, name.ref.?);
 
             return name;
         }
@@ -2960,7 +2963,7 @@ pub fn NewParser_(
                 scope: js_ast.TSNamespaceScope,
             };
 
-            var pair = p.allocator.create(Pair) catch bun.outOfMemory();
+            var pair = bun.handleOom(p.allocator.create(Pair));
             pair.map = .{};
             pair.scope = .{
                 .exported_members = &pair.map,
@@ -3068,7 +3071,7 @@ pub fn NewParser_(
             // this module will be unable to reference this symbol. However, we must
             // still add the symbol to the scope so it gets minified (automatically-
             // generated code may still reference the symbol).
-            try p.module_scope.generated.push(p.allocator, ref);
+            try p.module_scope.generated.append(p.allocator, ref);
             return ref;
         }
 
@@ -3142,7 +3145,7 @@ pub fn NewParser_(
             entry.key_ptr.* = name;
             entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref, .loc = loc };
             if (comptime is_generated) {
-                try p.module_scope.generated.push(p.allocator, ref);
+                try p.module_scope.generated.append(p.allocator, ref);
             }
             return ref;
         }
@@ -3332,7 +3335,7 @@ pub fn NewParser_(
                     p.allocator,
                     "panic here",
                     .{},
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
 
             p.log.level = .verbose;
@@ -3449,7 +3452,10 @@ pub fn NewParser_(
                         decls[0] = Decl{
                             .binding = p.b(B.Identifier{ .ref = ref }, local.loc),
                         };
-                        try partStmts.append(p.s(S.Local{ .decls = G.Decl.List.init(decls) }, local.loc));
+                        try partStmts.append(p.s(
+                            S.Local{ .decls = G.Decl.List.fromOwnedSlice(decls) },
+                            local.loc,
+                        ));
                         try p.declared_symbols.append(p.allocator, .{ .ref = ref, .is_top_level = true });
                     }
                 }
@@ -3464,7 +3470,7 @@ pub fn NewParser_(
                     .symbol_uses = p.symbol_uses,
                     .import_symbol_property_uses = p.import_symbol_property_uses,
                     .declared_symbols = p.declared_symbols.toOwnedSlice(),
-                    .import_record_indices = bun.BabyList(u32).init(
+                    .import_record_indices = bun.BabyList(u32).fromOwnedSlice(
                         p.import_records_for_current_part.toOwnedSlice(
                             p.allocator,
                         ) catch unreachable,
@@ -3976,7 +3982,7 @@ pub fn NewParser_(
                         // checks are not yet handled correctly by bun or esbuild, so this possibility is
                         // currently ignored.
                         .un_typeof => {
-                            if (ex.value.data == .e_identifier) {
+                            if (ex.value.data == .e_identifier and ex.flags.was_originally_typeof_identifier) {
                                 return true;
                             }
 
@@ -4015,6 +4021,18 @@ pub fn NewParser_(
                             ex.right.data,
                         ) and
                             p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right),
+
+                        // Special-case "<" and ">" with string, number, or bigint arguments
+                        .bin_lt, .bin_gt, .bin_le, .bin_ge => {
+                            const left = ex.left.knownPrimitive();
+                            const right = ex.right.knownPrimitive();
+                            switch (left) {
+                                .string, .number, .bigint => {
+                                    return right == left and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.left) and p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.right);
+                                },
+                                else => {},
+                            }
+                        },
                         else => {},
                     }
                 },
@@ -4235,13 +4253,14 @@ pub fn NewParser_(
         //     return false;
         // }
 
-        fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch: bool) bool {
+        fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch_: bool) bool {
             if (value.data != .e_identifier or
                 p.symbols.items[value.data.e_identifier.ref.innerIndex()].kind != .unbound or
                 guard_condition.data != .e_binary)
                 return false;
 
             const binary = guard_condition.data.e_binary.*;
+            var is_yes_branch = is_yes_branch_;
 
             switch (binary.op) {
                 .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne => {
@@ -4269,6 +4288,39 @@ pub fn NewParser_(
                     return ((compare.e_string.eqlComptime("undefined") == is_yes_branch) ==
                         (binary.op == .bin_strict_ne or binary.op == .bin_loose_ne)) and
                         id.eql(id2);
+                },
+                .bin_lt, .bin_gt, .bin_le, .bin_ge => {
+                    // Pattern match for "typeof x < <string>"
+                    var typeof: Expr.Data = binary.left.data;
+                    var str: Expr.Data = binary.right.data;
+
+                    // Check if order is flipped: 'u' >= typeof x
+                    if (typeof == .e_string) {
+                        typeof = binary.right.data;
+                        str = binary.left.data;
+                        is_yes_branch = !is_yes_branch;
+                    }
+
+                    if (typeof == .e_unary and str == .e_string) {
+                        const unary = typeof.e_unary.*;
+                        if (unary.op == .un_typeof and
+                            unary.value.data == .e_identifier and
+                            unary.flags.was_originally_typeof_identifier and
+                            str.e_string.eqlComptime("u"))
+                        {
+                            // In "typeof x < 'u' ? x : null", the reference to "x" is side-effect free
+                            // In "typeof x > 'u' ? x : null", the reference to "x" is side-effect free
+                            if (is_yes_branch == (binary.op == .bin_lt or binary.op == .bin_le)) {
+                                const id = value.data.e_identifier.ref;
+                                const id2 = unary.value.data.e_identifier.ref;
+                                if (id.eql(id2)) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+
+                    return false;
                 },
                 else => return false,
             }
@@ -4298,7 +4350,7 @@ pub fn NewParser_(
                                 .ref = (p.declareGeneratedSymbol(.other, symbol_name) catch unreachable),
                             };
 
-                            p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
+                            bun.handleOom(p.module_scope.generated.append(p.allocator, loc_ref.ref.?));
                             p.is_import_item.put(p.allocator, loc_ref.ref.?, {}) catch unreachable;
                             @field(p.jsx_imports, @tagName(field)) = loc_ref;
                             break :brk loc_ref.ref.?;
@@ -4400,7 +4452,7 @@ pub fn NewParser_(
                     var local = p.s(
                         S.Local{
                             .is_export = true,
-                            .decls = Decl.List.init(decls),
+                            .decls = Decl.List.fromOwnedSlice(decls),
                         },
                         loc,
                     );
@@ -4421,7 +4473,7 @@ pub fn NewParser_(
                     var local = p.s(
                         S.Local{
                             .is_export = true,
-                            .decls = Decl.List.init(decls),
+                            .decls = Decl.List.fromOwnedSlice(decls),
                         },
                         loc,
                     );
@@ -4533,9 +4585,9 @@ pub fn NewParser_(
             if ((symbol.kind == .ts_namespace or symbol.kind == .ts_enum) and
                 !p.emitted_namespace_vars.contains(name_ref))
             {
-                p.emitted_namespace_vars.putNoClobber(allocator, name_ref, {}) catch bun.outOfMemory();
+                bun.handleOom(p.emitted_namespace_vars.putNoClobber(allocator, name_ref, {}));
 
-                var decls = allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                var decls = bun.handleOom(allocator.alloc(G.Decl, 1));
                 decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = name_ref }, name_loc) };
 
                 if (p.enclosing_namespace_arg_ref == null) {
@@ -4543,18 +4595,18 @@ pub fn NewParser_(
                     stmts.append(
                         p.s(S.Local{
                             .kind = .k_var,
-                            .decls = G.Decl.List.init(decls),
+                            .decls = G.Decl.List.fromOwnedSlice(decls),
                             .is_export = is_export,
                         }, stmt_loc),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 } else {
                     // Nested namespace: "let"
                     stmts.append(
                         p.s(S.Local{
                             .kind = .k_let,
-                            .decls = G.Decl.List.init(decls),
+                            .decls = G.Decl.List.fromOwnedSlice(decls),
                         }, stmt_loc),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             }
 
@@ -4593,10 +4645,10 @@ pub fn NewParser_(
                 }, name_loc);
             };
 
-            var func_args = allocator.alloc(G.Arg, 1) catch bun.outOfMemory();
+            var func_args = bun.handleOom(allocator.alloc(G.Arg, 1));
             func_args[0] = .{ .binding = p.b(B.Identifier{ .ref = arg_ref }, name_loc) };
 
-            var args_list = allocator.alloc(ExprNodeIndex, 1) catch bun.outOfMemory();
+            var args_list = bun.handleOom(allocator.alloc(ExprNodeIndex, 1));
             args_list[0] = arg_expr;
 
             // TODO: if unsupported features includes arrow functions
@@ -4637,7 +4689,7 @@ pub fn NewParser_(
             const call = p.newExpr(
                 E.Call{
                     .target = target,
-                    .args = ExprNodeList.init(args_list),
+                    .args = ExprNodeList.fromOwnedSlice(args_list),
                     // TODO: make these fully tree-shakable. this annotation
                     // as-is is incorrect.  This would be done by changing all
                     // enum wrappers into `var Enum = ...` instead of two
@@ -4692,18 +4744,16 @@ pub fn NewParser_(
                                         for (func.func.args, 0..) |arg, i| {
                                             for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
                                                 var decorators = if (is_constructor)
-                                                    class.ts_decorators.listManaged(p.allocator)
+                                                    &class.ts_decorators
                                                 else
-                                                    prop.ts_decorators.listManaged(p.allocator);
+                                                    &prop.ts_decorators;
                                                 const args = p.allocator.alloc(Expr, 2) catch unreachable;
                                                 args[0] = p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(i)) }, arg_decorator.loc);
                                                 args[1] = arg_decorator;
-                                                decorators.append(p.callRuntime(arg_decorator.loc, "__legacyDecorateParamTS", args)) catch unreachable;
-                                                if (is_constructor) {
-                                                    class.ts_decorators.update(decorators);
-                                                } else {
-                                                    prop.ts_decorators.update(decorators);
-                                                }
+                                                decorators.append(
+                                                    p.allocator,
+                                                    p.callRuntime(arg_decorator.loc, "__legacyDecorateParamTS", args),
+                                                ) catch |err| bun.handleOom(err);
                                             }
                                         }
                                     },
@@ -4733,7 +4783,7 @@ pub fn NewParser_(
                                 target = p.newExpr(E.Dot{ .target = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
                             }
 
-                            var array = prop.ts_decorators.listManaged(p.allocator);
+                            var array: std.ArrayList(Expr) = .init(p.allocator);
 
                             if (p.options.features.emit_decorator_metadata) {
                                 switch (prop.kind) {
@@ -4758,7 +4808,7 @@ pub fn NewParser_(
                                                         entry.* = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
                                                     }
 
-                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
+                                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.fromOwnedSlice(args_array) }, logger.Loc.Empty);
 
                                                     array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                                 }
@@ -4783,7 +4833,7 @@ pub fn NewParser_(
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
                                                 args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
-                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.empty }, logger.Loc.Empty);
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
                                         }
@@ -4803,7 +4853,7 @@ pub fn NewParser_(
                                                     entry.* = p.serializeMetadata(method_arg.ts_metadata) catch unreachable;
                                                 }
 
-                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(args_array) }, logger.Loc.Empty);
+                                                args[1] = p.newExpr(E.Array{ .items = ExprNodeList.fromOwnedSlice(args_array) }, logger.Loc.Empty);
 
                                                 array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                             }
@@ -4820,8 +4870,9 @@ pub fn NewParser_(
                                 }
                             }
 
+                            bun.handleOom(array.insertSlice(0, prop.ts_decorators.slice()));
                             const args = p.allocator.alloc(Expr, 4) catch unreachable;
-                            args[0] = p.newExpr(E.Array{ .items = ExprNodeList.init(array.items) }, loc);
+                            args[0] = p.newExpr(E.Array{ .items = ExprNodeList.moveFromList(&array) }, loc);
                             args[1] = target;
                             args[2] = descriptor_key;
                             args[3] = descriptor_kind;
@@ -4883,10 +4934,10 @@ pub fn NewParser_(
                             if (class.extends != null) {
                                 const target = p.newExpr(E.Super{}, stmt.loc);
                                 const arguments_ref = p.newSymbol(.unbound, arguments_str) catch unreachable;
-                                p.current_scope.generated.push(p.allocator, arguments_ref) catch unreachable;
+                                bun.handleOom(p.current_scope.generated.append(p.allocator, arguments_ref));
 
                                 const super = p.newExpr(E.Spread{ .value = p.newExpr(E.Identifier{ .ref = arguments_ref }, stmt.loc) }, stmt.loc);
-                                const args = ExprNodeList.one(p.allocator, super) catch unreachable;
+                                const args = bun.handleOom(ExprNodeList.initOne(p.allocator, super));
 
                                 constructor_stmts.append(p.s(S.SExpr{ .value = p.newExpr(E.Call{ .target = target, .args = args }, stmt.loc) }, stmt.loc)) catch unreachable;
                             }
@@ -4934,7 +4985,7 @@ pub fn NewParser_(
                     stmts.appendSliceAssumeCapacity(instance_decorators.items);
                     stmts.appendSliceAssumeCapacity(static_decorators.items);
                     if (class.ts_decorators.len > 0) {
-                        var array = class.ts_decorators.listManaged(p.allocator);
+                        var array = class.ts_decorators.moveToListManaged(p.allocator);
 
                         if (p.options.features.emit_decorator_metadata) {
                             if (constructor_function != null) {
@@ -4950,9 +5001,9 @@ pub fn NewParser_(
                                         param_array[i] = p.serializeMetadata(constructor_arg.ts_metadata) catch unreachable;
                                     }
 
-                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(param_array) }, logger.Loc.Empty);
+                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.fromOwnedSlice(param_array) }, logger.Loc.Empty);
                                 } else {
-                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.init(&[_]Expr{}) }, logger.Loc.Empty);
+                                    args[1] = p.newExpr(E.Array{ .items = ExprNodeList.empty }, logger.Loc.Empty);
                                 }
 
                                 array.append(p.callRuntime(stmt.loc, "__legacyMetadataTS", args)) catch unreachable;
@@ -4960,7 +5011,7 @@ pub fn NewParser_(
                         }
 
                         const args = p.allocator.alloc(Expr, 2) catch unreachable;
-                        args[0] = p.newExpr(E.Array{ .items = ExprNodeList.init(array.items) }, stmt.loc);
+                        args[0] = p.newExpr(E.Array{ .items = ExprNodeList.fromOwnedSlice(array.items) }, stmt.loc);
                         args[1] = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
 
                         stmts.appendAssumeCapacity(Stmt.assign(
@@ -5370,7 +5421,7 @@ pub fn NewParser_(
                         name,
                         loc_ref.ref.?,
                     );
-                    p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
+                    bun.handleOom(p.module_scope.generated.append(p.allocator, loc_ref.ref.?));
                     return loc_ref.ref.?;
                 }
             } else {
@@ -5394,7 +5445,7 @@ pub fn NewParser_(
             return p.newExpr(
                 E.Call{
                     .target = p.runtimeIdentifier(loc, name),
-                    .args = ExprNodeList.init(args),
+                    .args = ExprNodeList.fromOwnedSlice(args),
                 },
                 loc,
             );
@@ -5454,7 +5505,7 @@ pub fn NewParser_(
 
             for (to_flatten.children.slice()) |item| {
                 item.parent = parent;
-                parent.children.push(p.allocator, item) catch unreachable;
+                bun.handleOom(parent.children.append(p.allocator, item));
             }
         }
 
@@ -5467,15 +5518,15 @@ pub fn NewParser_(
         pub fn generateTempRefWithScope(p: *P, default_name: ?string, scope: *Scope) Ref {
             const name = (if (p.willUseRenamer()) default_name else null) orelse brk: {
                 p.temp_ref_count += 1;
-                break :brk std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory();
+                break :brk bun.handleOom(std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}));
             };
-            const ref = p.newSymbol(.other, name) catch bun.outOfMemory();
+            const ref = bun.handleOom(p.newSymbol(.other, name));
 
             p.temp_refs_to_declare.append(p.allocator, .{
                 .ref = ref,
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
 
-            scope.generated.append(p.allocator, &.{ref}) catch bun.outOfMemory();
+            bun.handleOom(scope.generated.append(p.allocator, ref));
 
             return ref;
         }
@@ -5561,7 +5612,7 @@ pub fn NewParser_(
                                 if (decl.value) |*decl_value| {
                                     const value_loc = decl_value.loc;
                                     p.recordUsage(ctx.stack_ref);
-                                    const args = p.allocator.alloc(Expr, 3) catch bun.outOfMemory();
+                                    const args = bun.handleOom(p.allocator.alloc(Expr, 3));
                                     args[0] = Expr{
                                         .data = .{ .e_identifier = .{ .ref = ctx.stack_ref } },
                                         .loc = stmt.loc,
@@ -5595,14 +5646,14 @@ pub fn NewParser_(
                     switch (stmt.data) {
                         .s_directive, .s_import, .s_export_from, .s_export_star => {
                             // These can't go in a try/catch block
-                            result.append(stmt) catch bun.outOfMemory();
+                            bun.handleOom(result.append(stmt));
                             continue;
                         },
 
                         .s_class => {
                             if (stmt.data.s_class.is_export) {
                                 // can't go in try/catch; hoist out
-                                result.append(stmt) catch bun.outOfMemory();
+                                bun.handleOom(result.append(stmt));
                                 continue;
                             }
                         },
@@ -5613,14 +5664,14 @@ pub fn NewParser_(
 
                         .s_export_clause => |data| {
                             // Merge export clauses together
-                            exports.appendSlice(data.items) catch bun.outOfMemory();
+                            bun.handleOom(exports.appendSlice(data.items));
                             continue;
                         },
 
                         .s_function => {
                             if (should_hoist_fns) {
                                 // Hoist function declarations for cross-file ESM references
-                                result.append(stmt) catch bun.outOfMemory();
+                                bun.handleOom(result.append(stmt));
                                 continue;
                             }
                         },
@@ -5639,7 +5690,7 @@ pub fn NewParser_(
                                             },
                                             .alias = p.symbols.items[identifier.ref.inner_index].original_name,
                                             .alias_loc = decl.binding.loc,
-                                        }) catch bun.outOfMemory();
+                                        }) catch |err| bun.handleOom(err);
                                         local.kind = .k_var;
                                     }
                                 }
@@ -5665,17 +5716,17 @@ pub fn NewParser_(
                 }
 
                 const is_top_level = scope == p.module_scope;
-                scope.generated.append(p.allocator, &.{
+                scope.generated.appendSlice(p.allocator, &.{
                     ctx.stack_ref,
                     caught_ref,
                     err_ref,
                     has_err_ref,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
                 p.declared_symbols.ensureUnusedCapacity(
                     p.allocator,
                     // 5 to include the _promise decl later on:
                     if (ctx.has_await_using) 5 else 4,
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
                 p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = ctx.stack_ref });
                 p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = caught_ref });
                 p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = err_ref });
@@ -5686,7 +5737,7 @@ pub fn NewParser_(
                     p.recordUsage(ctx.stack_ref);
                     p.recordUsage(err_ref);
                     p.recordUsage(has_err_ref);
-                    const args = p.allocator.alloc(Expr, 3) catch bun.outOfMemory();
+                    const args = bun.handleOom(p.allocator.alloc(Expr, 3));
                     args[0] = Expr{
                         .data = .{ .e_identifier = .{ .ref = ctx.stack_ref } },
                         .loc = loc,
@@ -5705,7 +5756,7 @@ pub fn NewParser_(
                 const finally_stmts = finally: {
                     if (ctx.has_await_using) {
                         const promise_ref = p.generateTempRef("_promise");
-                        scope.generated.append(p.allocator, &.{promise_ref}) catch bun.outOfMemory();
+                        bun.handleOom(scope.generated.append(p.allocator, promise_ref));
                         p.declared_symbols.appendAssumeCapacity(.{ .is_top_level = is_top_level, .ref = promise_ref });
 
                         const promise_ref_expr = p.newExpr(E.Identifier{ .ref = promise_ref }, loc);
@@ -5715,15 +5766,15 @@ pub fn NewParser_(
                         }, loc);
                         p.recordUsage(promise_ref);
 
-                        const statements = p.allocator.alloc(Stmt, 2) catch bun.outOfMemory();
+                        const statements = bun.handleOom(p.allocator.alloc(Stmt, 2));
                         statements[0] = p.s(S.Local{
                             .decls = decls: {
-                                const decls = p.allocator.alloc(Decl, 1) catch bun.outOfMemory();
+                                const decls = bun.handleOom(p.allocator.alloc(Decl, 1));
                                 decls[0] = .{
                                     .binding = p.b(B.Identifier{ .ref = promise_ref }, loc),
                                     .value = call_dispose,
                                 };
-                                break :decls G.Decl.List.init(decls);
+                                break :decls G.Decl.List.fromOwnedSlice(decls);
                             },
                         }, loc);
 
@@ -5743,7 +5794,7 @@ pub fn NewParser_(
 
                         break :finally statements;
                     } else {
-                        const single = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                        const single = bun.handleOom(p.allocator.alloc(Stmt, 1));
                         single[0] = p.s(S.SExpr{ .value = call_dispose }, call_dispose.loc);
                         break :finally single;
                     }
@@ -5751,15 +5802,15 @@ pub fn NewParser_(
 
                 // Wrap everything in a try/catch/finally block
                 p.recordUsage(caught_ref);
-                result.ensureUnusedCapacity(2 + @as(usize, @intFromBool(exports.items.len > 0))) catch bun.outOfMemory();
+                bun.handleOom(result.ensureUnusedCapacity(2 + @as(usize, @intFromBool(exports.items.len > 0))));
                 result.appendAssumeCapacity(p.s(S.Local{
                     .decls = decls: {
-                        const decls = p.allocator.alloc(Decl, 1) catch bun.outOfMemory();
+                        const decls = bun.handleOom(p.allocator.alloc(Decl, 1));
                         decls[0] = .{
                             .binding = p.b(B.Identifier{ .ref = ctx.stack_ref }, loc),
                             .value = p.newExpr(E.Array{}, loc),
                         };
-                        break :decls G.Decl.List.init(decls);
+                        break :decls G.Decl.List.fromOwnedSlice(decls);
                     },
                     .kind = .k_let,
                 }, loc));
@@ -5769,10 +5820,10 @@ pub fn NewParser_(
                     .catch_ = .{
                         .binding = p.b(B.Identifier{ .ref = caught_ref }, loc),
                         .body = catch_body: {
-                            const statements = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                            const statements = bun.handleOom(p.allocator.alloc(Stmt, 1));
                             statements[0] = p.s(S.Local{
                                 .decls = decls: {
-                                    const decls = p.allocator.alloc(Decl, 2) catch bun.outOfMemory();
+                                    const decls = bun.handleOom(p.allocator.alloc(Decl, 2));
                                     decls[0] = .{
                                         .binding = p.b(B.Identifier{ .ref = err_ref }, loc),
                                         .value = p.newExpr(E.Identifier{ .ref = caught_ref }, loc),
@@ -5781,7 +5832,7 @@ pub fn NewParser_(
                                         .binding = p.b(B.Identifier{ .ref = has_err_ref }, loc),
                                         .value = p.newExpr(E.Number{ .value = 1 }, loc),
                                     };
-                                    break :decls G.Decl.List.init(decls);
+                                    break :decls G.Decl.List.fromOwnedSlice(decls);
                                 },
                             }, loc);
                             break :catch_body statements;
@@ -5828,7 +5879,7 @@ pub fn NewParser_(
                 },
                 .e_array => |arr| for (arr.items.slice()) |*item| {
                     if (item.data != .e_string) {
-                        p.log.addError(p.source, item.loc, import_meta_hot_accept_err) catch bun.outOfMemory();
+                        bun.handleOom(p.log.addError(p.source, item.loc, import_meta_hot_accept_err));
                         continue;
                     }
                     item.data = p.rewriteImportMetaHotAcceptString(item.data.e_string, item.loc) orelse
@@ -5841,7 +5892,7 @@ pub fn NewParser_(
         }
 
         fn rewriteImportMetaHotAcceptString(p: *P, str: *E.String, loc: logger.Loc) ?Expr.Data {
-            str.toUTF8(p.allocator) catch bun.outOfMemory();
+            bun.handleOom(str.toUTF8(p.allocator));
             const specifier = str.data;
 
             const import_record_index = for (p.import_records.items, 0..) |import_record, i| {
@@ -5849,7 +5900,7 @@ pub fn NewParser_(
                     break i;
                 }
             } else {
-                p.log.addError(p.source, loc, import_meta_hot_accept_err) catch bun.outOfMemory();
+                bun.handleOom(p.log.addError(p.source, loc, import_meta_hot_accept_err));
                 return null;
             };
 
@@ -6122,7 +6173,7 @@ pub fn NewParser_(
                     val,
                     module_path,
                     p.newExpr(E.String{ .data = original_name }, logger.Loc.Empty),
-                }) catch bun.outOfMemory(),
+                }) catch |err| bun.handleOom(err),
             }, logger.Loc.Empty);
         }
 
@@ -6154,7 +6205,7 @@ pub fn NewParser_(
                 p.declared_symbols.append(p.allocator, .{
                     .is_top_level = true,
                     .ref = ctx_storage.*.?.signature_cb,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
 
                 break :init &(ctx_storage.*.?);
             };
@@ -6177,7 +6228,7 @@ pub fn NewParser_(
                 .e_import_identifier,
                 .e_commonjs_export_identifier,
                 => |id, tag| {
-                    const gop = ctx.user_hooks.getOrPut(p.allocator, id.ref) catch bun.outOfMemory();
+                    const gop = bun.handleOom(ctx.user_hooks.getOrPut(p.allocator, id.ref));
                     if (!gop.found_existing) {
                         gop.value_ptr.* = .{
                             .data = @unionInit(Expr.Data, @tagName(tag), id),
@@ -6200,7 +6251,7 @@ pub fn NewParser_(
                 // re-allocated entirely to fit. Only one slot of new capacity
                 // is used since we know this statement list is not going to be
                 // appended to afterwards; This function is a post-visit handler.
-                const new_stmts = p.allocator.alloc(Stmt, stmts.items.len + 1) catch bun.outOfMemory();
+                const new_stmts = bun.handleOom(p.allocator.alloc(Stmt, stmts.items.len + 1));
                 @memcpy(new_stmts[1..], stmts.items);
                 stmts.deinit();
                 stmts.* = ListManaged(Stmt).fromOwnedSlice(p.allocator, new_stmts);
@@ -6228,14 +6279,14 @@ pub fn NewParser_(
                 .value = p.newExpr(E.Call{
                     .target = Expr.initIdentifier(p.react_refresh.create_signature_ref, loc),
                 }, loc),
-            }}) catch bun.outOfMemory() }, loc);
+            }}) catch |err| bun.handleOom(err) }, loc);
         }
 
         pub fn getReactRefreshHookSignalInit(p: *P, ctx: *ReactRefresh.HookContext, function_with_hook_calls: Expr) Expr {
             const loc = logger.Loc.Empty;
 
             const final = ctx.hasher.final();
-            const hash_data = p.allocator.alloc(u8, comptime bun.base64.encodeLenFromSize(@sizeOf(@TypeOf(final)))) catch bun.outOfMemory();
+            const hash_data = bun.handleOom(p.allocator.alloc(u8, comptime bun.base64.encodeLenFromSize(@sizeOf(@TypeOf(final)))));
             bun.assert(bun.base64.encode(hash_data, std.mem.asBytes(&final)) == hash_data.len);
 
             const have_custom_hooks = ctx.user_hooks.count() > 0;
@@ -6246,7 +6297,7 @@ pub fn NewParser_(
                 2 +
                     @as(usize, @intFromBool(have_force_arg)) +
                     @as(usize, @intFromBool(have_custom_hooks)),
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
 
             args[0] = function_with_hook_calls;
             args[1] = p.newExpr(E.String{ .data = hash_data }, loc);
@@ -6259,9 +6310,9 @@ pub fn NewParser_(
                     .body = .{
                         .stmts = p.allocator.dupe(Stmt, &.{
                             p.s(S.Return{ .value = p.newExpr(E.Array{
-                                .items = ExprNodeList.init(ctx.user_hooks.values()),
+                                .items = ExprNodeList.fromBorrowedSliceDangerous(ctx.user_hooks.values()),
                             }, loc) }, loc),
-                        }) catch bun.outOfMemory(),
+                        }) catch |err| bun.handleOom(err),
                         .loc = loc,
                     },
                     .prefer_expr = true,
@@ -6271,7 +6322,7 @@ pub fn NewParser_(
             // _s(func, "<hash>", force, () => [useCustom])
             return p.newExpr(E.Call{
                 .target = Expr.initIdentifier(ctx.signature_cb, loc),
-                .args = ExprNodeList.init(args),
+                .args = ExprNodeList.fromOwnedSlice(args),
             }, loc);
         }
 
@@ -6352,11 +6403,14 @@ pub fn NewParser_(
                             }
 
                             if (part.import_record_indices.len == 0) {
-                                part.import_record_indices = @TypeOf(part.import_record_indices).init(
-                                    (p.import_records_for_current_part.clone(p.allocator) catch unreachable).items,
-                                );
+                                part.import_record_indices = .fromOwnedSlice(bun.handleOom(
+                                    p.allocator.dupe(u32, p.import_records_for_current_part.items),
+                                ));
                             } else {
-                                part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items) catch unreachable;
+                                part.import_record_indices.appendSlice(
+                                    p.allocator,
+                                    p.import_records_for_current_part.items,
+                                ) catch |err| bun.handleOom(err);
                             }
 
                             parts.items[parts_end] = part;
@@ -6400,7 +6454,7 @@ pub fn NewParser_(
                 //   })
                 //
                 //  which is then called in `evaluateCommonJSModuleOnce`
-                var args = allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))) catch bun.outOfMemory();
+                var args = bun.handleOom(allocator.alloc(Arg, 5 + @as(usize, @intFromBool(p.has_import_meta))));
                 args[0..5].* = .{
                     Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) },
                     Arg{ .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty) },
@@ -6409,7 +6463,7 @@ pub fn NewParser_(
                     Arg{ .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty) },
                 };
                 if (p.has_import_meta) {
-                    p.import_meta_ref = p.newSymbol(.other, "$Bun_import_meta") catch bun.outOfMemory();
+                    p.import_meta_ref = bun.handleOom(p.newSymbol(.other, "$Bun_import_meta"));
                     args[5] = Arg{ .binding = p.b(B.Identifier{ .ref = p.import_meta_ref }, logger.Loc.Empty) };
                 }
 
@@ -6425,7 +6479,7 @@ pub fn NewParser_(
 
                 total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
 
-                const stmts_to_copy = allocator.alloc(Stmt, total_stmts_count) catch bun.outOfMemory();
+                const stmts_to_copy = bun.handleOom(allocator.alloc(Stmt, total_stmts_count));
                 {
                     var remaining_stmts = stmts_to_copy;
                     if (preserve_strict_mode) {
@@ -6459,7 +6513,7 @@ pub fn NewParser_(
                     logger.Loc.Empty,
                 );
 
-                var top_level_stmts = p.allocator.alloc(Stmt, 1) catch bun.outOfMemory();
+                var top_level_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
                 top_level_stmts[0] = p.s(
                     S.SExpr{
                         .value = wrapper,
@@ -6497,7 +6551,7 @@ pub fn NewParser_(
                             entry.value_ptr.* = .{};
                         }
 
-                        entry.value_ptr.push(ctx.allocator, @as(u32, @truncate(ctx.part_index))) catch unreachable;
+                        bun.handleOom(entry.value_ptr.append(ctx.allocator, @as(u32, @truncate(ctx.part_index))));
                     }
                 };
 
@@ -6523,7 +6577,7 @@ pub fn NewParser_(
                         entry.value_ptr.* = .{};
                     }
 
-                    entry.value_ptr.push(p.allocator, js_ast.namespace_export_part_index) catch unreachable;
+                    bun.handleOom(entry.value_ptr.append(p.allocator, js_ast.namespace_export_part_index));
                 }
             }
 
@@ -6539,24 +6593,19 @@ pub fn NewParser_(
                             p.allocator,
                             "require_{any}",
                             .{p.source.fmtIdentifier()},
-                        ) catch bun.outOfMemory(),
-                    ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err),
+                    ) catch |err| bun.handleOom(err);
                 }
 
                 break :brk Ref.None;
             };
 
-            const parts_list = bun.BabyList(js_ast.Part).fromList(parts);
-
             return .{
                 .runtime_imports = p.runtime_imports,
-                .parts = parts_list,
                 .module_scope = p.module_scope.*,
-                .symbols = js_ast.Symbol.List.fromList(p.symbols),
                 .exports_ref = p.exports_ref,
                 .wrapper_ref = wrapper_ref,
                 .module_ref = p.module_ref,
-                .import_records = ImportRecord.List.fromList(p.import_records),
                 .export_star_import_records = p.export_star_import_records.items,
                 .approximate_newline_count = p.lexer.approximate_newline_count,
                 .exports_kind = exports_kind,
@@ -6596,12 +6645,14 @@ pub fn NewParser_(
                 .has_commonjs_export_names = p.has_commonjs_export_names,
 
                 .hashbang = hashbang,
-
                 // TODO: cross-module constant inlining
                 // .const_values = p.const_values,
                 .ts_enums = try p.computeTsEnumsMap(allocator),
-
                 .import_meta_ref = p.import_meta_ref,
+
+                .symbols = js_ast.Symbol.List.moveFromList(&p.symbols),
+                .parts = bun.BabyList(js_ast.Part).moveFromList(parts),
+                .import_records = ImportRecord.List.moveFromList(&p.import_records),
             };
         }
 

@@ -57,6 +57,7 @@ class GlobalInternals;
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
+#include "WriteBarrierList.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -621,13 +622,19 @@ public:
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBunRequestStructure)                                \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSBunRequestParamsPrototype)                           \
                                                                                                              \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdin)                                              \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStderr)                                             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdout)                                             \
+                                                                                                             \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statValues)                                      \
     V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatValues)                               \
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
     V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)                             \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
-    V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)
+    V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \
@@ -651,6 +658,11 @@ public:
     std::optional<napi_module> m_pendingNapiModule = {};
 
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
+
+    // LazyProperty accessors for stdin/stderr/stdout
+    JSC::JSObject* bunStdin() const { return m_bunStdin.getInitializedOnMainThread(this); }
+    JSC::JSObject* bunStderr() const { return m_bunStderr.getInitializedOnMainThread(this); }
+    JSC::JSObject* bunStdout() const { return m_bunStdout.getInitializedOnMainThread(this); }
 
     Structure* memoryFootprintStructure()
     {
@@ -724,8 +736,8 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
-    WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+    Bun::WriteBarrierList<JSC::JSFunction> m_ffiFunctions;
 };
 
 class EvalGlobalObject : public GlobalObject {

@@ -1,5 +1,6 @@
 // Test that napi_reference_unref CANNOT be called from a finalizer in experimental NAPI
 // This verifies the GC check is enforced for experimental modules
+// This test is expected to CRASH/ABORT when the finalizer runs
 // This is a regression test for https://github.com/oven-sh/bun/issues/22596
 
 #define NAPI_VERSION NAPI_VERSION_EXPERIMENTAL
@@ -11,6 +12,34 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// Suppress core dumps when testing crashes
+#if defined(__linux__) || defined(__APPLE__)
+#include <sys/resource.h>
+static void suppress_core_dumps() {
+  if (getenv("BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT")) {
+    struct rlimit rl;
+    rl.rlim_cur = 0;
+    rl.rlim_max = 0;
+    setrlimit(RLIMIT_CORE, &rl);
+  }
+}
+#elif defined(_WIN32)
+#include <windows.h>
+#include <dbghelp.h>
+static void suppress_core_dumps() {
+  if (getenv("BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT")) {
+    // Disable Windows Error Reporting dialogs
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    // Disable the default crash handler
+    SetUnhandledExceptionFilter(NULL);
+  }
+}
+#else
+static void suppress_core_dumps() {
+  // No-op on unsupported platforms
+}
+#endif
 
 #define NODE_API_CALL(env, call)                                               \
   do {                                                                         \
@@ -36,65 +65,39 @@ typedef struct {
 } RefHolder;
 
 static int finalizer_called_count = 0;
-static int unref_failed_count = 0;
-static bool test_ran = false;
-
-// Called at exit to verify the test actually ran
-static void check_test_ran(void* arg) {
-  (void)arg;
-  if (!test_ran) {
-    fprintf(stderr, "ERROR: Test did not run properly\n");
-    exit(1);
-  }
-  if (finalizer_called_count == 0) {
-    fprintf(stderr, "ERROR: No finalizers were called\n");
-    exit(1);
-  }
-  // For experimental version, we expect unrefs to fail
-  if (unref_failed_count == 0) {
-    fprintf(stderr, "ERROR: Expected napi_reference_unref to fail in experimental mode but it succeeded\n");
-    exit(1);
-  }
-  printf("Test completed: %d finalizers called, %d unrefs failed as expected\n", 
-         finalizer_called_count, unref_failed_count);
-}
 
 static void finalizer_unref(napi_env env, void *data, void *hint) {
   (void)hint;
   RefHolder* holder = (RefHolder*)data;
   finalizer_called_count++;
   
+  printf("Finalizer %d called, attempting napi_reference_unref...\n", holder->index);
+  
   if (holder && holder->ref) {
     uint32_t result;
-    // This should FAIL for experimental NAPI versions during GC
+    // This call should ABORT the process for experimental NAPI versions during GC
+    // The process will crash here with an assertion failure
+    // This line should never return successfully
     napi_status status = napi_reference_unref(env, holder->ref, &result);
-    if (status != napi_ok) {
-      unref_failed_count++;
-      printf("napi_reference_unref failed as expected in experimental mode\n");
-    } else {
-      printf("ERROR: napi_reference_unref succeeded but should have failed!\n");
-    }
     
-    // Try to clean up the reference with post_finalizer if available
-    // In experimental mode, we should use node_api_post_finalizer
-    free(holder);
+    // If we get here, something is wrong - the assertion should have failed
+    printf("ERROR: napi_reference_unref returned status %d but should have aborted!\n", status);
+    printf("ERROR: This indicates the GC check is NOT working for experimental modules!\n");
+    exit(1);  // Force exit with error if the check didn't work
   }
+  
+  free(holder);
 }
 
 static napi_value test_reference_unref_in_finalizer_experimental(napi_env env, napi_callback_info info) {
   (void)info;
   
-  test_ran = true;
+  printf("Starting experimental NAPI test (version %d)\n", NAPI_VERSION_EXPERIMENTAL);
+  printf("This test is expected to CRASH when finalizers run.\n");
+  printf("If you see 'SUCCESS' below, the test has FAILED.\n");
   
-  // Register atexit handler on first call
-  static bool atexit_registered = false;
-  if (!atexit_registered) {
-    napi_add_env_cleanup_hook(env, check_test_ran, NULL);
-    atexit_registered = true;
-  }
-  
-  // Create just a few objects to test - we only need to verify the behavior
-  const int NUM_OBJECTS = 5;
+  // Create just a few objects to test - we only need one to trigger the crash
+  const int NUM_OBJECTS = 3;
   napi_value objects_array;
   NODE_API_CALL(env, napi_create_array_with_length(env, NUM_OBJECTS, &objects_array));
   
@@ -114,7 +117,7 @@ static napi_value test_reference_unref_in_finalizer_experimental(napi_env env, n
     napi_value wrapper_obj;
     NODE_API_CALL(env, napi_create_object(env, &wrapper_obj));
     
-    // Add a finalizer that will try to call napi_reference_unref (should fail)
+    // Add a finalizer that will call napi_reference_unref (should crash)
     NODE_API_CALL(env, napi_add_finalizer(env, wrapper_obj, holder, finalizer_unref, NULL, NULL));
     
     // Store in array
@@ -127,36 +130,42 @@ static napi_value test_reference_unref_in_finalizer_experimental(napi_env env, n
   return objects_array;
 }
 
-static napi_value get_stats(napi_env env, napi_callback_info info) {
-  (void)info;
-  napi_value result;
-  NODE_API_CALL(env, napi_create_object(env, &result));
-  
-  napi_value finalizers_called;
-  NODE_API_CALL(env, napi_create_int32(env, finalizer_called_count, &finalizers_called));
-  NODE_API_CALL(env, napi_set_named_property(env, result, "finalizersCalled", finalizers_called));
-  
-  napi_value unrefs_failed;
-  NODE_API_CALL(env, napi_create_int32(env, unref_failed_count, &unrefs_failed));
-  NODE_API_CALL(env, napi_set_named_property(env, result, "unrefsFailed", unrefs_failed));
-  
-  return result;
-}
-
 static napi_value init(napi_env env, napi_value exports) {
+  // Suppress core dumps when testing
+  suppress_core_dumps();
+  
   napi_value test_fn;
   NODE_API_CALL(env, napi_create_function(env, "test_reference_unref_in_finalizer_experimental", 
                                           NAPI_AUTO_LENGTH, test_reference_unref_in_finalizer_experimental, 
                                           NULL, &test_fn));
   NODE_API_CALL(env, napi_set_named_property(env, exports, "test_reference_unref_in_finalizer_experimental", test_fn));
   
-  napi_value stats_fn;
-  NODE_API_CALL(env, napi_create_function(env, "get_stats", 
-                                          NAPI_AUTO_LENGTH, get_stats, 
-                                          NULL, &stats_fn));
-  NODE_API_CALL(env, napi_set_named_property(env, exports, "get_stats", stats_fn));
-  
   return exports;
 }
 
-NAPI_MODULE(test_reference_unref_in_finalizer_experimental, init)
+// Instead of using NAPI_MODULE, manually define a module with experimental version
+static napi_module _module = {
+  NAPI_VERSION_EXPERIMENTAL, // Use experimental version here!!!
+  0,
+  __FILE__,
+  init,
+  "test_reference_unref_in_finalizer_experimental",
+  NULL,
+  {0},
+};
+
+#if defined(_MSC_VER)
+#pragma section(".CRT$XCU", read)
+#define NAPI_C_CTOR(fn)                                                        \
+  static void __cdecl fn(void);                                                \
+  __declspec(allocate(".CRT$XCU")) void(__cdecl * fn##_)(void) = fn;          \
+  static void __cdecl fn(void)
+#else
+#define NAPI_C_CTOR(fn)                                                        \
+  static void fn(void) __attribute__((constructor)); \
+  static void fn(void)
+#endif
+
+NAPI_C_CTOR(_register_test_reference_unref_in_finalizer_experimental) {
+  napi_module_register(&_module);
+}

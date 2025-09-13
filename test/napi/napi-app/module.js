@@ -697,51 +697,32 @@ nativeTests.test_reference_unref_in_finalizer = async (gc) => {
 };
 
 nativeTests.test_reference_unref_in_finalizer_experimental = async (gc) => {
+  // This test is expected to CRASH when the finalizer runs
+  // The experimental NAPI module enforces GC checks and will abort the process
+  console.log("WARNING: This test will crash the process - this is expected behavior!");
+  
   // Create objects with finalizers that will call napi_reference_unref when GC'd
-  // This should FAIL for experimental NAPI modules
   let objects = testReferenceUnrefInFinalizerExperimental.test_reference_unref_in_finalizer_experimental();
   
   // Clear the reference to allow GC
   objects = null;
   
-  // Force GC multiple times to ensure finalizers run
+  // Force GC to trigger the finalizers - this should crash the process
   if (gc) {
     gc();
     gc();
   }
   
-  // Allocate some memory to trigger GC pressure
-  const buffers = [];
-  for (let i = 0; i < 10; i++) {
-    buffers.push(new ArrayBuffer(10 * 1024 * 1024)); // 10MB each
-    if (gc) {
-      gc();
-    }
+  // Allocate memory to ensure GC runs
+  for (let i = 0; i < 5; i++) {
+    new ArrayBuffer(10 * 1024 * 1024);
+    if (gc) gc();
   }
   
-  // Wait for async operations
-  await new Promise(resolve => setTimeout(resolve, 50));
-  
-  // Force final GC
-  if (gc) {
-    gc();
-    gc();
-  }
-  
-  // Get stats to verify the expected behavior
-  const stats = testReferenceUnrefInFinalizerExperimental.get_stats();
-  console.log(`Experimental mode - Finalizers called: ${stats.finalizersCalled}, Unrefs failed: ${stats.unrefsFailed}`);
-  
-  if (stats.finalizersCalled === 0) {
-    throw new Error("No finalizers were called - test did not properly trigger GC");
-  }
-  
-  // For experimental modules, we expect unrefs to fail
-  if (stats.unrefsFailed === 0) {
-    throw new Error("Expected napi_reference_unref to fail in experimental mode but it succeeded");
-  }
-  
-  console.log("SUCCESS: napi_reference_unref correctly failed in experimental mode");
+  // If we get here, the test has FAILED - the process should have crashed
+  console.log("ERROR: Process did not crash as expected!");
+  console.log("ERROR: The GC check for experimental modules is NOT working!");
+  throw new Error("Test FAILED: napi_reference_unref should have aborted for experimental module");
 };
 
 nativeTests.test_create_bigint_words = () => {

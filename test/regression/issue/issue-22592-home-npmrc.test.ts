@@ -2,13 +2,7 @@ import { test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir, isWindows } from "harness";
 import { join } from "path";
 
-test("bun install should read registry from ~/.npmrc", async () => {
-  // Skip on Windows as npmrc path is different
-  if (isWindows) {
-    test.skip();
-    return;
-  }
-
+test.skipIf(isWindows)("bun install should read registry from ~/.npmrc", async () => {
   // Use yarn registry as an alternative to test if npmrc is being read
   using testDir = tempDir("npmrc-home", {
     "package.json": JSON.stringify({
@@ -54,15 +48,9 @@ test("bun install should read registry from ~/.npmrc", async () => {
   expect(await Bun.file(join(nodeModules, "package.json")).exists()).toBe(true);
 });
 
+// TODO: This test is skipped because verbose output prints cache dir before 
+// it's loaded from npmrc. This is a separate issue from the main fix.
 test.skip("bun install should read cache directory from ~/.npmrc", async () => {
-  // TODO: This test is skipped because verbose output prints cache dir before 
-  // it's loaded from npmrc. This is a separate issue from the main fix.
-  // Skip on Windows as npmrc path is different
-  if (isWindows) {
-    test.skip();
-    return;
-  }
-
   using testDir = tempDir("npmrc-cache", {
     "package.json": JSON.stringify({
       name: "test-npmrc-cache",
@@ -101,13 +89,7 @@ test.skip("bun install should read cache directory from ~/.npmrc", async () => {
   expect(stderr).toContain(`Cache Dir: ${customCache}`);
 });
 
-test("local .npmrc should override ~/.npmrc", async () => {
-  // Skip on Windows as npmrc path is different  
-  if (isWindows) {
-    test.skip();
-    return;
-  }
-
+test.skipIf(isWindows)("local .npmrc should override ~/.npmrc", async () => {
   using testDir = tempDir("npmrc-override", {
     "package.json": JSON.stringify({
       name: "test-npmrc-override",

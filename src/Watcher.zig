@@ -31,6 +31,7 @@ evict_list_i: WatchItemIndex = 0,
 ctx: *anyopaque,
 onFileUpdate: *const fn (this: *anyopaque, events: []WatchEvent, changed_files: []?[:0]u8, watchlist: WatchList) void,
 onError: *const fn (this: *anyopaque, err: bun.sys.Error) void,
+shouldShowWarn: *const fn (this: *anyopaque) bool,
 
 thread_lock: bun.safety.ThreadLock = .initUnlocked(),
 
@@ -74,6 +75,14 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
                 T.onError(@alignCast(@ptrCast(ctx_opaque)), err);
             }
         }
+        fn shouldShowWarnWrapped(ctx_opaque: *anyopaque) bool {
+            const ctx_typed: *T = @alignCast(@ptrCast(ctx_opaque));
+            if (@hasDecl(T, "log")) {
+                const Kind = bun.logger.Kind;
+                return Kind.shouldPrint(.warn, ctx_typed.log.level);
+            }
+            return true; // Default to showing warnings if no log field
+        }
     };
 
     const watcher = try allocator.create(Watcher);
@@ -88,6 +97,7 @@ pub fn init(comptime T: type, ctx: *T, fs: *bun.fs.FileSystem, allocator: std.me
         .ctx = ctx,
         .onFileUpdate = &wrapped.onFileUpdateWrapped,
         .onError = &wrapped.onErrorWrapped,
+        .shouldShowWarn = &wrapped.shouldShowWarnWrapped,
         .platform = .{},
         .watch_events = try allocator.alloc(WatchEvent, max_count),
         .changed_filepaths = [_]?[:0]u8{null} ** max_count,
@@ -314,7 +324,9 @@ fn appendFileAssumeCapacity(
         // on windows we can only watch items that are in the directory tree of the top level dir
         const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
         if (rel == .unrelated) {
-            Output.warn("File {s} is not in the project directory and will not be watched\n", .{file_path});
+            if (this.shouldShowWarn(this.ctx)) {
+                Output.warn("File {s} is not in the project directory and will not be watched\n", .{file_path});
+            }
             return .success;
         }
     }
@@ -395,7 +407,9 @@ fn appendDirectoryAssumeCapacity(
         // on windows we can only watch items that are in the directory tree of the top level dir
         const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
         if (rel == .unrelated) {
-            Output.warn("Directory {s} is not in the project directory and will not be watched\n", .{file_path});
+            if (this.shouldShowWarn(this.ctx)) {
+                Output.warn("Directory {s} is not in the project directory and will not be watched\n", .{file_path});
+            }
             return .{ .result = no_watch_item };
         }
     }

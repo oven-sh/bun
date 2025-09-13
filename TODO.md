@@ -375,11 +375,11 @@ Regular:
 - [x] test/js/bun/bun-object/write.spec.ts
 - [x] test/cli/install/isolated-install.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
-- [ ] test/cli/install/catalogs.test.ts
-- [ ] test/js/node/test/parallel/test-worker-uncaught-exception-async.js
+- [x] test/cli/install/catalogs.test.ts
+- [x] test/js/node/test/parallel/test-worker-uncaught-exception-async.js
 - [ ] test/js/bun/spawn/spawn-pipe-leak.test.ts
-- [ ] test/cli/install/npmrc.test.ts
-- [ ] test/cli/inspect/BunFrontendDevServer.test.ts
+- [x] test/cli/install/npmrc.test.ts
+- [x] test/cli/inspect/BunFrontendDevServer.test.ts
 - [ ] test/bake/dev/stress.test.ts
 - [ ] test/js/bun/test/test-failing.test.ts
 - [ ] test/cli/test/bun-test.test.ts

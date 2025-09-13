@@ -77,6 +77,7 @@ pub const transpiler_params_ = [_]ParamType{
 pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
+    clap.parseParam("--watch-excludes <STR>...         Exclude files matching these glob patterns from watch & hot mode") catch unreachable,
     clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
     clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
     clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
@@ -589,6 +590,20 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
             if (args.flag("--no-clear-screen")) {
                 bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+            }
+        }
+
+        // Combine CLI watch excludes with bunfig.toml excludes
+        const cli_excludes = args.options("--watch-excludes");
+        if (cli_excludes.len > 0) {
+            if (ctx.debug.watch_excludes.len > 0) {
+                // Merge CLI and bunfig excludes
+                var combined = try allocator.alloc([]const u8, ctx.debug.watch_excludes.len + cli_excludes.len);
+                @memcpy(combined[0..ctx.debug.watch_excludes.len], ctx.debug.watch_excludes);
+                @memcpy(combined[ctx.debug.watch_excludes.len..], cli_excludes);
+                ctx.debug.watch_excludes = combined;
+            } else {
+                ctx.debug.watch_excludes = cli_excludes;
             }
         }
 

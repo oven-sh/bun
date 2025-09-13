@@ -112,7 +112,11 @@ if (docker) {
         });
 
         test("Idle timeout works at start", async () => {
-          const onclose = mock();
+          const onClosePromise = Promise.withResolvers();
+          const onclose = mock(err => {
+            console.log("onclose", err);
+            onClosePromise.resolve(err);
+          });
           const onconnect = mock();
           await using sql = new SQL({
             ...options,
@@ -121,13 +125,11 @@ if (docker) {
             onclose,
             max: 1,
           });
-          let error: any;
-          try {
-            await sql`select SLEEP(2)`;
-          } catch (e) {
-            error = e;
-          }
-          expect(error.code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
+          await sql.connect();
+          const err = await onClosePromise.promise;
+          expect(err).toBeInstanceOf(SQL.SQLError);
+          expect(err).toBeInstanceOf(SQL.MySQLError);
+          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
           expect(onconnect).toHaveBeenCalled();
           expect(onclose).toHaveBeenCalledTimes(1);
         });

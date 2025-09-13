@@ -468,7 +468,6 @@ fn onGroupCompleted(_: *Execution, group: *ConcurrentGroup, globalThis: *jsc.JSG
     const vm = globalThis.bunVM();
     if (group.auto_killer) _ = vm.auto_killer.kill();
     vm.auto_killer.disable();
-    globalThis.bunVM().autoGarbageCollect();
 }
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();

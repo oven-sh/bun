@@ -76,11 +76,11 @@ for (const type of types) {
           length: 0,
         },
         setMode: {
-          fn: "setMode",
+          fn: "setModeFromJS",
           length: 1,
         },
         setPendingValue: {
-          fn: "setPendingValue",
+          fn: "setPendingValueFromJS",
           length: 1,
         },
       },

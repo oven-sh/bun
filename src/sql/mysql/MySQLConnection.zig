@@ -9,11 +9,7 @@ read_buffer: bun.OffsetByteList = .{},
 last_message_start: u32 = 0,
 sequence_id: u8 = 0,
 
-requests: Queue = Queue.init(bun.default_allocator),
-// number of pipelined requests (Bind/Execute/Prepared statements)
-pipelined_requests: u32 = 0,
-// number of non-pipelined requests (Simple/Copy)
-nonpipelinable_requests: u32 = 0,
+queue: MySQLRequestQueue = MySQLRequestQueue.init(),
 
 statements: PreparedStatementsMap = .{},
 
@@ -97,16 +93,18 @@ pub fn onAutoFlush(this: *@This()) bool {
 }
 
 pub fn canPipeline(this: *@This()) bool {
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
-        @branchHint(.unlikely);
-        return false;
-    }
-    return this.status == .connected and
-        this.nonpipelinable_requests == 0 and // need to wait for non pipelinable requests to finish
-        !this.flags.use_unnamed_prepared_statements and // unnamed statements are not pipelinable
-        !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
-        !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
-        this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
+    return this.queue.canPipeline(this);
+}
+pub fn canPrepareQuery(this: *@This()) bool {
+    return this.queue.canPrepareQuery(this);
+}
+pub fn canExecuteQuery(this: *@This()) bool {
+    return this.queue.canExecuteQuery(this);
+}
+
+pub inline fn isAbleToWrite(this: *@This()) bool {
+    return !this.flags.has_backpressure and
+        this.write_buffer.len() < MAX_PIPELINE_SIZE;
 }
 pub const AuthState = union(enum) {
     pending: void,
@@ -123,7 +121,7 @@ pub const AuthState = union(enum) {
 
 fn updateReferenceType(this: *MySQLConnection) void {
     if (this.js_value.isNotEmpty()) {
-        if (this.requests.readableLength() > 0 or (this.status != .disconnected and this.status != .failed)) {
+        if (!this.queue.isEmpty() or (this.status != .disconnected and this.status != .failed)) {
             this.js_value.upgrade(this.globalObject);
             return;
         }
@@ -135,11 +133,8 @@ fn hasDataToSend(this: *@This()) bool {
     if (this.write_buffer.len() > 0) {
         return true;
     }
-    if (this.current()) |request| {
-        switch (request.status) {
-            .pending, .binding => return true,
-            else => return false,
-        }
+    if (this.queue.current()) |request| {
+        return request.isPending();
     }
     return false;
 }
@@ -259,7 +254,7 @@ fn drainInternal(this: *@This()) void {
             this.upgradeToTLS();
         } else {
             // no backpressure yet so pipeline more if possible and flush again
-            this.advance();
+            this.queue.advance(this);
             this.flushData();
         }
     }
@@ -413,7 +408,7 @@ fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
     // refAndClose is always called when we wanna to disconnect or when we are closed
 
     // cleanup requests
-    this.cleanUpRequests(js_reason);
+    this.queue.clean(js_reason, this.getQueriesArray());
 
     if (!this.socket.isClosed()) {
         // event loop need to be alive to close the socket
@@ -429,281 +424,12 @@ pub fn disconnect(this: *@This()) void {
         defer this.updateReferenceType();
         this.status = .disconnected;
         this.poll_ref.disable();
-
-        const requests = this.requests.readableSlice(0);
-        this.requests.head = 0;
-        this.requests.count = 0;
-
-        // Fail any pending requests
-        for (requests) |request| {
-            this.finishRequest(request);
-            request.onError(.{
-                .error_code = 2013, // CR_SERVER_LOST
-                .error_message = .{ .temporary = "Lost connection to MySQL server" },
-            }, this.globalObject);
-        }
-
+        this.queue.clean(null, this.getQueriesArray());
         this.socket.close();
     }
 }
-
-fn finishRequest(this: *@This(), item: *MySQLQuery) void {
-    switch (item.status) {
-        .running, .binding, .partial_response => {
-            if (item.flags.simple) {
-                this.nonpipelinable_requests -= 1;
-            } else if (item.flags.pipelined) {
-                this.pipelined_requests -= 1;
-            }
-        },
-        .success, .fail, .pending => {
-            if (this.flags.waiting_to_prepare) {
-                this.flags.waiting_to_prepare = false;
-            }
-        },
-    }
-}
-
-fn current(this: *@This()) ?*MySQLQuery {
-    if (this.requests.readableLength() == 0) {
-        return null;
-    }
-
-    return this.requests.peekItem(0);
-}
-
-pub fn canExecuteQuery(this: *@This()) bool {
-    if (this.status != .connected) return false;
-    return this.flags.is_ready_for_query and this.current() == null;
-}
-pub fn canPrepareQuery(this: *@This()) bool {
-    return this.flags.is_ready_for_query and !this.flags.waiting_to_prepare and this.pipelined_requests == 0;
-}
-
-fn cleanUpRequests(this: *@This(), js_reason: ?jsc.JSValue) void {
-    while (this.current()) |request| {
-        switch (request.status) {
-            // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
-            .pending => {
-                const stmt = request.statement orelse continue;
-                stmt.status = .failed;
-                if (!this.vm.isShuttingDown()) {
-                    if (js_reason) |reason| {
-                        request.onJSError(reason, this.globalObject);
-                    } else {
-                        request.onError(.{
-                            .error_code = 2013,
-                            .error_message = .{ .temporary = "Connection closed" },
-                        }, this.globalObject);
-                    }
-                }
-            },
-            // in the middle of running
-            .binding,
-            .running,
-            .partial_response,
-            => {
-                this.finishRequest(request);
-                if (!this.vm.isShuttingDown()) {
-                    if (js_reason) |reason| {
-                        request.onJSError(reason, this.globalObject);
-                    } else {
-                        request.onError(.{
-                            .error_code = 2013,
-                            .error_message = .{ .temporary = "Connection closed" },
-                        }, this.globalObject);
-                    }
-                }
-            },
-            // just ignore success and fail cases
-            .success, .fail => {},
-        }
-        request.deref();
-        this.requests.discard(1);
-    }
-}
-fn advance(this: *@This()) void {
-    var offset: usize = 0;
-    debug("advance", .{});
-    defer {
-        while (this.requests.readableLength() > 0) {
-            const result = this.requests.peekItem(0);
-            // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
-            // so we do the cleanup her
-            switch (result.status) {
-                .success => {
-                    result.deref();
-                    this.requests.discard(1);
-                    continue;
-                },
-                .fail => {
-                    result.deref();
-                    this.requests.discard(1);
-                    continue;
-                },
-                else => break, // trully current item
-            }
-        }
-    }
-
-    while (this.requests.readableLength() > offset and !this.flags.has_backpressure) {
-        if (this.vm.isShuttingDown()) return this.close();
-        var req: *MySQLQuery = this.requests.peekItem(offset);
-        switch (req.status) {
-            .pending => {
-                if (req.flags.simple) {
-                    if (this.pipelined_requests > 0 or !this.flags.is_ready_for_query) {
-                        debug("cannot execute simple query, pipelined_requests: {d}, is_ready_for_query: {}", .{ this.pipelined_requests, this.flags.is_ready_for_query });
-                        // need to wait for the previous request to finish before starting simple queries
-                        return;
-                    }
-
-                    var query_str = req.query.toUTF8(bun.default_allocator);
-                    defer query_str.deinit();
-
-                    debug("execute simple query: {d} {s}", .{ this.sequence_id, query_str.slice() });
-
-                    MySQLRequest.executeQuery(query_str.slice(), MySQLConnection.Writer, this.writer()) catch |err| {
-                        if (this.globalObject.tryTakeException()) |err_| {
-                            req.onJSError(err_, this.globalObject);
-                        } else {
-                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                        }
-                        if (offset == 0) {
-                            req.deref();
-                            this.requests.discard(1);
-                        } else {
-                            // deinit later
-                            req.status = .fail;
-                        }
-                        debug("executeQuery failed: {s}", .{@errorName(err)});
-                        offset += 1;
-                        continue;
-                    };
-                    this.nonpipelinable_requests += 1;
-                    this.flags.is_ready_for_query = false;
-                    req.status = .running;
-                    this.flushDataAndResetTimeout();
-                    return;
-                } else {
-                    if (req.statement) |statement| {
-                        switch (statement.status) {
-                            .failed => {
-                                debug("stmt failed", .{});
-                                req.onError(statement.error_response, this.globalObject);
-                                if (offset == 0) {
-                                    req.deref();
-                                    this.requests.discard(1);
-                                } else {
-                                    // deinit later
-                                    req.status = .fail;
-                                    offset += 1;
-                                }
-                                continue;
-                            },
-                            .prepared => {
-                                req.bindAndExecute(this.writer(), statement, this.globalObject) catch |err| {
-                                    if (this.globalObject.tryTakeException()) |err_| {
-                                        req.onJSError(err_, this.globalObject);
-                                    } else {
-                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                    }
-                                    if (offset == 0) {
-                                        req.deref();
-                                        this.requests.discard(1);
-                                    } else {
-                                        // deinit later
-                                        req.status = .fail;
-                                        offset += 1;
-                                    }
-                                    debug("executeQuery failed: {s}", .{@errorName(err)});
-                                    continue;
-                                };
-
-                                req.flags.pipelined = true;
-                                this.pipelined_requests += 1;
-                                this.flags.is_ready_for_query = false;
-                                this.flushDataAndResetTimeout();
-                                if (this.flags.use_unnamed_prepared_statements or !this.canPipeline()) {
-                                    debug("cannot pipeline more stmt", .{});
-                                    return;
-                                }
-                                offset += 1;
-                                continue;
-                            },
-                            .pending => {
-                                if (!this.canPrepareQuery()) {
-                                    debug("need to wait to finish the pipeline before starting a new query preparation", .{});
-                                    // need to wait to finish the pipeline before starting a new query preparation
-                                    return;
-                                }
-                                // We're waiting for prepare response
-                                req.statement.?.status = .parsing;
-                                var query_str = req.query.toUTF8(bun.default_allocator);
-                                defer query_str.deinit();
-                                MySQLRequest.prepareRequest(query_str.slice(), Writer, this.writer()) catch |err| {
-                                    if (this.globalObject.tryTakeException()) |err_| {
-                                        req.onJSError(err_, this.globalObject);
-                                    } else {
-                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                    }
-                                    if (offset == 0) {
-                                        req.deref();
-                                        this.requests.discard(1);
-                                    } else {
-                                        // deinit later
-                                        req.status = .fail;
-                                        offset += 1;
-                                    }
-                                    debug("executeQuery failed: {s}", .{@errorName(err)});
-                                    continue;
-                                };
-                                this.flags.waiting_to_prepare = true;
-                                this.flags.is_ready_for_query = false;
-                                this.flushDataAndResetTimeout();
-                                return;
-                            },
-                            .parsing => {
-                                // we are still parsing, lets wait for it to be prepared or failed
-                                offset += 1;
-                                continue;
-                            },
-                        }
-                    }
-                }
-            },
-            .binding, .running, .partial_response => {
-                const total_requests_running = this.pipelined_requests + this.nonpipelinable_requests;
-                if (offset < total_requests_running) {
-                    offset += total_requests_running;
-                } else {
-                    offset += 1;
-                }
-                continue;
-            },
-            .success => {
-                if (offset > 0) {
-                    // deinit later
-                    req.status = .fail;
-                    offset += 1;
-                    continue;
-                }
-                req.deref();
-                this.requests.discard(1);
-                continue;
-            },
-            .fail => {
-                if (offset > 0) {
-                    // deinit later
-                    offset += 1;
-                    continue;
-                }
-                req.deref();
-                this.requests.discard(1);
-                continue;
-            },
-        }
-    }
+pub fn enqueueRequest(this: *@This(), item: *JSMySQLQuery) void {
+    this.queue.add(item, this);
 }
 
 fn SocketHandler(comptime ssl: bool) type {
@@ -885,6 +611,8 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const connection_timeout = arguments[12].toInt32();
     const max_lifetime = arguments[13].toInt32();
     const use_unnamed_prepared_statements = arguments[14].asBoolean();
+    // MySQL doesn't support unnamed prepared statements
+    _ = use_unnamed_prepared_statements;
 
     var ptr = try bun.default_allocator.create(MySQLConnection);
 
@@ -897,7 +625,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .options = options,
         .options_buf = options_buf,
         .socket = .{ .SocketTCP = .{ .socket = .{ .detached = {} } } },
-        .requests = Queue.init(bun.default_allocator),
+        .queue = MySQLRequestQueue.init(),
         .statements = PreparedStatementsMap{},
         .tls_config = tls_config,
         .tls_ctx = tls_ctx,
@@ -907,9 +635,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         .connection_timeout_ms = @intCast(connection_timeout),
         .max_lifetime_interval_ms = @intCast(max_lifetime),
         .character_set = CharacterSet.default,
-        .flags = .{
-            .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
-        },
+        .flags = .{},
     };
 
     {
@@ -962,22 +688,13 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 }
 
 pub fn deinit(this: *MySQLConnection) void {
-    this.disconnect();
     this.stopTimers();
     debug("MySQLConnection deinit", .{});
 
-    var requests = this.requests;
-    defer requests.deinit();
-    this.requests = Queue.init(bun.default_allocator);
+    var queue = this.queue;
+    defer queue.deinit();
+    this.queue = MySQLRequestQueue.init();
 
-    // Clear any pending requests first
-    for (requests.readableSlice(0)) |request| {
-        this.finishRequest(request);
-        request.onError(.{
-            .error_code = 2013,
-            .error_message = .{ .temporary = "Connection closed" },
-        }, this.globalObject);
-    }
     this.write_buffer.deinit(bun.default_allocator);
     this.read_buffer.deinit(bun.default_allocator);
     this.statements.deinit(bun.default_allocator);
@@ -1068,7 +785,7 @@ pub fn onData(this: *MySQLConnection, data: []const u8) void {
     this.socket.setTimeout(0);
 
     defer {
-        if (this.status == .connected and this.requests.readableLength() == 0 and this.write_buffer.remaining().len == 0) {
+        if (this.status == .connected and this.queue.isEmpty() and this.write_buffer.remaining().len == 0) {
             // Don't keep the process alive when there's nothixng to do.
             this.poll_ref.unref(vm);
         } else if (this.status == .connected) {
@@ -1356,8 +1073,8 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
             defer this.updateRef();
             this.status_flags = ok.status_flags;
             this.flags.is_ready_for_query = true;
-            this.advance();
-
+            this.queue.markAsReadyForQuery();
+            this.queue.advance(this);
             this.registerAutoFlusher();
         },
 
@@ -1391,7 +1108,8 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
                                 this.setStatus(.connected);
                                 defer this.updateRef();
                                 this.flags.is_ready_for_query = true;
-                                this.advance();
+                                this.queue.markAsReadyForQuery();
+                                this.queue.advance(this);
                                 this.registerAutoFlusher();
                             },
                             .continue_auth => {
@@ -1473,19 +1191,19 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
 
 pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: NewReader(Context), header_length: u24) !void {
     // Get the current request if any
-    const request = this.current() orelse {
+    const request = this.queue.current() orelse {
         debug("Received unexpected command response", .{});
         return error.UnexpectedPacket;
     };
 
     debug("handleCommand", .{});
-    if (request.flags.simple) {
+    if (request.isSimple()) {
         // Regular query response
         return try this.handleResultSet(Context, reader, header_length);
     }
 
     // Handle based on request type
-    if (request.statement) |statement| {
+    if (request.getStatement()) |statement| {
         switch (statement.status) {
             .pending => {
                 return error.UnexpectedPacket;
@@ -1500,13 +1218,18 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
             },
             .failed => {
                 defer {
-                    this.advance();
+                    this.queue.advance(this);
                     this.registerAutoFlusher();
                 }
                 this.flags.is_ready_for_query = true;
-                this.finishRequest(request);
+                this.queue.markAsReadyForQuery();
+                this.queue.markCurrentRequestAsFinished(request);
                 // Statement failed, clean up
-                request.onError(statement.error_response, this.globalObject);
+                if (this.vm.isShuttingDown()) {
+                    request.markAsFailed();
+                } else {
+                    request.rejectWithJSValue(this.getQueriesArray(), statement.error_response.toJS(this.globalObject));
+                }
             },
         }
     }
@@ -1691,8 +1414,9 @@ fn checkIfPreparedStatementIsDone(this: *MySQLConnection, statement: *MySQLState
         statement.status = .prepared;
         this.flags.waiting_to_prepare = false;
         this.flags.is_ready_for_query = true;
+        this.queue.markAsReadyForQuery();
         statement.reset();
-        this.advance();
+        this.queue.advance(this);
         this.registerAutoFlusher();
     }
 }
@@ -1702,11 +1426,11 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
     const first_byte = try reader.int(u8);
     reader.skip(-1);
 
-    const request = this.current() orelse {
+    const request = this.queue.current() orelse {
         debug("Unexpected prepared statement packet missing request", .{});
         return error.UnexpectedPacket;
     };
-    const statement = request.statement orelse {
+    const statement = request.getStatement() orelse {
         debug("Unexpected prepared statement packet missing statement", .{});
         return error.UnexpectedPacket;
     };
@@ -1759,14 +1483,18 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             try err.decode(reader);
             defer err.deinit();
             defer {
-                this.advance();
+                this.queue.advance(this);
                 this.registerAutoFlusher();
             }
             this.flags.is_ready_for_query = true;
-            this.finishRequest(request);
+            this.queue.markCurrentRequestAsFinished(request);
             statement.status = .failed;
             statement.error_response = err;
-            request.onError(err, this.globalObject);
+            if (this.vm.isShuttingDown()) {
+                request.markAsFailed();
+            } else {
+                request.rejectWithJSValue(this.getQueriesArray(), err.toJS(this.globalObject));
+            }
         },
 
         else => {
@@ -1776,25 +1504,25 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
     }
 }
 
-fn handleResultSetOK(this: *MySQLConnection, request: *MySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags, last_insert_id: u64, affected_rows: u64) void {
+fn handleResultSetOK(this: *MySQLConnection, request: *JSMySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags, last_insert_id: u64, affected_rows: u64) void {
     this.status_flags = status_flags;
     this.flags.is_ready_for_query = !status_flags.has(.SERVER_MORE_RESULTS_EXISTS);
+
     debug("handleResultSetOK: {d} {}", .{ status_flags.toInt(), status_flags.has(.SERVER_MORE_RESULTS_EXISTS) });
     defer {
-        this.advance();
+        this.queue.advance(this);
         this.registerAutoFlusher();
     }
     if (this.flags.is_ready_for_query) {
-        this.finishRequest(request);
+        this.queue.markAsReadyForQuery();
+        this.queue.markCurrentRequestAsFinished(request);
     }
-    request.onResult(
-        statement.result_count,
-        this.globalObject,
-        this.getQueriesArray(),
-        this.flags.is_ready_for_query,
-        last_insert_id,
-        affected_rows,
-    );
+    request.resolve(this.getQueriesArray(), .{
+        .result_count = statement.result_count,
+        .last_insert_id = last_insert_id,
+        .affected_rows = affected_rows,
+        .is_last_result = this.flags.is_ready_for_query,
+    });
     statement.reset();
 }
 
@@ -1804,7 +1532,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
 
     reader.skip(-1);
 
-    var request = this.current() orelse {
+    var request = this.queue.current() orelse {
         debug("Unexpected result set packet", .{});
         return error.UnexpectedPacket;
     };
@@ -1817,20 +1545,25 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
             try err.decode(reader);
             defer err.deinit();
             defer {
-                this.advance();
+                this.queue.advance(this);
                 this.registerAutoFlusher();
             }
-            if (request.statement) |statement| {
+            if (request.getStatement()) |statement| {
                 statement.reset();
             }
 
             this.flags.is_ready_for_query = true;
-            this.finishRequest(request);
-            request.onError(err, this.globalObject);
+            this.queue.markAsReadyForQuery();
+            this.queue.markCurrentRequestAsFinished(request);
+            if (this.vm.isShuttingDown()) {
+                request.markAsFailed();
+            } else {
+                request.rejectWithJSValue(this.getQueriesArray(), err.toJS(this.globalObject));
+            }
         },
 
         else => |packet_type| {
-            const statement = request.statement orelse {
+            const statement = request.getStatement() orelse {
                 debug("Unexpected result set packet", .{});
                 return error.UnexpectedPacket;
             };
@@ -1870,7 +1603,7 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 statement.columns_received += 1;
             } else {
                 if (packet_type == .OK or packet_type == .EOF) {
-                    if (request.flags.simple) {
+                    if (request.isSimple()) {
                         // if we are using the text protocol for sure this is a OK packet otherwise will be OK packet with 0xFE code
                         try ok.decode(reader);
                         defer ok.deinit();
@@ -1885,19 +1618,20 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                         return;
                     }
                 }
+                const result_mode = request.getResultMode();
 
                 var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
                 const allocator = stack_fallback.get();
                 var row = ResultSet.Row{
                     .globalObject = this.globalObject,
                     .columns = statement.columns,
-                    .binary = request.flags.binary,
-                    .raw = request.flags.result_mode == .raw,
-                    .bigint = request.flags.bigint,
+                    .binary = request.isSimple(),
+                    .raw = result_mode == .raw,
+                    .bigint = request.bigintSupported(),
                 };
                 var structure: JSValue = .js_undefined;
                 var cached_structure: ?CachedStructure = null;
-                switch (request.flags.result_mode) {
+                switch (result_mode) {
                     .objects => {
                         cached_structure = if (this.js_value.tryGet()) |value| statement.structure(value, this.globalObject) else null;
                         structure = cached_structure.?.jsValue() orelse .js_undefined;
@@ -1908,36 +1642,34 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 }
                 defer row.deinit(allocator);
                 try row.decode(allocator, reader);
-
-                const pending_value = (if (request.thisValue.tryGet()) |value| MySQLQuery.js.pendingValueGetCached(value) else .js_undefined) orelse .js_undefined;
-
+                const pending_value = request.getPendingValue() orelse .js_undefined;
                 // Process row data
                 const row_value = row.toJS(
                     this.globalObject,
                     pending_value,
                     structure,
                     statement.fields_flags,
-                    request.flags.result_mode,
+                    result_mode,
                     cached_structure,
                 );
                 if (this.globalObject.tryTakeException()) |err| {
-                    this.finishRequest(request);
-                    request.onJSError(err, this.globalObject);
-                    return error.JSError;
+                    this.queue.markCurrentRequestAsFinished(request);
+                    request.rejectWithJSValue(this.getQueriesArray(), err);
+                    this.queue.advance(this);
+                    this.registerAutoFlusher();
+                    return;
                 }
                 statement.result_count += 1;
 
                 if (pending_value.isEmptyOrUndefinedOrNull()) {
-                    if (request.thisValue.tryGet()) |value| {
-                        MySQLQuery.js.pendingValueSetCached(value, this.globalObject, row_value);
-                    }
+                    request.setPendingValue(row_value);
                 }
             }
         },
     }
 }
 
-fn close(this: *@This()) void {
+pub fn close(this: *@This()) void {
     this.disconnect();
     this.unregisterAutoFlusher();
     this.write_buffer.clearAndFree(bun.default_allocator);
@@ -2007,7 +1739,6 @@ const MAX_PIPELINE_SIZE = std.math.maxInt(u16); // about 64KB per connection
 const PreparedStatementsMap = std.HashMapUnmanaged(u64, *MySQLStatement, bun.IdentityContext(u64), 80);
 const debug = bun.Output.scoped(.MySQLConnection, .visible);
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-const Queue = std.fifo.LinearFifo(*MySQLQuery, .Dynamic);
 
 const AnyMySQLError = @import("./protocol/AnyMySQLError.zig");
 const Auth = @import("./protocol/Auth.zig");
@@ -2020,7 +1751,7 @@ const ErrorPacket = @import("./protocol/ErrorPacket.zig");
 const HandshakeResponse41 = @import("./protocol/HandshakeResponse41.zig");
 const HandshakeV10 = @import("./protocol/HandshakeV10.zig");
 const LocalInfileRequest = @import("./protocol/LocalInfileRequest.zig");
-const MySQLQuery = @import("./MySQLQuery.zig");
+const JSMySQLQuery = @import("./js/JSMySQLQuery.zig");
 const MySQLRequest = @import("./MySQLRequest.zig");
 const MySQLStatement = @import("./MySQLStatement.zig");
 const OKPacket = @import("./protocol/OKPacket.zig");
@@ -2054,3 +1785,4 @@ const AutoFlusher = jsc.WebCore.AutoFlusher;
 
 const uws = bun.uws;
 const Socket = uws.AnySocket;
+const MySQLRequestQueue = @import("./MySQLRequestQueue.zig");

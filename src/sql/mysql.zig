@@ -5,7 +5,7 @@ pub fn createBinding(globalObject: *jsc.JSGlobalObject) JSValue {
     binding.put(
         globalObject,
         ZigString.static("createQuery"),
-        jsc.JSFunction.create(globalObject, "createQuery", MySQLQuery.call, 6, .{}),
+        jsc.JSFunction.create(globalObject, "createQuery", JSMySQLQuery.createInstance, 6, .{}),
     );
 
     binding.put(
@@ -19,7 +19,7 @@ pub fn createBinding(globalObject: *jsc.JSGlobalObject) JSValue {
 
 pub const MySQLConnection = @import("./mysql/MySQLConnection.zig");
 pub const MySQLContext = @import("./mysql/MySQLContext.zig");
-pub const MySQLQuery = @import("./mysql/MySQLQuery.zig");
+pub const JSMySQLQuery = @import("./mysql/js/JSMySQLQuery.zig");
 
 const bun = @import("bun");
 

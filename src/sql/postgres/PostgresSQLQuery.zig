@@ -241,13 +241,13 @@ pub fn doDone(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFra
     this.flags.is_done = true;
     return .js_undefined;
 }
-pub fn setPendingValue(_: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+pub fn setPendingValueFromJS(_: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const result = callframe.argument(0);
     const thisValue = callframe.this();
     js.pendingValueSetCached(thisValue, globalObject, result);
     return .js_undefined;
 }
-pub fn setMode(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+pub fn setModeFromJS(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const js_mode = callframe.argument(0);
     if (js_mode.isEmptyOrUndefinedOrNull() or !js_mode.isNumber()) {
         return globalObject.throwInvalidArgumentType("setMode", "mode", "Number");

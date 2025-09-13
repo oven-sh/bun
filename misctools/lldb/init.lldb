@@ -19,3 +19,6 @@ command script import -c bun_pretty_printer.py
 
 command script delete btjs
 command alias btjs p {printf("gathering btjs trace...\n");printf("%s\n", (char*)dumpBtjsTrace())}
+
+# do not pass SIGHUP on to child process. it is often not the real error and the stop point will be nonsensical.
+process handle -p false -s false -n true SIGHUP

@@ -4600,7 +4600,7 @@ public:
         if (openingParentheses > closingParentheses)
             openingParentheses = WTF::notFound;
 
-        if (closingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             offset = stack.length();
             return false;
         }
@@ -4926,6 +4926,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             return;
         if (sourceURL) {
             if (sourceURL.isString()) {
+                except->stack.frames_ptr[0].source_url.deref();
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                     return;
@@ -4967,6 +4968,11 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             }
 
             {
+                for (int i = 1; i < except->stack.frames_len; i++) {
+                    auto frame = except->stack.frames_ptr[i];
+                    frame.function_name.deref();
+                    frame.source_url.deref();
+                }
                 except->stack.frames_len = 1;
                 PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
                 except->stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
@@ -5433,7 +5439,10 @@ void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
     arg0->heap.deprecatedReportExtraMemory(arg1);
 }
 
-void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject) {}
+void JSC__VM__deinit(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
+{
+}
+
 void JSC__VM__drainMicrotasks(JSC::VM* arg0)
 {
     arg0->drainMicrotasks();

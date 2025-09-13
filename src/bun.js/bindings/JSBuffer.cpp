@@ -348,9 +348,9 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
 
     if (length > 0) [[likely]] {
-        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([ctx, bytesDeallocator](void* p) {
-            if (bytesDeallocator)
-                bytesDeallocator(p, ctx);
+        ASSERT(bytesDeallocator);
+        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([=](void* p) {
+            bytesDeallocator(p, NULL);
         }));
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), 0, length);

@@ -170,6 +170,7 @@ fn JSONLikeParser_(
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
                     var exprs = std.ArrayList(Expr).init(p.list_allocator);
+                    errdefer exprs.deinit();
 
                     while (p.lexer.token != .t_close_bracket) {
                         if (exprs.items.len > 0) {

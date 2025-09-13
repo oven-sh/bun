@@ -91,8 +91,7 @@ static const WTF::String toString(ZigString str)
 
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
-            : WTF::String(WTF::ExternalStringImpl::create(
-                  { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+            : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.

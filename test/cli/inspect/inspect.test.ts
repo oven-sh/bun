@@ -449,6 +449,11 @@ test.todo("junit reporter", async () => {
   expect(stripAnsi(report)).toMatchSnapshot();
 });
 
+// This test is checking that Bun.inspect || console.log on an Error instance is
+// ~the same whether you did `error.stack` or not.
+//
+// Since the 2nd time around, we parse the error.stack getter, we need to make sure
+// it doesn't lose frames.
 test("error.stack doesnt lose frames", () => {
   function top() {
     function middle() {
@@ -494,6 +499,7 @@ test("error.stack doesnt lose frames", () => {
     .replaceAll(import.meta.dirname, "<dir>")
     .replaceAll("\\", "/")
     .replace(/\d+/gim, "<num>");
+
   expect(no).toMatchInlineSnapshot(`
     "
     error: test
@@ -504,6 +510,8 @@ test("error.stack doesnt lose frames", () => {
           at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
     "
   `);
+
+  // In Bun v1.2.20 and lower, we would only have the first frame here.
   expect(yes).toMatchInlineSnapshot(`
     "
     error: test

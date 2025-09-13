@@ -457,6 +457,21 @@ pub fn onStart(this: *AsyncHTTP) void {
     _ = active_requests_count.fetchAdd(1, .monotonic);
     this.err = null;
     this.state.store(.sending, .monotonic);
+
+    // Check if this is an FTP URL
+    if (this.url.isFTP()) {
+        // Handle FTP request
+        const ftp = @import("./ftp_simple.zig");
+        ftp.handleFTPRequest(this) catch |err| {
+            this.err = err;
+            this.state.store(.fail, .monotonic);
+            const result = HTTPClientResult{ .fail = err };
+            onAsyncHTTPCallback(this, this, result);
+        };
+        return;
+    }
+
+    // Handle normal HTTP/HTTPS request
     this.client.result_callback = HTTPClientResult.Callback.New(*AsyncHTTP, onAsyncHTTPCallback).init(
         this,
     );

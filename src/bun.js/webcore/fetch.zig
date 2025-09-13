@@ -1444,9 +1444,9 @@ pub fn Bun__fetchPreconnect_(
     }
 
     const url = ZigURL.parse(bun.handleOom(url_str.toOwnedSlice(bun.default_allocator)));
-    if (!url.isHTTP() and !url.isHTTPS() and !url.isS3()) {
+    if (!url.isHTTP() and !url.isHTTPS() and !url.isS3() and !url.isFTP()) {
         bun.default_allocator.free(url.href);
-        return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
+        return globalObject.throwInvalidArguments("URL must be HTTP, HTTPS, S3 or FTP", .{});
     }
 
     if (url.hostname.len == 0) {
@@ -2336,8 +2336,8 @@ pub fn Bun__fetch_(
     }
 
     if (url.protocol.len > 0) {
-        if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
-            const err = globalThis.toTypeError(.INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{});
+        if (!(url.isHTTP() or url.isHTTPS() or url.isS3() or url.isFTP())) {
+            const err = globalThis.toTypeError(.INVALID_ARG_VALUE, "protocol must be http:, https:, s3: or ftp:", .{});
             is_error = true;
             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }

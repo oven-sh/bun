@@ -100,6 +100,10 @@ pub const URL = struct {
         return strings.eqlComptime(this.protocol, "http");
     }
 
+    pub inline fn isFTP(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "ftp");
+    }
+
     pub fn displayHostname(this: *const URL) string {
         if (this.hostname.len > 0) {
             return this.hostname;

@@ -11,6 +11,7 @@
 const DevServer = @This();
 
 pub const debug = bun.Output.Scoped(.DevServer, .visible);
+pub const bakeDebug = bun.Output.scoped(.bake, .hidden);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, .visible);
 pub const mapLog = bun.Output.scoped(.SourceMapStore, .visible);
 
@@ -398,18 +399,16 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.framework = resolved_framework;
 
     // Log framework configuration details
-    Output.prettyln("  <d>Framework initialized successfully<r>", .{});
+    bakeDebug("Framework initialized successfully", .{});
     if (dev.framework.server_components) |sc| {
-        Output.prettyln("  <d>Server Components: enabled<r>", .{});
-        Output.prettyln("  <d>Separate SSR graph: {}<r>", .{sc.separate_ssr_graph});
+        bakeDebug("Server Components: enabled (separate_ssr_graph: {})", .{sc.separate_ssr_graph});
     }
     if (dev.framework.react_fast_refresh) |_| {
-        Output.prettyln("  <d>React Fast Refresh: enabled<r>", .{});
+        bakeDebug("React Fast Refresh: enabled", .{});
     }
     if (dev.framework.file_system_router_types.len > 0) {
-        Output.prettyln("  <d>File system router: {d} type(s) configured<r>", .{dev.framework.file_system_router_types.len});
+        bakeDebug("File system router: {d} type(s) configured", .{dev.framework.file_system_router_types.len});
     }
-    Output.flush();
 
     errdefer dev.route_lookup.clearAndFree(alloc);
     errdefer dev.client_graph.deinit();
@@ -756,8 +755,8 @@ fn scanInitialRoutes(dev: *DevServer) !void {
         &dev.server_transpiler.resolver,
         FrameworkRouter.InsertionContext.wrap(DevServer, dev),
     );
-    Output.prettyln("  <d>Found {d} routes<r>", .{dev.route_bundles.items.len});
-    Output.flush();
+    const total_routes = dev.router.static_routes.entries.len + dev.router.dynamic_routes.entries.len;
+    bakeDebug("Found {d} routes", .{total_routes});
 
     try dev.server_graph.ensureStaleBitCapacity(true);
     try dev.client_graph.ensureStaleBitCapacity(true);

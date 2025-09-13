@@ -120,7 +120,7 @@ pub const TOML = struct {
 
     pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, redact_logs: bool) !Expr {
         switch (source_.contents.len) {
-            // This is to be consisntent with how disabled JS files are handled
+            // This is to be consistent with how disabled JS files are handled
             0 => {
                 return Expr{ .loc = logger.Loc{ .start = 0 }, .data = Expr.init(E.Object, E.Object{}, logger.Loc.Empty).data };
             },
@@ -258,6 +258,14 @@ pub const TOML = struct {
 
                 try p.lexer.next();
                 return p.e(str, loc);
+            },
+            .t_local_date => {
+                const value = p.lexer.date;
+                std.log.debug("got a date {s}", .{value});
+
+                try p.lexer.next();
+                // TODO (jcromer): translate to JS
+                return p.e(E.Number{ .value = 0 }, loc);
             },
             .t_numeric_literal => {
                 const value = p.lexer.number;

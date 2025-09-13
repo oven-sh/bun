@@ -6,7 +6,7 @@ pub const ResolveMessage = struct {
 
     msg: logger.Msg,
     allocator: std.mem.Allocator,
-    referrer: ?Fs.Path = null,
+    referrer: bun.String = bun.String.empty,
     logged: bool = false,
 
     pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*ResolveMessage {
@@ -173,9 +173,16 @@ pub const ResolveMessage = struct {
         resolve_error.* = ResolveMessage{
             .msg = try msg.clone(allocator),
             .allocator = allocator,
-            .referrer = Fs.Path.init(referrer),
+            .referrer = bun.String.cloneUTF8(referrer),
         };
-        return resolve_error.toJS(globalThis);
+
+        const js_value = resolve_error.toJS(globalThis);
+
+        // Explicitly set the message property to override any empty message set by Error constructor
+        const message_str = ZigString.init(resolve_error.msg.data.text);
+        js_value.put(globalThis, ZigString.static("message"), message_str.toJS(globalThis));
+
+        return js_value;
     }
 
     pub fn getPosition(
@@ -217,14 +224,15 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        if (this.referrer) |referrer| {
-            return ZigString.init(referrer.text).toJS(globalThis);
-        } else {
+        if (this.referrer.isEmpty()) {
             return jsc.JSValue.jsNull();
+        } else {
+            return this.referrer.toJS(globalThis);
         }
     }
 
     pub fn finalize(this: *ResolveMessage) callconv(.C) void {
+        this.referrer.deref();
         this.msg.deinit(bun.default_allocator);
     }
 };
@@ -235,7 +243,6 @@ const Resolver = @import("../resolver//resolver.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const Fs = bun.fs;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;

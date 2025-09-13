@@ -273,13 +273,6 @@ fn SocketHandler(comptime ssl: bool) type {
                 this.resetConnectionTimeout();
                 this.updateReferenceType();
                 this.registerAutoFlusher();
-                if (!this.#connection.isActive()) {
-                    // Don't keep the process alive when there's nothixng to do.
-                    this.#poll_ref.unref(this.#vm);
-                } else if (this.#connection.isConnected()) {
-                    // Keep the process alive if there's something to do.
-                    this.#poll_ref.ref(this.#vm);
-                }
             }
             if (this.#vm.isShuttingDown()) {
                 // we are shutting down lets not process the data
@@ -315,6 +308,7 @@ fn updateReferenceType(this: *@This()) void {
         if (this.#js_value == .strong) {
             this.#js_value.downgrade();
             this.#poll_ref.unref(this.#vm);
+            return;
         }
     }
     this.#poll_ref.unref(this.#vm);

@@ -141,8 +141,10 @@ if (docker) {
           await using sql = new SQL({
             ...options,
             idle_timeout: 1,
+            connection_timeout: 5,
             onconnect,
             onclose,
+            max: 1,
           });
           expect<[{ x: number }]>(await sql`select 123 as x`).toEqual([{ x: 123 }]);
           expect(onconnect).toHaveBeenCalledTimes(1);
@@ -151,7 +153,7 @@ if (docker) {
           expect(err).toBeInstanceOf(SQL.SQLError);
           expect(err).toBeInstanceOf(SQL.MySQLError);
           expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
-        }, 10_000);
+        });
 
         test("Max lifetime works", async () => {
           const onClosePromise = Promise.withResolvers();

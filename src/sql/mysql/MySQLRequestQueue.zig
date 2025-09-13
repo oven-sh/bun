@@ -118,6 +118,7 @@ pub fn advance(this: *@This(), connection: *MySQLConnection) void {
         };
         if (request.isBeingPrepared()) {
             debug("isBeingPrepared", .{});
+            connection.resetConnectionTimeout();
             this.#is_ready_for_query = false;
             this.#waiting_to_prepare = true;
             return;

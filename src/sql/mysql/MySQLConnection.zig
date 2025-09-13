@@ -219,12 +219,8 @@ pub fn isActive(this: *MySQLConnection) bool {
         return false;
     }
 
-    if (this.status != .connected) {
-        // keep alive the connection until it is connected or failed
-        return true;
-    }
-
-    return (!this.queue.isEmpty() or this.#write_buffer.len() > 0);
+    // if is connected or connecting we keep alive until idle timeout is reached
+    return true;
 }
 pub inline fn isConnected(this: *MySQLConnection) bool {
     return this.status == .connected;

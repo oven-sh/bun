@@ -619,7 +619,9 @@ fn failWithJSValue(this: *@This(), value: JSValue) void {
     this.ref();
     defer {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
-        if (!this.#vm.isShuttingDown()) {
+        if (this.#vm.isShuttingDown()) {
+            this.#connection.close();
+        } else {
             this.#connection.cleanQueueAndClose(value, this.getQueriesArray());
         }
         this.deref();

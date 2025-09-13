@@ -892,6 +892,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
                 this.queue.advance(connection);
             }
             this.#flags.is_ready_for_query = true;
+            this.queue.markAsReadyForQuery();
             this.queue.markCurrentRequestAsFinished(request);
             statement.status = .failed;
             statement.error_response = err;

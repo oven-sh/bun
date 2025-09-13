@@ -1,5 +1,5 @@
 const JSMySQLConnection = @This();
-ref_count: RefCount = RefCount.init(),
+__ref_count: RefCount = RefCount.init(),
 #js_value: jsc.JSRef = jsc.JSRef.empty(),
 #globalObject: *jsc.JSGlobalObject,
 #vm: *jsc.VirtualMachine,
@@ -456,14 +456,14 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
         if (path.len > 0) {
             ptr.#connection.setSocket(.{
                 .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
-                    ptr.deinit();
+                    ptr.deref();
                     return globalObject.throwError(err, "failed to connect to postgresql");
                 },
             });
         } else {
             ptr.#connection.setSocket(.{
                 .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    ptr.deinit();
+                    ptr.deref();
                     return globalObject.throwError(err, "failed to connect to mysql");
                 },
             });
@@ -744,7 +744,7 @@ pub fn getStatementFromSignatureHash(this: *@This(), signature_hash: u64) !MySQL
     return try this.#connection.statements.getOrPut(bun.default_allocator, signature_hash);
 }
 
-const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+const RefCount = bun.ptr.RefCount(@This(), "__ref_count", deinit, .{});
 pub const js = jsc.Codegen.JSMySQLConnection;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;

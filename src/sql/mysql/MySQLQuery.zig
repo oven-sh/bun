@@ -74,6 +74,7 @@ fn runSimpleQuery(this: *@This(), connection: *MySQLConnection) !void {
         const stmt = bun.new(MySQLStatement, .{
             .signature = Signature.empty(),
             .status = .parsing,
+            .ref_count = .initExactRefs(1),
         });
         this.#statement = stmt;
     }
@@ -188,35 +189,26 @@ pub inline fn setResultMode(this: *@This(), result_mode: SQLQueryResultMode) voi
     this.#flags.result_mode = result_mode;
 }
 
-pub inline fn result(this: *@This(), is_partial: bool) bool {
+pub inline fn result(this: *@This(), is_last_result: bool) bool {
     if (this.#status == .success or this.#status == .fail) return false;
-    this.#status = if (is_partial) .partial_response else .success;
-    // We can cleanup the query early because we know we are successful
-    if (!is_partial) {
-        this.cleanup();
-    }
+    this.#status = if (is_last_result) .success else .partial_response;
 
     return true;
 }
 pub fn fail(this: *@This()) bool {
     if (this.#status == .fail or this.#status == .success) return false;
     this.#status = .fail;
-    // We can cleanup the query early because we know we failed
-    this.cleanup();
 
     return true;
 }
 
 pub fn cleanup(this: *@This()) void {
     if (this.#statement) |statement| {
-        this.#statement = null;
         statement.deref();
+        this.#statement = null;
     }
     var query = this.#query;
     defer query.deref();
-    // var cursor_name = this.#cursor_name;
-    // defer cursor_name.deinit();
-    // this.#cursor_name = bun.String.empty;
     this.#query = bun.String.empty;
 }
 

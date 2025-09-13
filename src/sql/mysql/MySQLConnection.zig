@@ -177,6 +177,11 @@ pub fn cleanup(this: *MySQLConnection) void {
 
     read_buffer.deinit(bun.default_allocator);
 
+    var iter = statements.valueIterator();
+    while (iter.next()) |statement| {
+        var stmt = statement.*;
+        stmt.deref();
+    }
     statements.deinit(bun.default_allocator);
 
     tls_config.deinit();
@@ -608,6 +613,8 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
         debug("Received unexpected command response", .{});
         return error.UnexpectedPacket;
     };
+    request.ref();
+    defer request.deref();
 
     debug("handleCommand", .{});
     if (request.isSimple()) {
@@ -617,6 +624,8 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
 
     // Handle based on request type
     if (request.getStatement()) |statement| {
+        statement.ref();
+        defer statement.deref();
         switch (statement.status) {
             .pending => {
                 return error.UnexpectedPacket;
@@ -835,10 +844,14 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
         debug("Unexpected prepared statement packet missing request", .{});
         return error.UnexpectedPacket;
     };
+    request.ref();
+    defer request.deref();
     const statement = request.getStatement() orelse {
         debug("Unexpected prepared statement packet missing statement", .{});
         return error.UnexpectedPacket;
     };
+    statement.ref();
+    defer statement.deref();
     if (statement.statement_id > 0) {
         if (statement.params_received < statement.params.len) {
             var column = ColumnDefinition41{};
@@ -909,13 +922,14 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
 
 fn handleResultSetOK(this: *MySQLConnection, request: *JSMySQLQuery, statement: *MySQLStatement, status_flags: StatusFlags, last_insert_id: u64, affected_rows: u64) void {
     this.#status_flags = status_flags;
-    this.#flags.is_ready_for_query = !status_flags.has(.SERVER_MORE_RESULTS_EXISTS);
+    const is_last_result = !status_flags.has(.SERVER_MORE_RESULTS_EXISTS);
     const connection = this.getJSConnection();
-    debug("handleResultSetOK: {d} {}", .{ status_flags.toInt(), status_flags.has(.SERVER_MORE_RESULTS_EXISTS) });
+    debug("handleResultSetOK: {d} {}", .{ status_flags.toInt(), is_last_result });
     defer {
         this.queue.advance(connection);
     }
-    if (this.#flags.is_ready_for_query) {
+    this.#flags.is_ready_for_query = is_last_result;
+    if (is_last_result) {
         this.queue.markAsReadyForQuery();
         this.queue.markCurrentRequestAsFinished(request);
     }
@@ -924,7 +938,7 @@ fn handleResultSetOK(this: *MySQLConnection, request: *JSMySQLQuery, statement: 
         .result_count = statement.result_count,
         .last_insert_id = last_insert_id,
         .affected_rows = affected_rows,
-        .is_last_result = this.#flags.is_ready_for_query,
+        .is_last_result = is_last_result,
     });
 
     statement.reset();
@@ -944,6 +958,8 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
         debug("Unexpected result set packet", .{});
         return error.UnexpectedPacket;
     };
+    request.ref();
+    defer request.deref();
     var ok = OKPacket{
         .packet_size = header_length,
     };
@@ -972,6 +988,8 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 debug("Unexpected result set packet", .{});
                 return error.UnexpectedPacket;
             };
+            statement.ref();
+            defer statement.deref();
             if (!statement.execution_flags.header_received) {
                 if (packet_type == .OK) {
                     // if packet type is OK it means the query is done and no results are returned
@@ -1008,17 +1026,12 @@ pub fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: N
                 statement.columns_received += 1;
             } else {
                 if (packet_type == .OK or packet_type == .EOF) {
-                    if (request.isSimple()) {
+                    if (request.isSimple() or packet_type == .EOF) {
                         // if we are using the text protocol for sure this is a OK packet otherwise will be OK packet with 0xFE code
+                        // If is not simple and is EOF this is actually a OK packet but with the flag EOF
                         try ok.decode(reader);
                         defer ok.deinit();
 
-                        this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
-                        return;
-                    } else if (packet_type == .EOF) {
-                        // this is actually a OK packet but with the flag EOF
-                        try ok.decode(reader);
-                        defer ok.deinit();
                         this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
                         return;
                     }

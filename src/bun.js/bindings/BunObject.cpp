@@ -807,6 +807,14 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     zstdDecompressSync                             BunObject_callback_zstdDecompressSync                              DontDelete|Function 1
     zstdCompress                                 BunObject_callback_zstdCompress                                    DontDelete|Function 1
     zstdDecompress                                 BunObject_callback_zstdDecompress                                    DontDelete|Function 1
+    camelCase                                      BunObject_callback_camelCase                                       DontDelete|Function 1
+    pascalCase                                     BunObject_callback_pascalCase                                      DontDelete|Function 1
+    snakeCase                                      BunObject_callback_snakeCase                                       DontDelete|Function 1
+    kebabCase                                      BunObject_callback_kebabCase                                       DontDelete|Function 1
+    constantCase                                   BunObject_callback_constantCase                                    DontDelete|Function 1
+    dotCase                                        BunObject_callback_dotCase                                         DontDelete|Function 1
+    capitalCase                                    BunObject_callback_capitalCase                                     DontDelete|Function 1
+    trainCase                                      BunObject_callback_trainCase                                       DontDelete|Function 1
 @end
 */
 

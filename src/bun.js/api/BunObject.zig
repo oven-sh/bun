@@ -44,6 +44,16 @@ pub const BunObject = struct {
     pub const zstdDecompressSync = toJSCallback(JSZstd.decompressSync);
     pub const zstdCompress = toJSCallback(JSZstd.compress);
     pub const zstdDecompress = toJSCallback(JSZstd.decompress);
+    
+    // Case conversion functions
+    pub const camelCase = toJSCallback(CaseConvert.jsCamelCase);
+    pub const pascalCase = toJSCallback(CaseConvert.jsPascalCase);
+    pub const snakeCase = toJSCallback(CaseConvert.jsSnakeCase);
+    pub const kebabCase = toJSCallback(CaseConvert.jsKebabCase);
+    pub const constantCase = toJSCallback(CaseConvert.jsConstantCase);
+    pub const dotCase = toJSCallback(CaseConvert.jsDotCase);
+    pub const capitalCase = toJSCallback(CaseConvert.jsCapitalCase);
+    pub const trainCase = toJSCallback(CaseConvert.jsTrainCase);
 
     // --- Callbacks ---
 
@@ -180,6 +190,16 @@ pub const BunObject = struct {
         @export(&BunObject.zstdDecompressSync, .{ .name = callbackName("zstdDecompressSync") });
         @export(&BunObject.zstdCompress, .{ .name = callbackName("zstdCompress") });
         @export(&BunObject.zstdDecompress, .{ .name = callbackName("zstdDecompress") });
+        
+        // Case conversion exports
+        @export(&BunObject.camelCase, .{ .name = callbackName("camelCase") });
+        @export(&BunObject.pascalCase, .{ .name = callbackName("pascalCase") });
+        @export(&BunObject.snakeCase, .{ .name = callbackName("snakeCase") });
+        @export(&BunObject.kebabCase, .{ .name = callbackName("kebabCase") });
+        @export(&BunObject.constantCase, .{ .name = callbackName("constantCase") });
+        @export(&BunObject.dotCase, .{ .name = callbackName("dotCase") });
+        @export(&BunObject.capitalCase, .{ .name = callbackName("capitalCase") });
+        @export(&BunObject.trainCase, .{ .name = callbackName("trainCase") });
         // --- Callbacks ---
 
         // --- LazyProperty initializers ---
@@ -2070,6 +2090,7 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue
 }
 
 const Braces = @import("../../shell/braces.zig");
+const CaseConvert = @import("./CaseConvert.zig");
 const Which = @import("../../which.zig");
 const options = @import("../../options.zig");
 const std = @import("std");

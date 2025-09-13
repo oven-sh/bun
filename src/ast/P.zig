@@ -5913,7 +5913,7 @@ pub fn NewParser_(
             const glob = @import("../glob.zig");
 
             if (call.args.len == 0) {
-                p.log.addError(p.source, loc, "import.meta.glob() requires at least one argument") catch unreachable;
+                bun.handleOom(p.log.addError(p.source, loc, "import.meta.glob() requires at least one argument"));
                 return p.newExpr(E.Object{}, loc);
             }
 
@@ -5922,19 +5922,19 @@ pub fn NewParser_(
             defer patterns.deinit();
 
             switch (call.args.at(0).data) {
-                .e_string => |str| patterns.append(str.slice(p.allocator)) catch unreachable,
+                .e_string => |str| bun.handleOom(patterns.append(str.slice(p.allocator))),
                 .e_array => |arr| {
                     for (arr.items.slice()) |item| {
                         if (item.data == .e_string) {
-                            patterns.append(item.data.e_string.slice(p.allocator)) catch unreachable;
+                            bun.handleOom(patterns.append(item.data.e_string.slice(p.allocator)));
                         } else {
-                            p.log.addError(p.source, item.loc, "import.meta.glob() patterns must be string literals") catch unreachable;
+                            bun.handleOom(p.log.addError(p.source, item.loc, "import.meta.glob() patterns must be string literals"));
                             return p.newExpr(E.Object{}, loc);
                         }
                     }
                 },
                 else => {
-                    p.log.addError(p.source, call.args.at(0).loc, "import.meta.glob() patterns must be string literals or an array of string literals") catch unreachable;
+                    bun.handleOom(p.log.addError(p.source, call.args.at(0).loc, "import.meta.glob() patterns must be string literals or an array of string literals"));
                     return p.newExpr(E.Object{}, loc);
                 },
             }
@@ -6007,7 +6007,7 @@ pub fn NewParser_(
                     const rel_path = if (strings.hasPrefix(path, source_dir)) path[source_dir.len + @intFromBool(path[source_dir.len] == '/') ..] else path;
 
                     var path_buf: bun.PathBuffer = undefined;
-                    const slash_normalized = if (bun.Environment.isWindows)
+                    const slash_normalized = if (comptime bun.Environment.isWindows)
                         strings.normalizeSlashesOnly(&path_buf, rel_path, '/')
                     else
                         rel_path;
@@ -6016,7 +6016,7 @@ pub fn NewParser_(
                         p.allocator.dupe(u8, slash_normalized) catch unreachable
                     else
                         std.fmt.allocPrint(p.allocator, "./{s}", .{slash_normalized}) catch unreachable;
-                    matched_files.put(normalized, {}) catch unreachable;
+                    bun.handleOom(matched_files.put(normalized, {}));
                 }
             }
 
@@ -6025,7 +6025,7 @@ pub fn NewParser_(
             defer files.deinit();
             var iter = matched_files.iterator();
             while (iter.next()) |entry| {
-                files.append(entry.key_ptr.*) catch unreachable;
+                bun.handleOom(files.append(entry.key_ptr.*));
             }
             std.sort.block([]const u8, files.items, {}, struct {
                 fn lessThan(_: void, a: []const u8, b_path: []const u8) bool {
@@ -6034,44 +6034,44 @@ pub fn NewParser_(
             }.lessThan);
 
             // Create properties
-            var properties = p.allocator.alloc(G.Property, files.items.len) catch unreachable;
+            var properties: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, files.items.len));
 
             for (files.items, 0..) |file_path, i| {
                 const import_path = if (query) |q|
-                    std.fmt.allocPrint(p.allocator, "{s}{s}", .{ file_path, q }) catch unreachable
+                    bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}{s}", .{ file_path, q }))
                 else
                     file_path;
 
                 const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
-                p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+                bun.handleOom(p.import_records_for_current_part.append(p.allocator, import_record_index));
 
                 if (loader) |l| p.import_records.items[import_record_index].loader = l;
 
                 const import_expr = p.newExpr(E.Import{
                     .expr = p.newExpr(E.String{ .data = import_path }, loc),
                     .options = if (with_attrs) |attrs| blk: {
-                        var with_props = p.allocator.alloc(G.Property, 1) catch unreachable;
+                        var with_props: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, 1));
                         with_props[0] = .{
                             .key = p.newExpr(E.String{ .data = "with" }, loc),
                             .value = p.newExpr(E.Object{ .properties = attrs.properties }, loc),
                         };
-                        break :blk p.newExpr(E.Object{ .properties = G.Property.List.init(with_props) }, loc);
+                        break :blk p.newExpr(E.Object{ .properties = G.Property.List.fromOwnedSlice(with_props) }, loc);
                     } else Expr.empty,
                     .import_record_index = import_record_index,
                 }, loc);
 
                 const return_expr = if (import_name) |name| blk: {
                     // Create import('./file').then(m => m.name)
-                    const m_ref = p.newSymbol(.other, "m") catch unreachable;
+                    const m_ref: Ref = bun.handleOom(p.newSymbol(.other, "m"));
 
-                    var arrow_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                    var arrow_stmts: []Stmt = bun.handleOom(p.allocator.alloc(Stmt, 1));
                     arrow_stmts[0] = p.s(S.Return{ .value = p.newExpr(E.Dot{
                         .target = p.newExpr(E.Identifier{ .ref = m_ref }, loc),
                         .name = name,
                         .name_loc = loc,
                     }, loc) }, loc);
 
-                    var arrow_args = p.allocator.alloc(G.Arg, 1) catch unreachable;
+                    var arrow_args: []G.Arg = bun.handleOom(p.allocator.alloc(G.Arg, 1));
                     arrow_args[0] = .{
                         .binding = p.b(B.Identifier{ .ref = m_ref }, logger.Loc.Empty),
                     };
@@ -6088,11 +6088,11 @@ pub fn NewParser_(
                             .name = "then",
                             .name_loc = loc,
                         }, loc),
-                        .args = ExprNodeList.fromSlice(p.allocator, &.{arrow_fn}) catch unreachable,
+                        .args = bun.handleOom(ExprNodeList.fromSlice(p.allocator, &.{arrow_fn})),
                     }, loc);
                 } else import_expr;
 
-                var outer_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                var outer_stmts: []Stmt = bun.handleOom(p.allocator.alloc(Stmt, 1));
                 outer_stmts[0] = p.s(S.Return{ .value = return_expr }, loc);
 
                 properties[i] = .{
@@ -6106,7 +6106,7 @@ pub fn NewParser_(
             }
 
             return p.newExpr(E.Object{
-                .properties = G.Property.List.init(properties),
+                .properties = G.Property.List.fromOwnedSlice(properties),
             }, loc);
         }
 

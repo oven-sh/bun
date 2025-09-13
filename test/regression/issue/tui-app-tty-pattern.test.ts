@@ -95,10 +95,13 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
 
   // First snapshot the combined output to see what actually happened
   const output = stdout + (stderr ? "\nSTDERR:\n" + stderr : "");
-  expect(normalizeBunSnapshot(output, dir)).toMatchInlineSnapshot(`
-    "^D\b\bPIPED_INPUT:piped content
-    TTY_REOPENED:SUCCESS"
-  `);
+  // Use JSON.stringify to make control characters visible
+  const jsonOutput = JSON.stringify(normalizeBunSnapshot(output, dir));
+  // macOS script adds control characters, Linux doesn't
+  const expected = isMacOS
+    ? `"^D\\b\\bPIPED_INPUT:piped content\\nTTY_REOPENED:SUCCESS"`
+    : `"PIPED_INPUT:piped content\\nTTY_REOPENED:SUCCESS"`;
+  expect(jsonOutput).toBe(expected);
 
   // Then check exit code
   expect(exitCode).toBe(0);

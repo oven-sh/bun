@@ -114,15 +114,13 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
 
   // First snapshot the combined output to see what actually happened
   const output = stdout + (stderr ? "\nSTDERR:\n" + stderr : "");
-  expect(normalizeBunSnapshot(output, dir)).toMatchInlineSnapshot(`
-    "^D\b\bGOT_INPUT:test input
-    OPENED_TTY:true
-    CREATED_STREAM:true
-    POS:undefined
-    START:undefined
-    SET_RAW_MODE:true
-    SUCCESS:true"
-  `);
+  // Use JSON.stringify to make control characters visible
+  const jsonOutput = JSON.stringify(normalizeBunSnapshot(output, dir));
+  // macOS script adds control characters, Linux doesn't
+  const expected = isMacOS
+    ? `"^D\\b\\bGOT_INPUT:test input\\nOPENED_TTY:true\\nCREATED_STREAM:true\\nPOS:undefined\\nSTART:undefined\\nSET_RAW_MODE:true\\nSUCCESS:true"`
+    : `"GOT_INPUT:test input\\nOPENED_TTY:true\\nCREATED_STREAM:true\\nPOS:undefined\\nSTART:undefined\\nSET_RAW_MODE:true\\nSUCCESS:true"`;
+  expect(jsonOutput).toBe(expected);
 
   // Then check exit code
   expect(exitCode).toBe(0);
@@ -231,13 +229,13 @@ test.skipIf(isWindows)("TTY ReadStream should not set position for character dev
 
   // First snapshot the combined output to see what actually happened
   const output = stdout + (stderr ? "\nSTDERR:\n" + stderr : "");
-  expect(normalizeBunSnapshot(output, dir)).toMatchInlineSnapshot(`
-    "^D\b\bPOS_TYPE:undefined
-    START_TYPE:undefined
-    POSITION_PASSED:NOT_CALLED
-    POSITION_TYPE:string
-    READ_CALLED:false"
-  `);
+  // Use JSON.stringify to make control characters visible
+  const jsonOutput = JSON.stringify(normalizeBunSnapshot(output, dir));
+  // macOS script adds control characters, Linux doesn't
+  const expected = isMacOS
+    ? `"^D\\b\\bPOS_TYPE:undefined\\nSTART_TYPE:undefined\\nPOSITION_PASSED:NOT_CALLED\\nPOSITION_TYPE:string\\nREAD_CALLED:false"`
+    : `"POS_TYPE:undefined\\nSTART_TYPE:undefined\\nPOSITION_PASSED:NOT_CALLED\\nPOSITION_TYPE:string\\nREAD_CALLED:false"`;
+  expect(jsonOutput).toBe(expected);
 
   // Then check exit code
   expect(exitCode).toBe(0);

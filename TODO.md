@@ -424,6 +424,14 @@ Regular:
 
 # Add features:
 
+- [ ] The error is duplicated:
+  ```js
+  test("abc", async () => {
+    await (async () => {
+      throw new Error("abc");
+    })();
+  });
+  ```
 - [x] `done` is missing `.call()`/`.apply()`
 - [ ] switch to a memory pool instead of individually-tracked scope allocations
 - [x] `describe.skip()` is not displaying the tests it skipped; fix

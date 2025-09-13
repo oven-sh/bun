@@ -108,8 +108,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespac
     // Check virtual modules for both onLoad and onResolve (only in "file" namespace)
     if (!this->virtualModules.isEmpty()) {
         // Virtual modules only work in the "file" namespace or empty namespace (defaults to "file")
-        bool isFileNamespace = !namespaceStr || namespaceStr->isEmpty() || 
-                               namespaceStr->toWTFString(BunString::ZeroCopy) == "file"_s;
+        bool isFileNamespace = !namespaceStr || namespaceStr->isEmpty() || namespaceStr->toWTFString(BunString::ZeroCopy) == "file"_s;
         if (isFileNamespace && this->virtualModules.contains(pathString)) {
             return true;
         }

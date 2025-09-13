@@ -442,7 +442,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     }
 
     var results = onResolve.$get(inputNamespace);
-    
+
     if (!results) {
       this.onResolveAsync(internalID, null, null, null);
       return null;
@@ -595,7 +595,9 @@ export function runOnLoadPlugins(
               contents = JSON.stringify(result.exports);
               loader = "json";
             } catch (e) {
-              throw new TypeError("Virtual module must return a JSON-serializable object when using loader: \"object\": " + e);
+              throw new TypeError(
+                'Virtual module must return a JSON-serializable object when using loader: "object": ' + e,
+              );
             }
           }
 

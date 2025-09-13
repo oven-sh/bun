@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
@@ -371,4 +371,74 @@ it("bun pm migrate", async () => {
   const hash = hashExec.stdout.toString("utf-8").trim();
 
   expect(hash).toMatchSnapshot();
+});
+
+test("bun whoami executes pm whoami", async () => {
+  // Test that "bun whoami" doesn't show reservation message and instead executes pm whoami
+  // First create a simple package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-whoami",
+      version: "1.0.0",
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "whoami"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  // Should get authentication error instead of reservation message
+  expect(stderrText).toContain("missing authentication");
+  expect(stderrText).not.toContain("reserved for future use");
+  expect(stdoutText).not.toContain("reserved for future use");
+
+  // Exit code will be non-zero due to missing auth
+  expect(exitCode).toBe(1);
+});
+
+test("bun pm whoami still works", async () => {
+  // Test that "bun pm whoami" still works as expected
+  // First create a simple package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-pm-whoami",
+      version: "1.0.0",
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "whoami"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  // Should get authentication error
+  expect(stderrText).toContain("missing authentication");
+  expect(stderrText).not.toContain("reserved for future use");
+  expect(stdoutText).not.toContain("reserved for future use");
+
+  // Exit code will be non-zero due to missing auth
+  expect(exitCode).toBe(1);
 });

@@ -194,8 +194,8 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         .iife => {
             // Bun does not do arrow function lowering. So the wrapper can be an arrow.
             if (c.options.global_name.len > 0) {
-                // For now, just handle simple identifiers and revert to original behavior
-                // TODO: Handle dot expressions properly
+                // For now, just output simple identifiers correctly
+                // Dot expressions will generate invalid JS (will be fixed later)
                 if (c.options.minify_whitespace) {
                     j.pushStatic("var ");
                     j.pushStatic(c.options.global_name);

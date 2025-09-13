@@ -8,6 +8,7 @@ pub const JSRef = union(enum) {
     }
 
     pub fn initStrong(value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) @This() {
+        bun.assert(value != .zero);
         return .{ .strong = .create(value, globalThis) };
     }
 
@@ -15,15 +16,7 @@ pub const JSRef = union(enum) {
         return .{ .weak = .zero };
     }
 
-    pub fn get(this: *@This()) jsc.JSValue {
-        return switch (this.*) {
-            .weak => this.weak,
-            .strong => this.strong.get() orelse .zero,
-            .finalized => .zero,
-        };
-    }
-
-    pub fn tryGet(this: *@This()) ?jsc.JSValue {
+    pub fn tryGet(this: *const @This()) ?jsc.JSValue {
         return switch (this.*) {
             .weak => if (this.weak != .zero) this.weak else null,
             .strong => this.strong.get(),
@@ -44,6 +37,7 @@ pub const JSRef = union(enum) {
     }
 
     pub fn setStrong(this: *@This(), value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
+        bun.assert(value != .zero);
         if (this.* == .strong) {
             this.strong.set(globalThis, value);
             return;
@@ -62,6 +56,37 @@ pub const JSRef = union(enum) {
                 bun.debugAssert(false);
             },
         }
+    }
+
+    pub fn downgrade(this: *@This()) void {
+        switch (this.*) {
+            .weak => {},
+            .strong => |*strong| {
+                const value = strong.get() orelse .zero;
+                value.ensureStillAlive();
+                strong.deinit();
+                this.* = .{ .weak = value };
+            },
+            .finalized => {
+                bun.debugAssert(false);
+            },
+        }
+    }
+
+    pub fn isEmpty(this: *const @This()) bool {
+        return switch (this.*) {
+            .weak => this.weak == .zero,
+            .strong => !this.strong.has(),
+            .finalized => true,
+        };
+    }
+
+    pub fn isNotEmpty(this: *const @This()) bool {
+        return switch (this.*) {
+            .weak => this.weak != .zero,
+            .strong => this.strong.has(),
+            .finalized => false,
+        };
     }
 
     pub fn deinit(this: *@This()) void {

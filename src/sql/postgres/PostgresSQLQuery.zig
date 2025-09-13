@@ -1,5 +1,5 @@
 const PostgresSQLQuery = @This();
-const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 statement: ?*PostgresSQLStatement = null,
 query: bun.String = bun.String.empty,
 cursor_name: bun.String = bun.String.empty,
@@ -23,9 +23,9 @@ flags: packed struct(u8) {
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-pub fn getTarget(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {
-    const thisValue = this.thisValue.tryGet() orelse return .zero;
-    const target = js.targetGetCached(thisValue) orelse return .zero;
+pub fn getTarget(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, clean_target: bool) ?jsc.JSValue {
+    const thisValue = this.thisValue.tryGet() orelse return null;
+    const target = js.targetGetCached(thisValue) orelse return null;
     if (clean_target) {
         js.targetSetCached(thisValue, globalObject, .zero);
     }
@@ -50,10 +50,6 @@ pub const Status = enum(u8) {
         return @intFromEnum(this) > @intFromEnum(Status.pending) and @intFromEnum(this) < @intFromEnum(Status.success);
     }
 };
-
-pub fn hasPendingActivity(this: *@This()) bool {
-    return this.ref_count.get() > 1;
-}
 
 pub fn deinit(this: *@This()) void {
     this.thisValue.deinit();
@@ -84,12 +80,9 @@ pub fn onWriteFail(
     this.ref();
     defer this.deref();
     this.status = .fail;
-    const thisValue = this.thisValue.get();
+    const thisValue = this.thisValue.tryGet() orelse return;
     defer this.thisValue.deinit();
-    const targetValue = this.getTarget(globalObject, true);
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, true) orelse return;
 
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
@@ -105,12 +98,9 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     this.ref();
     defer this.deref();
     this.status = .fail;
-    const thisValue = this.thisValue.get();
+    const thisValue = this.thisValue.tryGet() orelse return;
     defer this.thisValue.deinit();
-    const targetValue = this.getTarget(globalObject, true);
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, true) orelse return;
 
     var vm = jsc.VirtualMachine.get();
     const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
@@ -145,21 +135,17 @@ fn consumePendingValue(thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject
 pub fn onResult(this: *@This(), command_tag_str: []const u8, globalObject: *jsc.JSGlobalObject, connection: jsc.JSValue, is_last: bool) void {
     this.ref();
     defer this.deref();
-
-    const thisValue = this.thisValue.get();
-    const targetValue = this.getTarget(globalObject, is_last);
     if (is_last) {
         this.status = .success;
     } else {
         this.status = .partial_response;
     }
+    const thisValue = this.thisValue.tryGet() orelse return;
     defer if (is_last) {
         allowGC(thisValue, globalObject);
         this.thisValue.deinit();
     };
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, is_last) orelse return;
 
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;

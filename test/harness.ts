@@ -862,11 +862,6 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 
-  // TODO: investigate why its not starting on Linux arm64
-  if ((isLinux && process.arch === "arm64") || isMacOS) {
-    return false;
-  }
-
   try {
     const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
@@ -902,7 +897,7 @@ export async function waitForPort(port: number, timeout: number = 60_000): Promi
   throw error;
 }
 
-export async function describeWithContainer(
+export function describeWithContainer(
   label: string,
   {
     image,
@@ -915,16 +910,48 @@ export async function describeWithContainer(
     args?: string[];
     archs?: NodeJS.Architecture[];
   },
-  fn: (port: number) => void,
+  fn: (container: { port: number; host: string }) => void,
 ) {
   describe(label, () => {
+    // Check if this is one of our docker-compose services
+    const services: Record<string, number> = {
+      "postgres_plain": 5432,
+      "postgres_tls": 5432,
+      "postgres_auth": 5432,
+      "mysql_plain": 3306,
+      "mysql_native_password": 3306,
+      "mysql_tls": 3306,
+      "redis_plain": 6379,
+      "redis_unified": 6379,
+      "minio": 9000,
+      "autobahn": 9002,
+    };
+    
+    const servicePort = services[image];
+    if (servicePort) {
+      let containerInfo = { host: "127.0.0.1", port: 0 };
+      
+      // Start the service before any tests
+      beforeAll(async () => {
+        const dockerHelper = await import("./docker/index.ts");
+        const info = await dockerHelper.ensure(image as any);
+        containerInfo.host = info.host;
+        containerInfo.port = info.ports[servicePort];
+        console.log(`Container ready: ${image} at ${containerInfo.host}:${containerInfo.port}`);
+      });
+      
+      fn(containerInfo);
+      return;
+    }
+    
+    // Fall back to original implementation for unknown images
     const docker = dockerExe();
     if (!docker) {
       test.skip(`docker is not installed, skipped: ${image}`, () => {});
       return;
     }
     const { arch, platform } = process;
-    if ((archs && !archs?.includes(arch)) || platform === "win32" || platform === "darwin") {
+    if ((archs && !archs?.includes(arch)) || platform === "win32") {
       test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
       return false;
     }
@@ -980,7 +1007,7 @@ export async function describeWithContainer(
         stderr: "ignore",
       });
     });
-    fn(port);
+    fn({ port, host: "127.0.0.1" });
   });
 }
 

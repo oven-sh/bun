@@ -1,5 +1,5 @@
 const MySQLQuery = @This();
-const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 
 statement: ?*MySQLStatement = null,
 query: bun.String = bun.String.empty,
@@ -42,10 +42,6 @@ pub const Status = enum(u8) {
     }
 };
 
-pub fn hasPendingActivity(this: *@This()) bool {
-    return this.ref_count.load(.monotonic) > 1;
-}
-
 pub fn deinit(this: *@This()) void {
     this.thisValue.deinit();
     if (this.statement) |statement| {
@@ -66,11 +62,7 @@ pub fn finalize(this: *@This()) void {
         this.statement = null;
     }
 
-    if (this.thisValue == .weak) {
-        // clean up if is a weak reference, if is a strong reference we need to wait until the query is done
-        // if we are a strong reference, here is probably a bug because GC'd should not happen
-        this.thisValue.weak = .zero;
-    }
+    this.thisValue.deinit();
     this.deref();
 }
 
@@ -81,12 +73,9 @@ pub fn onWriteFail(
     queries_array: JSValue,
 ) void {
     this.status = .fail;
-    const thisValue = this.thisValue.get();
+    const thisValue = this.thisValue.tryGet() orelse return;
     defer this.thisValue.deinit();
-    const targetValue = this.getTarget(globalObject, true);
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, true) orelse return;
 
     const instance = AnyMySQLError.mysqlErrorToJS(globalObject, "Failed to bind query", err);
 
@@ -95,9 +84,7 @@ pub fn onWriteFail(
     const event_loop = vm.eventLoop();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
-        // TODO: add mysql error to JS
-        // postgresErrorToJS(globalObject, null, err),
-        instance,
+        instance.toError() orelse instance,
         queries_array,
     });
 }
@@ -124,9 +111,9 @@ pub fn bindAndExecute(this: *MySQLQuery, writer: anytype, statement: *MySQLState
 }
 
 fn bind(this: *MySQLQuery, execute: *PreparedStatement.Execute, globalObject: *jsc.JSGlobalObject) AnyMySQLError.Error!void {
-    const thisValue = this.thisValue.get();
-    const binding_value = js.bindingGetCached(thisValue) orelse .zero;
-    const columns_value = js.columnsGetCached(thisValue) orelse .zero;
+    const thisValue = this.thisValue.tryGet() orelse return error.InvalidState;
+    const binding_value = js.bindingGetCached(thisValue) orelse .js_undefined;
+    const columns_value = js.columnsGetCached(thisValue) orelse .js_undefined;
 
     var iter = try QueryBindingIterator.init(binding_value, columns_value, globalObject);
 
@@ -167,24 +154,26 @@ pub fn onJSError(this: *@This(), err: jsc.JSValue, globalObject: *jsc.JSGlobalOb
     this.ref();
     defer this.deref();
     this.status = .fail;
-    const thisValue = this.thisValue.get();
+    const thisValue = this.thisValue.tryGet() orelse return;
     defer this.thisValue.deinit();
-    const targetValue = this.getTarget(globalObject, true);
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, true) orelse return;
 
     var vm = jsc.VirtualMachine.get();
     const function = vm.rareData().mysql_context.onQueryRejectFn.get().?;
     const event_loop = vm.eventLoop();
+    var js_error = err.toError() orelse err;
+    if (js_error == .zero) {
+        js_error = AnyMySQLError.mysqlErrorToJS(globalObject, "Query failed", error.UnknownError);
+    }
+    js_error.ensureStillAlive();
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
-        err,
+        js_error,
     });
 }
-pub fn getTarget(this: *@This(), globalObject: *jsc.JSGlobalObject, clean_target: bool) jsc.JSValue {
-    const thisValue = this.thisValue.tryGet() orelse return .zero;
-    const target = js.targetGetCached(thisValue) orelse return .zero;
+pub fn getTarget(this: *@This(), globalObject: *jsc.JSGlobalObject, clean_target: bool) ?jsc.JSValue {
+    const thisValue = this.thisValue.tryGet() orelse return null;
+    const target = js.targetGetCached(thisValue) orelse return null;
     if (clean_target) {
         js.targetSetCached(thisValue, globalObject, .zero);
     }
@@ -219,32 +208,36 @@ pub fn onResult(this: *@This(), result_count: u64, globalObject: *jsc.JSGlobalOb
     this.ref();
     defer this.deref();
 
-    const thisValue = this.thisValue.get();
-    const targetValue = this.getTarget(globalObject, is_last);
     if (is_last) {
         this.status = .success;
     } else {
         this.status = .partial_response;
     }
+    const thisValue = this.thisValue.tryGet() orelse return;
+
     defer if (is_last) {
         allowGC(thisValue, globalObject);
         this.thisValue.deinit();
     };
-    if (thisValue == .zero or targetValue == .zero) {
-        return;
-    }
+    const targetValue = this.getTarget(globalObject, is_last) orelse return;
 
     const vm = jsc.VirtualMachine.get();
     const function = vm.rareData().mysql_context.onQueryResolveFn.get().?;
     const event_loop = vm.eventLoop();
     const tag: CommandTag = .{ .SELECT = result_count };
+    var queries_array = if (connection == .zero) .js_undefined else MySQLConnection.js.queriesGetCached(connection) orelse .js_undefined;
+    if (queries_array == .zero) {
+        queries_array = .js_undefined;
+    } else {
+        queries_array.ensureStillAlive();
+    }
 
     event_loop.runCallback(function, globalObject, thisValue, &.{
         targetValue,
         consumePendingValue(thisValue, globalObject) orelse .js_undefined,
         tag.toJSTag(globalObject),
         tag.toJSNumber(),
-        if (connection == .zero) .js_undefined else MySQLConnection.js.queriesGetCached(connection) orelse .js_undefined,
+        queries_array,
         JSValue.jsBoolean(is_last),
         JSValue.jsNumber(last_insert_id),
         JSValue.jsNumber(affected_rows),
@@ -364,7 +357,7 @@ pub fn doRun(this: *MySQLQuery, globalObject: *jsc.JSGlobalObject, callframe: *j
         return globalObject.throw("connection must be a MySQLConnection", .{});
     };
 
-    connection.poll_ref.ref(globalObject.bunVM());
+    defer connection.updateRef();
     var query = arguments[1];
 
     if (!query.isObject()) {

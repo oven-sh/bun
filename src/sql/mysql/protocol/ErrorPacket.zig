@@ -19,7 +19,7 @@ pub fn createMySQLError(
     message: []const u8,
     options: MySQLErrorOptions,
 ) bun.JSError!JSValue {
-    const opts_obj = JSValue.createEmptyObject(globalObject, 18);
+    const opts_obj = JSValue.createEmptyObject(globalObject, 0);
     opts_obj.ensureStillAlive();
     opts_obj.put(globalObject, JSC.ZigString.static("code"), try bun.String.createUTF8ForJS(globalObject, options.code));
     if (options.errno) |errno| {

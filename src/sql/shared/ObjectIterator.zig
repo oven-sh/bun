@@ -11,6 +11,10 @@ array_length: usize = 0,
 any_failed: bool = false,
 
 pub fn next(this: *ObjectIterator) ?jsc.JSValue {
+    if (this.array.isEmptyOrUndefinedOrNull() or this.columns.isEmptyOrUndefinedOrNull()) {
+        this.any_failed = true;
+        return null;
+    }
     if (this.row_i >= this.array_length) {
         return null;
     }

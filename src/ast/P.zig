@@ -5944,6 +5944,7 @@ pub fn NewParser_(
             var import_name: ?[]const u8 = null;
             var loader: ?options.Loader = null;
             var with_attrs: ?*const E.Object = null;
+            var base_path: ?[]const u8 = null;
 
             if (call.args.len >= 2 and call.args.at(1).data == .e_object) {
                 const obj = call.args.at(1).data.e_object;
@@ -5955,6 +5956,15 @@ pub fn NewParser_(
                 if (obj.get("import")) |import_value| {
                     if (import_value.data == .e_string) {
                         import_name = import_value.data.e_string.slice(p.allocator);
+                    }
+                }
+                if (obj.get("base")) |base_value| {
+                    if (base_value.data == .e_string) {
+                        const _base_path = base_value.data.e_string.slice(p.allocator);
+                        base_path = if (strings.hasPrefixComptime(_base_path, "./") or strings.hasPrefixComptime(_base_path, "../") or strings.hasPrefixComptime(_base_path, "/"))
+                            _base_path
+                        else
+                            bun.handleOom(std.fmt.allocPrint(p.allocator, "./{s}", .{_base_path}));
                     }
                 }
                 if (obj.get("with")) |with_value| {
@@ -5971,76 +5981,72 @@ pub fn NewParser_(
 
             // Find matching files
             const source_dir = p.source.path.sourceDir();
-            var matched_files = bun.StringHashMap(void).init(p.allocator);
+            const search_dir = if (base_path) |base| blk: {
+                if (strings.hasPrefixComptime(base, "/")) {
+                    break :blk base;
+                } else {
+                    var path_buf: bun.PathBuffer = undefined;
+                    const resolved = bun.path.joinAbsStringBuf(source_dir, &path_buf, &.{base}, .auto);
+                    break :blk bun.handleOom(p.allocator.dupe(u8, resolved));
+                }
+            } else source_dir;
+
+            var matched_files = std.ArrayList([]const u8).init(p.allocator);
             defer matched_files.deinit();
 
             var glob_arena = bun.ArenaAllocator.init(p.allocator);
             defer glob_arena.deinit();
 
             for (patterns.items) |pattern| {
-                if (!strings.hasPrefix(pattern, "./") and !strings.hasPrefix(pattern, "../")) {
-                    p.log.addErrorFmt(p.source, call.args.at(0).loc, p.allocator, "Glob pattern \"{s}\" must be a relative path starting with ./ or ../", .{pattern}) catch unreachable;
-                    return p.newExpr(E.Object{}, loc);
-                }
-
                 var walker = glob.BunGlobWalker{};
                 defer walker.deinit(false);
 
-                const clean_pattern = if (strings.hasPrefix(pattern, "./")) pattern[2..] else pattern;
-
-                switch (walker.initWithCwd(&glob_arena, clean_pattern, source_dir, true, false, true, false, true) catch unreachable) {
+                switch (walker.initWithCwd(&glob_arena, pattern, search_dir, true, false, true, false, true) catch continue) {
                     .err => continue,
                     .result => {},
                 }
 
                 var iter = glob.BunGlobWalker.Iterator{ .walker = &walker };
                 defer iter.deinit();
-                switch (iter.init() catch unreachable) {
+                switch (iter.init() catch continue) {
                     .err => continue,
                     .result => {},
                 }
 
-                while (switch (iter.next() catch unreachable) {
+                while (switch (iter.next() catch continue) {
                     .err => null,
                     .result => |path| path,
                 }) |path| {
-                    const rel_path = if (strings.hasPrefix(path, source_dir)) path[source_dir.len + @intFromBool(path[source_dir.len] == '/') ..] else path;
-
                     var path_buf: bun.PathBuffer = undefined;
                     const slash_normalized = if (comptime bun.Environment.isWindows)
-                        strings.normalizeSlashesOnly(&path_buf, rel_path, '/')
+                        strings.normalizeSlashesOnly(&path_buf, path, '/')
                     else
-                        rel_path;
+                        path;
 
-                    const normalized = if (strings.hasPrefix(slash_normalized, "./"))
-                        p.allocator.dupe(u8, slash_normalized) catch unreachable
-                    else
-                        std.fmt.allocPrint(p.allocator, "./{s}", .{slash_normalized}) catch unreachable;
-                    bun.handleOom(matched_files.put(normalized, {}));
+                    const duped = bun.handleOom(p.allocator.dupe(u8, slash_normalized));
+                    bun.handleOom(matched_files.append(duped));
                 }
             }
 
-            // Sort files
-            var files = std.ArrayList([]const u8).init(p.allocator);
-            defer files.deinit();
-            var iter = matched_files.iterator();
-            while (iter.next()) |entry| {
-                bun.handleOom(files.append(entry.key_ptr.*));
-            }
-            std.sort.block([]const u8, files.items, {}, struct {
+            std.sort.block([]const u8, matched_files.items, {}, struct {
                 fn lessThan(_: void, a: []const u8, b_path: []const u8) bool {
                     return strings.order(a, b_path) == .lt;
                 }
             }.lessThan);
 
             // Create properties
-            var properties: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, files.items.len));
+            var properties: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, matched_files.items.len));
 
-            for (files.items, 0..) |file_path, i| {
-                const import_path = if (query) |q|
-                    bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}{s}", .{ file_path, q }))
+            for (matched_files.items, 0..) |file_path, i| {
+                const base_import_path: []const u8 = if (base_path) |base|
+                    bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}/{s}", .{ base, file_path }))
                 else
                     file_path;
+
+                const import_path = if (query) |q|
+                    bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}{s}", .{ base_import_path, q }))
+                else
+                    base_import_path;
 
                 const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
                 bun.handleOom(p.import_records_for_current_part.append(p.allocator, import_record_index));

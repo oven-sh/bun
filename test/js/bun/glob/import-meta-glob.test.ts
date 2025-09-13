@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import path from "node:path";
 
 describe("import.meta.glob", () => {
   describe("runtime behavior", () => {
@@ -299,6 +300,121 @@ describe("import.meta.glob", () => {
       expect(lines[2]).toContain("ACTUAL_KEY:");
       expect(lines[3]).toBe("SAME_INSTANCE: true");
     });
+
+    test("base option prepends base path to imports but not keys", async () => {
+      using dir = tempDir("import-glob-base", {
+        "index.js": `
+          const modules = import.meta.glob('./modules/*.js', { base: './src' });
+          const moduleKeys = Object.keys(modules).sort();
+          
+          console.log('KEYS:', JSON.stringify(moduleKeys));
+          
+          for (const [key, loader] of Object.entries(modules)) {
+            console.log('KEY:', key);
+            const result = await loader();
+            console.log('VALUE:', result.default);
+          }
+        `,
+        "src/modules/foo.js": `export default "foo-value";`,
+        "src/modules/bar.js": `export default "bar-value";`,
+        "modules/baz.js": `export default "baz-should-not-match";`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      if (exitCode !== 0) {
+        console.log("STDERR:", stderr);
+        console.log("STDOUT:", stdout);
+      }
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+
+      expect(lines[0]).toBe('KEYS: ["./modules/bar.js","./modules/foo.js"]');
+
+      expect(lines).toContain("KEY: ./modules/foo.js");
+      expect(lines).toContain("VALUE: foo-value");
+      expect(lines).toContain("KEY: ./modules/bar.js");
+      expect(lines).toContain("VALUE: bar-value");
+    });
+
+    test("base option with relative path upward", async () => {
+      using dir = tempDir("import-glob-base-relative", {
+        "src/index.js": `
+          const modules = import.meta.glob('./lib/*.js', { base: '../base' });
+          
+          console.log('KEYS:', JSON.stringify(Object.keys(modules).sort()));
+          
+          for (const [key, loader] of Object.entries(modules)) {
+            const result = await loader();
+            console.log(key + ':', result.default);
+          }
+        `,
+        "base/lib/util.js": `export default "util-module";`,
+        "base/lib/helper.js": `export default "helper-module";`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: path.join(String(dir), "src"),
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      if (exitCode !== 0 || !stdout.includes("KEYS:")) {
+        console.log("STDERR:", stderr);
+        console.log("STDOUT:", stdout);
+      }
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+
+      expect(lines[0]).toBe('KEYS: ["./lib/helper.js","./lib/util.js"]');
+      expect(lines).toContain("./lib/util.js: util-module");
+      expect(lines).toContain("./lib/helper.js: helper-module");
+    });
+
+    test("base option with parent directory", async () => {
+      using dir = tempDir("import-glob-base-parent", {
+        "src/index.js": `
+          const modules = import.meta.glob('./components/*.js', { base: '../shared' });
+          console.log('KEYS:', JSON.stringify(Object.keys(modules).sort()));
+          
+          for (const [key, loader] of Object.entries(modules)) {
+            const result = await loader();
+            console.log(key + ':', result.name);
+          }
+        `,
+        "shared/components/button.js": `export const name = "button-component";`,
+        "shared/components/input.js": `export const name = "input-component";`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: path.join(String(dir), "src"),
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+
+      expect(lines[0]).toBe('KEYS: ["./components/button.js","./components/input.js"]');
+      expect(lines).toContain("./components/button.js: button-component");
+      expect(lines).toContain("./components/input.js: input-component");
+    });
   });
 
   describe("bundler behavior", () => {
@@ -313,7 +429,6 @@ describe("import.meta.glob", () => {
         "src/b.js": `export default "b";`,
       });
 
-      // Build and run
       await using buildProc = Bun.spawn({
         cmd: [bunExe(), "build", "index.js", "--outfile", "dist/bundle.js"],
         env: bunEnv,
@@ -451,7 +566,6 @@ describe("import.meta.glob", () => {
         `,
       });
 
-      // Build with splitting
       await using buildProc = Bun.spawn({
         cmd: [bunExe(), "build", "entry1.js", "entry2.js", "--splitting", "--outdir", "dist", "--target=bun"],
         env: bunEnv,
@@ -466,7 +580,6 @@ describe("import.meta.glob", () => {
       expect(buildExitCode).toBe(0);
       expect(buildStderr).toBe("");
 
-      // Run the test file
       await using runProc = Bun.spawn({
         cmd: [bunExe(), "test.js"],
         env: bunEnv,
@@ -589,6 +702,100 @@ describe("import.meta.glob", () => {
       const lines = stdout.split("\n");
       const shouldNotExecuteLine = lines.findIndex(line => line === "This should be text, not executed!");
       expect(shouldNotExecuteLine).toBe(-1);
+    });
+
+    test("base option works with bundler", async () => {
+      using dir = tempDir("import-glob-bundler-base", {
+        "index.js": `
+          const modules = import.meta.glob('./modules/*.js', { base: './src' });
+          const moduleKeys = Object.keys(modules).sort();
+          
+          console.log('KEYS:', JSON.stringify(moduleKeys));
+          
+          for (const [key, loader] of Object.entries(modules)) {
+            const result = await loader();
+            console.log(\`\${key}: \${result.default}\`);
+          }
+        `,
+        "src/modules/foo.js": `export default "foo-bundled";`,
+        "src/modules/bar.js": `export default "bar-bundled";`,
+        "modules/baz.js": `export default "baz-should-not-match";`,
+      });
+
+      await using buildProc = Bun.spawn({
+        cmd: [bunExe(), "build", "index.js", "--outfile", "bundle.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const buildExitCode = await buildProc.exited;
+      expect(buildExitCode).toBe(0);
+
+      await using runProc = Bun.spawn({
+        cmd: [bunExe(), "bundle.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(runProc.stdout).text(),
+        new Response(runProc.stderr).text(),
+        runProc.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`KEYS: ["./modules/bar.js","./modules/foo.js"]
+./modules/bar.js: bar-bundled
+./modules/foo.js: foo-bundled
+`);
+    });
+
+    test("base option with parent directory and bundler", async () => {
+      using dir = tempDir("import-glob-bundler-base-parent", {
+        "project/index.js": `
+          const modules = import.meta.glob('./*.js', { base: '../' });
+          const moduleKeys = Object.keys(modules).sort();
+          
+          console.log('KEYS:', JSON.stringify(moduleKeys));
+          
+          for (const [key, loader] of Object.entries(modules)) {
+            const result = await loader();
+            console.log(\`\${key}: \${result.default}\`);
+          }
+        `,
+        "module1.js": `export default "module1-value";`,
+        "module2.js": `export default "module2-value";`,
+        "project/local.js": `export default "should-not-match";`,
+      });
+
+      await using buildProc = Bun.spawn({
+        cmd: [bunExe(), "build", "project/index.js", "--outfile", "bundle.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const buildExitCode = await buildProc.exited;
+      expect(buildExitCode).toBe(0);
+
+      await using runProc = Bun.spawn({
+        cmd: [bunExe(), "bundle.js"],
+        env: bunEnv,
+        cwd: dir,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(runProc.stdout).text(),
+        new Response(runProc.stderr).text(),
+        runProc.exited,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`KEYS: ["./module1.js","./module2.js"]
+./module1.js: module1-value
+./module2.js: module2-value
+`);
     });
   });
 });

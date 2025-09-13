@@ -1353,6 +1353,18 @@ interface ImportMeta {
        * }
        */
       with?: ImportAttributes;
+      /**
+       * The base path to prepend to the imports. Basically changing the "cwd" of the directory to scan.
+       *
+       * @example
+       * const modules = import.meta.glob('./assets/*.txt', { base: './src' })
+       *
+       * // code produced by bun
+       * const modules = {
+       *   './assets/file.txt': () => import('./src/assets/file.txt'),
+       * }
+       */
+      base?: string;
     },
   ): Eager extends true ? Record<string, TModule> : Record<string, () => Promise<TModule>>;
 

@@ -144,6 +144,7 @@ static napi_value init(napi_env env, napi_value exports) {
 }
 
 // Instead of using NAPI_MODULE, manually define a module with experimental version
+// This needs to work on both Unix and Windows
 static napi_module _module = {
   NAPI_VERSION_EXPERIMENTAL, // Use experimental version here!!!
   0,
@@ -154,18 +155,17 @@ static napi_module _module = {
   {0},
 };
 
+// Windows and Unix have different ways to register constructors
 #if defined(_MSC_VER)
 #pragma section(".CRT$XCU", read)
-#define NAPI_C_CTOR(fn)                                                        \
-  static void __cdecl fn(void);                                                \
-  __declspec(allocate(".CRT$XCU")) void(__cdecl * fn##_)(void) = fn;          \
-  static void __cdecl fn(void)
-#else
-#define NAPI_C_CTOR(fn)                                                        \
-  static void fn(void) __attribute__((constructor)); \
-  static void fn(void)
-#endif
-
-NAPI_C_CTOR(_register_test_reference_unref_in_finalizer_experimental) {
+static void __cdecl _register_test_reference_unref_in_finalizer_experimental(void);
+__declspec(allocate(".CRT$XCU")) void(__cdecl *_register_test_reference_unref_in_finalizer_experimental_)(void) = _register_test_reference_unref_in_finalizer_experimental;
+static void __cdecl _register_test_reference_unref_in_finalizer_experimental(void) {
   napi_module_register(&_module);
 }
+#else
+static void _register_test_reference_unref_in_finalizer_experimental(void) __attribute__((constructor));
+static void _register_test_reference_unref_in_finalizer_experimental(void) {
+  napi_module_register(&_module);
+}
+#endif

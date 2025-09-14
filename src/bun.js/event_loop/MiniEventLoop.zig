@@ -40,7 +40,7 @@ pub threadlocal var global: *MiniEventLoop = undefined;
 
 pub const ConcurrentTaskQueue = UnboundedQueue(AnyTaskWithExtraContext, .next);
 
-pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
+pub fn initGlobal(env: ?*bun.DotEnv.Loader, cwd: ?[]const u8) *MiniEventLoop {
     if (globalInitialized) return global;
     const loop = MiniEventLoop.init(bun.default_allocator);
     global = bun.handleOom(bun.default_allocator.create(MiniEventLoop));
@@ -55,8 +55,10 @@ pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
         break :env_loader loader;
     };
 
-    // Set top_level_dir to current working directory if not already set
-    if (global.top_level_dir.len == 0) {
+    // Set top_level_dir from provided cwd or get current working directory
+    if (cwd) |dir| {
+        global.top_level_dir = dir;
+    } else if (global.top_level_dir.len == 0) {
         var buf: bun.PathBuffer = undefined;
         if (bun.sys.getcwd(&buf)) |result| {
             global.top_level_dir = bun.default_allocator.dupe(u8, result.result) catch "";

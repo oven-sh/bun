@@ -13,7 +13,7 @@ import.meta.main;  // `true` if this file is directly executed by `bun run`
 
 import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/index.js"
 
-import.meta.glob("./dir/*.ts"); // => { "./dir/a.ts": () => import("./dir/a.ts"), ... }
+import.meta.glob("./src/*.ts"); // => { "./src/a.ts": () => import("./src/a.ts"), ... }
 ```
 
 {% table %}
@@ -74,10 +74,10 @@ import.meta.glob("./dir/*.ts"); // => { "./dir/a.ts": () => import("./dir/a.ts")
 - Import multiple modules using glob patterns. Returns an object mapping file paths to lazy-loading functions.
 
   ```ts
-  const modules = import.meta.glob("./modules/*.js");
+  const modules = import.meta.glob("./modules/*.ts");
   // const modules = {
-  //   './modules/a.js': () => import('./modules/a.js'),
-  //   './modules/b.js': () => import('./modules/b.js'),
+  //   './modules/a.ts': () => import('./modules/a.ts'),
+  //   './modules/b.ts': () => import('./modules/b.st'),
   // }
   ```
 

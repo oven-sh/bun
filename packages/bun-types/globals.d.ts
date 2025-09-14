@@ -1294,85 +1294,125 @@ interface ImportMeta {
    * @returns An object mapping file paths to import functions or modules
    *
    * @example
-   * const modules = import.meta.glob('./modules/*.js')
-   * const module = await modules['./modules/foo.js']()
+   * const modules = import.meta.glob('./src/*.ts')
+   * const module = await modules['./src/foo.ts']()
    *
    * // code produced by bun
    * const modules = {
-   *   './modules/foo.js': () => import('./modules/foo.js'),
-   *   './modules/bar.js': () => import('./modules/bar.js'),
+   *   './src/foo.ts': () => import('./src/foo.ts'),
+   *   './src/bar.ts': () => import('./src/bar.ts'),
    * }
-   * const module = await modules['./modules/foo.js']()
+   * const module = await modules['./src/foo.ts']()
    */
   glob<Eager extends boolean = false, TModule = unknown>(
     pattern: string | string[],
-    options?: {
-      // todo:
-      // /**
-      //  * If true, imports all modules eagerly (synchronously).
-      //  * If false (default), returns functions that import modules lazily.
-      //  */
-      // eager?: Eager;
-      eager?: false;
-      /**
-       * Specify a named export to import from matched modules.
-       * If not specified, imports the entire module.
-       *
-       * @example
-       * const modules = import.meta.glob('./dir/*.js', { import: 'setup' })
-       *
-       * // code produced by bun
-       * const modules = {
-       *   './dir/bar.js': () => import('./dir/bar.js').then((m) => m.setup),
-       *   './dir/foo.js': () => import('./dir/foo.js').then((m) => m.setup),
-       * }
-       */
-      import?: string;
-      /**
-       * Add a query string to the end of the "generated" dynamic import.
-       *
-       * @example
-       * const modules = import.meta.glob('./assets/*.txt', { query: '?something' })
-       *
-       * // code produced by bun
-       * const modules = {
-       *   './assets/file.txt': () => import('./assets/file.txt?something'),
-       * }
-       */
-      query?: string;
-      /**
-       * Import attributes to pass to the import statement.
-       * This is the standard way to specify import options.
-       *
-       * @example
-       * const modules = import.meta.glob('./assets/*.txt', { with: { type: 'text' } })
-       *
-       * // code produced by bun
-       * const modules = {
-       *   './assets/file.txt': () => import('./assets/file.txt', { with: { type: 'text' } }),
-       * }
-       */
-      with?: ImportAttributes;
-      /**
-       * The base path to prepend to the imports. Basically changing the "cwd" of the directory to scan.
-       *
-       * @example
-       * const modules = import.meta.glob('./assets/*.txt', { base: './src' })
-       *
-       * // code produced by bun
-       * const modules = {
-       *   './assets/file.txt': () => import('./src/assets/file.txt'),
-       * }
-       */
-      base?: string;
-    },
+    options?: ImportMetaGlobOptions<Eager>,
   ): Eager extends true ? Record<string, TModule> : Record<string, () => Promise<TModule>>;
+  glob<TModule = unknown>(
+    pattern: string | string[],
+    options?: ImportMetaGlobOptions<false>,
+  ): Record<string, () => Promise<TModule>>;
+  glob<TModule = unknown>(pattern: string | string[], options?: ImportMetaGlobOptions<true>): Record<string, TModule>;
 
   /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
   dirname: string;
 
   /** Alias of `import.meta.path`. Exists for Node.js compatibility */
   filename: string;
+}
+
+interface ImportMetaGlobOptions<Eager extends boolean = false> {
+  // todo:
+  // /**
+  //  * If true, imports all modules eagerly (synchronously).
+  //  * If false (default), returns functions that import modules lazily.
+  //  *
+  //  * @example
+  //  * const eager = import.meta.glob('./src/*.ts', { eager: true })
+  //  * const normal = import.meta.glob('./src/*.ts', { eager: false })
+  //  *
+  //  * // code produced by bun
+  //  * import * as __modules_foo from './src/foo.ts'
+  //  * import * as __modules_bar from './src/bar.ts'
+  //  * const eager = {
+  //  *   './src/foo.ts': __modules_foo,
+  //  *   './src/bar.ts': __modules_bar,
+  //  * }
+  //  *
+  //  * const normal = {
+  //  *   './src/foo.ts': () => import('./src/foo.ts'),
+  //  *   './src/bar.ts': () => import('./src/bar.ts'),
+  //  * }
+  //  */
+  // eager?: Eager;
+  eager?: false;
+  /**
+   * Specify a named export to import from matched modules.
+   * If not specified, imports the entire module.
+   *
+   * @example
+   * const modules = import.meta.glob('./src/*.ts', { import: 'setup' })
+   *
+   * // code produced by bun
+   * const modules = {
+   *   './src/bar.ts': () => import('./src/bar.ts').then((m) => m.setup),
+   *   './src/foo.ts': () => import('./src/foo.ts').then((m) => m.setup),
+   * }
+   */
+  import?: "default" | (string & {});
+  /**
+   * Add a query string to the end of the "generated" dynamic import.
+   *
+   * @example
+   * const modules = import.meta.glob('./assets/*.txt', { query: '?something' })
+   *
+   * // code produced by bun
+   * const modules = {
+   *   './assets/file.txt': () => import('./assets/file.txt?something'),
+   * }
+   */
+  query?: string;
+  /**
+   * Import attributes to pass to the import statement.
+   * This is the standard way to specify import options.
+   *
+   * @example
+   * const modules = import.meta.glob('./assets/*.txt', { with: { type: 'text' } })
+   *
+   * // code produced by bun
+   * const modules = {
+   *   './assets/file.txt': () => import('./assets/file.txt', { with: { type: 'text' } }),
+   * }
+   */
+  with?: ImportAttributes;
+  /**
+   * The base path to prepend to the imports.
+   * Basically changing the "cwd" of the directory to scan.
+   *
+   * @example
+   * const modules = import.meta.glob('./assets/*.txt', { base: './src' })
+   *
+   * // code produced by bun
+   * const modules = {
+   *   './assets/file.txt': () => import('./src/assets/file.txt'),
+   * }
+   */
+  base?: string;
+}
+
+interface ImportAttributes {
+  type:
+    | "css"
+    | "file"
+    | "json"
+    | "jsonc"
+    | "toml"
+    | "yaml"
+    | "txt"
+    | "text"
+    | "html"
+    // just so it doesn't break for other things - but still have suggestions
+    | (string & {});
 }
 
 /**

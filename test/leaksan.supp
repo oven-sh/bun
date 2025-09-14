@@ -19,3 +19,6 @@ leak:JSCInitialize
 leak:getaddrinfo_send_reply
 leak:start_wqthread
 leak:CRYPTO_set_thread_local
+leak:BIO_new
+leak:_tlv_get_addr
+leak:Bun::generateModule

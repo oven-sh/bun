@@ -1511,7 +1511,6 @@ pub fn definesFromTransformOptions(
             }));
         }
 
-        // Set process.isBun to true for DCE when target is bun
         if (!user_defines.contains("process.isBun")) {
             _ = try environment_defines.getOrPutValue("process.isBun", .init(.{
                 .valueless = false,

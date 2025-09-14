@@ -60,10 +60,13 @@ pub fn initGlobal(env: ?*bun.DotEnv.Loader, cwd: ?[]const u8) *MiniEventLoop {
         global.top_level_dir = dir;
     } else if (global.top_level_dir.len == 0) {
         var buf: bun.PathBuffer = undefined;
-        if (bun.sys.getcwd(&buf)) |result| {
-            global.top_level_dir = bun.default_allocator.dupe(u8, result.result) catch "";
-        } else |_| {
-            global.top_level_dir = "";
+        switch (bun.sys.getcwd(&buf)) {
+            .result => |p| {
+                global.top_level_dir = bun.default_allocator.dupe(u8, p) catch "";
+            },
+            .err => {
+                global.top_level_dir = "";
+            },
         }
     }
 

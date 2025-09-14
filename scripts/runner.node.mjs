@@ -1586,7 +1586,41 @@ function getTests(cwd) {
       }
     }
   }
-  return [...getFiles(cwd, "")].sort();
+  // Get list of tests in deterministic order
+  const tests = [...getFiles(cwd, "")].sort();
+
+  // Deterministically shuffle based on git SHA if available
+  try {
+    const gitSha = getCommit();
+
+    // Simple hash function for deterministic shuffling
+    function hashCode(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = (hash << 5) - hash + char;
+        hash = hash & hash; // Convert to 32-bit integer
+      }
+      return Math.abs(hash);
+    }
+
+    // Shuffle using seeded random based on git SHA
+    const seed = hashCode(gitSha);
+    function seededRandom() {
+      const x = Math.sin(seed) * 10000;
+      return x - Math.floor(x);
+    }
+
+    // Fisher-Yates shuffle with seeded random
+    for (let i = tests.length - 1; i > 0; i--) {
+      const j = Math.floor(seededRandom() * (i + 1));
+      [tests[i], tests[j]] = [tests[j], tests[i]];
+    }
+  } catch (error) {
+    // If git command fails, keep tests in sorted order
+    console.warn("Could not get git SHA for test shuffling, using sorted order");
+  }
+  return tests;
 }
 
 /**

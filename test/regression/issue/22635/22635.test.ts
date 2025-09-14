@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Worker, MessageChannel } from "worker_threads";
+import { MessageChannel, Worker } from "worker_threads";
 
 test("issue #22635 - MessagePort communication fails after transfer to worker", async () => {
   // Create a MessageChannel
@@ -29,8 +29,8 @@ test("issue #22635 - MessagePort communication fails after transfer to worker", 
   const worker = new Worker(workerCode, { eval: true });
 
   // Wait for worker to be ready
-  const readyPromise = new Promise<void>((resolve) => {
-    worker.once('message', (msg) => {
+  const readyPromise = new Promise<void>(resolve => {
+    worker.once("message", msg => {
       if (msg.ready) {
         resolve();
       }
@@ -44,15 +44,15 @@ test("issue #22635 - MessagePort communication fails after transfer to worker", 
   await readyPromise;
 
   // Test communication through the transferred port
-  const responsePromise = new Promise<void>((resolve) => {
-    port1.on('message', (msg) => {
-      expect(msg.reply).toBe('Got: Hello from main');
+  const responsePromise = new Promise<void>(resolve => {
+    port1.on("message", msg => {
+      expect(msg.reply).toBe("Got: Hello from main");
       resolve();
     });
   });
 
   // Send message through port1
-  port1.postMessage({ text: 'Hello from main' });
+  port1.postMessage({ text: "Hello from main" });
 
   // Wait for response
   await responsePromise;

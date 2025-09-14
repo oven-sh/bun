@@ -1,18 +1,11 @@
 const { hideFromStack } = require("internal/shared");
 
-const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
-const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
-/**
- * Verifies that the given val is a valid HTTP token
- * per the rules defined in RFC 7230
- * See https://tools.ietf.org/html/rfc7230#section-3.2.6
- */
-function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
-}
+// Use native C++ implementations for better performance
+const checkIsHttpToken = $newCppFunction("HTTPParsers.cpp", "jsFunction_checkIsHttpToken", 1);
+const checkInvalidHeaderChar = $newCppFunction("HTTPParsers.cpp", "jsFunction_checkInvalidHeaderChar", 1);
 
 /*
   The rules for the Link header field are described here:
@@ -95,6 +88,7 @@ export default {
   validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
+  checkInvalidHeaderChar: checkInvalidHeaderChar,
   /** `(value, name, min, max)` */
   validateInteger: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInteger", 0),
   /** `(value, name, min, max)` */

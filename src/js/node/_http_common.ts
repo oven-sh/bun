@@ -1,26 +1,9 @@
-const { checkIsHttpToken } = require("internal/validators");
+const { checkIsHttpToken, checkInvalidHeaderChar } = require("internal/validators");
 const FreeList = require("internal/freelist");
 const { methods, allMethods, HTTPParser } = process.binding("http_parser");
 const incoming = require("node:_http_incoming");
 
 const { IncomingMessage, readStart, readStop } = incoming;
-
-const RegExpPrototypeExec = RegExp.prototype.exec;
-
-let headerCharRegex;
-
-/**
- * True if val contains an invalid field-vchar
- *  field-value    = *( field-content / obs-fold )
- *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
- *  field-vchar    = VCHAR / obs-text
- */
-function checkInvalidHeaderChar(val: string) {
-  if (!headerCharRegex) {
-    headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
-  }
-  return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
-}
 
 const validateHeaderName = (name, label?) => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {

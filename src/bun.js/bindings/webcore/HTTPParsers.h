@@ -34,6 +34,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/WallTime.h>
 #include <wtf/text/StringHash.h>
+#include <JavaScriptCore/JSCInlines.h>
 
 namespace WebCore {
 
@@ -169,5 +170,9 @@ inline bool isHTTPSpace(char16_t character)
 //     }
 //     return set;
 // }
+
+// JavaScript bindings for HTTP validators
+JSC_DECLARE_HOST_FUNCTION(jsFunction_checkIsHttpToken);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_checkInvalidHeaderChar);
 
 }

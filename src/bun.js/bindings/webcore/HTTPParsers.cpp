@@ -1017,4 +1017,64 @@ extern "C" int Bun__writeHTTPDate(char* buffer, size_t length, uint64_t timestam
         tstruct.tm_sec % 99);
 }
 
+// JavaScript binding for checking HTTP tokens
+JSC_DEFINE_HOST_FUNCTION(jsFunction_checkIsHttpToken, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1)
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+
+    auto* jsString = callFrame->argument(0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto view = jsString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSC::JSValue::encode(JSC::jsBoolean(WebCore::isValidHTTPToken(view)));
+}
+
+// Helper template functions for checking invalid header characters
+template<typename CharType>
+static inline bool hasInvalidHeaderChar(const CharType* characters, size_t length)
+{
+    // Check for invalid field-vchar
+    // field-value    = *( field-content / obs-fold )
+    // field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+    // field-vchar    = VCHAR / obs-text
+    // Valid characters are: \t, \x20-\x7e, \x80-\xff
+    const CharType* end = characters + length;
+    for (const CharType* p = characters; p < end; ++p) {
+        CharType c = *p;
+        if (c != '\t' && (c < 0x20 || (c > 0x7e && c < 0x80) || c > 0xff)) {
+            return true; // Found invalid character
+        }
+    }
+    return false; // No invalid characters found
+}
+
+// JavaScript binding for checking invalid header characters
+JSC_DEFINE_HOST_FUNCTION(jsFunction_checkInvalidHeaderChar, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1)
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+
+    auto* jsString = callFrame->argument(0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto view = jsString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    bool hasInvalid;
+    if (view->is8Bit()) {
+        hasInvalid = hasInvalidHeaderChar(view->span8().data(), view->length());
+    } else {
+        hasInvalid = hasInvalidHeaderChar(view->span16().data(), view->length());
+    }
+
+    return JSC::JSValue::encode(JSC::jsBoolean(hasInvalid));
+}
+
 }

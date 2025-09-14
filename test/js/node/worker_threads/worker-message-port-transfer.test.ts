@@ -1,7 +1,6 @@
-import { test, expect } from "bun:test";
-import { Worker, MessageChannel } from "worker_threads";
-import { bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
 import path from "path";
+import { MessageChannel, Worker } from "worker_threads";
 
 test("MessagePort can be transferred to worker and used for bidirectional communication", async () => {
   // Create a simple worker that receives a port and sends a message through it
@@ -31,10 +30,10 @@ parentPort.on('message', (msg) => {
     const channel = new MessageChannel();
 
     // Create promise to track communication
-    const messageReceived = new Promise((resolve) => {
-      channel.port1.on('message', (msg) => {
+    const messageReceived = new Promise(resolve => {
+      channel.port1.on("message", msg => {
         // Send response back
-        channel.port1.postMessage({ from: 'main', data: 'hello back from main' });
+        channel.port1.postMessage({ from: "main", data: "hello back from main" });
         resolve(msg);
       });
     });
@@ -43,24 +42,24 @@ parentPort.on('message', (msg) => {
     const worker = new Worker(workerPath);
 
     // Create promise to track worker receiving response
-    const workerReceivedResponse = new Promise((resolve) => {
-      worker.on('message', (msg) => {
-        if (msg.type === 'received') {
+    const workerReceivedResponse = new Promise(resolve => {
+      worker.on("message", msg => {
+        if (msg.type === "received") {
           resolve(msg.data);
         }
       });
     });
 
     // Send port2 to worker
-    worker.postMessage({ type: 'port', port: channel.port2 }, [channel.port2]);
+    worker.postMessage({ type: "port", port: channel.port2 }, [channel.port2]);
 
     // Wait for the message from worker through the port
     const messageFromWorker = await messageReceived;
-    expect(messageFromWorker).toEqual({ from: 'worker', data: 'hello from worker' });
+    expect(messageFromWorker).toEqual({ from: "worker", data: "hello from worker" });
 
     // Wait for worker to receive the response
     const responseData = await workerReceivedResponse;
-    expect(responseData).toEqual({ from: 'main', data: 'hello back from main' });
+    expect(responseData).toEqual({ from: "main", data: "hello back from main" });
 
     await worker.terminate();
   } finally {
@@ -111,42 +110,42 @@ parentPort.on('message', (msg) => {
 
     // Wait for workers to be ready
     const ready1 = new Promise(resolve => {
-      worker1.once('message', msg => {
-        if (msg.type === 'ready') resolve(true);
+      worker1.once("message", msg => {
+        if (msg.type === "ready") resolve(true);
       });
     });
 
     const ready2 = new Promise(resolve => {
-      worker2.once('message', msg => {
-        if (msg.type === 'ready') resolve(true);
+      worker2.once("message", msg => {
+        if (msg.type === "ready") resolve(true);
       });
     });
 
     // Transfer ports to workers
-    worker1.postMessage({ type: 'port', port: channel1.port2 }, [channel1.port2]);
-    worker2.postMessage({ type: 'port', port: channel2.port2 }, [channel2.port2]);
+    worker1.postMessage({ type: "port", port: channel1.port2 }, [channel1.port2]);
+    worker2.postMessage({ type: "port", port: channel2.port2 }, [channel2.port2]);
 
     // Wait for both workers to be ready
     await Promise.all([ready1, ready2]);
 
     // Set up response promises
     const response1 = new Promise(resolve => {
-      channel1.port1.once('message', resolve);
+      channel1.port1.once("message", resolve);
     });
 
     const response2 = new Promise(resolve => {
-      channel2.port1.once('message', resolve);
+      channel2.port1.once("message", resolve);
     });
 
     // Send messages through the channels
-    channel1.port1.postMessage('test1');
-    channel2.port1.postMessage('test2');
+    channel1.port1.postMessage("test1");
+    channel2.port1.postMessage("test2");
 
     // Wait for responses
     const [msg1, msg2] = await Promise.all([response1, response2]);
 
-    expect(msg1).toEqual({ workerId: 1, received: 'test1' });
-    expect(msg2).toEqual({ workerId: 2, received: 'test2' });
+    expect(msg1).toEqual({ workerId: 1, received: "test1" });
+    expect(msg2).toEqual({ workerId: 2, received: "test2" });
 
     await Promise.all([worker1.terminate(), worker2.terminate()]);
   } finally {
@@ -208,28 +207,28 @@ parentPort.on('message', (msg) => {
 
     // Wait for coordinator to be ready
     const coordinatorReady = new Promise(resolve => {
-      coordinator.once('message', msg => {
-        if (msg.type === 'ready') resolve(true);
+      coordinator.once("message", msg => {
+        if (msg.type === "ready") resolve(true);
       });
     });
 
     // Wait for message to be received
     const messageReceived = new Promise(resolve => {
-      coordinator.on('message', msg => {
-        if (msg.type === 'received') resolve(msg.data);
+      coordinator.on("message", msg => {
+        if (msg.type === "received") resolve(msg.data);
       });
     });
 
     // Send port1 to coordinator
-    coordinator.postMessage({ type: 'port', port: channel.port1 }, [channel.port1]);
+    coordinator.postMessage({ type: "port", port: channel.port1 }, [channel.port1]);
     await coordinatorReady;
 
     // Send port2 to sender
-    sender.postMessage({ type: 'port', port: channel.port2 }, [channel.port2]);
+    sender.postMessage({ type: "port", port: channel.port2 }, [channel.port2]);
 
     // Wait for the message to be relayed
     const message = await messageReceived;
-    expect(message).toBe('hello from sender worker');
+    expect(message).toBe("hello from sender worker");
 
     await Promise.all([coordinator.terminate(), sender.terminate()]);
   } finally {

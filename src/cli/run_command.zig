@@ -247,6 +247,7 @@ pub const RunCommand = struct {
 
         if (!use_system_shell) {
             const mini = bun.jsc.MiniEventLoop.initGlobal(env);
+            mini.top_level_dir = cwd;
             const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items, cwd) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });

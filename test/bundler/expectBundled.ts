@@ -1043,7 +1043,12 @@ function expectBundled(
         const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          banner,
+          format,
+          footer,
+          root: outbase,
           packages,
+          loader,
           minify: {
             whitespace: minifyWhitespace,
             identifiers: minifyIdentifiers,

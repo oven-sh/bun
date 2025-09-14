@@ -1918,6 +1918,26 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     const start = parser.pos;
 
+                    // Check if we're at the end of the scalar for + or - alone
+                    if (first_char == .positive or first_char == .negative) {
+                        switch (parser.next()) {
+                            ' ', '\t', 0, '\n', '\r', ':' => {
+                                // Just a '+' or '-' alone, not a number
+                                return;
+                            },
+                            ',' , ']', '}' => {
+                                switch (parser.context.get()) {
+                                    .flow_in, .flow_key => {
+                                        // Just a '+' or '-' alone in flow context
+                                        return;
+                                    },
+                                    .block_in, .block_out => {},
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
                     var decimal = parser.next() == '.';
                     var x = false;
                     var o = false;
@@ -3434,6 +3454,7 @@ pub fn Parser(comptime enc: Encoding) type {
             };
 
             const previous_token_line = self.token.line;
+            const previous_token_data = self.token.data;
 
             self.token = next: switch (self.next()) {
                 0 => {
@@ -3467,6 +3488,12 @@ pub fn Parser(comptime enc: Encoding) type {
                         ' ',
                         '\t',
                         => {
+                            // Check if previous token was a mapping value (':')
+                            // If so, treat '-' as a plain scalar, not a sequence entry
+                            if (previous_token_data == .mapping_value) {
+                                break :next try self.scanPlainScalar(opts);
+                            }
+
                             self.inc(1);
 
                             switch (self.context.get()) {
@@ -3499,15 +3526,9 @@ pub fn Parser(comptime enc: Encoding) type {
                                 .flow_in,
                                 .flow_key,
                                 => {
-                                    self.inc(1);
-
-                                    self.token = .sequenceEntry(.{
-                                        .start = start,
-                                        .indent = self.line_indent,
-                                        .line = self.line,
-                                    });
-
-                                    return error.UnexpectedToken;
+                                    // In flow context, '-' should be treated as a plain scalar
+                                    // not as a sequence entry marker
+                                    break :next try self.scanPlainScalar(opts);
                                 },
                                 .block_in,
                                 .block_out,

@@ -128,7 +128,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
 
         // Otherwise check if banner starts with hashbang
         if (c.options.banner.len > 0 and strings.hasPrefixComptime(c.options.banner, "#!")) {
-            const newline_pos = strings.indexOfChar(c.options.banner, "\n") orelse c.options.banner.len;
+            const newline_pos = strings.indexOfChar(c.options.banner, '\n') orelse c.options.banner.len;
             const banner_hashbang = c.options.banner[0..newline_pos];
 
             break :brk .{ banner_hashbang, std.mem.trimLeft(u8, c.options.banner[newline_pos..], "\r\n") };

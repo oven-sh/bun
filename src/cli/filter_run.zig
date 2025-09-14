@@ -142,6 +142,7 @@ const State = struct {
     handles: []ProcessHandle,
     event_loop: *bun.jsc.MiniEventLoop,
     remaining_scripts: usize = 0,
+    total_expected_scripts: usize = 0,
     // buffer for batched output
     draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
@@ -151,6 +152,7 @@ const State = struct {
     env: *bun.DotEnv.Loader,
 
     pub fn isDone(this: *This) bool {
+        // We're done when all scripts that were started have finished
         return this.remaining_scripts == 0;
     }
 
@@ -191,15 +193,29 @@ const State = struct {
 
     fn processExit(this: *This, handle: *ProcessHandle) !void {
         this.remaining_scripts -= 1;
+
+        // Check if the process exited successfully
+        const success = if (handle.process) |proc| switch (proc.status) {
+            .exited => |exited| exited.code == 0,
+            else => false,
+        } else false;
+
         if (!this.aborted) {
-            for (handle.dependents.items) |dependent| {
-                dependent.remaining_dependencies -= 1;
-                if (dependent.remaining_dependencies == 0) {
-                    dependent.start() catch {
-                        Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
-                        Global.exit(1);
-                    };
+            // Only start dependents if this process succeeded
+            if (success) {
+                for (handle.dependents.items) |dependent| {
+                    dependent.remaining_dependencies -= 1;
+                    if (dependent.remaining_dependencies == 0) {
+                        dependent.start() catch {
+                            Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
+                            Global.exit(1);
+                        };
+                    }
                 }
+            } else {
+                // If this process failed, abort all remaining processes
+                // This prevents dependents from running
+                this.abort();
             }
         }
         if (this.pretty_output) {
@@ -580,18 +596,22 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
     for (state.handles) |*handle| {
-        var iter = handle.config.deps.map.iterator();
-        while (iter.next()) |entry| {
-            var sfa = std.heap.stackFallback(256, ctx.allocator);
-            const alloc = sfa.get();
-            const buf = try alloc.alloc(u8, entry.key_ptr.len());
-            defer alloc.free(buf);
-            const name = entry.key_ptr.slice(buf);
-            // is it a workspace dependency?
-            if (map.get(name)) |pkgs| {
-                for (pkgs.items) |dep| {
-                    try dep.dependents.append(handle);
-                    handle.remaining_dependencies += 1;
+        // Iterate through the dependency values directly
+        const deps = handle.config.deps.map.values();
+        for (deps) |dep_value| {
+            // Check version tag for workspace dependencies
+            const tag = dep_value.version.tag;
+            if (tag == .workspace) {
+                // This is a workspace dependency
+                // Get the dependency name from the dependency itself
+                const dep_name = dep_value.name.slice(handle.config.deps.source_buf);
+
+                // Check if this dependency is another package in our workspace
+                if (map.get(dep_name)) |pkgs| {
+                    for (pkgs.items) |pkg| {
+                        try pkg.dependents.append(handle);
+                        handle.remaining_dependencies += 1;
+                    }
                 }
             }
         }

@@ -2246,5 +2246,102 @@ refs:
         });
       });
     });
+
+    // Regression tests for GitHub issues
+    describe("GitHub issue regressions", () => {
+      // https://github.com/oven-sh/bun/issues/22659
+      test("handles '+' and '-' characters as scalar values (#22659)", () => {
+        // Test case 1: test2 first, test1 second
+        const yaml1 = `- test2: next\n  test1: +`;
+        const result1 = YAML.parse(yaml1);
+        expect(result1).toEqual([{ test2: "next", test1: "+" }]);
+
+        // Test case 2: test1 first, test2 second (was throwing an error)
+        const yaml2 = `- test1: +\n  test2: next`;
+        const result2 = YAML.parse(yaml2);
+        expect(result2).toEqual([{ test1: "+", test2: "next" }]);
+
+        // Test case 3: '-' character as scalar value
+        const yaml3 = `- test1: -\n  test2: value`;
+        const result3 = YAML.parse(yaml3);
+        expect(result3).toEqual([{ test1: "-", test2: "value" }]);
+
+        // Test case 4: Simple object with + and - values
+        const yaml4 = `plus: +\nminus: -`;
+        const result4 = YAML.parse(yaml4);
+        expect(result4).toEqual({ plus: "+", minus: "-" });
+
+        // Test case 5: '+' and '-' in flow collections
+        const yaml5 = `[+, -, test]`;
+        const result5 = YAML.parse(yaml5);
+        expect(result5).toEqual(["+", "-", "test"]);
+
+        const yaml6 = `{a: +, b: -, c: test}`;
+        const result6 = YAML.parse(yaml6);
+        expect(result6).toEqual({ a: "+", b: "-", c: "test" });
+      });
+
+      test("exclamation mark (!) alone errors as invalid tag", () => {
+        // ! is a tag indicator and needs a tag name after it
+        expect(() => YAML.parse(`value: !`)).toThrow();
+        expect(() => YAML.parse(`- !`)).toThrow();
+
+        // Valid tags should work
+        expect(YAML.parse(`value: !!str test`)).toEqual({ value: "test" });
+      });
+
+      test("question mark (?) alone errors as invalid mapping key", () => {
+        // ? is a mapping key indicator
+        expect(() => YAML.parse(`value: ?`)).toThrow();
+        expect(() => YAML.parse(`- ?`)).toThrow();
+
+        // Valid explicit key should work
+        const validKey = `? key\n: value`;
+        expect(YAML.parse(validKey)).toEqual({ key: "value" });
+      });
+
+      test("empty block scalars (| and >) return empty strings", () => {
+        // Empty literal block scalar
+        expect(YAML.parse(`value: |`)).toEqual({ value: "" });
+        expect(YAML.parse(`value: |\n`)).toEqual({ value: "" });
+
+        // Empty folded block scalar
+        expect(YAML.parse(`value: >`)).toEqual({ value: "" });
+        expect(YAML.parse(`value: >\n`)).toEqual({ value: "" });
+
+        // With content (includes trailing newline by default)
+        expect(YAML.parse(`value: |\n  test`)).toEqual({ value: "test\n" });
+        expect(YAML.parse(`value: >\n  test`)).toEqual({ value: "test\n" });
+
+        // With chomp indicators
+        expect(YAML.parse(`value: |-`)).toEqual({ value: "" });
+        expect(YAML.parse(`value: |+`)).toEqual({ value: "" });
+        expect(YAML.parse(`value: >-`)).toEqual({ value: "" });
+        expect(YAML.parse(`value: >+`)).toEqual({ value: "" });
+      });
+
+      test("reserved and special characters error correctly", () => {
+        // Reserved characters should error when unquoted
+        expect(() => YAML.parse(`value: @`)).toThrow();
+        expect(() => YAML.parse(`value: \``)).toThrow();
+        expect(() => YAML.parse(`value: %`)).toThrow();
+
+        // But work when quoted
+        expect(YAML.parse(`value: "@"`)).toEqual({ value: "@" });
+        expect(YAML.parse(`value: "\`"`)).toEqual({ value: "`" });
+        expect(YAML.parse(`value: "%"`)).toEqual({ value: "%" });
+
+        // Alias and anchor require names
+        expect(() => YAML.parse(`value: *`)).toThrow();
+        expect(() => YAML.parse(`value: &`)).toThrow();
+
+        // With names they work
+        expect(YAML.parse(`value: &anchor test`)).toEqual({ value: "test" });
+
+        // Tilde is null
+        expect(YAML.parse(`value: ~`)).toEqual({ value: null });
+        expect(YAML.parse(`- ~`)).toEqual([null]);
+      });
+    });
   });
 });

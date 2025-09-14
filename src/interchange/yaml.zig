@@ -1918,17 +1918,14 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     const start = parser.pos;
 
-                    // Check if we're at the end of the scalar for + or - alone
                     if (first_char == .positive or first_char == .negative) {
                         switch (parser.next()) {
                             ' ', '\t', 0, '\n', '\r', ':' => {
-                                // Just a '+' or '-' alone, not a number
                                 return;
                             },
                             ',' , ']', '}' => {
                                 switch (parser.context.get()) {
                                     .flow_in, .flow_key => {
-                                        // Just a '+' or '-' alone in flow context
                                         return;
                                     },
                                     .block_in, .block_out => {},
@@ -2591,7 +2588,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 0 => {
-                    // EOF after block scalar indicator - return empty scalar
                     return .{
                         indent_indicator orelse .default,
                         chomp orelse .default,
@@ -3223,10 +3219,6 @@ pub fn Parser(comptime enc: Encoding) type {
                 '\n',
                 '\r',
                 => {
-                    // c-non-specific-tag
-                    // primary tag handle
-                    // Note: '!' alone should be an error per YAML spec
-                    // A tag must have content after the '!'
                     return error.UnexpectedCharacter;
                 },
 
@@ -3492,8 +3484,6 @@ pub fn Parser(comptime enc: Encoding) type {
                         ' ',
                         '\t',
                         => {
-                            // Check if previous token was a mapping value (':')
-                            // If so, treat '-' as a plain scalar, not a sequence entry
                             if (previous_token_data == .mapping_value) {
                                 break :next try self.scanPlainScalar(opts);
                             }
@@ -3530,8 +3520,6 @@ pub fn Parser(comptime enc: Encoding) type {
                                 .flow_in,
                                 .flow_key,
                                 => {
-                                    // In flow context, '-' should be treated as a plain scalar
-                                    // not as a sequence entry marker
                                     break :next try self.scanPlainScalar(opts);
                                 },
                                 .block_in,
@@ -3576,8 +3564,6 @@ pub fn Parser(comptime enc: Encoding) type {
                         '\n',
                         '\r',
                         => {
-                            // Check if previous token was a mapping value (':') or sequence entry ('-')
-                            // If so, '?' alone should be an error per YAML spec
                             if (previous_token_data == .mapping_value or previous_token_data == .sequence_entry) {
                                 self.token.start = start;
                                 return error.UnexpectedToken;
@@ -3607,7 +3593,6 @@ pub fn Parser(comptime enc: Encoding) type {
                                 .flow_in,
                                 .flow_key,
                                 => {
-                                    // In flow context after mapping value or in a sequence, '?' alone should error
                                     if (previous_token_data == .mapping_value or previous_token_data == .collect_entry) {
                                         self.token.start = start;
                                         return error.UnexpectedToken;

@@ -38,6 +38,14 @@ The `--inspect-brk` flag behaves identically to `--inspect`, except it automatic
 
 The `--inspect-wait` flag behaves identically to `--inspect`, except the code will not execute until a debugger has attached to the running process.
 
+### `--inspect-browser`
+
+The `--inspect-browser` flag behaves identically to `--inspect`, except it automatically opens the debugger in your default browser and waits for a debugger to attach to the running process. It's the equivalent of `--inspect-wait` and it will open the debugger in your default browser.
+
+```sh
+$ bun --inspect-browser server.ts
+```
+
 ### Setting a port or URL for the debugger
 
 Regardless of which flag you use, you can optionally specify a port number, URL prefix, or both.

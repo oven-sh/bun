@@ -29,7 +29,7 @@ pub const CommandTag = union(enum) {
 
     other: []const u8,
 
-    pub fn toJSTag(this: CommandTag, globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn toJSTag(this: CommandTag, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return switch (this) {
             .INSERT => JSValue.jsNumber(1),
             .DELETE => JSValue.jsNumber(2),
@@ -39,7 +39,7 @@ pub const CommandTag = union(enum) {
             .MOVE => JSValue.jsNumber(6),
             .FETCH => JSValue.jsNumber(7),
             .COPY => JSValue.jsNumber(8),
-            .other => |tag| jsc.ZigString.init(tag).toJS(globalObject),
+            .other => |tag| bun.String.createUTF8ForJS(globalObject, tag),
         };
     }
 

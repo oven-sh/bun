@@ -106,6 +106,7 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!" },
   });
   itBundled("compile/WorkerRelativePathNoExtension", {
+    backend: "cli",
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -125,6 +126,7 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
   itBundled("compile/WorkerRelativePathTSExtension", {
+    backend: "cli",
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -143,6 +145,7 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
   itBundled("compile/WorkerRelativePathTSExtensionBytecode", {
+    backend: "cli",
     compile: true,
     bytecode: true,
     files: {
@@ -558,6 +561,7 @@ describe("bundler", () => {
   });
   itBundled("compile/ImportMetaMain", {
     compile: true,
+    backend: "cli",
     files: {
       "/entry.ts": /* js */ `
         // test toString on function to observe what the inlined value was

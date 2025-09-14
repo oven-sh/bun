@@ -152,6 +152,7 @@ console.log(favicon);
   // Test manifest with multiple HTML imports
   itBundled("html-import/multiple-manifests", {
     outdir: "out/",
+    backend: "cli",
     files: {
       "/server.js": `
 import homeHtml from "./home.html";
@@ -301,6 +302,7 @@ console.log("About manifest:", aboutHtml);
   // Test that import with {type: 'file'} still works as a file import
   itBundled("html-import/with-type-file-attribute", {
     outdir: "out/",
+    backend: "cli",
     files: {
       "/entry.js": `
 import htmlUrl from "./page.html" with { type: 'file' };

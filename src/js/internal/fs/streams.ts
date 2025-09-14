@@ -141,7 +141,8 @@ function ReadStream(this: FSStream, path, options): void {
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let { fd, autoClose, fs: customFs, start = 0, end = Infinity, encoding } = options;
+  let { fd, autoClose, fs: customFs, start, end = Infinity, encoding } = options;
+
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;

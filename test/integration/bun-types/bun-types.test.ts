@@ -40,7 +40,7 @@ beforeAll(async () => {
 
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun install
+      bun install --no-cache
       cp package.json package.json.backup
     `;
 
@@ -70,7 +70,7 @@ beforeAll(async () => {
         "private": true,
         "name": "@types/bun",
         "version": BUN_VERSION,
-        "projects": ["https://bun.sh"],
+        "projects": ["https://bun.com"],
         "dependencies": {
           "bun-types": BUN_VERSION,
         },
@@ -179,6 +179,141 @@ async function diagnose(
   };
 }
 
+const expectedEmptyInterfacesWhenNoDOM = new Set([
+  "ThisType",
+  "Document",
+  "DataTransfer",
+  "StyleMedia",
+  "Element",
+  "DocumentFragment",
+  "HTMLElement",
+  "HTMLAnchorElement",
+  "HTMLAreaElement",
+  "HTMLAudioElement",
+  "HTMLBaseElement",
+  "HTMLBodyElement",
+  "HTMLBRElement",
+  "HTMLButtonElement",
+  "HTMLCanvasElement",
+  "HTMLDataElement",
+  "HTMLDataListElement",
+  "HTMLDetailsElement",
+  "HTMLDialogElement",
+  "HTMLDivElement",
+  "HTMLDListElement",
+  "HTMLEmbedElement",
+  "HTMLFieldSetElement",
+  "HTMLFormElement",
+  "HTMLHeadingElement",
+  "HTMLHeadElement",
+  "HTMLHRElement",
+  "HTMLHtmlElement",
+  "HTMLIFrameElement",
+  "HTMLImageElement",
+  "HTMLInputElement",
+  "HTMLModElement",
+  "HTMLLabelElement",
+  "HTMLLegendElement",
+  "HTMLLIElement",
+  "HTMLLinkElement",
+  "HTMLMapElement",
+  "HTMLMetaElement",
+  "HTMLMeterElement",
+  "HTMLObjectElement",
+  "HTMLOListElement",
+  "HTMLOptGroupElement",
+  "HTMLOptionElement",
+  "HTMLOutputElement",
+  "HTMLParagraphElement",
+  "HTMLParamElement",
+  "HTMLPreElement",
+  "HTMLProgressElement",
+  "HTMLQuoteElement",
+  "HTMLSlotElement",
+  "HTMLScriptElement",
+  "HTMLSelectElement",
+  "HTMLSourceElement",
+  "HTMLSpanElement",
+  "HTMLStyleElement",
+  "HTMLTableElement",
+  "HTMLTableColElement",
+  "HTMLTableDataCellElement",
+  "HTMLTableHeaderCellElement",
+  "HTMLTableRowElement",
+  "HTMLTableSectionElement",
+  "HTMLTemplateElement",
+  "HTMLTextAreaElement",
+  "HTMLTimeElement",
+  "HTMLTitleElement",
+  "HTMLTrackElement",
+  "HTMLUListElement",
+  "HTMLVideoElement",
+  "HTMLWebViewElement",
+  "SVGElement",
+  "SVGSVGElement",
+  "SVGCircleElement",
+  "SVGClipPathElement",
+  "SVGDefsElement",
+  "SVGDescElement",
+  "SVGEllipseElement",
+  "SVGFEBlendElement",
+  "SVGFEColorMatrixElement",
+  "SVGFEComponentTransferElement",
+  "SVGFECompositeElement",
+  "SVGFEConvolveMatrixElement",
+  "SVGFEDiffuseLightingElement",
+  "SVGFEDisplacementMapElement",
+  "SVGFEDistantLightElement",
+  "SVGFEDropShadowElement",
+  "SVGFEFloodElement",
+  "SVGFEFuncAElement",
+  "SVGFEFuncBElement",
+  "SVGFEFuncGElement",
+  "SVGFEFuncRElement",
+  "SVGFEGaussianBlurElement",
+  "SVGFEImageElement",
+  "SVGFEMergeElement",
+  "SVGFEMergeNodeElement",
+  "SVGFEMorphologyElement",
+  "SVGFEOffsetElement",
+  "SVGFEPointLightElement",
+  "SVGFESpecularLightingElement",
+  "SVGFESpotLightElement",
+  "SVGFETileElement",
+  "SVGFETurbulenceElement",
+  "SVGFilterElement",
+  "SVGForeignObjectElement",
+  "SVGGElement",
+  "SVGImageElement",
+  "SVGLineElement",
+  "SVGLinearGradientElement",
+  "SVGMarkerElement",
+  "SVGMaskElement",
+  "SVGMetadataElement",
+  "SVGPathElement",
+  "SVGPatternElement",
+  "SVGPolygonElement",
+  "SVGPolylineElement",
+  "SVGRadialGradientElement",
+  "SVGRectElement",
+  "SVGSetElement",
+  "SVGStopElement",
+  "SVGSwitchElement",
+  "SVGSymbolElement",
+  "SVGTextElement",
+  "SVGTextPathElement",
+  "SVGTSpanElement",
+  "SVGUseElement",
+  "SVGViewElement",
+  "Text",
+  "TouchList",
+  "WebGLRenderingContext",
+  "WebGL2RenderingContext",
+  "TrustedHTML",
+  "MediaStream",
+  "MediaSource",
+]);
+
 function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
 
@@ -194,12 +329,6 @@ function checkForEmptyInterfaces(program: ts.Program) {
   for (const symbol of globalSymbols) {
     // find only globals
     const declarations = symbol.declarations ?? [];
-
-    const concernsBun = declarations.some(decl => decl.getSourceFile().fileName.includes("node_modules/@types/bun"));
-
-    if (!concernsBun) {
-      continue;
-    }
 
     const isGlobal = declarations.some(decl => {
       const sourceFile = decl.getSourceFile();
@@ -255,7 +384,7 @@ describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR);
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([]);
   });
 
@@ -283,7 +412,7 @@ describe("@types/bun integration test", () => {
         },
       });
 
-      expect(emptyInterfaces).toEqual(new Set());
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
       expect(diagnostics).toEqual([]);
     });
 
@@ -292,7 +421,7 @@ describe("@types/bun integration test", () => {
         files: { "my-test.test.ts": code }, // no reference to bun-types/test-globals
       });
 
-      expect(emptyInterfaces).toEqual(new Set()); // should still have no empty interfaces
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM); // should still have no empty interfaces
       expect(diagnostics).toEqual([
         {
           "code": 2582,
@@ -368,7 +497,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([]);
   });
 
@@ -381,7 +510,7 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([
       // This is expected because we, of course, can't check that our tsx file is passing
       // when tsx is turned off...
@@ -400,7 +529,41 @@ describe("@types/bun integration test", () => {
       },
     });
 
-    expect(emptyInterfaces).toEqual(new Set());
+    expect(emptyInterfaces).toEqual(
+      new Set([
+        "ThisType",
+        "RTCAnswerOptions",
+        "RTCOfferAnswerOptions",
+        "RTCSetParameterOptions",
+        "EXT_color_buffer_float",
+        "EXT_float_blend",
+        "EXT_frag_depth",
+        "EXT_shader_texture_lod",
+        "FragmentDirective",
+        "MediaSourceHandle",
+        "OES_element_index_uint",
+        "OES_fbo_render_mipmap",
+        "OES_texture_float",
+        "OES_texture_float_linear",
+        "OES_texture_half_float_linear",
+        "PeriodicWave",
+        "RTCRtpScriptTransform",
+        "WebGLBuffer",
+        "WebGLFramebuffer",
+        "WebGLProgram",
+        "WebGLQuery",
+        "WebGLRenderbuffer",
+        "WebGLSampler",
+        "WebGLShader",
+        "WebGLSync",
+        "WebGLTexture",
+        "WebGLTransformFeedback",
+        "WebGLUniformLocation",
+        "WebGLVertexArrayObject",
+        "WebGLVertexArrayObjectOES",
+        "TrustedHTML",
+      ]),
+    );
     expect(diagnostics).toEqual([
       {
         code: 2769,

@@ -117,49 +117,67 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     var newline_before_comment = false;
     var is_executable = false;
 
-    // Start with the hashbang if there is one. This must be done before the
-    // banner because it only works if it's literally the first character.
-    if (chunk.isEntryPoint()) {
-        const is_bun = c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
-        const hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
+    // Extract hashbang and banner for entry points
+    const hashbang, const banner = if (chunk.isEntryPoint()) brk: {
+        const source_hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
 
-        if (hashbang.len > 0) {
-            j.pushStatic(hashbang);
-            j.pushStatic("\n");
-            line_offset.advance(hashbang);
-            line_offset.advance("\n");
-            newline_before_comment = true;
-            is_executable = true;
+        // If source file has a hashbang, use it
+        if (source_hashbang.len > 0) {
+            break :brk .{ source_hashbang, c.options.banner };
         }
 
-        if (is_bun) {
-            const cjs_entry_chunk = "(function(exports, require, module, __filename, __dirname) {";
-            if (ctx.c.options.generate_bytecode_cache and output_format == .cjs) {
-                const input = "// @bun @bytecode @bun-cjs\n" ++ cjs_entry_chunk;
-                j.pushStatic(input);
-                line_offset.advance(input);
-            } else if (ctx.c.options.generate_bytecode_cache) {
-                j.pushStatic("// @bun @bytecode\n");
-                line_offset.advance("// @bun @bytecode\n");
-            } else if (output_format == .cjs) {
-                j.pushStatic("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
-                line_offset.advance("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
-            } else {
-                j.pushStatic("// @bun\n");
-                line_offset.advance("// @bun\n");
-            }
+        // Otherwise check if banner starts with hashbang
+        if (c.options.banner.len > 0 and strings.hasPrefixComptime(c.options.banner, "#!")) {
+            const newline_pos = strings.indexOfChar(c.options.banner, '\n') orelse c.options.banner.len;
+            const banner_hashbang = c.options.banner[0..newline_pos];
+
+            break :brk .{ banner_hashbang, std.mem.trimLeft(u8, c.options.banner[newline_pos..], "\r\n") };
+        }
+
+        // No hashbang anywhere
+        break :brk .{ "", c.options.banner };
+    } else .{ "", c.options.banner };
+
+    // Start with the hashbang if there is one. This must be done before the
+    // banner because it only works if it's literally the first character.
+    if (hashbang.len > 0) {
+        j.pushStatic(hashbang);
+        j.pushStatic("\n");
+        line_offset.advance(hashbang);
+        line_offset.advance("\n");
+        newline_before_comment = true;
+        is_executable = true;
+    }
+
+    // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
+    const is_bun = c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
+    if (is_bun) {
+        const cjs_entry_chunk = "(function(exports, require, module, __filename, __dirname) {";
+        if (ctx.c.options.generate_bytecode_cache and output_format == .cjs) {
+            const input = "// @bun @bytecode @bun-cjs\n" ++ cjs_entry_chunk;
+            j.pushStatic(input);
+            line_offset.advance(input);
+        } else if (ctx.c.options.generate_bytecode_cache) {
+            j.pushStatic("// @bun @bytecode\n");
+            line_offset.advance("// @bun @bytecode\n");
+        } else if (output_format == .cjs) {
+            j.pushStatic("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
+            line_offset.advance("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
+        } else {
+            j.pushStatic("// @bun\n");
+            line_offset.advance("// @bun\n");
         }
     }
 
-    if (c.options.banner.len > 0) {
-        if (newline_before_comment) {
+    // Add the banner (excluding any hashbang part) for all chunks
+    if (banner.len > 0) {
+        j.pushStatic(banner);
+        line_offset.advance(banner);
+        if (!strings.endsWithChar(banner, '\n')) {
             j.pushStatic("\n");
             line_offset.advance("\n");
         }
-        j.pushStatic(ctx.c.options.banner);
-        line_offset.advance(ctx.c.options.banner);
-        j.pushStatic("\n");
-        line_offset.advance("\n");
+        newline_before_comment = true;
     }
 
     // Add the top-level directive if present (but omit "use strict" in ES
@@ -372,12 +390,9 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             }
         },
         .cjs => {
-            if (chunk.isEntryPoint()) {
-                const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
-                if (is_bun) {
-                    j.pushStatic("})\n");
-                    line_offset.advance("})\n");
-                }
+            if (is_bun) {
+                j.pushStatic("})\n");
+                line_offset.advance("})\n");
             }
         },
         else => {},

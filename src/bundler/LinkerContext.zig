@@ -390,6 +390,7 @@ pub const LinkerContext = struct {
             }
         }
 
+        try this.graph.propagateAsyncDependencies();
         try this.scanImportsAndExports();
 
         // Stop now if there were errors

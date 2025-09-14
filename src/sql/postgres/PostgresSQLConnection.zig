@@ -219,7 +219,7 @@ pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoop
             this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .sent_startup_message => {
-            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
     return .disarm;
@@ -311,7 +311,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     this.stopTimers();
     if (this.status == .failed) return;
 
-    this.setStatus(.failed);
+    this.status = .failed;
 
     this.ref();
     defer this.deref();
@@ -321,12 +321,17 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
 
     const loop = this.vm.eventLoop();
     loop.enter();
+    var js_error = value.toError() orelse value;
+    if (js_error == .zero) {
+        js_error = postgresErrorToJS(this.globalObject, "Connection closed", error.ConnectionClosed);
+    }
+    js_error.ensureStillAlive();
     defer loop.exit();
     _ = on_close.call(
         this.globalObject,
-        this.js_value,
+        .js_undefined,
         &[_]JSValue{
-            value.toError() orelse value,
+            js_error,
             this.getQueriesArray(),
         },
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
@@ -1350,6 +1355,9 @@ fn advance(this: *PostgresSQLConnection) void {
 }
 
 pub fn getQueriesArray(this: *const PostgresSQLConnection) JSValue {
+    if (this.js_value.isEmptyOrUndefinedOrNull()) {
+        return .js_undefined;
+    }
     return js.queriesGetCached(this.js_value) orelse .js_undefined;
 }
 

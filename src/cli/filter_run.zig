@@ -532,7 +532,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Global.exit(1);
     }
 
-    const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env);
+    const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null);
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
         RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else

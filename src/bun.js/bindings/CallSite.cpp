@@ -76,6 +76,9 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
     if (!stackFrame.codeBlock()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
+    if (stackFrame.isAsync()) {
+        m_flags |= static_cast<unsigned int>(Flags::IsAsync);
+    }
 }
 
 template<typename Visitor>

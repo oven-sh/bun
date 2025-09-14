@@ -1126,6 +1126,9 @@ endif()
 
 include_directories(${WEBKIT_INCLUDE_PATH})
 
+# Include the generated dependency versions header
+include_directories(${CMAKE_BINARY_DIR})
+
 if(NOT WEBKIT_LOCAL AND NOT APPLE)
   include_directories(${WEBKIT_INCLUDE_PATH}/wtf/unicode)
 endif()

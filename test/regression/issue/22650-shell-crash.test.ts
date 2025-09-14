@@ -1,12 +1,7 @@
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("issue #22650 - shell crash with && operator followed by external command on Windows", async () => {
-  if (process.platform !== "win32") {
-    // This is a Windows-specific bug
-    return;
-  }
-
+test("issue #22650 - shell crash with && operator followed by external command", async () => {
   // Minimal reproduction: echo && <external command>
   // This triggers the crash because after the first command succeeds,
   // the shell tries to spawn an external process but top_level_dir is not set
@@ -23,9 +18,8 @@ test("issue #22650 - shell crash with && operator followed by external command o
     proc.exited,
   ]);
 
-  // Should not crash with panic
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("oh no: Bun has crashed");
+  // Should not have any errors
+  expect(stderr).toBe("");
 
   // Should execute both commands successfully
   expect(stdout).toContain("test");

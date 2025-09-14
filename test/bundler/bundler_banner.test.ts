@@ -104,6 +104,8 @@ module.exports = 1;`,
     banner: "// Copyright 2024 Example Corp",
     format: "esm",
     target: "bun",
+    backend: "api",
+    minifyWhitespace: true,
     files: {
       "/a.js": `export default 1;`,
     },
@@ -117,6 +119,12 @@ module.exports = 1;`,
       expect(bannerIndex).toBeGreaterThan(bunCommentIndex);
       // No CJS wrapper in ESM format
       expect(content).not.toContain("(function(exports, require, module, __filename, __dirname)");
+      expect(content).toMatchInlineSnapshot(`
+        "// @bun
+        // Copyright 2024 Example Corp
+        var a_default=1;export{a_default as default};
+        "
+      `);
     },
   });
 

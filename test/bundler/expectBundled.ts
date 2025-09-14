@@ -572,7 +572,22 @@ function expectBundled(
 
   return (async () => {
     if (!backend) {
-      backend = plugins !== undefined ? "api" : "cli";
+      backend =
+        dotenv ||
+        jsx.factory ||
+        jsx.fragment ||
+        jsx.runtime ||
+        jsx.importSource ||
+        typeof production !== "undefined" ||
+        bundling === false ||
+        (run && target === "node") ||
+        emitDCEAnnotations ||
+        bundleWarnings ||
+        env ||
+        run?.validate ||
+        define
+          ? "cli"
+          : "api";
     }
 
     let root = path.join(
@@ -1043,7 +1058,12 @@ function expectBundled(
         const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          banner,
+          format,
+          footer,
+          root: outbase,
           packages,
+          loader,
           minify: {
             whitespace: minifyWhitespace,
             identifiers: minifyIdentifiers,
@@ -1102,7 +1122,13 @@ for (const [key, blob] of build.outputs) {
         configRef = buildConfig;
         let build: BuildOutput;
         try {
-          build = await Bun.build(buildConfig);
+          const cwd = process.cwd();
+          process.chdir(root);
+          try {
+            build = await Bun.build(buildConfig);
+          } finally {
+            process.chdir(cwd);
+          }
         } catch (e) {
           if (e instanceof AggregateError) {
             build = {

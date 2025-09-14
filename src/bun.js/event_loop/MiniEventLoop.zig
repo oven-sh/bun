@@ -54,6 +54,17 @@ pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
         loader.* = bun.DotEnv.Loader.init(map, bun.default_allocator);
         break :env_loader loader;
     };
+
+    // Set top_level_dir to current working directory if not already set
+    if (global.top_level_dir.len == 0) {
+        var buf: bun.PathBuffer = undefined;
+        if (bun.sys.getcwd(&buf)) |result| {
+            global.top_level_dir = bun.default_allocator.dupe(u8, result.result) catch "";
+        } else |_| {
+            global.top_level_dir = "";
+        }
+    }
+
     globalInitialized = true;
     return global;
 }

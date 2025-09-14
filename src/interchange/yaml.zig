@@ -2590,6 +2590,14 @@ pub fn Parser(comptime enc: Encoding) type {
                     };
                 },
 
+                0 => {
+                    // EOF after block scalar indicator - return empty scalar
+                    return .{
+                        indent_indicator orelse .default,
+                        chomp orelse .default,
+                    };
+                },
+
                 else => {
                     return error.UnexpectedCharacter;
                 },
@@ -3217,13 +3225,9 @@ pub fn Parser(comptime enc: Encoding) type {
                 => {
                     // c-non-specific-tag
                     // primary tag handle
-
-                    return .tag(.{
-                        .start = start,
-                        .indent = self.line_indent,
-                        .line = self.line,
-                        .tag = .non_specific,
-                    });
+                    // Note: '!' alone should be an error per YAML spec
+                    // A tag must have content after the '!'
+                    return error.UnexpectedCharacter;
                 },
 
                 '<' => {
@@ -3572,6 +3576,13 @@ pub fn Parser(comptime enc: Encoding) type {
                         '\n',
                         '\r',
                         => {
+                            // Check if previous token was a mapping value (':') or sequence entry ('-')
+                            // If so, '?' alone should be an error per YAML spec
+                            if (previous_token_data == .mapping_value or previous_token_data == .sequence_entry) {
+                                self.token.start = start;
+                                return error.UnexpectedToken;
+                            }
+
                             self.inc(1);
                             break :next .mappingKey(.{
                                 .start = start,
@@ -3596,6 +3607,12 @@ pub fn Parser(comptime enc: Encoding) type {
                                 .flow_in,
                                 .flow_key,
                                 => {
+                                    // In flow context after mapping value or in a sequence, '?' alone should error
+                                    if (previous_token_data == .mapping_value or previous_token_data == .collect_entry) {
+                                        self.token.start = start;
+                                        return error.UnexpectedToken;
+                                    }
+
                                     self.inc(1);
                                     break :next .mappingKey(.{
                                         .start = start,

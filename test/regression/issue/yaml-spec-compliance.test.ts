@@ -1,8 +1,8 @@
 import { test, expect, describe } from "bun:test";
 import { YAML } from "bun";
 
-// TODO: These tests document YAML spec compliance issues that need to be fixed
-describe.skip("YAML spec compliance for special characters", () => {
+// Tests for YAML spec compliance with special characters
+describe("YAML spec compliance for special characters", () => {
   test("exclamation mark (!) alone should error as invalid tag", () => {
     // Currently returns null, but should error per YAML spec
     // ! is a tag indicator and needs a tag name after it
@@ -33,8 +33,8 @@ describe.skip("YAML spec compliance for special characters", () => {
     expect(YAML.parse(`value: |`)).toEqual({ value: "" });
     expect(YAML.parse(`value: |\n`)).toEqual({ value: "" });
 
-    // With content should work
-    expect(YAML.parse(`value: |\n  test`)).toEqual({ value: "test" });
+    // With content should work (includes trailing newline by default)
+    expect(YAML.parse(`value: |\n  test`)).toEqual({ value: "test\n" });
   });
 
   test("greater than (>) alone should parse as empty folded block scalar", () => {
@@ -42,8 +42,8 @@ describe.skip("YAML spec compliance for special characters", () => {
     expect(YAML.parse(`value: >`)).toEqual({ value: "" });
     expect(YAML.parse(`value: >\n`)).toEqual({ value: "" });
 
-    // With content should work
-    expect(YAML.parse(`value: >\n  test`)).toEqual({ value: "test" });
+    // With content should work (includes trailing newline by default for folded too)
+    expect(YAML.parse(`value: >\n  test`)).toEqual({ value: "test\n" });
   });
 
   test("block scalars with chomp indicators", () => {

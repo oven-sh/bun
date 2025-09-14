@@ -1018,7 +1018,7 @@ extern "C" int Bun__writeHTTPDate(char* buffer, size_t length, uint64_t timestam
 }
 
 // JavaScript binding for checking HTTP tokens
-JSC_DEFINE_HOST_FUNCTION(jsFunction_checkIsHttpToken, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_checkIsHttpToken, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1054,7 +1054,7 @@ static inline bool hasInvalidHeaderChar(const CharType* characters, size_t lengt
 }
 
 // JavaScript binding for checking invalid header characters
-JSC_DEFINE_HOST_FUNCTION(jsFunction_checkInvalidHeaderChar, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_checkInvalidHeaderChar, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

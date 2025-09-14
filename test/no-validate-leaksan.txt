@@ -1437,11 +1437,6 @@ test/js/node/test/parallel/test-url-revokeobjecturl.js
 test/js/node/test/parallel/test-url-urltooptions.js
 test/js/node/test/parallel/test-utf8-scripts.js
 test/js/node/test/parallel/test-util-promisify-custom-names.mjs
-test/js/node/test/parallel/test-v8-deserialize-buffer.js
-test/js/node/test/parallel/test-v8-flag-pool-size-0.js
-test/js/node/test/parallel/test-v8-getheapsnapshot-twice.js
-test/js/node/test/parallel/test-v8-global-setter.js
-test/js/node/test/parallel/test-v8-serialize-leak.js
 test/js/node/test/parallel/test-vm-access-process-env.js
 test/js/node/test/parallel/test-vm-api-handles-getter-errors.js
 test/js/node/test/parallel/test-vm-attributes-property-not-on-sandbox.js

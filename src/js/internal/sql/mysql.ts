@@ -274,6 +274,9 @@ function onQueryFinish(this: PooledMySQLConnection, onClose: (err: Error) => voi
   this.adapter.release(this);
 }
 
+function closeNT(onClose: (err: Error) => void, err: Error | null) {
+  onClose(err as Error);
+}
 class PooledMySQLConnection {
   private static async createConnection(
     options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
@@ -328,7 +331,7 @@ class PooledMySQLConnection {
         !prepare,
       );
     } catch (e) {
-      onClose(e as Error);
+      process.nextTick(closeNT, onClose, e);
       return null;
     }
   }
@@ -344,10 +347,13 @@ class PooledMySQLConnection {
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
 
-  #onConnected(err, _) {
+  #onConnected(err, connection) {
     if (err) {
       err = wrapError(err);
+    } else {
+      this.connection = connection;
     }
+
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
       connectionInfo.onconnect(err);
@@ -413,12 +419,8 @@ class PooledMySQLConnection {
     this.#startConnection();
   }
 
-  async #startConnection() {
-    this.connection = await PooledMySQLConnection.createConnection(
-      this.connectionInfo,
-      this.#onConnected.bind(this),
-      this.#onClose.bind(this),
-    );
+  #startConnection() {
+    PooledMySQLConnection.createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
   }
 
   onClose(onClose: (err: Error) => void) {
@@ -482,14 +484,14 @@ class PooledMySQLConnection {
   }
 }
 
-export class MySQLAdapter
+class MySQLAdapter
   implements
     DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledMySQLConnection[];
-  public readonly readyConnections: Set<PooledMySQLConnection>;
+  public readonly readyConnections: Set<PooledMySQLConnection> = new Set();
 
   public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
   public reservedQueue: Array<(err: Error | null, result: any) => void> = [];
@@ -502,7 +504,6 @@ export class MySQLAdapter
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
-    this.readyConnections = new Set();
   }
 
   escapeIdentifier(str: string) {

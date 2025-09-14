@@ -24,3 +24,6 @@ leak:_tlv_get_addr
 leak:Bun::generateModule
 leak:Zig::ImportMetaObject::createFromSpecifier
 leak:Zig::GlobalObject::moduleLoaderResolve
+leak:JSModuleLoader__import
+leak:dyld::ThreadLocalVariables
+leak:JSC__JSModuleLoader__loadAndEvaluateModule

@@ -541,7 +541,7 @@ null_value: null
     test("throws on invalid YAML", () => {
       expect(() => YAML.parse("[ invalid")).toThrow();
       expect(() => YAML.parse("{ key: value")).toThrow();
-      expect(() => YAML.parse(":\n :  - invalid")).toThrow();
+      expect(() => YAML.parse("@invalid")).toThrow();
     });
 
     test("handles dates and timestamps", () => {

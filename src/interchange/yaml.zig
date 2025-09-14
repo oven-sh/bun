@@ -3484,7 +3484,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         ' ',
                         '\t',
                         => {
-                            if (previous_token_data == .mapping_value) {
+                            if (previous_token_data == .mapping_value and previous_token_line == self.line) {
                                 break :next try self.scanPlainScalar(opts);
                             }
 
@@ -3564,7 +3564,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         '\n',
                         '\r',
                         => {
-                            if (previous_token_data == .mapping_value or previous_token_data == .sequence_entry) {
+                            if ((previous_token_data == .mapping_value or previous_token_data == .sequence_entry) and previous_token_line == self.line) {
                                 self.token.start = start;
                                 return error.UnexpectedToken;
                             }

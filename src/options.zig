@@ -1510,6 +1510,15 @@ pub fn definesFromTransformOptions(
                 .value = .{ .e_undefined = .{} },
             }));
         }
+
+        // Set process.isBun to true for DCE when target is bun
+        if (!user_defines.contains("process.isBun")) {
+            _ = try environment_defines.getOrPutValue("process.isBun", .init(.{
+                .valueless = false,
+                .original_name = "process.isBun",
+                .value = .{ .e_boolean = .{ .value = true } },
+            }));
+        }
     }
 
     const resolved_defines = try defines.DefineData.fromInput(user_defines, drop, log, allocator);

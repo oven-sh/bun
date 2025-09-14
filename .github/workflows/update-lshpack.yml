@@ -7,6 +7,7 @@ on:
 
 jobs:
   check-update:
+    if: ${{ github.repository_owner == 'oven-sh' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -59,7 +60,7 @@ jobs:
 
           LATEST_TAG_SHA=$(echo "$TAG_REF" | jq -r '.object.sha')
           TAG_TYPE=$(echo "$TAG_REF" | jq -r '.object.type')
-          
+
           if [ -z "$LATEST_TAG_SHA" ] || [ "$LATEST_TAG_SHA" = "null" ]; then
             echo "Error: Could not fetch SHA for tag $LATEST_TAG"
             exit 1
@@ -105,7 +106,8 @@ jobs:
           commit-message: "deps: update lshpack to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update lshpack to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-lshpack-${{ github.run_number }}
+          branch: deps/update-lshpack
+          labels: "automation"
           body: |
             ## What does this PR do?
 

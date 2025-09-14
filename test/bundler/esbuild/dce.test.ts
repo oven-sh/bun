@@ -3406,15 +3406,15 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         if (process.isBun) {
-          console.log("BUN_CODE");
+          console.log("KEEP_BUN_CODE");
           function bunOnlyFunction() {
-            return "bun-specific";
+            return "KEEP_THIS";
           }
           console.log(bunOnlyFunction());
         } else {
-          console.log("NODE_CODE");
+          console.log("REMOVE_NODE_CODE");
           function nodeOnlyFunction() {
-            return "node-specific";
+            return "DROP_THIS";
           }
           console.log(nodeOnlyFunction());
         }
@@ -3423,7 +3423,7 @@ describe("bundler", () => {
     target: "bun",
     dce: true,
     run: {
-      stdout: "BUN_CODE\nbun-specific",
+      stdout: "KEEP_BUN_CODE\nKEEP_THIS",
     },
   });
 });

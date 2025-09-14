@@ -128,19 +128,10 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
 
         // Otherwise check if banner starts with hashbang
         if (c.options.banner.len > 0 and strings.hasPrefixComptime(c.options.banner, "#!")) {
-            const newline_pos = strings.indexOfNewlineOrNonASCII(c.options.banner, 0) orelse c.options.banner.len;
+            const newline_pos = strings.indexOfChar(c.options.banner, "\n") orelse c.options.banner.len;
             const banner_hashbang = c.options.banner[0..newline_pos];
 
-            // Skip past the hashbang line in the banner
-            var remaining_banner: []const u8 = "";
-            if (newline_pos < c.options.banner.len) {
-                var skip_pos = newline_pos;
-                if (skip_pos < c.options.banner.len and c.options.banner[skip_pos] == '\r') skip_pos += 1;
-                if (skip_pos < c.options.banner.len and c.options.banner[skip_pos] == '\n') skip_pos += 1;
-                remaining_banner = c.options.banner[skip_pos..];
-            }
-
-            break :brk .{ banner_hashbang, remaining_banner };
+            break :brk .{ banner_hashbang, std.mem.trimLeft(u8, c.options.banner[newline_pos..], "\r\n") };
         }
 
         // No hashbang anywhere
@@ -399,11 +390,9 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             }
         },
         .cjs => {
-            if (chunk.isEntryPoint()) {
-                if (is_bun) {
-                    j.pushStatic("})\n");
-                    line_offset.advance("})\n");
-                }
+            if (is_bun) {
+                j.pushStatic("})\n");
+                line_offset.advance("})\n");
             }
         },
         else => {},

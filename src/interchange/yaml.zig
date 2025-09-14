@@ -1923,7 +1923,7 @@ pub fn Parser(comptime enc: Encoding) type {
                             ' ', '\t', 0, '\n', '\r', ':' => {
                                 return;
                             },
-                            ',' , ']', '}' => {
+                            ',', ']', '}' => {
                                 switch (parser.context.get()) {
                                     .flow_in, .flow_key => {
                                         return;

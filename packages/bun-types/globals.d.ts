@@ -1401,18 +1401,7 @@ interface ImportMetaGlobOptions<Eager extends boolean = false> {
 }
 
 interface ImportAttributes {
-  type:
-    | "css"
-    | "file"
-    | "json"
-    | "jsonc"
-    | "toml"
-    | "yaml"
-    | "txt"
-    | "text"
-    | "html"
-    // just so it doesn't break for other things - but still have suggestions
-    | (string & {});
+  type: "css" | "file" | "json" | "jsonc" | "toml" | "yaml" | "txt" | "text" | "html" | (string & {});
 }
 
 /**

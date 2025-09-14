@@ -6,5 +6,5 @@ pub const short = u16;
 pub const PostgresShort = u16;
 
 pub fn Int32(value: anytype) [4]u8 {
-    return @bitCast(@byteSwap(@as(int4, @intCast(value))));
+    return @bitCast(@byteSwap(@as(int4, @truncate(value))));
 }

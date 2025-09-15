@@ -141,16 +141,17 @@ fn childDoneWithFlag(this: *Stmt, child: ChildPtr, exit_code: ExitCode, exit_req
             }
         } else if (child.ptr.is(Pipeline)) {
             const pipeline = child.as(Pipeline);
-            if (pipeline.any_child_exited) {
+            // Only treat pipeline exit as significant for single-command pipelines
+            if (pipeline.any_child_exited and pipeline.cmds.?.len == 1) {
                 break :brk true;
             }
-        } else if (child.ptr.is(Subshell)) {
-            const subshell = child.as(Subshell);
-            if (subshell.exit_requested) {
+        } else if (child.ptr.is(If)) {
+            const if_clause = child.as(If);
+            if (if_clause.state == .exec and if_clause.state.exec.exit_requested) {
                 break :brk true;
             }
         }
-        // TODO: Add checks for If, Async, CondExpr when they implement exit_requested
+        // TODO: Add checks for Async, CondExpr when they implement exit_requested
         break :brk false;
     };
 

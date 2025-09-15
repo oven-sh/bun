@@ -110,6 +110,19 @@ test("exit builtin in nested binary expressions", async () => {
   expect(result.exitCode).toBe(9);
 });
 
+test("exit in subshell does not stop parent script", async () => {
+  const result = await $`(exit 42); echo "after subshell"`.quiet().nothrow();
+  expect(result.stdout.toString()).toBe("after subshell\n");
+  expect(result.exitCode).toBe(0);
+});
+
+test("exit in pipeline is stage-local", async () => {
+  const result = await $`echo "before" | (exit 1)`.quiet().nothrow();
+  expect(result.stdout.toString()).toBe("");
+  // In multi-stage pipelines, exit doesn't stop the pipeline, just its stage
+  expect(result.exitCode).toBe(1);
+});
+
 // TODO: These tests require more comprehensive exit handling in nested constructs
 // test("exit in if/then stops execution", async () => {
 //   const result = await $`

@@ -18,6 +18,7 @@ state: union(enum) {
         stmts: *const SmolList(ast.Stmt, 1),
         stmt_idx: u32 = 0,
         last_exit_code: ExitCode = 0,
+        exit_requested: bool = false,
     },
     waiting_write_err,
     done,
@@ -156,6 +157,25 @@ pub fn deinit(this: *If) void {
 }
 
 pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
+    return this.childDoneWithFlag(child, exit_code, false);
+}
+
+pub fn childDoneWithExit(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
+    return this.childDoneWithFlag(child, exit_code, true);
+}
+
+fn childDoneWithFlag(this: *If, child: ChildPtr, exit_code: ExitCode, exit_requested: bool) Yield {
+    // Check if child had exit
+    const child_had_exit = exit_requested or brk: {
+        if (child.ptr.is(Stmt)) {
+            const stmt = child.as(Stmt);
+            if (stmt.exit_requested) {
+                break :brk true;
+            }
+        }
+        break :brk false;
+    };
+
     defer child.deinit();
 
     if (this.state != .exec) {
@@ -164,6 +184,24 @@ pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
 
     var exec = &this.state.exec;
     exec.last_exit_code = exit_code;
+
+    // If exit was requested, propagate it
+    if (child_had_exit) {
+        exec.exit_requested = true;
+        // Propagate exit to parent
+        if (this.parent.ptr.is(Stmt)) {
+            return this.parent.as(Stmt).childDoneWithExit(Stmt.ChildPtr.init(this), exit_code);
+        } else if (this.parent.ptr.is(Binary)) {
+            return this.parent.as(Binary).childDoneWithExit(Binary.ChildPtr.init(this), exit_code);
+        } else if (this.parent.ptr.is(Pipeline)) {
+            // Pipeline doesn't have childDoneWithExit, just use regular childDone
+            return this.parent.as(Pipeline).childDone(Pipeline.ChildPtr.init(this), exit_code);
+        } else if (this.parent.ptr.is(Async)) {
+            // Async doesn't have childDoneWithExit, just use regular childDone
+            return this.parent.as(Async).childDone(Async.ChildPtr.init(this), exit_code);
+        }
+        @panic("Unexpected parent type for If");
+    }
 
     switch (exec.state) {
         .cond => return .{ .@"if" = this },

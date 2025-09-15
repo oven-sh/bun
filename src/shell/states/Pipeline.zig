@@ -223,8 +223,8 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
 
     log("Pipeline(0x{x}) child done ({d}) i={d}", .{ @intFromPtr(this), exit_code, idx });
 
-    // Check if child requested exit
-    if (!this.any_child_exited) {
+    // Check if child requested exit - only for single-stage pipelines
+    if (!this.any_child_exited and this.cmds.?.len == 1) {
         if (child.ptr.is(Cmd)) {
             const cmd = child.as(Cmd);
             if (cmd.exec == .bltn and cmd.exec.bltn.kind == .exit) {

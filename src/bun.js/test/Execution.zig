@@ -510,9 +510,13 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     }
 }
 fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
+    groupLog.begin(@src());
+    defer groupLog.end();
     if (entry.timeout != 0) {
+        groupLog.log("-> entry.timeout: {}", .{entry.timeout});
         entry.timespec = bun.timespec.msFromNow(entry.timeout);
     } else {
+        groupLog.log("-> entry.timeout: 0", .{});
         entry.timespec = .epoch;
     }
 }

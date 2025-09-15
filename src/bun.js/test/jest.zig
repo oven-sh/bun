@@ -67,7 +67,7 @@ pub const TestRunner = struct {
 
     default_timeout_ms: u32,
 
-    // from `setDefaultTimeout() or jest.setTimeout()`
+    // from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
     default_timeout_override: u32 = std.math.maxInt(u32),
 
     test_options: *const bun.cli.Command.TestOptions = undefined,

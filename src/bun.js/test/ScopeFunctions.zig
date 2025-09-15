@@ -385,10 +385,10 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
 
     result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);
 
-    const default_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_ms else 0;
-    const override_timeout_ms = if (bun.jsc.Jest.Jest.runner) |runner| runner.default_timeout_override else 0;
-    const final_default_timeout_ms = if (override_timeout_ms != 0) override_timeout_ms else default_timeout_ms;
-    result.options.timeout = std.math.lossyCast(u32, timeout_option orelse @as(f64, @floatFromInt(final_default_timeout_ms)));
+    const default_timeout_ms: ?u32 = if (bun.jsc.Jest.Jest.runner) |runner| if (runner.default_timeout_ms != 0) runner.default_timeout_ms else null else null;
+    const override_timeout_ms: ?u32 = if (bun.jsc.Jest.Jest.runner) |runner| if (runner.default_timeout_override != std.math.maxInt(u32)) runner.default_timeout_override else null else null;
+    const timeout_option_ms: ?u32 = if (timeout_option) |timeout| std.math.lossyCast(u32, timeout) else null;
+    result.options.timeout = timeout_option_ms orelse override_timeout_ms orelse default_timeout_ms orelse 0;
 
     return result;
 }

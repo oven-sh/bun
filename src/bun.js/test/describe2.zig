@@ -421,6 +421,8 @@ pub const BunTest = struct {
     }
 
     fn updateMinTimeout(this: *BunTest, globalThis: *jsc.JSGlobalObject, min_timeout: bun.timespec) void {
+        group.begin(@src());
+        defer group.end();
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         group.log("-> timeout: {} {}, {s}", .{ min_timeout, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
         if (min_timeout.orderIgnoreEpoch(this.timer.next) == .lt) {
@@ -433,6 +435,10 @@ pub const BunTest = struct {
             if (!this.timer.next.eql(&.epoch)) {
                 group.log("-> inserting timer", .{});
                 globalThis.bunVM().timer.insert(&this.timer);
+                if (group.getLogEnabled()) {
+                    const duration = this.timer.next.duration(&bun.timespec.now());
+                    group.log("-> timer duration: {}", .{duration});
+                }
             }
             group.log("-> timer set", .{});
         }
@@ -788,8 +794,6 @@ pub const ExecutionEntry = struct {
     has_done_parameter: bool,
     /// '.epoch' = not set
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
-    /// runOne will return the lowest timespec
-    /// when the timeout completes, any items with a timespec < now will have their timespec reset to .epoch
     timespec: bun.timespec = .epoch,
 
     fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {

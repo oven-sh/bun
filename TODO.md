@@ -373,6 +373,8 @@ $> bun-after test ./beforeall-ordering.test.ts
     - if we implement it, we would want it to execute after the test?
     - jest errors "Hooks cannot be defined inside tests. Hook of type "afterAll" is nested within "jkl"."
     - vitest silently ignores the hook
+- [ ] vendor/elysia/test/validator/params.test.ts
+  - probably test() inside test(). should be fixed in elysia unless we want to do the linked list test-in-test support
 
 ## Regular:
 
@@ -383,16 +385,14 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] test/regression/issue/08964/08964.test.ts
 - [ ] test/regression/issue/19850/19850.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
-- [ ] test/bake/dev/ssg-pages-router.test.ts
-- [ ] test/js/bun/http/bun-serve-file.test.ts
+- [x] test/bake/dev/ssg-pages-router.test.ts
+- [x] test/js/bun/http/bun-serve-file.test.ts
 - [ ] test/js/bun/spawn/spawn-pipe-leak.test.ts
-- [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
-- [ ] test/cli/inspect/BunFrontendDevServer.test.ts
-- [ ] test/bake/dev/stress.test.ts
-- [ ] test/js/node/http2/node-http2.test.js
+- [x] test/cli/inspect/BunFrontendDevServer.test.ts
+- [x] test/bake/dev/stress.test.ts
+- [x] test/js/node/http2/node-http2.test.js
 - [ ] test/js/web/fetch/abort-signal-leak.test.ts
-- [ ] vendor/elysia/test/validator/params.test.ts
-- [ ] test/cli/test/bun-test.test.ts
+- [x] test/cli/test/bun-test.test.ts
 - [ ] test/js/bun/util/inspect-error.test.js
   - stack traces different
 - [x] test/bake/dev-and-prod.test.ts
@@ -429,6 +429,8 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Add features:
 
+- [ ] test/js/node/http2/node-http2.test.js
+  - this spams output with 'killed 1 dangling process' now - consider only showing that for timeout failures
 - [ ] change DoneCallback and ScopeFunctions to both use bound functions
   - DoneCallback will hold a jsvalue with the data
   - ScopeFunctions could be implemented by using 3 jsvalues and packing the data
@@ -627,6 +629,9 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Follow-up:
 
+- [ ] remove all instances of bun.jsc.Jest.Jest.current
+  - [ ] test options should be in BunTestRoot
+  - [ ] we will need one global still, stored in the globalobject/vm/?. but it should not be a Jest instance.
 - [ ] a flag or path for tests which are default concurrent
 - [ ] consider memory pool + linked lists, or just 'next': usize rather than incrementing an index. this is to allow inserting items during test execution.
 - [ ] consider using a jsc Bound Function rather than callback with args. bound functions allow adding arguments.

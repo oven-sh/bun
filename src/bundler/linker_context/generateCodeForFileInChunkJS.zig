@@ -450,11 +450,11 @@ pub fn generateCodeForFileInChunkJS(
                                     },
                                     .Empty,
                                 ),
-                                .args = .fromSlice(temp_allocator, &.{
+                                .args = BabyList(Expr).fromSlice(temp_allocator, &.{
                                     Expr.init(
                                         E.Array,
                                         .{
-                                            .items = .fromSlice(temp_allocator, stmts.async_imports.items) catch |err| bun.handleOom(err),
+                                            .items = BabyList(Expr).fromSlice(temp_allocator, stmts.async_imports.items) catch |err| bun.handleOom(err),
                                         },
                                         .Empty,
                                     ),
@@ -654,11 +654,11 @@ pub fn generateCodeForFileInChunkJS(
                         },
                         .Empty,
                     ),
-                    .args = .fromSlice(temp_allocator, &.{
+                    .args = BabyList(Expr).fromSlice(temp_allocator, &.{
                         Expr.init(
                             E.Array,
                             .{
-                                .items = .fromSlice(temp_allocator, stmts.async_imports.items) catch |err| bun.handleOom(err),
+                                .items = BabyList(Expr).fromSlice(temp_allocator, stmts.async_imports.items) catch |err| bun.handleOom(err),
                             },
                             .Empty,
                         ),

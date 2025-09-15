@@ -525,18 +525,10 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
     "private": false,
     "dependencies": {
       "lodash": {
-        "from": "lodash",
+        "from": "^4.17.21",
         "version": "4.17.21",
         "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
-        "path": "<dir>/node_modules/lodash",
-        "dependencies": {
-          "json-test": {
-            "from": "json-test",
-            "version": "",
-            "resolved": "",
-            "path": "<dir>/node_modules/json-test"
-          }
-        }
+        "path": "<dir>/node_modules/lodash"
       }
     }
   }
@@ -552,18 +544,10 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
     "private": false,
     "dependencies": {
       "lodash": {
-        "from": "lodash",
+        "from": "^4.17.21",
         "version": "4.17.21",
         "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
-        "path": "<dir>/node_modules/lodash",
-        "dependencies": {
-          "json-test": {
-            "from": "json-test",
-            "version": "",
-            "resolved": "",
-            "path": "<dir>/node_modules/json-test"
-          }
-        }
+        "path": "<dir>/node_modules/lodash"
       }
     }
   }

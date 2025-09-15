@@ -347,13 +347,16 @@ pub const WhyCommand = struct {
         }
 
         if (json_output) {
-            // Build JSON output using proper JSON formatting
+            // Build JSON output showing dependency chain from root to target
             var json_buf = bun.MutableString.init(ctx.allocator, 0) catch unreachable;
             defer json_buf.deinit();
             var writer = json_buf.writer();
 
-            // Get root package info
+            // Get root package info from lockfile
             const root_pkg = packages.get(0);
+            const root_dependencies = root_pkg.dependencies.get(dependencies_items);
+            const root_resolutions = root_pkg.resolutions.get(resolutions_items);
+
             var root_name = root_pkg.name.slice(string_bytes);
             if (root_name.len == 0) {
                 root_name = pm.root_package_json_name_at_time_of_init;
@@ -362,24 +365,21 @@ pub const WhyCommand = struct {
                 }
             }
 
-            // Get version
-            var version_buf = std.ArrayList(u8).init(ctx.allocator);
-            defer version_buf.deinit();
-            try std.fmt.format(version_buf.writer(), "{}", .{packages.items(.resolution)[0].fmt(string_bytes, .auto)});
-            const root_version = if (version_buf.items.len == 0) "0.0.1" else version_buf.items;
+            // Get root version from resolution
+            var root_version_buf = std.ArrayList(u8).init(ctx.allocator);
+            defer root_version_buf.deinit();
+            try std.fmt.format(root_version_buf.writer(), "{}", .{packages.items(.resolution)[0].fmt(string_bytes, .auto)});
+            const root_version = if (root_version_buf.items.len == 0) "0.0.1" else root_version_buf.items;
 
             try writer.writeAll("[\n");
 
+            // For each target package, show the dependency chain from root
             for (target_versions.items, 0..) |target_version, idx| {
                 if (idx > 0) try writer.writeAll(",\n");
 
-                const target_pkg = packages.get(target_version.pkg_id);
-                const target_name = target_pkg.name.slice(string_bytes);
-
-                // Start JSON object
                 try writer.writeAll("  {\n");
 
-                // Use proper JSON string escaping
+                // Root package info
                 try std.fmt.format(writer, "    \"name\": {},\n", .{
                     bun.fmt.formatJSONStringUTF8(root_name, .{ .quote = true }),
                 });
@@ -389,83 +389,146 @@ pub const WhyCommand = struct {
                 try std.fmt.format(writer, "    \"path\": {},\n", .{
                     bun.fmt.formatJSONStringUTF8(pm.root_dir.dir, .{ .quote = true }),
                 });
-                try writer.writeAll("    \"private\": false,\n");
+                try writer.writeAll("    \"private\": false");
 
-                // Add dependencies
-                try writer.writeAll("    \"dependencies\": {\n");
+                // Check if target is a direct dependency of root
+                var found_direct = false;
+                var dependency_spec: []const u8 = "";
 
-                // Build dependency entry using lockfile's resolution data
-                const resolution = packages.items(.resolution)[target_version.pkg_id];
-
-                // Get the resolved URL using the built-in fmtURL method
-                var resolved_buf = std.ArrayList(u8).init(ctx.allocator);
-                defer resolved_buf.deinit();
-                try std.fmt.format(resolved_buf.writer(), "{}", .{resolution.fmtURL(string_bytes)});
-
-                // Get actual install path from lockfile or use default
-                const pkg_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, target_name });
-                defer ctx.allocator.free(pkg_path);
-
-                try std.fmt.format(writer, "      {}: {{\n", .{
-                    bun.fmt.formatJSONStringUTF8(target_name, .{ .quote = true }),
-                });
-                try std.fmt.format(writer, "        \"from\": {},\n", .{
-                    bun.fmt.formatJSONStringUTF8(target_name, .{ .quote = true }),
-                });
-                try std.fmt.format(writer, "        \"version\": {},\n", .{
-                    bun.fmt.formatJSONStringUTF8(target_version.version, .{ .quote = true }),
-                });
-                try std.fmt.format(writer, "        \"resolved\": {},\n", .{
-                    bun.fmt.formatJSONStringUTF8(resolved_buf.items, .{ .quote = true }),
-                });
-                try std.fmt.format(writer, "        \"path\": {}", .{
-                    bun.fmt.formatJSONStringUTF8(pkg_path, .{ .quote = true }),
-                });
-
-                // Add nested dependencies if they exist
-                if (all_dependents.get(target_version.pkg_id)) |dependents| {
-                    if (dependents.items.len > 0) {
-                        try writer.writeAll(",\n        \"dependencies\": {\n");
-
-                        for (dependents.items, 0..) |dep, dep_idx| {
-                            if (dep_idx > 0) try writer.writeAll(",\n");
-
-                            // Get resolution data for the dependent package
-                            const dep_resolution = packages.items(.resolution)[dep.pkg_id];
-
-                            // Use the built-in fmtURL method for proper resolution formatting
-                            var dep_resolved_buf = std.ArrayList(u8).init(ctx.allocator);
-                            defer dep_resolved_buf.deinit();
-                            try std.fmt.format(dep_resolved_buf.writer(), "{}", .{dep_resolution.fmtURL(string_bytes)});
-
-                            const dep_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, dep.name });
-                            defer ctx.allocator.free(dep_path);
-
-                            try std.fmt.format(writer, "          {}: {{\n", .{
-                                bun.fmt.formatJSONStringUTF8(dep.name, .{ .quote = true }),
-                            });
-                            try std.fmt.format(writer, "            \"from\": {},\n", .{
-                                bun.fmt.formatJSONStringUTF8(dep.name, .{ .quote = true }),
-                            });
-                            try std.fmt.format(writer, "            \"version\": {},\n", .{
-                                bun.fmt.formatJSONStringUTF8(dep.version, .{ .quote = true }),
-                            });
-                            try std.fmt.format(writer, "            \"resolved\": {},\n", .{
-                                bun.fmt.formatJSONStringUTF8(dep_resolved_buf.items, .{ .quote = true }),
-                            });
-                            try std.fmt.format(writer, "            \"path\": {}\n", .{
-                                bun.fmt.formatJSONStringUTF8(dep_path, .{ .quote = true }),
-                            });
-                            try writer.writeAll("          }");
-                        }
-
-                        try writer.writeAll("\n        }");
+                for (root_dependencies, root_resolutions) |dep, res_id| {
+                    if (res_id == target_version.pkg_id) {
+                        found_direct = true;
+                        dependency_spec = dep.version.literal.slice(string_bytes);
+                        break;
                     }
                 }
 
-                try writer.writeAll("\n      }\n");
-                try writer.writeAll("    }\n");
-                try writer.writeAll("  }");
+                if (found_direct) {
+                    // Target is a direct dependency - show it directly under root
+                    try writer.writeAll(",\n    \"dependencies\": {\n");
+
+                    const target_pkg = packages.get(target_version.pkg_id);
+                    const target_name = target_pkg.name.slice(string_bytes);
+                    const target_resolution = packages.items(.resolution)[target_version.pkg_id];
+
+                    var resolved_buf = std.ArrayList(u8).init(ctx.allocator);
+                    defer resolved_buf.deinit();
+                    try std.fmt.format(resolved_buf.writer(), "{}", .{target_resolution.fmtURL(string_bytes)});
+
+                    const pkg_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, target_name });
+                    defer ctx.allocator.free(pkg_path);
+
+                    try std.fmt.format(writer, "      {}: {{\n", .{
+                        bun.fmt.formatJSONStringUTF8(target_name, .{ .quote = true }),
+                    });
+                    try std.fmt.format(writer, "        \"from\": {},\n", .{
+                        bun.fmt.formatJSONStringUTF8(dependency_spec, .{ .quote = true }),
+                    });
+                    try std.fmt.format(writer, "        \"version\": {},\n", .{
+                        bun.fmt.formatJSONStringUTF8(target_version.version, .{ .quote = true }),
+                    });
+                    try std.fmt.format(writer, "        \"resolved\": {},\n", .{
+                        bun.fmt.formatJSONStringUTF8(resolved_buf.items, .{ .quote = true }),
+                    });
+                    try std.fmt.format(writer, "        \"path\": {}\n", .{
+                        bun.fmt.formatJSONStringUTF8(pkg_path, .{ .quote = true }),
+                    });
+                    try writer.writeAll("      }\n    }");
+                } else {
+                    // Target is not a direct dependency - find the chain
+                    // For now, show all packages that depend on the target
+                    if (all_dependents.get(target_version.pkg_id)) |dependents| {
+                        try writer.writeAll(",\n    \"dependencies\": {\n");
+
+                        // Find the first dependent that is either root or reachable from root
+                        var first_written = false;
+                        for (dependents.items) |dep| {
+                            // Check if this dependent is a direct dependency of root
+                            var is_root_dep = false;
+                            var dep_spec: []const u8 = "";
+
+                            for (root_dependencies, root_resolutions) |root_dep, res_id| {
+                                if (res_id == dep.pkg_id) {
+                                    is_root_dep = true;
+                                    dep_spec = root_dep.version.literal.slice(string_bytes);
+                                    break;
+                                }
+                            }
+
+                            if (is_root_dep) {
+                                if (first_written) try writer.writeAll(",\n");
+                                first_written = true;
+
+                                // Show this intermediate package
+                                const dep_resolution = packages.items(.resolution)[dep.pkg_id];
+                                var dep_resolved_buf = std.ArrayList(u8).init(ctx.allocator);
+                                defer dep_resolved_buf.deinit();
+                                try std.fmt.format(dep_resolved_buf.writer(), "{}", .{dep_resolution.fmtURL(string_bytes)});
+
+                                const dep_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, dep.name });
+                                defer ctx.allocator.free(dep_path);
+
+                                try std.fmt.format(writer, "      {}: {{\n", .{
+                                    bun.fmt.formatJSONStringUTF8(dep.name, .{ .quote = true }),
+                                });
+                                try std.fmt.format(writer, "        \"from\": {},\n", .{
+                                    bun.fmt.formatJSONStringUTF8(dep_spec, .{ .quote = true }),
+                                });
+                                try std.fmt.format(writer, "        \"version\": {},\n", .{
+                                    bun.fmt.formatJSONStringUTF8(dep.version, .{ .quote = true }),
+                                });
+                                try std.fmt.format(writer, "        \"resolved\": {},\n", .{
+                                    bun.fmt.formatJSONStringUTF8(dep_resolved_buf.items, .{ .quote = true }),
+                                });
+                                try std.fmt.format(writer, "        \"path\": {},\n", .{
+                                    bun.fmt.formatJSONStringUTF8(dep_path, .{ .quote = true }),
+                                });
+
+                                // Now show the target package as a dependency of this intermediate
+                                try writer.writeAll("        \"dependencies\": {\n");
+
+                                const target_pkg = packages.get(target_version.pkg_id);
+                                const target_name = target_pkg.name.slice(string_bytes);
+                                const target_resolution = packages.items(.resolution)[target_version.pkg_id];
+
+                                var resolved_buf = std.ArrayList(u8).init(ctx.allocator);
+                                defer resolved_buf.deinit();
+                                try std.fmt.format(resolved_buf.writer(), "{}", .{target_resolution.fmtURL(string_bytes)});
+
+                                const pkg_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, target_name });
+                                defer ctx.allocator.free(pkg_path);
+
+                                try std.fmt.format(writer, "          {}: {{\n", .{
+                                    bun.fmt.formatJSONStringUTF8(target_name, .{ .quote = true }),
+                                });
+                                try std.fmt.format(writer, "            \"from\": {},\n", .{
+                                    bun.fmt.formatJSONStringUTF8(dep.spec, .{ .quote = true }),
+                                });
+                                try std.fmt.format(writer, "            \"version\": {},\n", .{
+                                    bun.fmt.formatJSONStringUTF8(target_version.version, .{ .quote = true }),
+                                });
+                                try std.fmt.format(writer, "            \"resolved\": {},\n", .{
+                                    bun.fmt.formatJSONStringUTF8(resolved_buf.items, .{ .quote = true }),
+                                });
+                                try std.fmt.format(writer, "            \"path\": {}\n", .{
+                                    bun.fmt.formatJSONStringUTF8(pkg_path, .{ .quote = true }),
+                                });
+                                try writer.writeAll("          }\n");
+                                try writer.writeAll("        }\n");
+                                try writer.writeAll("      }");
+
+                                break; // Only show the first valid chain for now
+                            }
+                        }
+
+                        try writer.writeAll("\n    }");
+                    } else {
+                        // No dependencies found
+                        try writer.writeAll(",\n    \"dependencies\": {}");
+                    }
+                }
+
+                try writer.writeAll("\n  }");
             }
 
             try writer.writeAll("\n]\n");

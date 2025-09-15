@@ -169,10 +169,17 @@ pub const ZstdReaderArrayList = struct {
             if (rc == 0) {
                 // Frame is complete, but check if there's more input (multiple frames)
                 if (this.total_in >= this.input.len) {
-                    this.end();
-                    return;
+                    // We've consumed all available input
+                    if (is_done) {
+                        // No more data coming, we can end the stream
+                        this.end();
+                        return;
+                    }
+                    // More data might come later, signal we need more input
+                    this.state = .Inflating;
+                    return error.ShortRead;
                 }
-                // Reset the decompressor for the next frame
+                // More input available, reset for the next frame
                 // ZSTD_initDStream() safely resets the stream state without needing cleanup
                 // It's designed to be called multiple times on the same DStream object
                 _ = c.ZSTD_initDStream(this.zstd);

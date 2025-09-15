@@ -80,3 +80,35 @@ test("issue #20053 - zstd with chunked encoding splits JSON into multiple frames
   expect(parsed.data.length).toBe(20000);
   expect(parsed.data).toBe("A".repeat(20000));
 });
+
+test("issue #20053 - streaming zstd decompression handles frame boundaries correctly", async () => {
+  // Test that the decompressor correctly handles the case where a frame completes
+  // but more data might arrive later (streaming scenario)
+  const part1 = "First frame content";
+  const part2 = "Second frame content";
+
+  const compressed1 = zstdCompressSync(Buffer.from(part1));
+  const compressed2 = zstdCompressSync(Buffer.from(part2));
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      // Simulate streaming by sending frames separately
+      const combined = Buffer.concat([compressed1, compressed2]);
+
+      return new Response(combined, {
+        headers: {
+          "content-type": "text/plain",
+          "content-encoding": "zstd",
+          "transfer-encoding": "chunked",
+        },
+      });
+    },
+  });
+
+  const response = await fetch(`http://localhost:${server.port}/`);
+  const text = await response.text();
+
+  // Both frames should be decompressed
+  expect(text).toBe(part1 + part2);
+});

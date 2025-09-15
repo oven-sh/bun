@@ -1,5 +1,6 @@
 const { hideFromStack } = require("internal/shared");
 
+const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 

@@ -138,9 +138,14 @@ pub const ZstdReaderArrayList = struct {
         while (this.state == .Uninitialized or this.state == .Inflating) {
             const next_in = this.input[this.total_in..];
 
-            // If we have no input to process, we're done for now
+            // If we have no input to process
             if (next_in.len == 0) {
                 if (is_done) {
+                    // If we're in the middle of inflating and stream is done, it's truncated
+                    if (this.state == .Inflating) {
+                        this.state = .Error;
+                        return error.ZstdDecompressionError;
+                    }
                     // No more input and stream is done, we can end
                     this.end();
                 }
@@ -176,7 +181,10 @@ pub const ZstdReaderArrayList = struct {
             this.total_out += bytes_written;
 
             if (rc == 0) {
-                // Frame is complete, but check if there's more input (multiple frames)
+                // Frame is complete
+                this.state = .Uninitialized;  // Reset state since frame is complete
+
+                // Check if there's more input (multiple frames)
                 if (this.total_in >= this.input.len) {
                     // We've consumed all available input
                     if (is_done) {
@@ -186,7 +194,6 @@ pub const ZstdReaderArrayList = struct {
                     }
                     // Frame is complete and no more input available right now.
                     // Just return normally - the caller can provide more data later if they have it.
-                    this.state = .Inflating;
                     return;
                 }
                 // More input available, reset for the next frame
@@ -196,6 +203,11 @@ pub const ZstdReaderArrayList = struct {
                 continue;
             }
 
+            // If rc > 0, decompressor needs more data
+            if (rc > 0) {
+                this.state = .Inflating;
+            }
+
             if (bytes_read == next_in.len) {
                 // We've consumed all available input
                 if (bytes_written > 0) {
@@ -203,7 +215,6 @@ pub const ZstdReaderArrayList = struct {
                     continue;
                 }
 
-                this.state = .Inflating;
                 if (is_done) {
                     // Stream is truncated - we're at EOF but need more data
                     this.state = .Error;

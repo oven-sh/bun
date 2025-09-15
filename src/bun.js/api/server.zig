@@ -2221,9 +2221,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 };
 
                 if (req_len > this.config.max_request_body_size) {
+                    // Set up abort handler before ending the response to ensure proper cleanup
+                    ctx.setAbortHandler();
                     resp.writeStatus("413 Request Entity Too Large");
                     resp.endWithoutBody(true);
-                    this.finalize();
+                    // Don't call finalize() here - let the abort handler clean up
                     return null;
                 }
 

@@ -124,7 +124,6 @@ pub fn childDoneWithExit(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yiel
 }
 
 fn childDoneWithFlag(this: *Stmt, child: ChildPtr, exit_code: ExitCode, exit_requested: bool) Yield {
-    const data = child.ptr.repr.data;
     log("child done Stmt {x} child({s})={x} exit={d} exit_requested={}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code, exit_requested });
     this.last_exit_code = exit_code;
 
@@ -145,14 +144,14 @@ fn childDoneWithFlag(this: *Stmt, child: ChildPtr, exit_code: ExitCode, exit_req
         break :brk false;
     };
 
-    const data2 = child.ptr.repr.data;
-    log("{d} {d}", .{ data, data2 });
     child.deinit();
     this.currently_executing = null;
 
     // If exit builtin was executed, propagate the exit immediately
     if (child_had_exit) {
         this.exit_requested = true;
+        // TODO: Once Script and If implement childDoneWithExit, call that instead
+        // to explicitly propagate the exit signal. For now, they check exit_requested.
         return this.parent.childDone(this, exit_code);
     }
 

@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createServer } from "node:http";
 import { join } from "node:path";
 
@@ -220,10 +220,7 @@ test("bun feedback handles server errors gracefully", async () => {
       cwd: String(dir),
     });
 
-    const [exitCode, stderr] = await Promise.all([
-      proc.exited,
-      proc.stderr.text(),
-    ]);
+    const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
 
     expect(exitCode).not.toBe(0);
     expect(stderr).toContain("Failed to send feedback");
@@ -241,7 +238,7 @@ test("bun feedback command exists", async () => {
 
   // Use a promise that resolves when we see output
   let outputReceived = false;
-  const outputPromise = new Promise<void>((resolve) => {
+  const outputPromise = new Promise<void>(resolve => {
     const proc = Bun.spawn({
       cmd: [bunExe(), "feedback", "test", "message"],
       env: {
@@ -256,16 +253,18 @@ test("bun feedback command exists", async () => {
 
     // Collect output
     let stderr = "";
-    proc.stderr.pipeTo(new WritableStream({
-      write(chunk) {
-        const text = new TextDecoder().decode(chunk);
-        stderr += text;
-        if (text.includes("feedback") || text.includes("Failed to send")) {
-          outputReceived = true;
-          resolve();
-        }
-      }
-    }));
+    proc.stderr.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          const text = new TextDecoder().decode(chunk);
+          stderr += text;
+          if (text.includes("feedback") || text.includes("Failed to send")) {
+            outputReceived = true;
+            resolve();
+          }
+        },
+      }),
+    );
 
     // Also resolve after timeout
     setTimeout(() => {

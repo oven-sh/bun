@@ -7,6 +7,7 @@ base: State,
 node: *const ast.Script,
 io: IO,
 parent: ParentPtr,
+exit_requested: bool = false,
 state: union(enum) {
     normal: struct {
         idx: usize = 0,
@@ -93,6 +94,7 @@ pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) Yield {
 
     // If exit builtin was executed, finish immediately with the exit code
     if (executed_exit) {
+        this.exit_requested = true;
         return this.finish(exit_code);
     }
 

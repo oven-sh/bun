@@ -139,8 +139,18 @@ fn childDoneWithFlag(this: *Stmt, child: ChildPtr, exit_code: ExitCode, exit_req
             if (binary.exit_requested) {
                 break :brk true;
             }
+        } else if (child.ptr.is(Pipeline)) {
+            const pipeline = child.as(Pipeline);
+            if (pipeline.any_child_exited) {
+                break :brk true;
+            }
+        } else if (child.ptr.is(Subshell)) {
+            const subshell = child.as(Subshell);
+            if (subshell.exit_requested) {
+                break :brk true;
+            }
         }
-        // TODO: Add checks for other state types when they implement exit_requested
+        // TODO: Add checks for If, Async, CondExpr when they implement exit_requested
         break :brk false;
     };
 

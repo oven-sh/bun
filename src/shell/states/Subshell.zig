@@ -16,6 +16,7 @@ state: union(enum) {
 } = .idle,
 redirection_file: std.ArrayList(u8),
 exit_code: ExitCode = 0,
+exit_requested: bool = false,
 
 pub const ParentPtr = StatePtrUnion(.{
     Pipeline,
@@ -150,6 +151,11 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
     }
 
     if (child_ptr.ptr.is(Script)) {
+        // Check if the script had an exit
+        const script = child_ptr.as(Script);
+        if (script.exit_requested) {
+            this.exit_requested = true;
+        }
         child_ptr.deinit();
         return this.parent.childDone(this, exit_code);
     }

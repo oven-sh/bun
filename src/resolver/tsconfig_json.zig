@@ -82,9 +82,6 @@ pub const TSConfigJSON = struct {
             out.development = this.jsx.development;
         }
 
-        if (this.jsx_flags.contains(.side_effects)) {
-            out.side_effects = this.jsx.side_effects;
-        }
 
         return out;
     }
@@ -227,13 +224,6 @@ pub const TSConfigJSON = struct {
                     result.jsx.package_name = str;
                     result.jsx.setImportSource(allocator);
                     result.jsx_flags.insert(.import_source);
-                }
-            }
-            // Parse "jsxSideEffects"
-            if (compiler_opts.expr.asProperty("jsxSideEffects")) |jsx_prop| {
-                if (jsx_prop.expr.asBool()) |val| {
-                    result.jsx.side_effects = val;
-                    result.jsx_flags.insert(.side_effects);
                 }
             }
 

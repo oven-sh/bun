@@ -381,6 +381,60 @@ pub const JSBundler = struct {
                 this.packages = packages;
             }
 
+            // Parse JSX configuration
+            if (try config.getTruthy(globalThis, "jsx")) |jsx_value| {
+                if (!jsx_value.isObject()) {
+                    return globalThis.throwInvalidArguments("jsx must be an object", .{});
+                }
+
+                if (try jsx_value.getOptional(globalThis, "runtime", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    if (strings.eqlComptime(slice.slice(), "classic")) {
+                        this.jsx.runtime = .classic;
+                    } else if (strings.eqlComptime(slice.slice(), "automatic")) {
+                        this.jsx.runtime = .automatic;
+                    } else if (strings.eqlComptime(slice.slice(), "react")) {
+                        this.jsx.runtime = .classic;
+                    } else if (strings.eqlComptime(slice.slice(), "react-jsx")) {
+                        this.jsx.runtime = .automatic;
+                    } else if (strings.eqlComptime(slice.slice(), "react-jsxdev")) {
+                        this.jsx.runtime = .automatic;
+                        this.jsx.development = true;
+                    } else if (strings.eqlComptime(slice.slice(), "solid")) {
+                        this.jsx.runtime = .solid;
+                    }
+                }
+
+                if (try jsx_value.getOptional(globalThis, "factory", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    const str = try allocator.dupe(u8, slice.slice());
+                    this.jsx.factory = try options.JSX.Pragma.memberListToComponentsIfDifferent(allocator, this.jsx.factory, str);
+                }
+
+                if (try jsx_value.getOptional(globalThis, "fragment", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    const str = try allocator.dupe(u8, slice.slice());
+                    this.jsx.fragment = try options.JSX.Pragma.memberListToComponentsIfDifferent(allocator, this.jsx.fragment, str);
+                }
+
+                if (try jsx_value.getOptional(globalThis, "importSource", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.package_name = try allocator.dupe(u8, slice.slice());
+                    this.jsx.setImportSource(allocator);
+                }
+
+                if (try jsx_value.getBooleanLoose(globalThis, "development")) |dev| {
+                    this.jsx.development = dev;
+                }
+
+                if (try jsx_value.getBooleanLoose(globalThis, "sideEffects")) |val| {
+                    this.jsx.side_effects = val;
+                }
+
+                // Ensure parse flag is set when jsx options are provided
+                this.jsx.parse = true;
+            }
+
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 

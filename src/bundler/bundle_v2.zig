@@ -1801,6 +1801,16 @@ pub const BundleV2 = struct {
         ) !void {
             const config = &completion.config;
 
+            // Convert JSX config to API format
+            const jsx_api = api.Jsx{
+                .factory = if (config.jsx.factory.len > 0) config.jsx.factory[0] else "",
+                .fragment = if (config.jsx.fragment.len > 0) config.jsx.fragment[0] else "",
+                .runtime = config.jsx.runtime,
+                .development = config.jsx.development,
+                .import_source = config.jsx.package_name,
+                .side_effects = config.jsx.side_effects,
+            };
+
             transpiler.* = try bun.Transpiler.init(
                 alloc,
                 &completion.log,
@@ -1821,6 +1831,7 @@ pub const BundleV2 = struct {
                     .ignore_dce_annotations = transpiler.options.ignore_dce_annotations,
                     .drop = config.drop.map.keys(),
                     .bunfig_path = transpiler.options.bunfig_path,
+                    .jsx = jsx_api,
                 },
                 completion.env,
             );

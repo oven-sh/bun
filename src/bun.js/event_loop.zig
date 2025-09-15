@@ -58,7 +58,6 @@ pub const Debug = if (Environment.isDebug) struct {
 };
 
 pub fn enter(this: *EventLoop) void {
-    std.debug.print("[eventloop] enter() = {d}\n", .{this.entered_event_loop_count});
     log("enter() = {d}", .{this.entered_event_loop_count});
     this.entered_event_loop_count += 1;
     this.debug.enter();
@@ -66,15 +65,12 @@ pub fn enter(this: *EventLoop) void {
 
 pub fn exit(this: *EventLoop) void {
     const count = this.entered_event_loop_count;
-    std.debug.print("[eventloop] exit() = {d}\n", .{count - 1});
     log("exit() = {d}", .{count - 1});
 
     defer this.debug.exit();
 
     if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        std.debug.print("[eventloop] draining microtasks\n", .{});
         this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm) catch {};
-        std.debug.print("[eventloop] finished draining microtasks\n", .{});
     }
 
     this.entered_event_loop_count -= 1;
@@ -156,19 +152,12 @@ pub fn maybeDrainMicrotasks(this: *EventLoop) void {
 /// not being drained, which can lead to catastrophic memory usage and
 /// application slowdown.
 pub fn runCallback(this: *EventLoop, callback: jsc.JSValue, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, arguments: []const jsc.JSValue) void {
-    std.debug.print("[eventloop] runCallback: enter()\n", .{});
     this.enter();
-    defer {
-        std.debug.print("[eventloop] runCallback: exit()\n", .{});
-        this.exit();
-    }
+    defer this.exit();
 
-    std.debug.print("[eventloop] runCallback: about to call callback\n", .{});
     _ = callback.call(globalObject, thisValue, arguments) catch |err| {
-        std.debug.print("[eventloop] runCallback: callback threw exception, reporting as unhandled\n", .{});
         globalObject.reportActiveExceptionAsUnhandled(err);
     };
-    std.debug.print("[eventloop] runCallback: callback completed\n", .{});
 }
 
 fn externRunCallback1(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisValue: jsc.JSValue, arg0: jsc.JSValue) callconv(.c) void {

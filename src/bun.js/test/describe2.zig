@@ -416,12 +416,12 @@ pub const BunTest = struct {
             }
         }
 
-        group.log("-> timeout: {} {}, {s}", .{ min_timeout, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
-        // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
-        this.setMinTimeout(globalThis, min_timeout);
+        this.updateMinTimeout(globalThis, min_timeout);
     }
 
-    fn setMinTimeout(this: *BunTest, globalThis: *jsc.JSGlobalObject, min_timeout: bun.timespec) void {
+    fn updateMinTimeout(this: *BunTest, globalThis: *jsc.JSGlobalObject, min_timeout: bun.timespec) void {
+        // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
+        group.log("-> timeout: {} {}, {s}", .{ min_timeout, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
         if (min_timeout.orderIgnoreEpoch(this.timer.next) == .lt) {
             group.log("-> setting timer to {}", .{min_timeout});
             if (!this.timer.next.eql(&.epoch)) {
@@ -486,7 +486,7 @@ pub const BunTest = struct {
     }
 
     /// if sync, the result is queued and appended later
-    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry) bun.JSError!void {
+    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry, timeout: bun.timespec) bun.JSError!void {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
@@ -501,6 +501,7 @@ pub const BunTest = struct {
             args.append(this.gpa, done_callback.?);
         }
 
+        this.updateMinTimeout(globalThis, timeout);
         const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, args.get()) catch |e| blk: {
             this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg.data);
             group.log("callTestCallback -> error", .{});

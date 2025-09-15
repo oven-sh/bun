@@ -141,7 +141,7 @@ pub fn step(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObjec
             .collection = .{
                 .active_scope = previous_scope,
             },
-        } });
+        } }, .epoch);
 
         return .{ .waiting = .{} };
     }

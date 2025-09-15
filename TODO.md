@@ -361,8 +361,11 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Test failures:
 
-## Problematic:
+## Real
 
+- [ ] test/js/bun/net/tcp-server.test.ts
+  - new flaky failure on windows
+  - gc(true) was supposed to fix this. unclear.
 - [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
   - Instead of this vvvv, we will modify our node:test implementation to support this.
   - Execution: first: \*ConcurrentGroup, current: \*ConcurrentGroup
@@ -377,31 +380,29 @@ $> bun-after test ./beforeall-ordering.test.ts
     - vitest silently ignores the hook
 - [ ] vendor/elysia/test/validator/params.test.ts
   - probably test() inside test(). should be fixed in elysia unless we want to do the linked list test-in-test support
+- [ ] test/js/bun/test/test-error-code-done-callback.test.ts
+  - stacktrace is messed up. it's including an incorrect item in the stacktrace for some reason.
+- [ ] test/js/bun/util/inspect-error.test.js
+  - same stacktrace issue
 
-## Real
+## Flaky
 
-- [ ] test/js/bun/net/tcp-server.test.ts
-  - new flaky failure on windows
-  - gc(true) was supposed to fix this. unclear.
-
-## Uncategorized
-
-- [ ] test/js/bun/net/tcp-server.test.ts
-- [x] test/js/bun/test/describe2.test.ts
 - [ ] test/bundler/compile-windows-metadata.test.ts
 - [ ] test/js/sql/sql-mysql.test.ts
-- [ ] test/js/bun/test/test-error-code-done-callback.test.ts
 - [ ] test/js/bun/http/bun-serve-file.test.ts
-- [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
 - [ ] test/cli/inspect/BunFrontendDevServer.test.ts
 - [ ] test/bake/dev/stress.test.ts
 - [ ] test/js/node/http2/node-http2.test.js
-- [ ] vendor/elysia/test/validator/params.test.ts
-- [ ] test/js/bun/util/inspect-error.test.js
 - [ ] test/bake/dev/hot.test.ts
 - [ ] test/js/web/websocket/autobahn.test.ts
+
+## Uncategorized
+
+- [x] test/js/bun/test/describe2.test.ts
 - [ ] test/js/bun/net/socket.test.ts
+  - maybe a real failure
 - [ ] test/js/junit-reporter/junit.test.js
+  - hostname regex wrong on windows
 - [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
 - [ ] test/js/third_party/prisma/prisma.test.ts
 - [ ] test/cli/install/bun-install-registry.test.ts

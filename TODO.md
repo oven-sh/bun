@@ -406,9 +406,13 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] test/js/third_party/prisma/prisma.test.ts
 - [ ] test/cli/install/bun-install-registry.test.ts
 - [ ] test/js/bun/s3/s3.test.ts
-- [ ] test/cli/test/test-timeout-behavior.test.ts
+- [x] test/cli/test/test-timeout-behavior.test.ts
   - oh no. it's expecting timeouts to run while spawnSync runs. we need to start the timeout before calling the callback
   - the change here is to specify the timeout when calling the callback rather than returning it out
+  - we now get bunTestTimeoutCalback in the sub-loop while executing the test, but we don't call auto_killer or attempt to
+    terminate. we need to do that.
+  - we currently call `this.globalThis.requestTermination();`
+  - need `globalThis.clearTerminationException()`, maybe on the catch for callback execution?
 - [ ] test/js/bun/test/stack.test.ts
   - error stacktrace different
 - [ ] test/js/bun/shell/leak.test.ts
@@ -478,6 +482,7 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Final validation:
 
+- [ ] remove done_promise, unused.
 - [ ] remove runErrorHandlerWithDedupe, last_reported_error_for_dedupe
 - [ ] eliminate fn bunTest() in Execution.zig
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)

@@ -400,6 +400,7 @@ pub const BunTest = struct {
         var min_timeout: bun.timespec = .epoch;
 
         while (this.result_queue.readItem()) |result| {
+            globalThis.clearTerminationException();
             const step_result: StepResult = switch (this.phase) {
                 .collection => try Collection.step(this_strong, globalThis, result),
                 .execution => try Execution.step(this_strong, globalThis, result),
@@ -502,8 +503,9 @@ pub const BunTest = struct {
         }
 
         this.updateMinTimeout(globalThis, timeout);
-        const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, args.get()) catch |e| blk: {
-            this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg.data);
+        const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, args.get()) catch blk: {
+            globalThis.clearTerminationException();
+            this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg.data);
             group.log("callTestCallback -> error", .{});
             break :blk null;
         };
@@ -542,7 +544,7 @@ pub const BunTest = struct {
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
-    pub fn onUncaughtException(this: *BunTest, globalThis: *jsc.JSGlobalObject, exception: jsc.JSValue, is_rejection: bool, user_data: RefDataValue) void {
+    pub fn onUncaughtException(this: *BunTest, globalThis: *jsc.JSGlobalObject, exception: ?jsc.JSValue, is_rejection: bool, user_data: RefDataValue) void {
         group.begin(@src());
         defer group.end();
 
@@ -557,6 +559,7 @@ pub const BunTest = struct {
         group.log("onUncaughtException -> {s}", .{@tagName(handle_status)});
 
         if (handle_status == .hide_error) return; // do not print error, it was already consumed
+        if (exception == null) return; // the exception should not be visible (eg m_terminationException)
 
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             this.reporter.?.jest.unhandled_errors_between_tests += 1;
@@ -568,7 +571,7 @@ pub const BunTest = struct {
             , .{});
             bun.Output.flush();
         }
-        globalThis.bunVM().runErrorHandler(exception, null);
+        globalThis.bunVM().runErrorHandler(exception.?, null);
         bun.Output.flush();
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             bun.Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});

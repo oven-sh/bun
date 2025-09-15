@@ -154,7 +154,6 @@ pub fn maybeDrainMicrotasks(this: *EventLoop) void {
 pub fn runCallback(this: *EventLoop, callback: jsc.JSValue, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, arguments: []const jsc.JSValue) void {
     this.enter();
     defer this.exit();
-
     _ = callback.call(globalObject, thisValue, arguments) catch |err| {
         globalObject.reportActiveExceptionAsUnhandled(err);
     };

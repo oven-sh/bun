@@ -75,7 +75,7 @@ console.log(data.hobbies); // => ["reading", "coding"]
 
 ## TypeScript Support
 
-To add TypeScript support for your YAML imports, create a declaration file by appending `.d.ts` to the YAML filename:
+To add TypeScript support for your YAML imports, create a declaration file with `.d.ts` appended to the YAML filename (e.g., `config.yaml` → `config.yaml.d.ts`);
 
 ```ts#config.yaml.d.ts
 const contents: {
@@ -96,8 +96,6 @@ const contents: {
 
 export = contents;
 ```
-
-This gives you full type safety and auto-completion in your editor while Bun handles the actual YAML parsing.
 
 ---
 

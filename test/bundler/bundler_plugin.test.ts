@@ -820,12 +820,13 @@ describe("bundler", () => {
       },
       external: ["esbuild"],
       entryPoints: ["./index.ts"],
+      backend: "api",
       plugins(build) {
         const opts = (build as any).initialOptions;
         expect(opts.bundle).toEqual(true);
         expect(opts.entryPoints).toEqual([join(root, "index.ts")]);
         expect(opts.external).toEqual(["esbuild"]);
-        expect(opts.format).toEqual(undefined);
+        expect(opts.format).toEqual("esm");
         expect(opts.minify).toEqual(false);
         expect(opts.minifyIdentifiers).toEqual(undefined);
         expect(opts.minifySyntax).toEqual(undefined);

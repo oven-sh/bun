@@ -44,7 +44,7 @@ if (docker) {
         env: image.env,
       },
       (port: number) => {
-        const options = {
+        const options: Bun.SQL.Options = {
           url: `mysql://root:bun@localhost:${port}`,
           max: 1,
           tls:
@@ -112,21 +112,23 @@ if (docker) {
         });
 
         test("Idle timeout works at start", async () => {
-          const onclose = mock();
+          const onClosePromise = Promise.withResolvers();
+          const onclose = mock(err => {
+            onClosePromise.resolve(err);
+          });
           const onconnect = mock();
           await using sql = new SQL({
             ...options,
             idle_timeout: 1,
             onconnect,
             onclose,
+            max: 1,
           });
-          let error: any;
-          try {
-            await sql`select SLEEP(2)`;
-          } catch (e) {
-            error = e;
-          }
-          expect(error.code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
+          await sql.connect();
+          const err = await onClosePromise.promise;
+          expect(err).toBeInstanceOf(SQL.SQLError);
+          expect(err).toBeInstanceOf(SQL.MySQLError);
+          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
           expect(onconnect).toHaveBeenCalled();
           expect(onclose).toHaveBeenCalledTimes(1);
         });
@@ -140,14 +142,18 @@ if (docker) {
           await using sql = new SQL({
             ...options,
             idle_timeout: 1,
+            connection_timeout: 5,
             onconnect,
             onclose,
+            max: 1,
           });
-          expect(await sql`select 123 as x`).toEqual([{ x: 123 }]);
+          expect<[{ x: number }]>(await sql`select 123 as x`).toEqual([{ x: 123 }]);
           expect(onconnect).toHaveBeenCalledTimes(1);
           expect(onclose).not.toHaveBeenCalled();
           const err = await onClosePromise.promise;
-          expect(err.code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
+          expect(err).toBeInstanceOf(SQL.SQLError);
+          expect(err).toBeInstanceOf(SQL.MySQLError);
+          expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
         });
 
         test("Max lifetime works", async () => {
@@ -156,14 +162,15 @@ if (docker) {
             onClosePromise.resolve(err);
           });
           const onconnect = mock();
-          const sql = new SQL({
+          await using sql = new SQL({
             ...options,
             max_lifetime: 1,
             onconnect,
             onclose,
+            max: 1,
           });
-          let error: any;
-          expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+          let error: unknown;
+          expect<[{ x: number }]>(await sql`select 1 as x`).toEqual([{ x: 1 }]);
           expect(onconnect).toHaveBeenCalledTimes(1);
           try {
             while (true) {
@@ -177,7 +184,9 @@ if (docker) {
 
           expect(onclose).toHaveBeenCalledTimes(1);
 
-          expect(error.code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
+          expect(error).toBeInstanceOf(SQL.SQLError);
+          expect(error).toBeInstanceOf(SQL.MySQLError);
+          expect((error as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
         });
 
         // Last one wins.
@@ -612,6 +621,7 @@ if (docker) {
             expect(e.message).toBe("password error");
           }
         });
+
         test("Support dynamic async password function that throws", async () => {
           await using sql = new SQL({
             ...options,
@@ -629,6 +639,7 @@ if (docker) {
             expect(e.message).toBe("password error");
           }
         });
+
         test("sql file", async () => {
           await using sql = new SQL(options);
           expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
@@ -865,31 +876,33 @@ if (docker) {
           sql.flush();
         });
 
-        test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
-          "connection timeout key %p throws",
-          async key => {
-            const server = net.createServer().listen();
+        describe("timeouts", () => {
+          test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
+            "connection timeout key %p throws",
+            async key => {
+              const server = net.createServer().listen();
 
-            const port = (server.address() as import("node:net").AddressInfo).port;
+              const port = (server.address() as import("node:net").AddressInfo).port;
 
-            const sql = new SQL({ adapter: "mysql", port, host: "127.0.0.1", [key]: 0.2 });
+              const sql = new SQL({ adapter: "mysql", port, host: "127.0.0.1", max: 1, [key]: 0.2 });
 
-            try {
-              await sql`select 1`;
-              throw new Error("should not reach");
-            } catch (e) {
-              expect(e).toBeInstanceOf(Error);
-              expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT");
-              expect(e.message).toMatch(/Connection timed out after 200ms/);
-            } finally {
-              sql.close();
-              server.close();
-            }
-          },
-          {
-            timeout: 1000,
-          },
-        );
+              try {
+                await sql`select 1`;
+                throw new Error("should not reach");
+              } catch (e) {
+                expect(e).toBeInstanceOf(Error);
+                expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT");
+                expect(e.message).toMatch(/Connection timeout after 200ms/);
+              } finally {
+                sql.close();
+                server.close();
+              }
+            },
+            {
+              timeout: 1000,
+            },
+          );
+        });
         test("Array returns rows as arrays of columns", async () => {
           await using sql = new SQL(options);
           return [(await sql`select CAST(1 AS SIGNED) as x`.values())[0][0], 1];

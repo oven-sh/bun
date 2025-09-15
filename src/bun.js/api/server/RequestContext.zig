@@ -1,3 +1,18 @@
+/// Q: Why is this needed?
+/// A: The dev server needs to attach its own callback when the request is
+///    aborted.
+///
+/// Q: Why can't the dev server just call `.setAbortHandler(...)` then?
+/// A: It can't, because that is *already* called by the RequestContext, setting
+///    the callback and the user data context pointer.
+///
+///    If it did, it would *overwrite* the user data context pointer (this
+///    is what it did before), causing segfaults.
+pub const AdditionalOnAbortCallback = struct {
+    cb: *const fn (this: *anyopaque) void,
+    data: *anyopaque,
+};
+
 pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
         const RequestContext = @This();
@@ -55,8 +70,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         /// Defer finalization until after the request handler task is completed?
         defer_deinit_until_callback_completes: ?*bool = null,
 
-        onAbortCb: ?*const fn (this: *anyopaque) void = null,
-        onAbortData: ?*anyopaque = null,
+        additional_on_abort: ?AdditionalOnAbortCallback = null,
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
@@ -357,7 +371,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn renderDefaultError(
             this: *RequestContext,
-            arena_allocator: std.mem.Allocator,
+            arena_allocator: std.mem.Allocator, // used for to allocate memory to render the fallback
             log: *logger.Log,
             err: anyerror,
             exceptions: []Api.JsException,
@@ -584,8 +598,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             assert(this.server != null);
             // mark request as aborted
             this.flags.aborted = true;
-            if (this.onAbortData != null and this.onAbortCb != null) {
-                this.onAbortCb.?(this.onAbortData.?);
+            if (this.additional_on_abort) |abort| {
+                abort.cb(abort.data);
             }
 
             this.detachResponse();
@@ -1466,10 +1480,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
                 .Render => {
-                    // Render should have been handled elsewhere, this is unexpected
-                    this.renderMetadata();
-                    resp.writeHeaderInt("content-length", 0);
-                    this.endWithoutBody(this.shouldCloseConnection());
+                    @panic("Unexpected Render body value in HEAD response. This is a bug in Bun, please file a GitHub issue at https://github.com/oven-sh/bun/issues");
                 },
             }
         }
@@ -1845,7 +1856,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     var byte_list = byte_stream.drain();
-                                    this.blob = .fromArrayList(byte_list.listManaged(bun.default_allocator));
+                                    this.blob = .fromArrayList(byte_list.moveToListManaged(bun.default_allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
@@ -1855,7 +1866,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;
-                                this.response_buf_owned = byte_stream.drain().list();
+                                var response_buf = byte_stream.drain();
+                                this.response_buf_owned = response_buf.moveToList();
 
                                 // we don't set size here because even if we have a hint
                                 // uWebSockets won't let us partially write streaming content
@@ -1888,9 +1900,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     return;
                 },
                 .Render => |render_body| {
-                    // Handle Response.render() case - need to call DevServer with new path
-                    defer bun.default_allocator.free(render_body.path);
-
                     if (this.server) |server| {
                         if (@hasField(@TypeOf(server.*), "dev_server")) {
                             if (server.dev_server) |dev_server_| {
@@ -1908,7 +1917,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 const resp = this.resp;
                                 this.detachResponse();
 
-                                const new_request_ctx = server.request_pool_allocator.tryGet() catch bun.outOfMemory();
+                                const new_request_ctx = server.request_pool_allocator.tryGet() catch |err| bun.handleOom(err);
                                 new_request_ctx.* = .{
                                     .allocator = server.allocator,
                                     .resp = resp,
@@ -1927,7 +1936,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                     .request_context = AnyRequestContext.init(new_request_ctx),
                                     .https = ssl_enabled,
                                     .signal = if (signal) |s| s.ref() else null,
-                                    .body = server.vm.initRequestBodyValue(body) catch bun.outOfMemory(),
+                                    .body = server.vm.initRequestBodyValue(body) catch |err| bun.handleOom(err),
                                     .url = url,
                                 });
 
@@ -1969,8 +1978,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (is_done) this.deref();
                 if (stream_needs_deinit) {
                     switch (stream_) {
-                        .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
-                        .owned => |*owned| owned.listManaged(allocator).deinit(),
+                        .owned_and_done => |*owned| owned.deinit(allocator),
+                        .owned => |*owned| owned.deinit(allocator),
                         else => unreachable,
                     }
                 }
@@ -2136,7 +2145,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.flags.has_called_error_handler = true;
                     const result = server.config.onError.call(
                         server.globalThis,
-                        server.js_value.get(),
+                        server.js_value.tryGet() orelse .js_undefined,
                         &.{value},
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();
@@ -2396,7 +2405,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (!last) {
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary = bun.ByteList.initConst(chunk),
+                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -2412,7 +2421,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     readable.value.ensureStillAlive();
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary_and_done = bun.ByteList.initConst(chunk),
+                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );

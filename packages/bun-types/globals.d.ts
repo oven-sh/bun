@@ -1556,6 +1556,11 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * The **`AbortController`** interface represents a controller object that allows you to abort one or more Web requests as and when desired.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortController)
+ */
 interface AbortController {
   readonly signal: AbortSignal;
   abort(reason?: any): void;

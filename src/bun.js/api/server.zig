@@ -627,8 +627,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn jsValueAssertAlive(server: *ThisServer) jsc.JSValue {
-            // With JSRef, we can safely access the JS value even after stop() via weak reference
-            return server.js_value.get();
+            bun.assert(server.js_value.isNotEmpty());
+            return server.js_value.tryGet().?;
         }
 
         pub fn requestIP(this: *ThisServer, request: *jsc.WebCore.Request) bun.JSError!jsc.JSValue {
@@ -1124,7 +1124,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.onReloadFromZig(&new_config, globalThis);
 
-            return this.js_value.get();
+            return this.js_value.tryGet() orelse .js_undefined;
         }
 
         pub fn onFetch(this: *ThisServer, ctx: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -1426,7 +1426,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn finalize(this: *ThisServer) void {
             httplog("finalize", .{});
-            this.js_value.deinit();
+            this.js_value.finalize();
             this.flags.has_js_deinited = true;
             this.deinitIfWeCan();
         }
@@ -1539,8 +1539,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn stop(this: *ThisServer, abrupt: bool) void {
-            const current_value = this.js_value.get();
-            this.js_value.setWeak(current_value);
+            this.js_value.downgrade();
 
             if (this.config.allow_hot and this.config.id.len > 0) {
                 if (this.globalThis.bunVM().hotMap()) |hot| {
@@ -2266,7 +2265,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return .{
                 .js_request = switch (create_js_request) {
                     .yes => request_object.toJS(this.globalThis),
-                    .bake => request_object.toJSForBake(this.globalThis, req),
+                    .bake => request_object.toJSForBake(this.globalThis, req) catch |err| this.globalThis.takeException(err),
                     .no => .zero,
                 },
                 .request_object = request_object,

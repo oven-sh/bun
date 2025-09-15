@@ -84,9 +84,6 @@ export default [
       error: {
         fn: "constructError",
       },
-      render: {
-        fn: "constructRender",
-      },
     },
     proto: {
       url: {

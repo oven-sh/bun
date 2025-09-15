@@ -74,11 +74,11 @@ const SSRKind = enum(u8) {
     render = 2,
 };
 
-extern "C" fn Response__createForSSR(globalObject: *JSGlobalObject, this: *Response, kind: SSRKind) JSValue;
+extern "C" fn Response__createForSSR(globalObject: *JSGlobalObject, this: *Response, kind: u8) callconv(jsc.conv) jsc.JSValue;
 
 pub fn toJSForSSR(this: *Response, globalObject: *JSGlobalObject, kind: SSRKind) JSValue {
     this.calculateEstimatedByteSize();
-    return Response__createForSSR(globalObject, this, kind);
+    return Response__createForSSR(globalObject, this, @intFromEnum(kind));
 }
 
 pub fn getBodyValue(
@@ -542,12 +542,16 @@ pub fn constructRedirect(
     return response_js;
 }
 
+pub export fn ResponseClass__constructRender(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
+    return @call(.always_inline, jsc.toJSHostFn(constructRender), .{ globalObject, callFrame });
+}
+
 /// This function is only available on JSBakeResponse
 pub fn constructRender(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    const arguments = callframe.arguments_old(2);
+    const arguments = callframe.argumentsAsArray(2);
     const vm = globalThis.bunVM();
 
     // Check if dev server async local_storage is set
@@ -562,7 +566,7 @@ pub fn constructRender(
         return globalThis.throwInvalidArguments("Response.render() requires at least a path argument", .{});
     }
 
-    const path_arg = arguments.ptr[0];
+    const path_arg = arguments[0];
     if (!path_arg.isString()) {
         return globalThis.throwInvalidArguments("Response.render() path must be a string", .{});
     }

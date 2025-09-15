@@ -110,7 +110,28 @@ pub fn putBakeSourceProvider(this: *SavedSourceMap, opaque_source_provider: *Bak
 }
 
 pub fn putDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider: *DevServerSourceProvider, path: []const u8) void {
-    this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
+    this.putValue(path, Value.init(opaque_source_provider)) catch |err| bun.handleOom(err);
+}
+
+pub fn removeDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+    this.lock();
+    defer this.unlock();
+
+    const entry = this.map.getEntry(bun.hash(path)) orelse return;
+    const old_value = Value.from(entry.value_ptr.*);
+    if (old_value.get(DevServerSourceProvider)) |prov| {
+        if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+            // there is nothing to unref or deinit
+            this.map.removeByPtr(entry.key_ptr);
+        }
+    } else if (old_value.get(ParsedSourceMap)) |map| {
+        if (map.underlying_provider.provider()) |prov| {
+            if (@intFromPtr(prov.ptr()) == @intFromPtr(opaque_source_provider)) {
+                this.map.removeByPtr(entry.key_ptr);
+                map.deref();
+            }
+        }
+    }
 }
 
 pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
@@ -294,7 +315,7 @@ fn getWithContent(
                 if (parse.map) |map| {
                     map.ref();
                     // The mutex is not locked. We have to check the hash table again.
-                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+                    this.putValue(path, Value.init(map)) catch |err| bun.handleOom(err);
 
                     return parse;
                 }

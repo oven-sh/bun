@@ -566,8 +566,37 @@ pub fn installWithManager(
 
         manager.verifyResolutions(log_level);
 
-        if (manager.subcommand == .add and manager.options.security_scanner != null) {
-            try security_scanner.performSecurityScanAfterResolution(manager);
+        if (manager.options.security_scanner != null) {
+            const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install or manager.subcommand == .remove;
+
+            if (is_subcommand_to_run_scanner) {
+                if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
+                    switch (err) {
+                        error.SecurityScannerInWorkspace => {
+                            Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
+                        },
+                        else => {},
+                    }
+
+                    Global.exit(1);
+                }) |results| {
+                    defer {
+                        var results_mut = results;
+                        results_mut.deinit();
+                    }
+
+                    security_scanner.printSecurityAdvisories(manager, &results);
+
+                    if (results.hasFatalAdvisories()) {
+                        Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
+                        Global.exit(1);
+                    } else if (results.hasWarnings()) {
+                        if (!security_scanner.promptForWarnings()) {
+                            Global.exit(1);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -691,53 +720,8 @@ pub fn installWithManager(
         return;
     }
 
-    var path_buf: bun.PathBuffer = undefined;
-    var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
-    // only populated when subcommand is `.install`
-    if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
-        try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
-        for (manager.options.filter_patterns) |pattern| {
-            try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));
-        }
-    }
-    defer workspace_filters.deinit(manager.allocator);
-
-    var install_root_dependencies = workspace_filters.items.len == 0;
-    if (!install_root_dependencies) {
-        const pkg_names = manager.lockfile.packages.items(.name);
-
-        const abs_root_path = abs_root_path: {
-            if (comptime !Environment.isWindows) {
-                break :abs_root_path strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
-            }
-
-            var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, &path_buf);
-            break :abs_root_path strings.withoutTrailingSlash(abs_path[Path.windowsVolumeNameLen(abs_path)[0]..]);
-        };
-
-        for (workspace_filters.items) |filter| {
-            const pattern, const path_or_name = switch (filter) {
-                .name => |pattern| .{ pattern, pkg_names[0].slice(manager.lockfile.buffers.string_bytes.items) },
-                .path => |pattern| .{ pattern, abs_root_path },
-                .all => {
-                    install_root_dependencies = true;
-                    continue;
-                },
-            };
-
-            switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
-                .match, .negate_match => install_root_dependencies = true,
-
-                .negate_no_match => {
-                    // always skip if a pattern specifically says "!<name>"
-                    install_root_dependencies = false;
-                    break;
-                },
-
-                .no_match => {},
-            }
-        }
-    }
+    const workspace_filters, const install_root_dependencies = (try getWorkspaceFilters(manager, original_cwd));
+    defer manager.allocator.free(workspace_filters);
 
     const install_summary: PackageInstall.Summary = install_summary: {
         if (!manager.options.do.install_packages) {
@@ -751,16 +735,18 @@ pub fn installWithManager(
             => break :install_summary try installHoistedPackages(
                 manager,
                 ctx,
-                workspace_filters.items,
+                workspace_filters,
                 install_root_dependencies,
                 log_level,
+                null,
             ),
 
             .isolated => break :install_summary installIsolatedPackages(
                 manager,
                 ctx,
                 install_root_dependencies,
-                workspace_filters.items,
+                workspace_filters,
+                null,
             ) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             },
@@ -990,6 +976,62 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     } else {
         Output.pretty("<r>\n", .{});
     }
+}
+
+pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !struct {
+    []const WorkspaceFilter,
+    bool,
+} {
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+
+    var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
+    // only populated when subcommand is `.install`
+    if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
+        try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
+        for (manager.options.filter_patterns) |pattern| {
+            try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, path_buf[0..]));
+        }
+    }
+
+    var install_root_dependencies = workspace_filters.items.len == 0;
+    if (!install_root_dependencies) {
+        const pkg_names = manager.lockfile.packages.items(.name);
+
+        const abs_root_path = abs_root_path: {
+            if (comptime !Environment.isWindows) {
+                break :abs_root_path strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+            }
+
+            var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, path_buf);
+            break :abs_root_path strings.withoutTrailingSlash(abs_path[Path.windowsVolumeNameLen(abs_path)[0]..]);
+        };
+
+        for (workspace_filters.items) |filter| {
+            const pattern, const path_or_name = switch (filter) {
+                .name => |pattern| .{ pattern, pkg_names[0].slice(manager.lockfile.buffers.string_bytes.items) },
+                .path => |pattern| .{ pattern, abs_root_path },
+                .all => {
+                    install_root_dependencies = true;
+                    continue;
+                },
+            };
+
+            switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
+                .match, .negate_match => install_root_dependencies = true,
+
+                .negate_no_match => {
+                    // always skip if a pattern specifically says "!<name>"
+                    install_root_dependencies = false;
+                    break;
+                },
+
+                .no_match => {},
+            }
+        }
+    }
+
+    return .{ workspace_filters.items, install_root_dependencies };
 }
 
 const security_scanner = @import("./security_scanner.zig");

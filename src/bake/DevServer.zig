@@ -1144,7 +1144,7 @@ fn deferRequest(
                     },
                     .saved => |saved| saved,
                 };
-                server_handler.ctx.setAbortCallback(DeferredRequest.onAbortWrapper, &deferred.data);
+                server_handler.ctx.setAdditionalOnAbortCallback(.{ .cb = DeferredRequest.onAbortWrapper, .data = &deferred.data });
                 break :brk .{
                     .server_handler = server_handler,
                 };
@@ -2374,7 +2374,7 @@ pub fn finalizeBundle(
             );
             break :json json_data;
         } else null;
-        defer if (source_map_json) |json| bun.default_allocator.free(json);
+        defer if (source_map_json) |json| dev.allocator().free(json);
 
         const server_bundle = try dev.server_graph.takeJSBundle(&.{
             .kind = .hmr_chunk,
@@ -2974,12 +2974,12 @@ pub fn handleRenderRedirect(
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(render_path, &params)) |route_index| {
         // Found a matching route, bundle it and handle the request
-        dev.ensureRouteIsBundled(
-            dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory(),
+        try dev.ensureRouteIsBundled(
+            dev.getOrPutRouteBundle(.{ .framework = route_index }) catch |err| bun.handleOom(err),
             .server_handler,
             .{ .saved = saved_request },
             resp,
-        ) catch bun.outOfMemory();
+        );
         return;
     }
 

@@ -41,6 +41,8 @@ public:
 
     void setToThrow(JSC::JSGlobalObject* globalObject, JSC::VM& vm)
     {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
         JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
 
         JSC::MarkedArgumentBuffer args;
@@ -55,12 +57,15 @@ public:
 
         auto callData = JSC::getCallData(wrapComponentFn);
         JSC::JSValue wrappedComponent = JSC::call(globalObject, wrapComponentFn, callData, JSC::jsUndefined(), args);
+        RETURN_IF_EXCEPTION(scope, );
 
         this->putDirect(vm, WebCore::builtinNames(vm).typePublicName(), wrappedComponent, 0);
     }
 
     void wrapInnerComponent(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSValue component, JSValue responseOptions)
     {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
         this->kind(JSBakeResponseKind::Regular);
         JSC::JSFunction* wrapComponentFn = JSC::JSFunction::create(vm, globalObject, bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
 
@@ -76,6 +81,7 @@ public:
 
         auto callData = JSC::getCallData(wrapComponentFn);
         JSC::JSValue wrappedComponent = JSC::call(globalObject, wrapComponentFn, callData, JSC::jsUndefined(), args);
+        RETURN_IF_EXCEPTION(scope, );
 
         this->putDirect(vm, WebCore::builtinNames(vm).typePublicName(), wrappedComponent, 0);
     }
@@ -84,7 +90,7 @@ private:
     JSBakeResponse(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr);
     void finishCreation(JSC::VM& vm);
 
-    JSBakeResponseKind m_kind;
+    JSBakeResponseKind m_kind { JSBakeResponseKind::Regular };
 };
 
 void setupJSBakeResponseClassStructure(JSC::LazyClassStructure::Initializer& init);

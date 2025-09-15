@@ -724,3 +724,33 @@ test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
 
   expect(prepare).toHaveBeenCalledTimes(1);
 });
+
+test("CallFrame.p.isAsync", async () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  const prepare = mock((e, s) => {
+    expect(s[0].isAsync()).toBeFalse();
+    expect(s[1].isAsync()).toBeTrue();
+    expect(s[2].isAsync()).toBeTrue();
+    expect(s[3].isAsync()).toBeTrue();
+  });
+  Error.prepareStackTrace = prepare;
+  async function foo() {
+    await bar();
+  }
+  async function bar() {
+    await baz();
+  }
+  async function baz() {
+    await 1;
+    throw new Error("error from baz");
+  }
+
+  try {
+    await foo();
+  } catch (e) {
+    e.stack;
+  }
+  Error.prepareStackTrace = prevPrepareStackTrace;
+
+  expect(prepare).toHaveBeenCalledTimes(1);
+});

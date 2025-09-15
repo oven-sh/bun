@@ -18,27 +18,23 @@ pub fn init(request_ctx: anytype) AnyRequestContext {
     return .{ .tagged_pointer = Pointer.init(request_ctx) };
 }
 
-pub fn setAbortCallback(self: AnyRequestContext, cb: *const fn (this: *anyopaque) void, data: *anyopaque) void {
+pub fn setAdditionalOnAbortCallback(self: AnyRequestContext, cb: ?AdditionalOnAbortCallback) void {
     if (self.tagged_pointer.isNull()) {
         return;
     }
 
     switch (self.tagged_pointer.tag()) {
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPServer.RequestContext).onAbortCb = cb;
-            self.tagged_pointer.as(HTTPServer.RequestContext).onAbortData = data;
+            self.tagged_pointer.as(HTTPServer.RequestContext).additional_on_abort = cb;
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(HTTPSServer.RequestContext).onAbortCb = cb;
-            self.tagged_pointer.as(HTTPSServer.RequestContext).onAbortData = data;
+            self.tagged_pointer.as(HTTPSServer.RequestContext).additional_on_abort = cb;
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPServer.RequestContext).onAbortCb = cb;
-            self.tagged_pointer.as(DebugHTTPServer.RequestContext).onAbortData = data;
+            self.tagged_pointer.as(DebugHTTPServer.RequestContext).additional_on_abort = cb;
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).onAbortCb = cb;
-            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).onAbortData = data;
+            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).additional_on_abort = cb;
         },
         else => @panic("Unexpected AnyRequestContext tag"),
     }
@@ -268,6 +264,8 @@ pub fn deref(self: AnyRequestContext) void {
         else => @panic("Unexpected AnyRequestContext tag"),
     }
 }
+
+pub const AdditionalOnAbortCallback = @import("./RequestContext.zig").AdditionalOnAbortCallback;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

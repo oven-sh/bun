@@ -22,14 +22,16 @@ extern "C" JSC::EncodedJSValue Bun__JSRequest__createFromUwsReqForBake(Zig::Glob
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // the params are passed into the page component as a prop so we'll make
     // this empty for now
     auto* emptyParams = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSBunRequest* request
         = JSBunRequest::create(vm, structure, requestPtr, emptyParams);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(request);
 }

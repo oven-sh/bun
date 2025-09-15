@@ -331,6 +331,14 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 
+extern "C" JSC::EncodedJSValue createCLI(JSGlobalObject*, JSC::CallFrame*);
+
+static JSValue constructCLIObject(VM& vm, JSObject* bunObject)
+{
+    auto* globalObject = bunObject->globalObject();
+    return JSValue::decode(createCLI(globalObject, nullptr));
+}
+
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
     return JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
@@ -707,6 +715,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 @begin bunObjectTable
     $                                              constructBunShell                                                   DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_lazyPropCb_wrap_ArrayBufferSink                           DontDelete|PropertyCallback
+    CLI                                            constructCLIObject                                                  DontDelete|ReadOnly|PropertyCallback
     Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
     CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   BunObject_lazyPropCb_wrap_CryptoHasher                              DontDelete|PropertyCallback

@@ -190,6 +190,7 @@ pub const Subcommand = enum {
             .audit,
             .pm,
             .info,
+            .why,
             => true,
             else => false,
         };

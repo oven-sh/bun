@@ -27,6 +27,7 @@ pub const WhyCommand = struct {
         optional_peer,
     };
 
+
     fn getSpecifierSpecificity(spec: []const u8) u8 {
         if (spec.len == 0) return 9;
         if (spec[0] == '*') return 1;
@@ -197,6 +198,7 @@ pub const WhyCommand = struct {
             \\  <blue>\<package\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
             \\
             \\<b>Options:<r>
+            \\  <cyan>--json<r>        <d>Output results in JSON format (compatible with pnpm)<r>
             \\  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
             \\  <cyan>--depth<r> <blue>\<NUM\><r> <d>Maximum depth of the dependency tree to display<r>
             \\
@@ -204,6 +206,7 @@ pub const WhyCommand = struct {
             \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
             \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
             \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+            \\  <d>$<r> <b><green>bun why<r> <blue>vite<r> <cyan>--json<r>
             \\
         ;
         Output.pretty(usage_text, .{});
@@ -224,10 +227,10 @@ pub const WhyCommand = struct {
                 printUsage();
                 Global.exit(1);
             }
-            return try execWithManager(ctx, pm, cli.positionals[1], cli.top_only);
+            return try execWithManager(ctx, pm, cli.positionals[1], cli.top_only, cli.json_output);
         }
 
-        return try execWithManager(ctx, pm, cli.positionals[0], cli.top_only);
+        return try execWithManager(ctx, pm, cli.positionals[0], cli.top_only, cli.json_output);
     }
 
     pub fn execFromPm(ctx: Command.Context, pm: *PackageManager, positionals: []const string) !void {
@@ -236,10 +239,10 @@ pub const WhyCommand = struct {
             Global.exit(1);
         }
 
-        try execWithManager(ctx, pm, positionals[1], pm.options.top_only);
+        try execWithManager(ctx, pm, positionals[1], pm.options.top_only, pm.options.json_output);
     }
 
-    pub fn execWithManager(ctx: Command.Context, pm: *PackageManager, package_pattern: string, top_only: bool) !void {
+    pub fn execWithManager(ctx: Command.Context, pm: *PackageManager, package_pattern: string, top_only: bool, json_output: bool) !void {
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
         PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
 
@@ -335,42 +338,162 @@ pub const WhyCommand = struct {
         }
 
         if (target_versions.items.len == 0) {
-            Output.prettyln("<r><red>error<r>: No packages matching '{s}' found in lockfile", .{package_pattern});
+            if (json_output) {
+                Output.prettyln("[]", .{});
+            } else {
+                Output.prettyln("<r><red>error<r>: No packages matching '{s}' found in lockfile", .{package_pattern});
+            }
             Global.exit(1);
         }
 
-        for (target_versions.items) |target_version| {
-            const target_pkg = packages.get(target_version.pkg_id);
-            const target_name = target_pkg.name.slice(string_bytes);
-            Output.prettyln("<b>{s}@{s}<r>", .{ target_name, target_version.version });
+        if (json_output) {
+            // Build simplified JSON output
+            var json_buf = std.ArrayList(u8).init(ctx.allocator);
+            defer json_buf.deinit();
+            var writer = json_buf.writer();
 
-            if (all_dependents.get(target_version.pkg_id)) |dependents| {
-                if (dependents.items.len == 0) {
-                    Output.prettyln("<d>  └─ No dependents found<r>", .{});
-                } else if (max_depth == 0) {
-                    Output.prettyln("<d>  └─ (deeper dependencies hidden)<r>", .{});
-                } else {
-                    var ctx_data = TreeContext.init(arena_allocator, string_bytes, top_only, &all_dependents);
-                    defer ctx_data.clearPathTracker();
-
-                    std.sort.insertion(DependentInfo, dependents.items, {}, compareDependents);
-
-                    for (dependents.items, 0..) |dep, dep_idx| {
-                        const is_last = dep_idx == dependents.items.len - 1;
-                        const prefix = if (is_last) PREFIX_LAST else PREFIX_MIDDLE;
-
-                        printPackageWithType(prefix, &dep);
-                        if (!top_only) {
-                            try printDependencyTree(&ctx_data, dep.pkg_id, if (is_last) PREFIX_SPACE else PREFIX_CONTINUE, 1, is_last, dep.workspace);
-                        }
-                    }
+            // Get root package info
+            const root_pkg = packages.get(0);
+            var root_name = root_pkg.name.slice(string_bytes);
+            if (root_name.len == 0) {
+                root_name = pm.root_package_json_name_at_time_of_init;
+                if (root_name.len == 0) {
+                    root_name = "unknown";
                 }
-            } else {
-                Output.prettyln("<d>  └─ No dependents found<r>", .{});
             }
 
-            Output.prettyln("", .{});
+            // Get version
+            var version_buf = std.ArrayList(u8).init(ctx.allocator);
+            defer version_buf.deinit();
+            try std.fmt.format(version_buf.writer(), "{}", .{packages.items(.resolution)[0].fmt(string_bytes, .auto)});
+            const root_version = if (version_buf.items.len == 0) "0.0.1" else version_buf.items;
+
+            try writer.writeAll("[\n");
+
+            for (target_versions.items, 0..) |target_version, idx| {
+                if (idx > 0) try writer.writeAll(",\n");
+
+                const target_pkg = packages.get(target_version.pkg_id);
+                const target_name = target_pkg.name.slice(string_bytes);
+
+                // Start JSON object
+                try writer.writeAll("  {\n");
+                try std.fmt.format(writer, "    \"name\": \"{s}\",\n", .{root_name});
+                try std.fmt.format(writer, "    \"version\": \"{s}\",\n", .{root_version});
+                try std.fmt.format(writer, "    \"path\": \"{s}\",\n", .{pm.root_dir.dir});
+                try writer.writeAll("    \"private\": false,\n");
+
+                // Add dependencies
+                try writer.writeAll("    \"dependencies\": {\n");
+
+                // Build dependency entry using lockfile's resolution data
+                const resolution = packages.items(.resolution)[target_version.pkg_id];
+
+                // Get the resolved URL using the built-in fmtURL method
+                var resolved_buf = std.ArrayList(u8).init(ctx.allocator);
+                defer resolved_buf.deinit();
+                try std.fmt.format(resolved_buf.writer(), "{}", .{resolution.fmtURL(string_bytes)});
+
+                // Get actual install path from lockfile or use default
+                const pkg_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, target_name });
+                defer ctx.allocator.free(pkg_path);
+
+                try std.fmt.format(writer,
+                    \\      "{s}": {{
+                    \\        "from": "{s}",
+                    \\        "version": "{s}",
+                    \\        "resolved": "{s}",
+                    \\        "path": "{s}"
+                , .{
+                    target_name,
+                    target_name,
+                    target_version.version,
+                    resolved_buf.items,
+                    pkg_path,
+                });
+
+                // Add nested dependencies if they exist
+                if (all_dependents.get(target_version.pkg_id)) |dependents| {
+                    if (dependents.items.len > 0) {
+                        try writer.writeAll(",\n        \"dependencies\": {\n");
+
+                        for (dependents.items, 0..) |dep, dep_idx| {
+                            if (dep_idx > 0) try writer.writeAll(",\n");
+
+                            // Get resolution data for the dependent package
+                            const dep_resolution = packages.items(.resolution)[dep.pkg_id];
+
+                            // Use the built-in fmtURL method for proper resolution formatting
+                            var dep_resolved_buf = std.ArrayList(u8).init(ctx.allocator);
+                            defer dep_resolved_buf.deinit();
+                            try std.fmt.format(dep_resolved_buf.writer(), "{}", .{dep_resolution.fmtURL(string_bytes)});
+
+                            const dep_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, dep.name });
+                            defer ctx.allocator.free(dep_path);
+
+                            try std.fmt.format(writer,
+                                \\          "{s}": {{
+                                \\            "from": "{s}",
+                                \\            "version": "{s}",
+                                \\            "resolved": "{s}",
+                                \\            "path": "{s}"
+                                \\          }}
+                            , .{
+                                dep.name,
+                                dep.name,
+                                dep.version,
+                                dep_resolved_buf.items,
+                                dep_path,
+                            });
+                        }
+
+                        try writer.writeAll("\n        }");
+                    }
+                }
+
+                try writer.writeAll("\n      }\n");
+                try writer.writeAll("    }\n");
+                try writer.writeAll("  }");
+            }
+
+            try writer.writeAll("\n]\n");
+
+            Output.prettyln("{s}", .{json_buf.items});
             Output.flush();
+        } else {
+            for (target_versions.items) |target_version| {
+                const target_pkg = packages.get(target_version.pkg_id);
+                const target_name = target_pkg.name.slice(string_bytes);
+                Output.prettyln("<b>{s}@{s}<r>", .{ target_name, target_version.version });
+
+                if (all_dependents.get(target_version.pkg_id)) |dependents| {
+                    if (dependents.items.len == 0) {
+                        Output.prettyln("<d>  └─ No dependents found<r>", .{});
+                    } else if (max_depth == 0) {
+                        Output.prettyln("<d>  └─ (deeper dependencies hidden)<r>", .{});
+                    } else {
+                        var ctx_data = TreeContext.init(arena_allocator, string_bytes, top_only, &all_dependents);
+                        defer ctx_data.clearPathTracker();
+
+                        std.sort.insertion(DependentInfo, dependents.items, {}, compareDependents);
+
+                        for (dependents.items, 0..) |dep, dep_idx| {
+                            const is_last = dep_idx == dependents.items.len - 1;
+                            const prefix = if (is_last) PREFIX_LAST else PREFIX_MIDDLE;
+
+                            printPackageWithType(prefix, &dep);
+                            if (!top_only) {
+                                try printDependencyTree(&ctx_data, dep.pkg_id, if (is_last) PREFIX_SPACE else PREFIX_CONTINUE, 1, is_last, dep.workspace);
+                            }
+                        }
+                    }
+                } else {
+                    Output.prettyln("<d>  └─ No dependents found<r>", .{});
+                }
+
+                Output.prettyln("", .{});
+                Output.flush();
+            }
         }
     }
 
@@ -475,6 +598,7 @@ pub const WhyCommand = struct {
             }
         }
     }
+
 };
 
 const string = []const u8;

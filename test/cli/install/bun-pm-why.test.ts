@@ -479,6 +479,50 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
     }
   });
 
+  it("should support JSON output", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "json-test",
+        version: "1.0.0",
+        dependencies: {
+          lodash: "^4.17.21",
+        },
+      }),
+    );
+
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(install.exitCode).toBe(0);
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "lodash", "--json"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(exitCode).toBe(0);
+    const output = stdout.toString();
+    const json = JSON.parse(output);
+
+    expect(Array.isArray(json)).toBe(true);
+    expect(json.length).toBeGreaterThan(0);
+    expect(json[0].name).toBe("json-test");
+    // Version comes from lockfile resolution, not package.json
+    expect(json[0].version).toBeTruthy();
+    expect(json[0].path).toBe(package_dir);
+    expect(json[0].dependencies).toHaveProperty("lodash");
+    expect(json[0].dependencies.lodash.from).toBe("lodash");
+    expect(json[0].dependencies.lodash.version).toBe("4.17.21");
+  });
+
   it("should handle nested workspaces", async () => {
     await writeFile(
       join(package_dir, "package.json"),

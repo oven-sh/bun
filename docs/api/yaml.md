@@ -184,6 +184,45 @@ const { database, redis } = require("./config.yaml");
 console.log(database.port); // 5432
 ```
 
+### TypeScript Support
+
+While Bun can import YAML files directly, TypeScript doesn't know the types of your YAML files by default. To add TypeScript support for your YAML imports, create a declaration file with `.d.ts` appended to the YAML filename (e.g., `config.yaml` → `config.yaml.d.ts`):
+
+```yaml#config.yaml
+features: "advanced"
+server:
+  host: localhost
+  port: 3000
+```
+
+```ts#config.yaml.d.ts
+const contents: {
+  features: string;
+  server: {
+    host: string;
+    port: number;
+  };
+};
+
+export = contents;
+```
+
+Now TypeScript will provide proper type checking and auto-completion:
+
+```ts#app.ts
+import config from "./config.yaml";
+
+// TypeScript knows the types!
+config.server.port; // number
+config.server.host; // string
+config.features; // string
+
+// TypeScript will catch errors
+config.server.unknown; // Error: Property 'unknown' does not exist
+```
+
+This approach works for both ES modules and CommonJS, giving you full type safety while Bun continues to handle the actual YAML parsing at runtime.
+
 ## Hot Reloading with YAML
 
 One of the most powerful features of Bun's YAML support is hot reloading. When you run your application with `bun --hot`, changes to YAML files are automatically detected and reloaded without closing connections

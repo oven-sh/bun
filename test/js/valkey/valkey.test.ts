@@ -1,5 +1,5 @@
-import { randomUUIDv7, RedisClient } from "bun";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { randomUUIDv7, RedisClient, sleep, spawn } from "bun";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   awaitableCounter,
   ConnectionType,
@@ -552,40 +552,58 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("callback errors don't crash the client", async () => {
-      console.log("Starting callback error test");
       const channel = "error-callback-channel";
 
-      const subscriber = createClient(ConnectionType.TCP);
-      await subscriber.connect();
+      const STEP_SUBSCRIBED = 1;
+      const STEP_FIRST_MESSAGE = 2;
+      const STEP_SECOND_MESSAGE = 3;
+      const STEP_THIRD_MESSAGE = 4;
 
-      const counter = awaitableCounter();
-      let messageCount = 0;
-      setTimeout(() => { console.log("timeout-out"); }, 1000);
-      await subscriber.subscribe(channel, () => {
-        messageCount++;
-        counter.increment();
-        if (messageCount === 3) {
-          throw new Error("Intentional callback error");
-        }
+      // stepCounter is a slight hack to track the progress of the subprocess.
+      const stepCounter = awaitableCounter();
+      let currentMessage: any = {};
+
+      const subscriberProc = spawn({
+        cmd: [self.process.execPath, "run", `${__dirname}/valkey.failing-subscriber.ts`],
+        stdout: "pipe",
+        stderr: "pipe",
+        ipc: (msg) => {
+          console.log("Subprocess message", msg);
+          currentMessage = msg;
+          stepCounter.increment();
+        },
+        env: {
+          ...process.env,
+          NODE_ENV: "development",
+        },
       });
 
-      // Send multiple messages
-      expect(await ctx.redis.publish(channel, "message1")).toBe(1);
-      expect(await ctx.redis.publish(channel, "message2")).toBe(1);
-      expect(await ctx.redis.publish(channel, "message3")).toBe(1);
+      subscriberProc.send({ event: "start", url: DEFAULT_REDIS_URL });
 
-      await counter.untilValue(3);
-      expect(messageCount).toBe(3);
+      try {
+        await stepCounter.untilValue(STEP_SUBSCRIBED);
+        expect(currentMessage.event).toBe("ready");
 
-      // If we can still publish and receive messages, the client is fine
-      debugger;
-      console.log("after-expect");
-      expect(await ctx.redis.publish(channel, "message4")).toBe(1);
-      console.log("published ", messageCount);
-      await counter.untilValue(4);
-      console.log("pre-final", messageCount);
-      expect(messageCount).toBe(4);
-      console.log("Final", messageCount);
+        // Send multiple messages
+        expect(await ctx.redis.publish(channel, "message1")).toBe(1);
+        await stepCounter.untilValue(STEP_FIRST_MESSAGE);
+        expect(currentMessage.event).toBe("message");
+        expect(currentMessage.index).toBe(1);
+
+        // Now, the subscriber process will crash
+        expect(await ctx.redis.publish(channel, "message2")).toBe(1);
+        await stepCounter.untilValue(STEP_SECOND_MESSAGE);
+        expect(currentMessage.event).toBe("exception");
+        //expect(currentMessage.index).toBe(2);
+
+        // But it should recover and continue receiving messages
+        expect(await ctx.redis.publish(channel, "message3")).toBe(1);
+        await stepCounter.untilValue(STEP_THIRD_MESSAGE);
+        expect(currentMessage.event).toBe("message");
+        expect(currentMessage.index).toBe(3);
+      } finally {
+        subscriberProc.kill();
+      }
     });
 
     test("subscriptions return correct counts", async () => {

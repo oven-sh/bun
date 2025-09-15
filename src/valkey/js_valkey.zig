@@ -167,21 +167,36 @@ pub const SubscriptionCtx = struct {
             bun.assert(callbacks.isArray());
         }
 
+        const callback_count = callbacks.getLength(globalObject) catch 0;
+        debug("Starting callback invocation for channel {s}, {} callbacks registered", .{ channelName.asString().getZigString(globalObject), callback_count });
+
         const vm = jsc.VirtualMachine.get();
         const event_loop = vm.eventLoop();
+        debug("Event loop enter() before callbacks", .{});
         event_loop.enter();
-        defer event_loop.exit();
+        defer {
+            debug("Event loop exit() after callbacks", .{});
+            event_loop.exit();
+        }
 
         // If callbacks is an array, iterate and call each one
         var iter = try callbacks.arrayIterator(globalObject);
+        var callback_index: usize = 0;
         while (try iter.next()) |callback| {
+            debug("Invoking callback {} for channel {s}", .{ callback_index, channelName.asString().getZigString(globalObject) });
+
             if (comptime bun.Environment.isDebug) {
                 bun.assert(callback.isCallable());
             }
 
+            debug("About to call runCallback for callback {}", .{callback_index});
             event_loop.runCallback(callback, globalObject, .js_undefined, args);
+            debug("Finished runCallback for callback {}, calling updatePollRef", .{callback_index});
             this._parent.updatePollRef();
+            debug("Finished updatePollRef for callback {}", .{callback_index});
+            callback_index += 1;
         }
+        debug("Finished invoking all {} callbacks for channel {s}", .{ callback_index, channelName.asString().getZigString(globalObject) });
     }
 
     /// Return whether the subscription context is ready to be deleted by the JS garbage collector.
@@ -821,6 +836,8 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn onValkeyMessage(this: *JSValkeyClient, value: []protocol.RESPValue) void {
+        debug("onValkeyMessage called with {} values", .{value.len});
+
         if (!this.isSubscriber()) {
             debug("onMessage called but client is not in subscriber mode", .{});
             return;
@@ -828,8 +845,12 @@ pub const JSValkeyClient = struct {
 
         const globalObject = this.globalObject;
         const event_loop = this.client.vm.eventLoop();
+        debug("onValkeyMessage: entering event loop", .{});
         event_loop.enter();
-        defer event_loop.exit();
+        defer {
+            debug("onValkeyMessage: exiting event loop", .{});
+            event_loop.exit();
+        }
 
         // The message push should be an array with [channel, message]
         if (value.len < 2) {
@@ -847,20 +868,28 @@ pub const JSValkeyClient = struct {
             return;
         };
 
+        debug("onValkeyMessage: channel={s}, message={s}", .{
+            channel_value.asString().getZigString(globalObject),
+            message_value.asString().getZigString(globalObject)
+        });
+
         // Get the subscription context
         const subs_ctx = &(this._subscription_ctx orelse {
             debug("No subscription context found", .{});
             return;
         });
 
+        debug("onValkeyMessage: about to invoke callbacks", .{});
         // Invoke callbacks for this channel with message and channel as arguments
         subs_ctx.invokeCallbacks(globalObject, channel_value, &[_]JSValue{ message_value, channel_value }) catch {
             debug("Failed to invoke callbacks for channel", .{});
             return;
         };
+        debug("onValkeyMessage: finished invoking callbacks", .{});
 
         this.client.onWritable();
         this.updatePollRef();
+        debug("onValkeyMessage: completed", .{});
     }
 
     // Callback for when Valkey client needs to reconnect

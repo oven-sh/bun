@@ -602,7 +602,7 @@ export const context: TestContext = {
 };
 export { context as ctx };
 
-if (isEnabled)
+if (isEnabled && process.env.NODE_ENV === "test")
   beforeAll(async () => {
     // Initialize Docker container once for all tests
     if (!dockerInitPromise) {
@@ -669,7 +669,7 @@ if (isEnabled)
     // }
   });
 
-if (isEnabled)
+if (isEnabled && process.env.NODE_ENV === "test")
   afterAll(async () => {
     console.log("Cleaning up Redis container");
     if (!context.redis?.connected) {
@@ -715,7 +715,7 @@ if (isEnabled)
     }
   });
 
-if (!isEnabled) {
+if (!isEnabled && process.env.NODE_ENV === "test") {
   console.warn("Redis is not enabled, skipping tests");
 }
 

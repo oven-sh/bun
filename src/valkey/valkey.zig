@@ -529,7 +529,10 @@ pub const ValkeyClient = struct {
     ///
     /// Caller refs / derefs.
     pub fn onData(this: *ValkeyClient, data: []const u8) void {
-        defer std.debug.print("onData complete, read_buffer.len={d}\n", .{this.read_buffer.len()});
+        debug("onData called with {d} bytes: {s}", .{ data.len, data });
+        defer {
+            debug("({*}) onData complete, read_buffer.len={d}", .{this, this.read_buffer.len()});
+        }
 
         // Path 1: Buffer already has data, append and process from buffer
         if (this.read_buffer.remaining().len > 0) {
@@ -569,10 +572,13 @@ pub const ValkeyClient = struct {
                 this.read_buffer.consume(@truncate(bytes_consumed));
 
                 var value_to_handle = value; // Use temp var for defer
+                debug("About to call handleResponse (buffer path)", .{});
                 this.handleResponse(&value_to_handle) catch |err| {
+                    debug("handleResponse failed (buffer path): {}", .{err});
                     this.fail("Failed to handle response (buffer path)", err);
                     return;
                 };
+                debug("handleResponse completed (buffer path)", .{});
 
                 if (this.status == .disconnected or this.status == .failed) {
                     return;
@@ -622,10 +628,13 @@ pub const ValkeyClient = struct {
             // Handle the successfully parsed response
             var value_to_handle = value; // Use temp var for defer
             std.debug.print("Parsed a value from stack data, bytes_consumed={d}, remaining_data.len={d}\n", .{bytes_consumed, current_data_slice.len});
+            debug("About to call handleResponse (stack path)", .{});
             this.handleResponse(&value_to_handle) catch |err| {
+                debug("handleResponse failed (stack path): {}", .{err});
                 this.fail("Failed to handle response (stack path)", err);
                 return;
             };
+            debug("handleResponse completed (stack path)", .{});
 
             // Check connection status after handling
             if (this.status == .disconnected or this.status == .failed) {
@@ -1065,6 +1074,7 @@ pub const ValkeyClient = struct {
     }
 
     pub fn send(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, command: *const Command) !*jsc.JSPromise {
+        std.debug.print("({*}) send() called with command: {s}\n", .{this, command.command});
         var promise = Command.Promise.create(globalThis, command.meta);
 
         const js_promise = promise.promise.get();

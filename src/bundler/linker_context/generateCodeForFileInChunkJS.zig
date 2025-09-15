@@ -430,6 +430,42 @@ pub fn generateCodeForFileInChunkJS(
                     .allocator = temp_allocator,
                 };
 
+                // Generate Promise.all for parallel async imports if needed
+                if (stmts.async_imports.items.len > 0) {
+                    const promise_all_expr = if (stmts.async_imports.items.len == 1)
+                        // Single async import - just await it directly
+                        Expr.init(E.Await, .{
+                            .value = stmts.async_imports.items[0],
+                        }, Logger.Loc.Empty)
+                    else blk: {
+                        // Multiple async imports - use Promise.all for parallel execution
+                        // Use the pre-generated unbound reference to Promise
+                        const promise_ref = c.unbound_promise_ref;
+
+                        break :blk Expr.init(E.Await, .{
+                            .value = Expr.init(E.Call, .{
+                                .target = Expr.init(E.Dot, .{
+                                    .target = Expr.init(E.Identifier, .{
+                                        .ref = promise_ref,
+                                    }, Logger.Loc.Empty),
+                                    .name = "all",
+                                    .name_loc = Logger.Loc.Empty,
+                                }, Logger.Loc.Empty),
+                                .args = bun.BabyList(Expr).fromSlice(temp_allocator, &.{
+                                    Expr.init(E.Array, .{
+                                        .items = bun.BabyList(Expr).fromOwnedSlice(temp_allocator.dupe(Expr, stmts.async_imports.items) catch unreachable),
+                                    }, Logger.Loc.Empty),
+                                }) catch unreachable,
+                            }, Logger.Loc.Empty),
+                        }, Logger.Loc.Empty);
+                    };
+
+                    // Insert Promise.all at the beginning of the wrapper body
+                    stmts.all_stmts.insert(0, Stmt.alloc(S.SExpr, .{
+                        .value = promise_all_expr,
+                    }, Logger.Loc.Empty)) catch unreachable;
+                }
+
                 var inner_stmts = stmts.all_stmts.items;
 
                 // Hoist all top-level "var" and "function" declarations out of the closure

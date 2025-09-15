@@ -19,6 +19,9 @@ pub const LinkerContext = struct {
     /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
 
+    /// We may need to refer to Promise for Promise.all in async imports
+    unbound_promise_ref: Ref = Ref.None,
+
     options: LinkerOptions = .{},
 
     loop: EventLoop,
@@ -221,6 +224,9 @@ pub const LinkerContext = struct {
         if (this.options.output_format == .cjs) {
             this.unbound_module_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "module");
         }
+
+        // Generate unbound Promise ref for Promise.all usage
+        this.unbound_promise_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "Promise");
 
         if (this.options.output_format == .cjs or this.options.output_format == .iife) {
             const exports_kind = this.graph.ast.items(.exports_kind);
@@ -1035,11 +1041,15 @@ pub const LinkerContext = struct {
 
         all_stmts: std.ArrayList(Stmt),
 
+        // Collect async imports to generate Promise.all
+        async_imports: std.ArrayList(Expr),
+
         pub fn reset(this: *StmtList) void {
             this.inside_wrapper_prefix.clearRetainingCapacity();
             this.outside_wrapper_prefix.clearRetainingCapacity();
             this.inside_wrapper_suffix.clearRetainingCapacity();
             this.all_stmts.clearRetainingCapacity();
+            this.async_imports.clearRetainingCapacity();
         }
 
         pub fn deinit(this: *StmtList) void {
@@ -1047,6 +1057,7 @@ pub const LinkerContext = struct {
             this.outside_wrapper_prefix.deinit();
             this.inside_wrapper_suffix.deinit();
             this.all_stmts.deinit();
+            this.async_imports.deinit();
         }
 
         pub fn init(alloc: std.mem.Allocator) StmtList {
@@ -1055,6 +1066,7 @@ pub const LinkerContext = struct {
                 .outside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
                 .inside_wrapper_suffix = std.ArrayList(Stmt).init(alloc),
                 .all_stmts = std.ArrayList(Stmt).init(alloc),
+                .async_imports = std.ArrayList(Expr).init(alloc),
             };
         }
     };
@@ -1152,31 +1164,24 @@ pub const LinkerContext = struct {
                 }
 
                 // Replace the statement with a call to "init()"
-                const value: Expr = brk: {
-                    const default = Expr.init(E.Call, .{
-                        .target = Expr.initIdentifier(
-                            wrapper_ref,
-                            loc,
-                        ),
-                    }, loc);
+                const init_call = Expr.init(E.Call, .{
+                    .target = Expr.initIdentifier(
+                        wrapper_ref,
+                        loc,
+                    ),
+                }, loc);
 
-                    if (other_flags.is_async_or_has_async_dependency) {
-                        // This currently evaluates sibling dependencies in serial instead of in
-                        // parallel, which is incorrect. This should be changed to store a promise
-                        // and await all stored promises after all imports but before any code.
-                        break :brk Expr.init(E.Await, .{
-                            .value = default,
-                        }, loc);
-                    }
-
-                    break :brk default;
-                };
-
-                try stmts.inside_wrapper_prefix.append(
-                    Stmt.alloc(S.SExpr, .{
-                        .value = value,
-                    }, loc),
-                );
+                if (other_flags.is_async_or_has_async_dependency) {
+                    // Collect async imports to be awaited in parallel with Promise.all
+                    try stmts.async_imports.append(init_call);
+                } else {
+                    // Non-async imports can be called directly
+                    try stmts.inside_wrapper_prefix.append(
+                        Stmt.alloc(S.SExpr, .{
+                            .value = init_call,
+                        }, loc),
+                    );
+                }
             },
         }
 

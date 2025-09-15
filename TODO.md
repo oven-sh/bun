@@ -378,57 +378,46 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] vendor/elysia/test/validator/params.test.ts
   - probably test() inside test(). should be fixed in elysia unless we want to do the linked list test-in-test support
 
-## Regular:
+## Real
 
-- [x] test/js/bun/net/tcp-server.test.ts
+- [ ] test/js/bun/net/tcp-server.test.ts
+  - new flaky failure on windows
+  - gc(true) was supposed to fix this. unclear.
+
+## Uncategorized
+
+- [ ] test/js/bun/net/tcp-server.test.ts
 - [x] test/js/bun/test/describe2.test.ts
-- [x] test/js/sql/sql-mysql.test.ts
-- [ ] test/regression/issue/21311.test.ts
-- [x] test/regression/issue/08964/08964.test.ts
-- [x] test/regression/issue/19850/19850.test.ts
+- [ ] test/bundler/compile-windows-metadata.test.ts
+- [ ] test/js/sql/sql-mysql.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
-  - stacktrace slightly incorrect (it's including something that is irrelevant and not even in the trace?)
-- [x] test/bake/dev/ssg-pages-router.test.ts
-- [x] test/js/bun/http/bun-serve-file.test.ts
-- [ ] test/js/bun/spawn/spawn-pipe-leak.test.ts
-- [x] test/cli/inspect/BunFrontendDevServer.test.ts
-- [x] test/bake/dev/stress.test.ts
-- [x] test/js/node/http2/node-http2.test.js
-- [ ] test/js/web/fetch/abort-signal-leak.test.ts
-- [x] test/cli/test/bun-test.test.ts
+- [ ] test/js/bun/http/bun-serve-file.test.ts
+- [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
+- [ ] test/cli/inspect/BunFrontendDevServer.test.ts
+- [ ] test/bake/dev/stress.test.ts
+- [ ] test/js/node/http2/node-http2.test.js
+- [ ] vendor/elysia/test/validator/params.test.ts
 - [ ] test/js/bun/util/inspect-error.test.js
-  - stack traces different
-- [x] test/bake/dev-and-prod.test.ts
-- [x] test/bake/dev/esm.test.ts
-- [x] test/js/bun/util/bun-file.test.ts
-- [x] test/js/web/websocket/autobahn.test.ts
-- [x] test/js/bun/net/socket.test.ts
+- [ ] test/bake/dev/hot.test.ts
+- [ ] test/js/web/websocket/autobahn.test.ts
+- [ ] test/js/bun/net/socket.test.ts
 - [ ] test/js/junit-reporter/junit.test.js
-- [x] test/js/third_party/@duckdb/node-api/duckdb.test.ts
-- [x] test/js/node/test/parallel/test-child-process-fork-exec-path.js
-- [x] test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts
+- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
 - [ ] test/js/third_party/prisma/prisma.test.ts
 - [ ] test/cli/install/bun-install-registry.test.ts
-- [x] test/js/bun/s3/s3.test.ts
-- [x] test/cli/test/test-timeout-behavior.test.ts
-  - oh no. it's expecting timeouts to run while spawnSync runs. we need to start the timeout before calling the callback
-  - the change here is to specify the timeout when calling the callback rather than returning it out
-  - we now get bunTestTimeoutCalback in the sub-loop while executing the test, but we don't call auto_killer or attempt to
-    terminate. we need to do that.
-  - we currently call `this.globalThis.requestTermination();`
-  - need `globalThis.clearTerminationException()`, maybe on the catch for callback execution?
+- [ ] test/js/web/timers/setInterval.test.js
+- [ ] test/js/node/test/parallel/test-stdin-pipe-large.js
+- [ ] test/napi/napi.test.ts
+- [ ] test/js/bun/s3/s3.test.ts
+- [ ] test/cli/install/bun-install.test.ts
 - [ ] test/js/bun/test/stack.test.ts
-  - error stacktrace different
+- [ ] test/js/web/fetch/fetch.stream.test.ts
+- [ ] test/bundler/bundler_edgecase.test.ts
+- [ ] test/js/bun/http/serve.test.ts
 - [ ] test/js/bun/shell/leak.test.ts
-- [x] test/js/node/watch/fs.watchFile.test.ts
-- [x] test/regression/issue/09041.test.ts
+- [ ] test/regression/issue/09041.test.ts
+- [ ] test/js/web/fetch/fetch.test.ts
 - [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
-
-## Real:
-
-## Flaky failure:
-
-## Flaky warning:
 
 # Add features:
 

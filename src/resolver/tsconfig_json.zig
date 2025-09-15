@@ -82,7 +82,6 @@ pub const TSConfigJSON = struct {
             out.development = this.jsx.development;
         }
 
-
         return out;
     }
 

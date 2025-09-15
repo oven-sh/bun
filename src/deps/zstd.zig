@@ -136,13 +136,22 @@ pub const ZstdReaderArrayList = struct {
         if (this.state == .End or this.state == .Error) return;
 
         while (this.state == .Uninitialized or this.state == .Inflating) {
+            const next_in = this.input[this.total_in..];
+
+            // If we have no input to process, we're done for now
+            if (next_in.len == 0) {
+                if (is_done) {
+                    // No more input and stream is done, we can end
+                    this.end();
+                }
+                return;
+            }
+
             var unused = this.list.unusedCapacitySlice();
             if (unused.len < 4096) {
                 try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
                 unused = this.list.unusedCapacitySlice();
             }
-
-            const next_in = this.input[this.total_in..];
             var in_buf: c.ZSTD_inBuffer = .{
                 .src = if (next_in.len > 0) next_in.ptr else null,
                 .size = next_in.len,
@@ -175,9 +184,10 @@ pub const ZstdReaderArrayList = struct {
                         this.end();
                         return;
                     }
-                    // More data might come later, signal we need more input
+                    // Frame is complete and no more input available right now.
+                    // Just return normally - the caller can provide more data later if they have it.
                     this.state = .Inflating;
-                    return error.ShortRead;
+                    return;
                 }
                 // More input available, reset for the next frame
                 // ZSTD_initDStream() safely resets the stream state without needing cleanup
@@ -187,6 +197,12 @@ pub const ZstdReaderArrayList = struct {
             }
 
             if (bytes_read == next_in.len) {
+                // We've consumed all available input
+                if (bytes_written > 0) {
+                    // We wrote some output, continue to see if we need more output space
+                    continue;
+                }
+
                 this.state = .Inflating;
                 if (is_done) {
                     // Stream is truncated - we're at EOF but need more data

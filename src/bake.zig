@@ -541,7 +541,17 @@ pub const Framework = struct {
             had_errors.* = true;
             return;
         };
-        path.* = result.path().?.text;
+        const resolved_path = result.path() orelse {
+            bun.Output.err(error.ModuleNotFound, "Resolution returned null path for '{s}' ({s})", .{ path.*, desc });
+            had_errors.* = true;
+            return;
+        };
+        if (resolved_path.text.len == 0) {
+            bun.Output.err(error.ModuleNotFound, "Resolution returned empty path for '{s}' ({s})", .{ path.*, desc });
+            had_errors.* = true;
+            return;
+        }
+        path.* = resolved_path.text;
     }
 
     inline fn resolveOrNull(r: *bun.resolver.Resolver, path: []const u8) ?[]const u8 {

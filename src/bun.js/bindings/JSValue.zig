@@ -389,7 +389,6 @@ pub const JSValue = enum(i64) {
 
         return ZigType.fromJSDirect(value);
     }
-
     pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (value.isEmptyOrUndefinedOrNull())
             return null;
@@ -429,6 +428,7 @@ pub const JSValue = enum(i64) {
 
             return ZigType.fromJS(value);
         }
+        return null;
     }
 
     extern fn JSC__JSValue__dateInstanceFromNullTerminatedString(*JSGlobalObject, [*:0]const u8) JSValue;
@@ -2141,7 +2141,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn uncheckedPtrCast(value: JSValue, comptime T: type) *T {
-        return @alignCast(@ptrCast(value.asEncoded().asPtr));
+        return @ptrCast(@alignCast(value.asEncoded().asPtr));
     }
 
     /// For any callback JSValue created in JS that you will not call *immediately*, you must wrap it

@@ -88,6 +88,7 @@ src/bun.js/api/HashObject.zig
 src/bun.js/api/html_rewriter.zig
 src/bun.js/api/JSBundler.zig
 src/bun.js/api/JSTranspiler.zig
+src/bun.js/api/queue.zig
 src/bun.js/api/server.zig
 src/bun.js/api/server/AnyRequestContext.zig
 src/bun.js/api/server/FileRoute.zig
@@ -684,6 +685,9 @@ src/ptr/CowSlice.zig
 src/ptr/ref_count.zig
 src/ptr/tagged_pointer.zig
 src/ptr/weak_ptr.zig
+src/queue/queue.zig
+src/queue/storage/memory.zig
+src/queue/storage/sqlite.zig
 src/renamer.zig
 src/resolver/data_url.zig
 src/resolver/dir_info.zig

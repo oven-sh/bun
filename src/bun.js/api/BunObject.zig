@@ -79,6 +79,7 @@ pub const BunObject = struct {
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
     pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
     pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
+    pub const Queue = toJSLazyPropertyCallback(Bun.getQueueConstructor);
     // --- Lazy property callbacks ---
 
     // --- Getters ---
@@ -147,6 +148,7 @@ pub const BunObject = struct {
         @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
         @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
+        @export(&BunObject.Queue, .{ .name = lazyPropertyCallbackName("Queue") });
         // --- Lazy property callbacks ---
 
         // --- Callbacks ---
@@ -1298,6 +1300,11 @@ pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
+
+pub fn getQueueConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return jsc.API.Queue.js.getConstructor(globalThis);
+}
+
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.WebCore.S3Client.js.getConstructor(globalThis);
 }

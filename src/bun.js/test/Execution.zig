@@ -466,7 +466,13 @@ fn onGroupStarted(_: *Execution, group: *ConcurrentGroup, globalThis: *jsc.JSGlo
 }
 fn onGroupCompleted(_: *Execution, group: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
     const vm = globalThis.bunVM();
-    if (group.auto_killer) _ = vm.auto_killer.kill();
+    if (group.auto_killer) {
+        const kill_count = vm.auto_killer.kill();
+        if (kill_count.processes > 0) {
+            bun.Output.prettyErrorln("<d>killed {d} dangling process{s}<r>", .{ kill_count.processes, if (kill_count.processes != 1) "es" else "" });
+            bun.Output.flush();
+        }
+    }
     vm.auto_killer.disable();
 }
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {

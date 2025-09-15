@@ -368,6 +368,11 @@ $> bun-after test ./beforeall-ordering.test.ts
   - ExecutionSequence: first: \*ExecutionEntry, current: \*ExecutionEntry
   - ExecutionEntry: next_orig: \*ExecutionEntry, next: \*ExecutionEntry (on reset, set it back to next_orig)
   - or use indices?
+- [ ] test/js/bun/http/serve.test.ts
+  - unfortunately, afterAll is supported inside of tests concurrently and causes the block to execute at the end
+    - if we implement it, we would want it to execute after the test?
+    - jest errors "Hooks cannot be defined inside tests. Hook of type "afterAll" is nested within "jkl"."
+    - vitest silently ignores the hook
 
 ## Regular:
 
@@ -402,11 +407,13 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] test/cli/install/bun-install-registry.test.ts
 - [ ] test/js/bun/s3/s3.test.ts
 - [ ] test/cli/test/test-timeout-behavior.test.ts
+  - oh no. it's expecting timeouts to run while spawnSync runs. we need to start the timeout before calling the callback
+  - the change here is to specify the timeout when calling the callback rather than returning it out
 - [ ] test/js/bun/test/stack.test.ts
-- [ ] test/js/bun/http/serve.test.ts
+  - error stacktrace different
 - [ ] test/js/bun/shell/leak.test.ts
-- [ ] test/js/node/watch/fs.watchFile.test.ts
-- [ ] test/regression/issue/09041.test.ts
+- [x] test/js/node/watch/fs.watchFile.test.ts
+- [x] test/regression/issue/09041.test.ts
 - [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
 
 ## Real:

@@ -104,15 +104,15 @@ declare module "bun:app" {
      */
     staticRouters?: Array<StaticRouter> | undefined;
 
-    /**
-     * Add extra modules. This can be used to, for example, replace `react` with
-     * a different resolution.
-     *
-     * Internally, Bun's `react-server-components` framework uses this to embed
-     * its files in the `bun` binary.
-     * @default {}
-     */
-    builtInModules?: BuiltInModule[] | undefined;
+    // /**
+    //  * Add extra modules. This can be used to, for example, replace `react` with
+    //  * a different resolution.
+    //  *
+    //  * Internally, Bun's `react-server-components` framework uses this to embed
+    //  * its files in the `bun` binary.
+    //  * @default {}
+    //  */
+    // builtInModules?: BuiltInModule[] | undefined;
 
     /**
      * Bun offers integration for React's Server Components with an interface
@@ -263,11 +263,13 @@ declare module "bun:app" {
      * Relative to project root. For example: `src/pages`.
      */
     root: string;
+
     /**
      * The prefix to serve this directory on.
      * @default "/"
      */
     prefix?: string | undefined;
+
     /**
      * This file is the entrypoint of the server application. This module must
      * `export default` a fetch function, which takes a request and the
@@ -278,14 +280,16 @@ declare module "bun:app" {
      *
      *     import { serverManifest } from 'bun:app/server'
      */
-    serverEntryPoint: ImportSource<ServerEntryPoint>;
+    serverEntryPoint: string;
 
     /**
-     * This file is the true entrypoint of the client application. If null, a
-     * client will not be bundled, and the route will not receive bundling for
-     * client-side interactivity.
+     * This file is the true entrypoint of the client application. If null,
+     * undefined, or unspecified, a client will not be bundled, and the route
+     * will not receive bundling for client-side interactivity.
+     *
+     * @default undefined
      */
-    clientEntryPoint?: ImportSource<ClientEntryPoint> | undefined;
+    clientEntryPoint?: string | null | undefined;
 
     /**
      * Do not traverse into directories and files that start with an `_`.  Do
@@ -298,13 +302,13 @@ declare module "bun:app" {
     /**
      * @default ["node_modules", ".git"]
      */
-    ignoreDirs?: string[];
+    ignoreDirs?: string[] | undefined;
 
     /**
      * Extensions to match on. '*' - any extension
      * @default (set of all valid JavaScript/TypeScript extensions)
      */
-    extensions?: string[] | "*";
+    extensions?: string[] | "*" | undefined;
 
     /**
      * 'nextjs-app' builds routes out of directories with `page.tsx` and

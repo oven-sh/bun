@@ -839,15 +839,17 @@ export function randomCoinFlip(): boolean {
 /**
  * Utility for creating a counter that can be awaited until it reaches a target value.
  */
-export function awaitableCounter() {
-  let activeResolvers: [number, (value: number) => void][] = [];
+export function awaitableCounter(timeoutMs: number = 1000) {
+  let activeResolvers: [number, NodeJS.Timeout, (value: number) => void][] = [];
   let currentCount = 0;
 
   return {
     increment: () => {
       currentCount++;
 
-      for (const [value, resolve] of activeResolvers) {
+      for (const [value, alarm, resolve] of activeResolvers) {
+        alarm.close();
+
         if (currentCount >= value) {
           resolve(currentCount);
         }
@@ -858,13 +860,17 @@ export function awaitableCounter() {
     },
     count: () => currentCount,
 
-    untilValue: (value: number) => new Promise<number>((resolve) => {
+    untilValue: (value: number) => new Promise<number>((resolve, reject) => {
       if (currentCount >= value) {
         resolve(currentCount);
         return;
       }
 
-      activeResolvers.push([value, resolve]);
+      const alarm = setTimeout(() => {
+        reject(new Error(`Timeout waiting for counter to reach ${value}, current is ${currentCount}.`));
+      }, timeoutMs);
+
+      activeResolvers.push([value, alarm, resolve]);
     }),
   };
 };

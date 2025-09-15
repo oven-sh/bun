@@ -58,20 +58,19 @@ pub const SubscriptionCtx = struct {
     ) !?usize {
         const map = this.subscriptionCallbackMap();
 
-        const existing = try map.get(globalObject, channelName);
-
-        if (existing == null) {
-            // Could not find the channel, nothing to remove.
-            return null;
-        }
-
-        if (existing.?.isUndefinedOrNull()) {
+        const maybe_existing = try map.get(globalObject, channelName);
+        const existing = maybe_existing orelse return null;
+        if (existing.isUndefinedOrNull()) {
             // Nothing to remove.
             return null;
         }
 
         // Existing is guaranteed to be an array of callbacks.
-        bun.assert(existing.?.isArray());
+        // This check is necessary because crossing between Zig and C++ is necessary because Zig doesn't know that C++
+        // is side-effect-free.
+        if (comptime bun.Environment.isDebug) {
+            bun.assert(existing.isArray());
+        }
 
         // TODO(markovejnovic): I can't find a better way to do this... I generate a new array,
         // filtering out the callback we want to remove. This is woefully inefficient for large
@@ -80,7 +79,7 @@ pub const SubscriptionCtx = struct {
         // Perhaps there is an avenue to build a generic iterator pattern? @taylor.fish and I have
         // briefly expressed a desire for this, and I promised her I would look into it, but at
         // this moment have no proposal.
-        var array_it = try existing.?.arrayIterator(globalObject);
+        var array_it = try existing.arrayIterator(globalObject);
         const updated_array = try jsc.JSArray.createEmpty(globalObject, 0);
         while (try array_it.next()) |iter| {
             if (iter == callback)
@@ -94,7 +93,8 @@ pub const SubscriptionCtx = struct {
         _ = map.remove(globalObject, channelName);
 
         // Only populate the map if we have remaining callbacks for this channel.
-        const new_length = (updated_array.arrayIterator(globalObject) catch unreachable).len;
+        const new_length = updated_array.getLength(globalObject) catch unreachable;
+
         if (new_length != 0) {
             map.set(globalObject, channelName, updated_array);
         }
@@ -116,6 +116,8 @@ pub const SubscriptionCtx = struct {
         var is_new_channel = false;
         if (try map.get(globalObject, channelName)) |existing_handler_arr| {
             debug("Adding a new receive handler.", .{});
+            // Note that we need to cover this case because maps in JSC can return undefined when the key has never been
+            // set.
             if (existing_handler_arr.isUndefined()) {
                 // Create a new array if the existing_handler_arr is undefined/null
                 handlers_array = try jsc.JSArray.createEmpty(globalObject, 0);
@@ -137,10 +139,6 @@ pub const SubscriptionCtx = struct {
         map.set(globalObject, channelName, handlers_array);
     }
 
-    pub fn registerCallback(this: *Self, globalObject: *jsc.JSGlobalObject, eventString: JSValue, callback: JSValue) bun.JSError!void {
-        this.subscriptionCallbackMap().set(globalObject, eventString, callback);
-    }
-
     pub fn getCallbacks(this: *Self, globalObject: *jsc.JSGlobalObject, channelName: JSValue) bun.JSError!?JSValue {
         const result = try this.subscriptionCallbackMap().get(globalObject, channelName);
         if (result) |r| {
@@ -154,7 +152,7 @@ pub const SubscriptionCtx = struct {
 
     /// Invoke callbacks for a channel with the given arguments
     /// Handles both single callbacks and arrays of callbacks
-    pub fn invokeCallback(
+    pub fn invokeCallbacks(
         this: *Self,
         globalObject: *jsc.JSGlobalObject,
         channelName: JSValue,
@@ -165,25 +163,29 @@ pub const SubscriptionCtx = struct {
             return;
         };
 
+        if (comptime bun.Environment.isDebug) {
+            bun.assert(callbacks.isArray());
+        }
+
+        const vm = jsc.VirtualMachine.get();
+        const event_loop = vm.eventLoop();
+        event_loop.enter();
+        defer event_loop.exit();
+
         // If callbacks is an array, iterate and call each one
-        if (callbacks.isArray()) {
-            var iter = try callbacks.arrayIterator(globalObject);
-            while (try iter.next()) |callback| {
-                if (callback.isCallable()) {
-                    _ = callback.call(globalObject, .js_undefined, args) catch |e| {
-                        return e;
-                    };
-                }
+        var iter = try callbacks.arrayIterator(globalObject);
+        while (try iter.next()) |callback| {
+            if (comptime bun.Environment.isDebug) {
+                bun.assert(callback.isCallable());
             }
-        } else if (callbacks.isCallable()) {
-            _ = callbacks.call(globalObject, .js_undefined, args) catch |e| {
-                return e;
-            };
+
+            event_loop.runCallback(callback, globalObject, .js_undefined, args);
+            this._parent.updatePollRef();
         }
     }
 
-    /// Return whether the subscription context is ready to be disposed.
-    pub fn isDisposable(this: *Self, global_object: *jsc.JSGlobalObject) bool {
+    /// Return whether the subscription context is ready to be deleted by the JS garbage collector.
+    pub fn isDeletable(this: *Self, global_object: *jsc.JSGlobalObject) bool {
         // The user may request .close(), in which case we can dispose of the subscription object. If that is the case,
         // finalized will be true. Otherwise, we should treat the object as disposable if there are no active
         // subscriptions.
@@ -191,7 +193,11 @@ pub const SubscriptionCtx = struct {
     }
 
     pub fn deinit(this: *Self) void {
-        bun.debugAssert(this.isDisposable(this._parent.globalObject));
+        // This check is necessary because crossing between Zig and C++ is necessary because Zig doesn't know that C++
+        // is side-effect-free.
+        if (comptime bun.Environment.isDebug) {
+            bun.debugAssert(this.isDeletable(this._parent.globalObject));
+        }
     }
 };
 
@@ -462,6 +468,7 @@ pub const JSValkeyClient = struct {
             this.client.flags.auto_pipelining = ctx.original_enable_auto_pipelining;
 
             ctx.deinit();
+            this._subscription_ctx = null;
         }
 
         this._subscription_ctx = null;
@@ -514,6 +521,7 @@ pub const JSValkeyClient = struct {
             this.poll_ref.ref(this.client.vm);
 
             this.connect() catch |err| {
+                std.debug.print("unrefing", .{});
                 this.poll_ref.unref(this.client.vm);
                 this.client.flags.needs_to_open_socket = true;
                 const err_value = globalObject.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, " {s} connecting to Valkey", .{@errorName(err)}).toJS();
@@ -846,13 +854,9 @@ pub const JSValkeyClient = struct {
         });
 
         // Invoke callbacks for this channel with message and channel as arguments
-        subs_ctx.invokeCallback(
-            globalObject,
-            channel_value,
-            &[_]JSValue{ message_value, channel_value },
-        ) catch |e| {
-            debug("Failed to invoke callbacks. Error: {}", .{e});
-            this.failWithJSValue(globalObject.takeException(e));
+        subs_ctx.invokeCallbacks(globalObject, channel_value, &[_]JSValue{ message_value, channel_value }) catch {
+            debug("Failed to invoke callbacks for channel", .{});
+            return;
         };
 
         this.client.onWritable();
@@ -946,6 +950,7 @@ pub const JSValkeyClient = struct {
         this.client.close();
         if (this._subscription_ctx) |*ctx| {
             ctx.deinit();
+            this._subscription_ctx = null;
         }
         this.deref();
     }
@@ -1060,23 +1065,30 @@ pub const JSValkeyClient = struct {
 
     /// Keep the event loop alive, or don't keep it alive
     pub fn updatePollRef(this: *JSValkeyClient) void {
-        const pending_commands = this.client.hasAnyPendingCommands();
-        const subs_disposable = if (this._subscription_ctx) |*ctx| ctx.isDisposable(this.globalObject) else false;
-        const has_activity = pending_commands or !subs_disposable;
+        const has_pending_commands = this.client.hasAnyPendingCommands();
+        std.debug.print("updatePollRef hasPendingCommands={}\n", .{ has_pending_commands });
+        const subs_deletable = if (this._subscription_ctx) |*ctx| ctx.isDeletable(this.globalObject) else false;
+        std.debug.print("updatePollRef: subs_deletable={}\n", .{subs_deletable});
+        const has_activity = has_pending_commands or !subs_deletable;
+        std.debug.print("updatePollRef: has_activity={}\n", .{has_activity});
 
         if (!has_activity and this.client.status == .connected) {
+            std.debug.print("unrefing\n", .{});
             this.poll_ref.unref(this.client.vm);
             // If we don't have any pending commands and we're connected, we don't need to keep the object alive.
             if (this.this_value.tryGet()) |value| {
                 this.this_value.setWeak(value);
             }
         } else if (has_activity) {
+            std.debug.print("refing\n", .{});
             this.poll_ref.ref(this.client.vm);
             // If we have pending commands, we need to keep the object alive.
             if (this.this_value == .weak) {
                 this.this_value.upgrade(this.globalObject);
             }
         }
+
+        std.debug.print("updatePollRef, this.poll_ref={}\n", .{this.poll_ref.status});
     }
 
     pub const jsSend = fns.jsSend;
@@ -1202,6 +1214,8 @@ fn SocketHandler(comptime ssl: bool) type {
         pub const onHandshake = if (ssl) onHandshake_ else null;
 
         pub fn onClose(this: *JSValkeyClient, _: SocketType, _: i32, _: ?*anyopaque) void {
+            debug("Socket closed.", .{});
+
             // Ensure the socket pointer is updated.
             this.client.socket = .{ .SocketTCP = .detached };
 
@@ -1209,6 +1223,8 @@ fn SocketHandler(comptime ssl: bool) type {
         }
 
         pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {
+            debug("Socket ended.", .{});
+
             // Ensure the socket pointer is updated before closing
             this.client.socket = _socket(socket);
 
@@ -1224,6 +1240,8 @@ fn SocketHandler(comptime ssl: bool) type {
         }
 
         pub fn onTimeout(this: *JSValkeyClient, socket: SocketType) void {
+            debug("Socket timed out.", .{});
+
             this.client.socket = _socket(socket);
             // Handle socket timeout
         }
@@ -1231,6 +1249,8 @@ fn SocketHandler(comptime ssl: bool) type {
         pub fn onData(this: *JSValkeyClient, socket: SocketType, data: []const u8) void {
             // Ensure the socket pointer is updated.
             this.client.socket = _socket(socket);
+
+            std.debug.print("Received response data: {s}\n", .{data});
 
             this.ref();
             defer this.deref();

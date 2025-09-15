@@ -118,8 +118,8 @@ pub const Address = union(enum) {
 
     pub fn hostname(this: Address) []const u8 {
         return switch (this) {
-            .unix => |unix_addr| return unix_addr,
-            .host => |h| return h.host,
+            .unix => |unix_addr| unix_addr,
+            .host => |h| h.host,
         };
     }
 
@@ -492,6 +492,8 @@ pub const ValkeyClient = struct {
     }
 
     pub fn sendNextCommand(this: *ValkeyClient) void {
+        std.debug.print("sendNextCommand called, write_buffer.len={d}\n", .{this.write_buffer.len()});
+        defer std.debug.print("sendNextCommand complete, write_buffer.len={d}\n", .{this.write_buffer.len()});
         if (this.write_buffer.remaining().len == 0 and this.connectionReady()) {
             if (this.queue.readableLength() > 0) {
                 // Check the command at the head of the queue
@@ -524,8 +526,10 @@ pub const ValkeyClient = struct {
     }
 
     /// Process data received from socket
+    ///
+    /// Caller refs / derefs.
     pub fn onData(this: *ValkeyClient, data: []const u8) void {
-        // Caller refs / derefs.
+        defer std.debug.print("onData complete, read_buffer.len={d}\n", .{this.read_buffer.len()});
 
         // Path 1: Buffer already has data, append and process from buffer
         if (this.read_buffer.remaining().len > 0) {
@@ -533,6 +537,7 @@ pub const ValkeyClient = struct {
 
             // Process as many complete messages from the buffer as possible
             while (true) {
+                std.debug.print("Stuck in a loop. read_buffer.len={d}\n", .{this.read_buffer.len()});
                 const remaining_buffer = this.read_buffer.remaining();
                 if (remaining_buffer.len == 0) {
                     break; // Buffer processed completely
@@ -580,6 +585,7 @@ pub const ValkeyClient = struct {
         // Path 2: Buffer is empty, try processing directly from stack 'data'
         var current_data_slice = data; // Create a mutable view of the incoming data
         while (current_data_slice.len > 0) {
+            std.debug.print("Processing stack data, current_data_slice.len={d}\n", .{current_data_slice.len});
             var reader = protocol.ValkeyReader.init(current_data_slice);
             const before_read_pos = reader.pos;
 
@@ -603,6 +609,7 @@ pub const ValkeyClient = struct {
             defer value.deinit(this.allocator);
 
             const bytes_consumed = reader.pos - before_read_pos;
+            std.debug.print("Parser consumed {d} bytes from stack data\n", .{bytes_consumed});
             if (bytes_consumed == 0) {
                 // This case should ideally not happen if readValue succeeded and slice wasn't empty
                 this.fail("Parser consumed 0 bytes unexpectedly (stack path)", error.InvalidResponse);
@@ -614,6 +621,7 @@ pub const ValkeyClient = struct {
 
             // Handle the successfully parsed response
             var value_to_handle = value; // Use temp var for defer
+            std.debug.print("Parsed a value from stack data, bytes_consumed={d}, remaining_data.len={d}\n", .{bytes_consumed, current_data_slice.len});
             this.handleResponse(&value_to_handle) catch |err| {
                 this.fail("Failed to handle response (stack path)", err);
                 return;
@@ -629,6 +637,8 @@ pub const ValkeyClient = struct {
 
             // Loop continues with the remainder of current_data_slice
         }
+
+        std.debug.print("Finished processing stack data, all {d} bytes consumed\n", .{data.len});
 
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
@@ -977,11 +987,13 @@ pub const ValkeyClient = struct {
             // Optimization: avoid cloning the data an extra time.
             defer this.allocator.free(data);
 
+            std.debug.print("Draining command directly to socket: {s}\n", .{data});
             const wrote = this.socket.write(data);
             const unwritten = data[@intCast(@max(wrote, 0))..];
 
             if (unwritten.len > 0) {
                 // Handle incomplete write.
+                std.debug.print("Partial write of {d} bytes, buffering remaining {d} bytes\n", .{wrote, unwritten.len});
                 bun.handleOom(this.write_buffer.write(this.allocator, unwritten));
             }
 
@@ -989,6 +1001,7 @@ pub const ValkeyClient = struct {
         }
 
         // Write the pre-serialized data directly to the output buffer
+        std.debug.print("Draining command to write buffer: {s}\n", .{data});
         _ = bun.handleOom(this.write(data));
         bun.default_allocator.free(data);
 

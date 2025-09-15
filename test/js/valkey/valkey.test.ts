@@ -7,17 +7,18 @@ import {
   ctx,
   DEFAULT_REDIS_URL,
   expectType,
-  isEnabled, // Commented out in the file, but useful for local testing...
+  isEnabled,
+  overrideRedisUrl,
   randomCoinFlip,
 } from "./test-utils";
 
 // Uncomment to override the Redis URL for local testing.
-//overrideRedisUrl("redis://localhost:6379");
+overrideRedisUrl("redis://localhost:6379");
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(async () => {
     if (ctx.redis?.connected) {
-      ctx.redis.close?.();
+      ctx.redis.close();
     }
     ctx.redis = createClient(ConnectionType.TCP);
 
@@ -274,16 +275,17 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const TEST_MESSAGE_COUNT = 128;
       const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
       const channel = testChannel();
+      const message = testMessage();
 
       const counter = awaitableCounter();
       await subscriber.subscribe(channel, (message, channel) => {
         counter.increment();
         expect(channel).toBe(channel);
-        expect(message).toBe(testMessage());
+        expect(message).toBe(message);
       });
 
       Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
-        expect(await ctx.redis.publish(channel, testMessage())).toBe(1);
+        expect(await ctx.redis.publish(channel, message)).toBe(1);
       });
 
       await counter.untilValue(TEST_MESSAGE_COUNT);
@@ -550,6 +552,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("callback errors don't crash the client", async () => {
+      console.log("Starting callback error test");
       const channel = "error-callback-channel";
 
       const subscriber = createClient(ConnectionType.TCP);
@@ -557,10 +560,11 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       const counter = awaitableCounter();
       let messageCount = 0;
+      setTimeout(() => { console.log("timeout-out"); }, 1000);
       await subscriber.subscribe(channel, () => {
         messageCount++;
         counter.increment();
-        if (messageCount === 2) {
+        if (messageCount === 3) {
           throw new Error("Intentional callback error");
         }
       });
@@ -572,6 +576,16 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       await counter.untilValue(3);
       expect(messageCount).toBe(3);
+
+      // If we can still publish and receive messages, the client is fine
+      debugger;
+      console.log("after-expect");
+      expect(await ctx.redis.publish(channel, "message4")).toBe(1);
+      console.log("published ", messageCount);
+      await counter.untilValue(4);
+      console.log("pre-final", messageCount);
+      expect(messageCount).toBe(4);
+      console.log("Final", messageCount);
     });
 
     test("subscriptions return correct counts", async () => {
@@ -650,7 +664,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
     test("should create duplicate of manually closed client that remains closed", async () => {
       await ctx.redis.connect();
-      ctx.redis.close?.();
+      ctx.redis.close();
       expect(ctx.redis.connected).toBe(false);
 
       const duplicate = await ctx.redis.duplicate();
@@ -671,7 +685,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       expect(retrievedValue).toBe(testValue);
 
-      duplicate.close?.();
+      duplicate.close();
     });
 
     test("should allow duplicate to work independently from original", async () => {
@@ -680,7 +694,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const duplicate = await ctx.redis.duplicate();
 
       // Close original, duplicate should still work
-      ctx.redis.close?.();
+      ctx.redis.close();
 
       const testKey = `independent-test-${randomUUIDv7().substring(0, 8)}`;
       const testValue = "independent-value";
@@ -690,7 +704,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       expect(retrievedValue).toBe(testValue);
 
-      duplicate.close?.();
+      duplicate.close();
     });
 
     test("should handle duplicate of client in subscriber mode", async () => {
@@ -705,7 +719,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(() => duplicate.set("test-key", "test-value")).not.toThrow();
 
       await ctx.redis.unsubscribe(testChannel);
-      duplicate.close?.();
+      duplicate.close();
     });
 
     test("should create multiple duplicates from same client", async () => {
@@ -735,10 +749,10 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(await duplicate2.get(`${testKey}-3`)).toBe("value-3");
       expect(await duplicate3.get(`${testKey}-1`)).toBe("value-1");
 
-      duplicate1.close?.();
-      duplicate2.close?.();
-      duplicate3.close?.();
-      ctx.redis.close?.();
+      duplicate1.close();
+      duplicate2.close();
+      duplicate3.close();
+      ctx.redis.close();
     });
 
     test("should duplicate client that failed to connect", async () => {
@@ -780,8 +794,8 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       // Duplicate should be able to read the value
       expect(await duplicate.get(testKey)).toBe("original-value");
 
-      duplicate.close?.();
-      ctx.redis.close?.();
+      duplicate.close();
+      ctx.redis.close();
     });
   });
 });

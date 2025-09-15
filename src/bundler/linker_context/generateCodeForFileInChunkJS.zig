@@ -671,7 +671,7 @@ pub fn generateCodeForFileInChunkJS(
         out_stmts = stmts.all_stmts.items;
     }
 
-    if (stmts.all_stmts.items.len == 0) {
+    if (out_stmts.len == 0) {
         return .{
             .result = .{
                 .code = "",
@@ -684,7 +684,7 @@ pub fn generateCodeForFileInChunkJS(
         r,
         allocator,
         writer,
-        stmts.all_stmts.items,
+        out_stmts,
         &ast,
         flags,
         toESMRef,

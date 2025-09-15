@@ -309,75 +309,86 @@ pub const PackageManagerCommand = struct {
             const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
-            Output.flush();
-            Output.disableBuffering();
             const lockfile = load_lockfile.ok.lockfile;
-            var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
 
-            var max_depth: usize = 0;
+            // Determine max depth for traversal
+            const max_display_depth = if (pm.options.depth) |d| d else std.math.maxInt(usize);
 
-            var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
-            defer directories.deinit();
-            while (iterator.next(null)) |node_modules| {
-                const path_len = node_modules.relative_path.len;
-                const path = try ctx.allocator.alloc(u8, path_len + 1);
-                bun.copy(u8, path, node_modules.relative_path);
-                path[path_len] = 0;
-
-                const dependencies = try ctx.allocator.alloc(DependencyID, node_modules.dependencies.len);
-                bun.copy(DependencyID, dependencies, node_modules.dependencies);
-
-                if (max_depth < node_modules.depth + 1) max_depth = node_modules.depth + 1;
-
-                try directories.append(.{
-                    .relative_path = path[0..path_len :0],
-                    .dependencies = dependencies,
-                    .tree_id = node_modules.tree_id,
-                    .depth = node_modules.depth,
-                });
-            }
-
-            const first_directory = directories.orderedRemove(0);
-
-            var more_packages = try ctx.allocator.alloc(bool, max_depth);
-            @memset(more_packages, false);
-            if (first_directory.dependencies.len > 1) more_packages[0] = true;
-
-            if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
-                try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
+            if (pm.options.json_output) {
+                // JSON output
+                try printJsonDependencyTree(ctx, pm, lockfile, max_display_depth);
             } else {
-                var cwd_buf: bun.PathBuffer = undefined;
-                const path = bun.getcwd(&cwd_buf) catch {
-                    Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
-                    Global.exit(1);
-                };
-                const dependencies = lockfile.buffers.dependencies.items;
-                const slice = lockfile.packages.slice();
-                const resolutions = slice.items(.resolution);
-                const root_deps = slice.items(.dependencies)[0];
+                // Regular tree output
+                Output.flush();
+                Output.disableBuffering();
 
-                Output.println("{s} node_modules ({d})", .{ path, lockfile.buffers.hoisted_dependencies.items.len });
-                const string_bytes = lockfile.buffers.string_bytes.items;
-                const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
-                defer ctx.allocator.free(sorted_dependencies);
-                for (sorted_dependencies, 0..) |*dep, i| {
-                    dep.* = @as(DependencyID, @truncate(root_deps.off + i));
+                var iterator = Lockfile.Tree.Iterator(.node_modules).init(lockfile);
+
+                var max_depth: usize = 0;
+
+                var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
+                defer directories.deinit();
+                while (iterator.next(null)) |node_modules| {
+                    const path_len = node_modules.relative_path.len;
+                    const path = try ctx.allocator.alloc(u8, path_len + 1);
+                    bun.copy(u8, path, node_modules.relative_path);
+                    path[path_len] = 0;
+
+                    const dependencies = try ctx.allocator.alloc(DependencyID, node_modules.dependencies.len);
+                    bun.copy(DependencyID, dependencies, node_modules.dependencies);
+
+                    if (max_depth < node_modules.depth + 1) max_depth = node_modules.depth + 1;
+
+                    try directories.append(.{
+                        .relative_path = path[0..path_len :0],
+                        .dependencies = dependencies,
+                        .tree_id = node_modules.tree_id,
+                        .depth = node_modules.depth,
+                    });
                 }
-                std.sort.pdq(DependencyID, sorted_dependencies, ByName{
-                    .dependencies = dependencies,
-                    .buf = string_bytes,
-                }, ByName.isLessThan);
 
-                for (sorted_dependencies, 0..) |dependency_id, index| {
-                    const package_id = lockfile.buffers.resolutions.items[dependency_id];
-                    if (package_id >= lockfile.packages.len) continue;
-                    const name = dependencies[dependency_id].name.slice(string_bytes);
-                    const resolution = resolutions[package_id].fmt(string_bytes, .auto);
+                const first_directory = directories.orderedRemove(0);
 
-                    if (index < sorted_dependencies.len - 1) {
-                        Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
-                    } else {
-                        Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                var more_packages = try ctx.allocator.alloc(bool, max_depth);
+                @memset(more_packages, false);
+                if (first_directory.dependencies.len > 1) more_packages[0] = true;
+
+                if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
+                    try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages, max_display_depth);
+                } else {
+                    var cwd_buf: bun.PathBuffer = undefined;
+                    const path = bun.getcwd(&cwd_buf) catch {
+                        Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
+                        Global.exit(1);
+                    };
+                    const dependencies = lockfile.buffers.dependencies.items;
+                    const slice = lockfile.packages.slice();
+                    const resolutions = slice.items(.resolution);
+                    const root_deps = slice.items(.dependencies)[0];
+
+                    Output.println("{s} node_modules ({d})", .{ path, lockfile.buffers.hoisted_dependencies.items.len });
+                    const string_bytes = lockfile.buffers.string_bytes.items;
+                    const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
+                    defer ctx.allocator.free(sorted_dependencies);
+                    for (sorted_dependencies, 0..) |*dep, i| {
+                        dep.* = @as(DependencyID, @truncate(root_deps.off + i));
+                    }
+                    std.sort.pdq(DependencyID, sorted_dependencies, ByName{
+                        .dependencies = dependencies,
+                        .buf = string_bytes,
+                    }, ByName.isLessThan);
+
+                    for (sorted_dependencies, 0..) |dependency_id, index| {
+                        const package_id = lockfile.buffers.resolutions.items[dependency_id];
+                        if (package_id >= lockfile.packages.len) continue;
+                        const name = dependencies[dependency_id].name.slice(string_bytes);
+                        const resolution = resolutions[package_id].fmt(string_bytes, .auto);
+
+                        if (index < sorted_dependencies.len - 1) {
+                            Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                        } else {
+                            Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                        }
                     }
                 }
             }
@@ -441,6 +452,360 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         }
     }
+
+    fn printJsonDependencyTree(ctx: Command.Context, pm: *PackageManager, lockfile: *Lockfile, max_depth: usize) !void {
+        const allocator = ctx.allocator;
+        const dependencies = lockfile.buffers.dependencies.items;
+        const string_bytes = lockfile.buffers.string_bytes.items;
+        const slice = lockfile.packages.slice();
+        const resolutions = slice.items(.resolution);
+        const names = slice.items(.name);
+        const root_deps = slice.items(.dependencies)[0];
+
+        // Get root package info from lockfile
+        const root_package_id = pm.root_package_id.get(lockfile, pm.workspace_name_hash);
+        const root_name = if (root_package_id < lockfile.packages.len)
+            names[root_package_id].slice(string_bytes)
+        else if (pm.root_package_json_name_at_time_of_init.len > 0)
+            pm.root_package_json_name_at_time_of_init
+        else
+            "unknown";
+
+        // Get version from root package resolution
+        // For the root package, we typically have a "root" resolution tag, so we need to check package.json
+        var version_buf: [512]u8 = undefined;
+        const version = if (root_package_id < lockfile.packages.len and resolutions[root_package_id].tag == .npm)
+            try std.fmt.bufPrint(&version_buf, "{}", .{resolutions[root_package_id].value.npm.version.fmt(string_bytes)})
+        else if (root_package_id < lockfile.packages.len and resolutions[root_package_id].tag != .root)
+            try std.fmt.bufPrint(&version_buf, "{}", .{resolutions[root_package_id].fmt(string_bytes, .auto)})
+        else blk: {
+            // Try to read version from package.json for root packages
+            var path_buf: bun.PathBuffer = undefined;
+            const package_json_path = std.fmt.bufPrintZ(&path_buf, "{s}/package.json", .{pm.root_dir.dir}) catch "package.json";
+
+            if (std.fs.cwd().openFile(package_json_path, .{})) |file| {
+                defer file.close();
+                const content = file.readToEndAlloc(allocator, 1024 * 1024) catch null;
+                if (content) |c| {
+                    defer allocator.free(c);
+                    // Simple extraction of version field
+                    if (std.mem.indexOf(u8, c, "\"version\"")) |pos| {
+                        if (std.mem.indexOfPos(u8, c, pos + 9, "\"")) |start| {
+                            if (std.mem.indexOfPos(u8, c, start + 1, "\"")) |end| {
+                                const v = c[start + 1 .. end];
+                                break :blk try std.fmt.bufPrint(&version_buf, "{s}", .{v});
+                            }
+                        }
+                    }
+                }
+            } else |_| {}
+            break :blk "0.0.1";
+        };
+
+        // Start building JSON output
+        var buffer = std.ArrayList(u8).init(allocator);
+        defer buffer.deinit();
+        var writer = buffer.writer();
+
+        try writer.writeAll("{\n");
+        try writer.print("  \"version\": \"{s}\",\n", .{version});
+        try writer.print("  \"name\": \"{s}\"", .{root_name});
+
+        // Separate dependencies by type
+        var prod_deps = std.ArrayList(DependencyID).init(allocator);
+        var dev_deps = std.ArrayList(DependencyID).init(allocator);
+        var peer_deps = std.ArrayList(DependencyID).init(allocator);
+        var optional_deps = std.ArrayList(DependencyID).init(allocator);
+        defer prod_deps.deinit();
+        defer dev_deps.deinit();
+        defer peer_deps.deinit();
+        defer optional_deps.deinit();
+
+        // Categorize dependencies by type
+        if (root_deps.len > 0) {
+            for (0..root_deps.len) |i| {
+                const dep_id = @as(DependencyID, @truncate(root_deps.off + i));
+                const dep = dependencies[dep_id];
+
+                if (dep.behavior.peer) {
+                    try peer_deps.append(dep_id);
+                } else if (dep.behavior.dev) {
+                    try dev_deps.append(dep_id);
+                } else if (dep.behavior.optional) {
+                    try optional_deps.append(dep_id);
+                } else if (dep.behavior.prod) {
+                    try prod_deps.append(dep_id);
+                }
+            }
+        }
+
+        var has_any_deps = false;
+
+        // Print production dependencies
+        if (prod_deps.items.len > 0) {
+            try writer.writeAll(if (has_any_deps) ",\n  \"dependencies\": {\n" else ",\n  \"dependencies\": {\n");
+            try printJsonDependencySection(
+                writer,
+                lockfile,
+                prod_deps.items,
+                max_depth,
+                allocator,
+                true, // include "from" field
+            );
+            try writer.writeAll("  }");
+            has_any_deps = true;
+        }
+
+        // Print dev dependencies
+        if (dev_deps.items.len > 0) {
+            try writer.writeAll(if (has_any_deps) ",\n  \"devDependencies\": {\n" else ",\n  \"devDependencies\": {\n");
+            try printJsonDependencySection(
+                writer,
+                lockfile,
+                dev_deps.items,
+                max_depth,
+                allocator,
+                true, // include "from" field
+            );
+            try writer.writeAll("  }");
+            has_any_deps = true;
+        }
+
+        // Print peer dependencies
+        if (peer_deps.items.len > 0) {
+            try writer.writeAll(if (has_any_deps) ",\n  \"peerDependencies\": {\n" else ",\n  \"peerDependencies\": {\n");
+            try printJsonDependencySection(
+                writer,
+                lockfile,
+                peer_deps.items,
+                max_depth,
+                allocator,
+                true, // include "from" field
+            );
+            try writer.writeAll("  }");
+            has_any_deps = true;
+        }
+
+        // Print optional dependencies
+        if (optional_deps.items.len > 0) {
+            try writer.writeAll(if (has_any_deps) ",\n  \"optionalDependencies\": {\n" else ",\n  \"optionalDependencies\": {\n");
+            try printJsonDependencySection(
+                writer,
+                lockfile,
+                optional_deps.items,
+                max_depth,
+                allocator,
+                true, // include "from" field
+            );
+            try writer.writeAll("  }");
+            has_any_deps = true;
+        }
+
+        if (!has_any_deps) {
+            try writer.writeAll("\n");
+        } else {
+            try writer.writeAll("\n");
+        }
+
+        try writer.writeAll("}\n");
+
+        Output.flush();
+        Output.disableBuffering();
+        try Output.writer().writeAll(buffer.items);
+        Output.enableBuffering();
+    }
+
+    fn printJsonDependencySection(
+        writer: anytype,
+        lockfile: *Lockfile,
+        dep_ids: []const DependencyID,
+        max_depth: usize,
+        allocator: std.mem.Allocator,
+        include_from: bool,
+    ) !void {
+        const dependencies = lockfile.buffers.dependencies.items;
+        const string_bytes = lockfile.buffers.string_bytes.items;
+        const slice = lockfile.packages.slice();
+        const resolutions = slice.items(.resolution);
+
+        // Sort dependencies by name
+        const sorted_deps = try allocator.alloc(DependencyID, dep_ids.len);
+        defer allocator.free(sorted_deps);
+        @memcpy(sorted_deps, dep_ids);
+        std.sort.pdq(DependencyID, sorted_deps, ByName{
+            .dependencies = dependencies,
+            .buf = string_bytes,
+        }, ByName.isLessThan);
+
+        for (sorted_deps, 0..) |dependency_id, i| {
+            const package_id = lockfile.buffers.resolutions.items[dependency_id];
+            if (package_id >= lockfile.packages.len) continue;
+
+            const dep = dependencies[dependency_id];
+            const dep_name = dep.name.slice(string_bytes);
+            const resolution = resolutions[package_id];
+
+            // Get version string based on resolution type
+            var version_buf: [512]u8 = undefined;
+            const version_str = if (resolution.tag == .npm)
+                try std.fmt.bufPrint(&version_buf, "{}", .{resolution.value.npm.version.fmt(string_bytes)})
+            else
+                try std.fmt.bufPrint(&version_buf, "{}", .{resolution.fmt(string_bytes, .auto)});
+
+            // Get resolved URL from resolution
+            var resolved_buf: [1024]u8 = undefined;
+            const resolved_url = try std.fmt.bufPrint(&resolved_buf, "{}", .{resolution.fmtURL(string_bytes)});
+
+            try writer.print("    \"{s}\": {{\n", .{dep_name});
+            try writer.print("      \"version\": \"{s}\",\n", .{version_str});
+            try writer.print("      \"resolved\": \"{s}\",\n", .{resolved_url});
+            try writer.writeAll("      \"overridden\": false");
+
+            // Add "from" field only if requested (for root-level deps)
+            if (include_from) {
+                const from_str = dep.version.literal.slice(string_bytes);
+                try writer.print(",\n      \"from\": \"{s}\"", .{from_str});
+            }
+
+            // Add nested dependencies if depth allows
+            if (max_depth > 0) {
+                const package_deps = slice.items(.dependencies)[package_id];
+                if (package_deps.len > 0) {
+                    try writer.writeAll(",\n      \"dependencies\": {\n");
+                    try printJsonNestedDependencies(
+                        writer,
+                        lockfile,
+                        package_deps,
+                        1,
+                        max_depth,
+                        allocator,
+                        8,
+                    );
+                    try writer.writeAll("\n      }");
+                }
+            }
+
+            try writer.writeAll("\n    }");
+
+            if (i < sorted_deps.len - 1) {
+                try writer.writeAll(",");
+            }
+            try writer.writeAll("\n");
+        }
+    }
+
+    fn printJsonNestedDependencies(
+        writer: anytype,
+        lockfile: *Lockfile,
+        deps: Lockfile.DependencySlice,
+        current_depth: usize,
+        max_depth: usize,
+        allocator: std.mem.Allocator,
+        indent: usize,
+    ) !void {
+        if (current_depth > max_depth) return;
+
+        const dependencies = lockfile.buffers.dependencies.items;
+        const string_bytes = lockfile.buffers.string_bytes.items;
+        const slice = lockfile.packages.slice();
+        const resolutions = slice.items(.resolution);
+
+        // Sort dependencies
+        const sorted_dependencies = try allocator.alloc(DependencyID, deps.len);
+        defer allocator.free(sorted_dependencies);
+        for (sorted_dependencies, 0..) |*dep, i| {
+            dep.* = @as(DependencyID, @truncate(deps.off + i));
+        }
+        std.sort.pdq(DependencyID, sorted_dependencies, ByName{
+            .dependencies = dependencies,
+            .buf = string_bytes,
+        }, ByName.isLessThan);
+
+        for (sorted_dependencies, 0..) |dependency_id, i| {
+            const package_id = lockfile.buffers.resolutions.items[dependency_id];
+            if (package_id >= lockfile.packages.len) continue;
+
+            const dep_name = dependencies[dependency_id].name.slice(string_bytes);
+            const resolution = resolutions[package_id];
+
+            // Get version string based on resolution type
+            var version_buf: [512]u8 = undefined;
+            const version_str = if (resolution.tag == .npm)
+                try std.fmt.bufPrint(&version_buf, "{}", .{resolution.value.npm.version.fmt(string_bytes)})
+            else
+                try std.fmt.bufPrint(&version_buf, "{}", .{resolution.fmt(string_bytes, .auto)});
+
+            // Get resolved URL from resolution
+            var resolved_buf: [1024]u8 = undefined;
+            const resolved_url = try std.fmt.bufPrint(&resolved_buf, "{}", .{resolution.fmtURL(string_bytes)});
+
+            // Indent
+            var j: usize = 0;
+            while (j < indent) : (j += 1) {
+                try writer.writeAll(" ");
+            }
+
+            try writer.print("\"{s}\": {{\n", .{dep_name});
+
+            // Indent for properties
+            j = 0;
+            while (j < indent + 2) : (j += 1) {
+                try writer.writeAll(" ");
+            }
+            try writer.print("\"version\": \"{s}\",\n", .{version_str});
+
+            j = 0;
+            while (j < indent + 2) : (j += 1) {
+                try writer.writeAll(" ");
+            }
+            try writer.print("\"resolved\": \"{s}\",\n", .{resolved_url});
+
+            j = 0;
+            while (j < indent + 2) : (j += 1) {
+                try writer.writeAll(" ");
+            }
+            try writer.writeAll("\"overridden\": false");
+
+            // Add nested dependencies if depth allows (no "from" field for nested)
+            if (current_depth < max_depth) {
+                const package_deps = slice.items(.dependencies)[package_id];
+                if (package_deps.len > 0) {
+                    try writer.writeAll(",\n");
+                    j = 0;
+                    while (j < indent + 2) : (j += 1) {
+                        try writer.writeAll(" ");
+                    }
+                    try writer.writeAll("\"dependencies\": {\n");
+                    try printJsonNestedDependencies(
+                        writer,
+                        lockfile,
+                        package_deps,
+                        current_depth + 1,
+                        max_depth,
+                        allocator,
+                        indent + 4,
+                    );
+                    try writer.writeAll("\n");
+                    j = 0;
+                    while (j < indent + 2) : (j += 1) {
+                        try writer.writeAll(" ");
+                    }
+                    try writer.writeAll("}");
+                }
+            }
+
+            try writer.writeAll("\n");
+            j = 0;
+            while (j < indent) : (j += 1) {
+                try writer.writeAll(" ");
+            }
+            try writer.writeAll("}");
+
+            if (i < sorted_dependencies.len - 1) {
+                try writer.writeAll(",\n");
+            }
+        }
+    }
 };
 
 fn printNodeModulesFolderStructure(
@@ -450,7 +815,12 @@ fn printNodeModulesFolderStructure(
     directories: *std.ArrayList(NodeModulesFolder),
     lockfile: *Lockfile,
     more_packages: []bool,
+    max_display_depth: usize,
 ) !void {
+    // Stop if we've exceeded the maximum depth
+    if (depth > max_display_depth) {
+        return;
+    }
     const allocator = lockfile.allocator;
     const resolutions = lockfile.packages.items(.resolution);
     const string_bytes = lockfile.buffers.string_bytes.items;
@@ -539,7 +909,7 @@ fn printNodeModulesFolderStructure(
                 }
 
                 more_packages[new_depth] = true;
-                try printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages);
+                try printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages, max_display_depth);
             }
         }
 

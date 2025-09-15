@@ -54,6 +54,7 @@ pub const TestRunner = struct {
     index: File.Map = File.Map{},
     only: bool = false,
     run_todo: bool = false,
+    concurrent: bool = false,
     last_file: u64 = 0,
     bail: u32 = 0,
 

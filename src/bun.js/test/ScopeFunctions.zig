@@ -201,6 +201,9 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunT
     var base = this.cfg;
     base.line_no = line_no;
     base.test_id_for_debugger = test_id_for_debugger;
+    if (bun.jsc.Jest.Jest.runner) |runner| if (runner.concurrent) {
+        base.self_concurrent = true;
+    };
 
     switch (this.mode) {
         .describe => {

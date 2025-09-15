@@ -1291,6 +1291,7 @@ pub const TestCommand = struct {
             .jest = TestRunner{
                 .allocator = ctx.allocator,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
+                .concurrent = ctx.test_options.concurrent,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
                 .bail = ctx.test_options.bail,

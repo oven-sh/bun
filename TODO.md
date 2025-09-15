@@ -35,6 +35,8 @@ concurrent.test.js:
 Ran 3 tests across 1 file. [1081.00ms]
 ```
 
+To run all tests as concurrent, pass the `--concurrent` flag when running tests.
+
 Limitations:
 
 - concurrent tests cannot attribute `expect()` call counts to the test, meaning `expect.assertions()` does not function

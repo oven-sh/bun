@@ -28,3 +28,5 @@ leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
 leak:uws_create_app
+leak:lshpack_wrapper_decode
+leak:lshpack_wrapper_init

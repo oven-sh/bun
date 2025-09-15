@@ -7,6 +7,8 @@ idx: usize,
 last_exit_code: ?ExitCode,
 currently_executing: ?ChildPtr,
 io: IO,
+/// Set to true when an exit builtin has been executed in any child
+exit_requested: bool = false,
 
 pub const ParentPtr = StatePtrUnion(.{
     Script,
@@ -43,6 +45,7 @@ pub fn init(
     script.last_exit_code = null;
     script.currently_executing = null;
     script.io = io;
+    script.exit_requested = false;
     log("Stmt(0x{x}) init", .{@intFromPtr(script)});
     return script;
 }
@@ -113,18 +116,32 @@ pub fn next(this: *Stmt) Yield {
 }
 
 pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yield {
+    return this.childDoneWithFlag(child, exit_code, false);
+}
+
+pub fn childDoneWithExit(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yield {
+    return this.childDoneWithFlag(child, exit_code, true);
+}
+
+fn childDoneWithFlag(this: *Stmt, child: ChildPtr, exit_code: ExitCode, exit_requested: bool) Yield {
     const data = child.ptr.repr.data;
-    log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
+    log("child done Stmt {x} child({s})={x} exit={d} exit_requested={}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code, exit_requested });
     this.last_exit_code = exit_code;
 
-    // Check if the child was a Cmd with an exit builtin
-    const should_exit = brk: {
+    // Check if the child was a Cmd with an exit builtin or any child that had exit_requested
+    const child_had_exit = exit_requested or brk: {
         if (child.ptr.is(Cmd)) {
             const cmd = child.as(Cmd);
             if (cmd.exec == .bltn and cmd.exec.bltn.kind == .exit) {
                 break :brk true;
             }
+        } else if (child.ptr.is(Binary)) {
+            const binary = child.as(Binary);
+            if (binary.exit_requested) {
+                break :brk true;
+            }
         }
+        // TODO: Add checks for other state types like Pipeline, If, etc.
         break :brk false;
     };
 
@@ -134,7 +151,8 @@ pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yield {
     this.currently_executing = null;
 
     // If exit builtin was executed, propagate the exit immediately
-    if (should_exit) {
+    if (child_had_exit) {
+        this.exit_requested = true;
         return this.parent.childDone(this, exit_code);
     }
 

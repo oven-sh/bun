@@ -9,6 +9,7 @@ left: ?ExitCode = null,
 right: ?ExitCode = null,
 io: IO,
 currently_executing: ?ChildPtr = null,
+exit_requested: bool = false,
 
 pub const ChildPtr = StatePtrUnion(.{
     Async,
@@ -41,6 +42,7 @@ pub fn init(
     binary.left = null;
     binary.right = null;
     binary.currently_executing = null;
+    binary.exit_requested = false;
     return binary;
 }
 
@@ -113,14 +115,50 @@ fn makeChild(this: *Binary, left: bool) ?ChildPtr {
 }
 
 pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) Yield {
+    return this.childDoneWithFlag(child, exit_code, false);
+}
+
+pub fn childDoneWithExit(this: *Binary, child: ChildPtr, exit_code: ExitCode) Yield {
+    return this.childDoneWithFlag(child, exit_code, true);
+}
+
+fn childDoneWithFlag(this: *Binary, child: ChildPtr, exit_code: ExitCode, exit_requested: bool) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.left == null or this.right == null);
         assert(this.currently_executing != null);
     }
-    log("binary child done {x} ({s}) {s}", .{ @intFromPtr(this), @tagName(this.node.op), if (this.left == null) "left" else "right" });
+    log("binary child done {x} ({s}) {s} exit_requested={}", .{ @intFromPtr(this), @tagName(this.node.op), if (this.left == null) "left" else "right", exit_requested });
+
+    // Check if the child was a Cmd with an exit builtin
+    const child_had_exit = exit_requested or brk: {
+        if (child.ptr.is(Cmd)) {
+            const cmd = child.as(Cmd);
+            if (cmd.exec == .bltn and cmd.exec.bltn.kind == .exit) {
+                break :brk true;
+            }
+        } else if (child.ptr.is(Binary)) {
+            const binary = child.as(Binary);
+            if (binary.exit_requested) {
+                break :brk true;
+            }
+        }
+        break :brk false;
+    };
 
     child.deinit();
     this.currently_executing = null;
+
+    // If exit builtin was executed, propagate the exit immediately regardless of operator
+    if (child_had_exit) {
+        this.exit_requested = true;
+        // Propagate to parent with exit flag
+        if (this.parent.ptr.is(Stmt)) {
+            return this.parent.as(Stmt).childDoneWithExit(Stmt.ChildPtr.init(this), exit_code);
+        } else if (this.parent.ptr.is(Binary)) {
+            return this.parent.as(Binary).childDoneWithExit(Binary.ChildPtr.init(this), exit_code);
+        }
+        return this.parent.childDone(this, exit_code);
+    }
 
     if (this.left == null) {
         this.left = exit_code;

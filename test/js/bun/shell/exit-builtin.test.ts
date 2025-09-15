@@ -116,9 +116,20 @@ test("exit builtin with large number wraps modulo 256", async () => {
   expect(result.exitCode).toBe(1);
 });
 
-// TODO: This test currently fails - exit in chained commands should still exit
-// test("exit builtin in command chain with &&", async () => {
-//   const result = await $`echo "before" && exit && echo "after"`.quiet();
-//   expect(result.stdout.toString()).toBe("before\n");
-//   expect(result.exitCode).toBe(0);
-// });
+test("exit builtin in command chain with &&", async () => {
+  const result = await $`echo "before" && exit && echo "after"`.quiet();
+  expect(result.stdout.toString()).toBe("before\n");
+  expect(result.exitCode).toBe(0);
+});
+
+test("exit builtin in command chain with ||", async () => {
+  const result = await $`false || exit 3 || echo "after"`.quiet().nothrow();
+  expect(result.stdout.toString()).toBe("");
+  expect(result.exitCode).toBe(3);
+});
+
+test("exit builtin in nested binary expressions", async () => {
+  const result = await $`echo "start" && (false || exit 9) && echo "should not print"`.quiet().nothrow();
+  expect(result.stdout.toString()).toBe("start\n");
+  expect(result.exitCode).toBe(9);
+});

@@ -116,11 +116,29 @@ pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yield {
     const data = child.ptr.repr.data;
     log("child done Stmt {x} child({s})={x} exit={d}", .{ @intFromPtr(this), child.tagName(), @as(usize, @intCast(child.ptr.repr._ptr)), exit_code });
     this.last_exit_code = exit_code;
-    this.idx += 1;
+
+    // Check if the child was a Cmd with an exit builtin
+    const should_exit = brk: {
+        if (child.ptr.is(Cmd)) {
+            const cmd = child.as(Cmd);
+            if (cmd.exec == .bltn and cmd.exec.bltn.kind == .exit) {
+                break :brk true;
+            }
+        }
+        break :brk false;
+    };
+
     const data2 = child.ptr.repr.data;
     log("{d} {d}", .{ data, data2 });
     child.deinit();
     this.currently_executing = null;
+
+    // If exit builtin was executed, propagate the exit immediately
+    if (should_exit) {
+        return this.parent.childDone(this, exit_code);
+    }
+
+    this.idx += 1;
     return this.next();
 }
 

@@ -84,7 +84,19 @@ fn finish(this: *Script, exit_code: ExitCode) Yield {
 }
 
 pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) Yield {
+    // Check if the child Stmt executed an exit builtin
+    // We detect this by checking if the Stmt did not increment its idx
+    // (it returns early when detecting an exit builtin)
+    const stmt = child.val;
+    const executed_exit = stmt.idx == 0;
+
     child.deinit();
+
+    // If exit builtin was executed, finish immediately with the exit code
+    if (executed_exit) {
+        return this.finish(exit_code);
+    }
+
     if (this.state.normal.idx >= this.node.stmts.len) {
         return this.finish(exit_code);
     }

@@ -13,41 +13,17 @@ test("exit builtin stops execution in multiline script", async () => {
   expect(result.exitCode).toBe(0);
 });
 
-test("exit builtin with exit code 0", async () => {
+test.each([0, 1, 42])("exit %d stops further commands", async (code) => {
   const result = await $`
     echo "before exit"
-    exit 0
-    echo "after exit"
-  `.quiet();
-
-  expect(result.stdout.toString()).toBe("before exit\n");
-  expect(result.exitCode).toBe(0);
-});
-
-test("exit builtin with exit code 1", async () => {
-  const result = await $`
-    echo "before exit"
-    exit 1
+    exit ${code}
     echo "after exit"
   `
     .quiet()
     .nothrow();
 
   expect(result.stdout.toString()).toBe("before exit\n");
-  expect(result.exitCode).toBe(1);
-});
-
-test("exit builtin with exit code 42", async () => {
-  const result = await $`
-    echo "before exit"
-    exit 42
-    echo "after exit"
-  `
-    .quiet()
-    .nothrow();
-
-  expect(result.stdout.toString()).toBe("before exit\n");
-  expect(result.exitCode).toBe(42);
+  expect(result.exitCode).toBe(code);
 });
 
 test("exit builtin in shell script file", async () => {
@@ -133,3 +109,38 @@ test("exit builtin in nested binary expressions", async () => {
   expect(result.stdout.toString()).toBe("start\n");
   expect(result.exitCode).toBe(9);
 });
+
+// TODO: These tests require more comprehensive exit handling in nested constructs
+// test("exit in if/then stops execution", async () => {
+//   const result = await $`
+//     if true; then
+//       echo "in if"
+//       exit 7
+//       echo "should not print"
+//     fi
+//     echo "after if"
+//   `
+//     .quiet()
+//     .nothrow();
+//
+//   expect(result.stdout.toString()).toBe("in if\n");
+//   expect(result.exitCode).toBe(7);
+// });
+//
+// test("exit in else branch stops execution", async () => {
+//   const result = await $`
+//     if false; then
+//       echo "in then"
+//     else
+//       echo "in else"
+//       exit 8
+//       echo "should not print"
+//     fi
+//     echo "after if"
+//   `
+//     .quiet()
+//     .nothrow();
+//
+//   expect(result.stdout.toString()).toBe("in else\n");
+//   expect(result.exitCode).toBe(8);
+// });

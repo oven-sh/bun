@@ -152,12 +152,11 @@ fn childDoneWithFlag(this: *Binary, child: ChildPtr, exit_code: ExitCode, exit_r
     if (child_had_exit) {
         this.exit_requested = true;
         // Propagate to parent with exit flag
+        // ParentPtr is { Stmt, Binary } so no fallback needed
         if (this.parent.ptr.is(Stmt)) {
             return this.parent.as(Stmt).childDoneWithExit(Stmt.ChildPtr.init(this), exit_code);
-        } else if (this.parent.ptr.is(Binary)) {
-            return this.parent.as(Binary).childDoneWithExit(Binary.ChildPtr.init(this), exit_code);
         }
-        return this.parent.childDone(this, exit_code);
+        return this.parent.as(Binary).childDoneWithExit(Binary.ChildPtr.init(this), exit_code);
     }
 
     if (this.left == null) {

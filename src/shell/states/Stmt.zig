@@ -141,7 +141,7 @@ fn childDoneWithFlag(this: *Stmt, child: ChildPtr, exit_code: ExitCode, exit_req
                 break :brk true;
             }
         }
-        // TODO: Add checks for other state types like Pipeline, If, etc.
+        // TODO: Add checks for other state types when they implement exit_requested
         break :brk false;
     };
 

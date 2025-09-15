@@ -668,6 +668,9 @@ const db = new SQL({
     console.log("PostgreSQL connection closed");
   },
 });
+
+// how to use this manual connention
+const result = await db`SELECT 1`;
 ```
 
 ### SQLite Options

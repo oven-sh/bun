@@ -418,6 +418,10 @@ pub const BunTest = struct {
 
         group.log("-> timeout: {} {}, {s}", .{ min_timeout, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
+        this.setMinTimeout(globalThis, min_timeout);
+    }
+
+    fn setMinTimeout(this: *BunTest, globalThis: *jsc.JSGlobalObject, min_timeout: bun.timespec) void {
         if (min_timeout.orderIgnoreEpoch(this.timer.next) == .lt) {
             group.log("-> setting timer to {}", .{min_timeout});
             if (!this.timer.next.eql(&.epoch)) {

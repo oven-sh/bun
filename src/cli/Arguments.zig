@@ -931,10 +931,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.windows.icon = path;
         }
         if (args.option("--windows-title")) |title| {
-            if (!Environment.isWindows) {
-                Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
-                Global.crash();
-            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-title requires --compile", .{});
                 Global.crash();
@@ -942,10 +938,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.windows.title = title;
         }
         if (args.option("--windows-publisher")) |publisher| {
-            if (!Environment.isWindows) {
-                Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
-                Global.crash();
-            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-publisher requires --compile", .{});
                 Global.crash();
@@ -953,10 +945,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.windows.publisher = publisher;
         }
         if (args.option("--windows-version")) |version| {
-            if (!Environment.isWindows) {
-                Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
-                Global.crash();
-            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-version requires --compile", .{});
                 Global.crash();
@@ -964,10 +952,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.windows.version = version;
         }
         if (args.option("--windows-description")) |description| {
-            if (!Environment.isWindows) {
-                Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
-                Global.crash();
-            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-description requires --compile", .{});
                 Global.crash();
@@ -975,15 +959,39 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.windows.description = description;
         }
         if (args.option("--windows-copyright")) |copyright| {
-            if (!Environment.isWindows) {
-                Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
-                Global.crash();
-            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-copyright requires --compile", .{});
                 Global.crash();
             }
             ctx.bundler_options.windows.copyright = copyright;
+        }
+
+        // Check if Windows metadata flags are used with non-Windows compile target
+        if (comptime cmd == .BuildCommand) {
+            const has_windows_metadata = ctx.bundler_options.windows.title != null or
+                ctx.bundler_options.windows.publisher != null or
+                ctx.bundler_options.windows.version != null or
+                ctx.bundler_options.windows.description != null or
+                ctx.bundler_options.windows.copyright != null;
+
+            if (has_windows_metadata and ctx.bundler_options.compile) {
+                // Check the target platform
+                const target_os = if (!ctx.bundler_options.compile_target.isDefault())
+                    ctx.bundler_options.compile_target.os
+                else
+                    Environment.os;
+
+                if (target_os != .windows) {
+                    Output.errGeneric("Windows metadata flags (--windows-title, --windows-publisher, etc.) can only be used when targeting Windows. Current target platform: {s}", .{@tagName(target_os)});
+                    Global.crash();
+                }
+
+                // On non-Windows hosts, we can't set Windows metadata even when targeting Windows
+                if (!Environment.isWindows and target_os == .windows) {
+                    Output.errGeneric("Windows metadata flags can only be used when compiling on Windows", .{});
+                    Global.crash();
+                }
+            }
         }
 
         if (args.option("--outdir")) |outdir| {

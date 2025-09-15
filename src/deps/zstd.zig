@@ -167,8 +167,14 @@ pub const ZstdReaderArrayList = struct {
             this.total_out += bytes_written;
 
             if (rc == 0) {
-                this.end();
-                return;
+                // Frame is complete, but check if there's more input (multiple frames)
+                if (this.total_in >= this.input.len) {
+                    this.end();
+                    return;
+                }
+                // Reset the decompressor for the next frame
+                _ = c.ZSTD_initDStream(this.zstd);
+                continue;
             }
 
             if (bytes_read == next_in.len) {

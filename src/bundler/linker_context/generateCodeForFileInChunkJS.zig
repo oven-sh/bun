@@ -432,38 +432,39 @@ pub fn generateCodeForFileInChunkJS(
 
                 // Generate Promise.all for parallel async imports if needed
                 if (stmts.async_imports.items.len > 0) {
-                    const promise_all_expr = if (stmts.async_imports.items.len == 1)
-                        // Single async import - just await it directly
-                        Expr.init(E.Await, .{
-                            .value = stmts.async_imports.items[0],
-                        }, Logger.Loc.Empty)
-                    else blk: {
-                        // Multiple async imports - use Promise.all for parallel execution
-                        // Use the pre-generated unbound reference to Promise
+                    const await_expr = if (stmts.async_imports.items.len == 1)
+                        // await init_<mod> if there's only one
+                        Expr.init(E.Await, .{ .value = stmts.async_imports.items[0] }, .Empty)
+                    else await_expr: {
+                        // Promise.all for multiple async imports
                         const promise_ref = c.unbound_promise_ref;
 
-                        break :blk Expr.init(E.Await, .{
+                        break :await_expr Expr.init(E.Await, .{
                             .value = Expr.init(E.Call, .{
-                                .target = Expr.init(E.Dot, .{
-                                    .target = Expr.init(E.Identifier, .{
-                                        .ref = promise_ref,
-                                    }, Logger.Loc.Empty),
-                                    .name = "all",
-                                    .name_loc = Logger.Loc.Empty,
-                                }, Logger.Loc.Empty),
-                                .args = bun.BabyList(Expr).fromSlice(temp_allocator, &.{
-                                    Expr.init(E.Array, .{
-                                        .items = bun.BabyList(Expr).fromOwnedSlice(temp_allocator.dupe(Expr, stmts.async_imports.items) catch unreachable),
-                                    }, Logger.Loc.Empty),
-                                }) catch unreachable,
-                            }, Logger.Loc.Empty),
-                        }, Logger.Loc.Empty);
+                                .target = Expr.init(
+                                    E.Dot,
+                                    .{
+                                        .target = Expr.init(E.Identifier, .{ .ref = promise_ref }, .Empty),
+                                        .name = "all",
+                                        .name_loc = .Empty,
+                                    },
+                                    .Empty,
+                                ),
+                                .args = .fromSlice(temp_allocator, &.{
+                                    Expr.init(
+                                        E.Array,
+                                        .{
+                                            .items = .fromSlice(temp_allocator, stmts.async_imports.items) catch |err| bun.handleOom(err),
+                                        },
+                                        .Empty,
+                                    ),
+                                }) catch |err| bun.handleOom(err),
+                            }, .Empty),
+                        }, .Empty);
                     };
 
                     // Insert Promise.all at the beginning of the wrapper body
-                    stmts.all_stmts.insert(0, Stmt.alloc(S.SExpr, .{
-                        .value = promise_all_expr,
-                    }, Logger.Loc.Empty)) catch unreachable;
+                    bun.handleOom(stmts.all_stmts.insert(0, Stmt.alloc(S.SExpr, .{ .value = await_expr }, .Empty)));
                 }
 
                 var inner_stmts = stmts.all_stmts.items;
@@ -634,9 +635,43 @@ pub fn generateCodeForFileInChunkJS(
         }
 
         out_stmts = stmts.outside_wrapper_prefix.items;
+    } else if (stmts.async_imports.items.len > 0) {
+        const await_expr = if (stmts.async_imports.items.len == 1)
+            // await init_<mod> if there's only one
+            Expr.init(E.Await, .{ .value = stmts.async_imports.items[0] }, .Empty)
+        else await_expr: {
+            // Promise.all for multiple async imports
+            const promise_ref = c.unbound_promise_ref;
+
+            break :await_expr Expr.init(E.Await, .{
+                .value = Expr.init(E.Call, .{
+                    .target = Expr.init(
+                        E.Dot,
+                        .{
+                            .target = Expr.init(E.Identifier, .{ .ref = promise_ref }, .Empty),
+                            .name = "all",
+                            .name_loc = .Empty,
+                        },
+                        .Empty,
+                    ),
+                    .args = .fromSlice(temp_allocator, &.{
+                        Expr.init(
+                            E.Array,
+                            .{
+                                .items = .fromSlice(temp_allocator, stmts.async_imports.items) catch |err| bun.handleOom(err),
+                            },
+                            .Empty,
+                        ),
+                    }) catch |err| bun.handleOom(err),
+                }, .Empty),
+            }, .Empty);
+        };
+
+        bun.handleOom(stmts.all_stmts.insert(0, Stmt.alloc(S.SExpr, .{ .value = await_expr }, .Empty)));
+        out_stmts = stmts.all_stmts.items;
     }
 
-    if (out_stmts.len == 0) {
+    if (stmts.all_stmts.items.len == 0) {
         return .{
             .result = .{
                 .code = "",
@@ -649,7 +684,7 @@ pub fn generateCodeForFileInChunkJS(
         r,
         allocator,
         writer,
-        out_stmts,
+        stmts.all_stmts.items,
         &ast,
         flags,
         toESMRef,

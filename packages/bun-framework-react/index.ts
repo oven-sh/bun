@@ -1,12 +1,13 @@
 import type * as Bake from "bun:app";
+import { fileURLToPath } from "node:url";
 
 const framework: Bake.Framework = {
   fileSystemRouterTypes: [
     {
       root: "pages",
       prefix: "/",
-      clientEntryPoint: "./client.tsx",
-      serverEntryPoint: "./server.tsx",
+      clientEntryPoint: fileURLToPath(import.meta.resolve("./client.tsx")),
+      serverEntryPoint: fileURLToPath(import.meta.resolve("./server.tsx")),
       extensions: [".tsx", ".jsx"],
       style: "nextjs-pages",
       layouts: true,

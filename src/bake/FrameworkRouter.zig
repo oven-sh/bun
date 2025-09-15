@@ -1004,7 +1004,7 @@ fn scanInner(
         outer: while (it.next()) |entry| {
             const file = entry.value_ptr.*;
             const base = file.base();
-            bun.Output.prettyln("      <d>Processing: {s} (kind: {s})<r>", .{base, @tagName(file.kind(fs_impl, false))});
+            bun.Output.prettyln("      <d>Processing: {s} (kind: {s})<r>", .{ base, @tagName(file.kind(fs_impl, false)) });
             switch (file.kind(fs_impl, false)) {
                 .dir => {
                     if (t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
@@ -1074,7 +1074,7 @@ fn scanInner(
                         continue :outer;
                     }
 
-                    bun.Output.prettyln("        <d>Parsed successfully! kind={s}, parts_len={d}<r>", .{@tagName(parsed.kind), parsed.parts.len});
+                    bun.Output.prettyln("        <d>Parsed successfully! kind={s}, parts_len={d}<r>", .{ @tagName(parsed.kind), parsed.parts.len });
 
                     var static_total_len: usize = 0;
                     var param_count: usize = 0;

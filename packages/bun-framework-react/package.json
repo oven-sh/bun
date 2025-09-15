@@ -19,6 +19,11 @@
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9"
   },
-  "keywords": ["bun", "react", "framework", "bake"],
+  "keywords": [
+    "bun",
+    "react",
+    "framework",
+    "bake"
+  ],
   "license": "MIT"
 }

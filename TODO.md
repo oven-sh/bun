@@ -382,11 +382,12 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 - [x] test/js/bun/net/tcp-server.test.ts
 - [ ] test/js/bun/test/describe2.test.ts
-- [ ] test/js/sql/sql-mysql.test.ts
+- [x] test/js/sql/sql-mysql.test.ts
 - [ ] test/regression/issue/21311.test.ts
-- [ ] test/regression/issue/08964/08964.test.ts
-- [ ] test/regression/issue/19850/19850.test.ts
+- [x] test/regression/issue/08964/08964.test.ts
+- [x] test/regression/issue/19850/19850.test.ts
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
+  - stacktrace slightly incorrect (it's including something that is irrelevant and not even in the trace?)
 - [x] test/bake/dev/ssg-pages-router.test.ts
 - [x] test/js/bun/http/bun-serve-file.test.ts
 - [ ] test/js/bun/spawn/spawn-pipe-leak.test.ts

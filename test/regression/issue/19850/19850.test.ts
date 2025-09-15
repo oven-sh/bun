@@ -39,8 +39,8 @@ error: beforeEach
 (fail) test 1
 
  0 pass
- 4 fail
-Ran 4 tests across 1 file.
+ 2 fail
+Ran 2 tests across 1 file.
 `);
   });
 

@@ -381,7 +381,7 @@ $> bun-after test ./beforeall-ordering.test.ts
 ## Regular:
 
 - [x] test/js/bun/net/tcp-server.test.ts
-- [ ] test/js/bun/test/describe2.test.ts
+- [x] test/js/bun/test/describe2.test.ts
 - [x] test/js/sql/sql-mysql.test.ts
 - [ ] test/regression/issue/21311.test.ts
 - [x] test/regression/issue/08964/08964.test.ts
@@ -632,6 +632,8 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Follow-up:
 
+- [ ] concurrent limit
+- [ ] `test.failing` should have its own style in the same way `test.todo` passing marks as 'todo' insetead of 'passing'
 - [ ] remove all instances of bun.jsc.Jest.Jest.current
   - [ ] test options should be in BunTestRoot
   - [ ] we will need one global still, stored in the globalobject/vm/?. but it should not be a Jest instance.

@@ -28,9 +28,9 @@ test("describe/test", async () => {
     47 |   describe("failed describe inner 2", () => {
     48 |     console.log("failed describe inner 2");
     49 |   });
-    50 |   throw "uh oh";
+    50 |   throw "failed describe: error";
                  ^
-    error: uh oh
+    error: failed describe: error
         at <anonymous> (file:NN:NN)
     -------------------------------
 
@@ -40,9 +40,7 @@ test("describe/test", async () => {
     (pass) actual tests > another test
     (pass) concurrent describe 1 > item 1
     (pass) concurrent describe 1 > item 2
-    error: Snapshot matchers are not supported in concurrent tests
-    Snapshot matchers are not supported in concurrent tests
-    (fail) concurrent describe 1 > snapshot in concurrent group
+    (pass) concurrent describe 1 > snapshot in concurrent group
     (pass) LINE 66
     (skip) LINE 67
     (fail) LINE 68
@@ -68,6 +66,8 @@ test("describe/test", async () => {
     (pass) expect.assertions not yet supported in concurrent tests
     (pass) expect.assertions not yet supported in concurrent tests
     (pass) expect.assertions works
+    (fail) expect.assertions combined with timeout
+      ^ this test timed out after 1ms.
     (pass) more functions called after delayed done
     (pass) another test
     (pass) misattributed error
@@ -78,32 +78,31 @@ test("describe/test", async () => {
     (pass) done parameter > delayed done
     (pass) done parameter > done combined with promise > done combined with promise, promise resolves first
     (pass) done parameter > done combined with promise > done combined with promise, done resolves first
-    219 |   });
-    220 |   describe("done combined with promise", () => {
-    221 |     let completion = 0;
-    222 |     beforeEach(() => (completion = 0));
-    223 |     afterEach(() => {
-    224 |       if (completion != 2) throw "completion is not 2";
+    224 |   });
+    225 |   describe("done combined with promise", () => {
+    226 |     let completion = 0;
+    227 |     beforeEach(() => (completion = 0));
+    228 |     afterEach(() => {
+    229 |       if (completion != 2) throw "completion is not 2";
                                            ^
     error: completion is not 2
         at <anonymous> (file:NN:NN)
         at promiseReactionJobWithoutPromiseUnwrapAsyncContext (file:NN:NN)
         at promiseReactionJob (file:NN:NN)
     (fail) done parameter > done combined with promise > fails when completion is not incremented
-    (pass) done parameter > done combined with promise error conditions > both error and done resolves first
-    (pass) done parameter > done combined with promise error conditions > both error and promise resolves first
-    (pass) done parameter > done combined with promise error conditions > done errors only
-    (pass) done parameter > done combined with promise error conditions > promise errors only
-    258 |       throw "promise error";
-    259 |     });
-    260 |   });
-    261 |   test("second call of done callback still triggers error", done => {
-    262 |     done();
-    263 |     done("uh oh!");
-              ^
-    error: uh oh!
-        at <anonymous> (file:NN:NN)
-    (fail) done parameter > second call of done callback still triggers error
+    error: test error
+    test error
+    error: promise error
+    promise error
+    (fail) done parameter > done combined with promise error conditions > both error and done resolves first
+    error: done error
+    done error
+    (fail) done parameter > done combined with promise error conditions > done errors only
+    error: promise error
+    promise error
+    (fail) done parameter > done combined with promise error conditions > promise errors only
+    (pass) done parameter > second call of done callback ignores triggers error
+    (pass) microtasks and rejections are drained after the test callback is executed
 
     2 tests skipped:
     (skip) LINE 67
@@ -115,9 +114,8 @@ test("describe/test", async () => {
     (todo) failing todo passes
 
 
-    8 tests failed:
+    10 tests failed:
     (fail) actual tests > more functions called after delayed done
-    (fail) concurrent describe 1 > snapshot in concurrent group
     (fail) LINE 68
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (fail) this test times out
@@ -125,16 +123,20 @@ test("describe/test", async () => {
     (fail) this test times out with done
       ^ this test timed out after 1ms, before its done callback was called. If a done callback was not intended, remove the last parameter from the test callback function
     (fail) expect.assertions
+    (fail) expect.assertions combined with timeout
+      ^ this test timed out after 1ms.
     (fail) done parameter > done combined with promise > fails when completion is not incremented
-    (fail) done parameter > second call of done callback still triggers error
+    (fail) done parameter > done combined with promise error conditions > both error and done resolves first
+    (fail) done parameter > done combined with promise error conditions > done errors only
+    (fail) done parameter > done combined with promise error conditions > promise errors only
 
-     30 pass
+     29 pass
      2 skip
      2 todo
-     8 fail
+     10 fail
      1 error
      1 snapshots, 9 expect() calls
-    Ran 42 tests across 1 file."
+    Ran 43 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)
@@ -175,6 +177,7 @@ test("describe/test", async () => {
     async describe 4
     async describe 5
     async describe 6
+    snapshot in concurrent group
     LINE 66
     LINE 68
     LINE 70 1

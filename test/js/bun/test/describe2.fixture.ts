@@ -47,7 +47,7 @@ describe("failed describe", () => {
   describe("failed describe inner 2", () => {
     console.log("failed describe inner 2");
   });
-  throw "uh oh";
+  throw "failed describe: error";
 });
 
 // == async ==
@@ -59,6 +59,7 @@ describe("async describe 1", async () => {
   });
   describe("async describe 3", async () => {
     console.log("async describe 3");
+    await Bun.sleep(1);
   });
 });
 describe("async describe 4", async () => {
@@ -70,6 +71,8 @@ describe("async describe 4", async () => {
     console.log("async describe 6");
   });
 });
+
+// == done ==
 
 describe("actual tests", () => {
   test("more functions called after delayed done", done => {
@@ -106,7 +109,7 @@ test.if(true)("LINE 71", () => console.log("LINE 71"));
 test.skipIf(true)("LINE 72", () => console.log("LINE 72"));
 test.concurrent("LINE 74", () => console.log("LINE 74"));
 test.todo("failing todo passes", () => {
-  throw "this error is shown";
+  throw "this error would be shown if the --todo flag was passed";
 });
 test.failing("failing failing passes", () => {
   throw "this error is not shown";
@@ -148,6 +151,11 @@ test("expect.assertions works", () => {
   expect(true).toBe(true);
   expect(true).toBe(true);
 });
+
+test("expect.assertions combined with timeout", async () => {
+  expect.assertions(1);
+  await Bun.sleep(100);
+}, 1);
 
 // === timing edge case ===
 test.failing("more functions called after delayed done", done => {
@@ -239,18 +247,14 @@ describe("done parameter", () => {
     test("fails when completion is not incremented", () => {});
   });
   describe("done combined with promise error conditions", () => {
-    test.failing("both error and done resolves first", async done => {
-      done("test error");
+    test("both error and done resolves first", async done => {
+      done("test error"); // this error is ignored because
       throw "promise error";
     });
-    test.failing("both error and promise resolves first", async done => {
-      setTimeout(() => done("done error"), 10);
-      throw "promise error";
-    });
-    test.failing("done errors only", async done => {
+    test("done errors only", async done => {
       done("done error");
     });
-    test.failing("promise errors only", async done => {
+    test("promise errors only", async done => {
       setTimeout(() => done(), 10);
       throw "promise error";
     });

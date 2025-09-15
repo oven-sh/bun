@@ -182,7 +182,7 @@ pub const ZstdReaderArrayList = struct {
 
             if (rc == 0) {
                 // Frame is complete
-                this.state = .Uninitialized;  // Reset state since frame is complete
+                this.state = .Uninitialized; // Reset state since frame is complete
 
                 // Check if there's more input (multiple frames)
                 if (this.total_in >= this.input.len) {

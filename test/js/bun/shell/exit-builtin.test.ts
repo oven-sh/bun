@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { $ } from "bun";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("exit builtin stops execution in multiline script", async () => {
@@ -29,7 +29,9 @@ test("exit builtin with exit code 1", async () => {
     echo "before exit"
     exit 1
     echo "after exit"
-  `.quiet().nothrow();
+  `
+    .quiet()
+    .nothrow();
 
   expect(result.stdout.toString()).toBe("before exit\n");
   expect(result.exitCode).toBe(1);
@@ -40,7 +42,9 @@ test("exit builtin with exit code 42", async () => {
     echo "before exit"
     exit 42
     echo "after exit"
-  `.quiet().nothrow();
+  `
+    .quiet()
+    .nothrow();
 
   expect(result.stdout.toString()).toBe("before exit\n");
   expect(result.exitCode).toBe(42);
@@ -63,11 +67,7 @@ echo "after exit"
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("before exit\n");
   expect(stderr).toBe("");
@@ -77,7 +77,9 @@ echo "after exit"
 test("exit builtin with invalid argument", async () => {
   const result = await $`
     exit notanumber
-  `.quiet().nothrow();
+  `
+    .quiet()
+    .nothrow();
 
   expect(result.stderr.toString()).toContain("exit: numeric argument required");
   expect(result.exitCode).toBe(1);
@@ -86,7 +88,9 @@ test("exit builtin with invalid argument", async () => {
 test("exit builtin with too many arguments", async () => {
   const result = await $`
     exit 0 1 2
-  `.quiet().nothrow();
+  `
+    .quiet()
+    .nothrow();
 
   expect(result.stderr.toString()).toContain("exit: too many arguments");
   expect(result.exitCode).toBe(1);
@@ -95,7 +99,9 @@ test("exit builtin with too many arguments", async () => {
 test("exit builtin with overflow wraps around", async () => {
   const result = await $`
     exit 256
-  `.quiet().nothrow();
+  `
+    .quiet()
+    .nothrow();
 
   expect(result.exitCode).toBe(0);
 });
@@ -103,7 +109,9 @@ test("exit builtin with overflow wraps around", async () => {
 test("exit builtin with large number wraps modulo 256", async () => {
   const result = await $`
     exit 257
-  `.quiet().nothrow();
+  `
+    .quiet()
+    .nothrow();
 
   expect(result.exitCode).toBe(1);
 });

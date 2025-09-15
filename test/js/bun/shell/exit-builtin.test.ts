@@ -13,7 +13,7 @@ test("exit builtin stops execution in multiline script", async () => {
   expect(result.exitCode).toBe(0);
 });
 
-test.each([0, 1, 42])("exit %d stops further commands", async (code) => {
+test.each([0, 1, 42])("exit %d stops further commands", async code => {
   const result = await $`
     echo "before exit"
     exit ${code}

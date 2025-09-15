@@ -1,5 +1,5 @@
-import { randomUUIDv7, RedisClient, sleep, spawn } from "bun";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomUUIDv7, RedisClient, spawn } from "bun";
+import { beforeEach, describe, expect, test } from "bun:test";
 import {
   awaitableCounter,
   ConnectionType,
@@ -8,12 +8,11 @@ import {
   DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
-  overrideRedisUrl,
   randomCoinFlip,
 } from "./test-utils";
 
 // Uncomment to override the Redis URL for local testing.
-overrideRedisUrl("redis://localhost:6379");
+//overrideRedisUrl("redis://localhost:6379");
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeEach(async () => {

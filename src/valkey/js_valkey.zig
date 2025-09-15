@@ -519,7 +519,6 @@ pub const JSValkeyClient = struct {
             this.poll_ref.ref(this.client.vm);
 
             this.connect() catch |err| {
-                std.debug.print("unrefing", .{});
                 this.poll_ref.unref(this.client.vm);
                 this.client.flags.needs_to_open_socket = true;
                 const err_value = globalObject.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, " {s} connecting to Valkey", .{@errorName(err)}).toJS();
@@ -819,8 +818,6 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn onValkeyMessage(this: *JSValkeyClient, value: []protocol.RESPValue) void {
-        debug("onValkeyMessage called with {} values", .{value.len});
-
         if (!this.isSubscriber()) {
             debug("onMessage called but client is not in subscriber mode", .{});
             return;
@@ -828,12 +825,8 @@ pub const JSValkeyClient = struct {
 
         const globalObject = this.globalObject;
         const event_loop = this.client.vm.eventLoop();
-        debug("onValkeyMessage: entering event loop", .{});
         event_loop.enter();
-        defer {
-            debug("onValkeyMessage: exiting event loop", .{});
-            event_loop.exit();
-        }
+        defer event_loop.exit();
 
         // The message push should be an array with [channel, message]
         if (value.len < 2) {
@@ -851,28 +844,23 @@ pub const JSValkeyClient = struct {
             return;
         };
 
-        debug("onValkeyMessage: channel={s}, message={s}", .{
-            channel_value.asString().getZigString(globalObject),
-            message_value.asString().getZigString(globalObject)
-        });
-
         // Get the subscription context
         const subs_ctx = &(this._subscription_ctx orelse {
             debug("No subscription context found", .{});
             return;
         });
 
-        debug("onValkeyMessage: about to invoke callbacks", .{});
         // Invoke callbacks for this channel with message and channel as arguments
-        subs_ctx.invokeCallbacks(globalObject, channel_value, &[_]JSValue{ message_value, channel_value }) catch {
-            debug("Failed to invoke callbacks for channel", .{});
+        subs_ctx.invokeCallbacks(
+            globalObject,
+            channel_value,
+            &[_]JSValue{ message_value, channel_value },
+        ) catch {
             return;
         };
-        debug("onValkeyMessage: finished invoking callbacks", .{});
 
         this.client.onWritable();
         this.updatePollRef();
-        debug("onValkeyMessage: completed", .{});
     }
 
     // Callback for when Valkey client needs to reconnect
@@ -1078,29 +1066,22 @@ pub const JSValkeyClient = struct {
     /// Keep the event loop alive, or don't keep it alive
     pub fn updatePollRef(this: *JSValkeyClient) void {
         const has_pending_commands = this.client.hasAnyPendingCommands();
-        std.debug.print("updatePollRef hasPendingCommands={}\n", .{ has_pending_commands });
         const subs_deletable = if (this._subscription_ctx) |*ctx| ctx.isDeletable(this.globalObject) else false;
-        std.debug.print("updatePollRef: subs_deletable={}\n", .{subs_deletable});
         const has_activity = has_pending_commands or !subs_deletable;
-        std.debug.print("updatePollRef: has_activity={}\n", .{has_activity});
 
         if (!has_activity and this.client.status == .connected) {
-            std.debug.print("unrefing\n", .{});
             this.poll_ref.unref(this.client.vm);
             // If we don't have any pending commands and we're connected, we don't need to keep the object alive.
             if (this.this_value.tryGet()) |value| {
                 this.this_value.setWeak(value);
             }
         } else if (has_activity) {
-            std.debug.print("refing\n", .{});
             this.poll_ref.ref(this.client.vm);
             // If we have pending commands, we need to keep the object alive.
             if (this.this_value == .weak) {
                 this.this_value.upgrade(this.globalObject);
             }
         }
-
-        std.debug.print("updatePollRef, this.poll_ref={}\n", .{this.poll_ref.status});
     }
 
     pub const jsSend = fns.jsSend;
@@ -1261,8 +1242,6 @@ fn SocketHandler(comptime ssl: bool) type {
         pub fn onData(this: *JSValkeyClient, socket: SocketType, data: []const u8) void {
             // Ensure the socket pointer is updated.
             this.client.socket = _socket(socket);
-
-            std.debug.print("Received response data: {s}\n", .{data});
 
             this.ref();
             defer this.deref();

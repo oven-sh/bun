@@ -602,7 +602,7 @@ export const context: TestContext = {
 };
 export { context as ctx };
 
-if (isEnabled)
+if (isEnabled) {
   beforeAll(async () => {
     // Initialize Docker container once for all tests
     if (!dockerInitPromise) {
@@ -668,8 +668,9 @@ if (isEnabled)
     //   console.warn("Test initialization failed - tests may be skipped");
     // }
   });
+}
 
-if (isEnabled)
+if (isEnabled) {
   afterAll(async () => {
     console.log("Cleaning up Redis container");
     if (!context.redis?.connected) {
@@ -714,6 +715,7 @@ if (isEnabled)
       console.error("Error during test cleanup:", err);
     }
   });
+}
 
 if (!isEnabled) {
   console.warn("Redis is not enabled, skipping tests");

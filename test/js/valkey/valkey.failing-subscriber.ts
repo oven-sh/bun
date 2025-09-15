@@ -20,7 +20,7 @@ const redisUrl = new Promise<string>((resolve) => {
 
 process.on("message", (msg: any) => {
   if (msg.event === "start") {
-    redisUrlResolver(msg.redisUrl);
+    redisUrlResolver(msg.url);
   } else {
     throw new Error("Unknown event " + msg.event);
   }
@@ -29,7 +29,8 @@ process.on("message", (msg: any) => {
 const CHANNEL = "error-callback-channel";
 
 // We will wait for the parent process to tell us to start.
-const subscriber = new RedisClient(await redisUrl);
+const url = await redisUrl;
+const subscriber = new RedisClient(url);
 await subscriber.connect();
 trySend({ event: "ready" });
 
@@ -44,5 +45,4 @@ await subscriber.subscribe(CHANNEL, () => {
 
 process.on("uncaughtException", (e) => {
   trySend({ event: "exception", exMsg: e.message });
-  console.log("uncaughtException", e);
 });

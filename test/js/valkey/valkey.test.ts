@@ -564,10 +564,9 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
       const subscriberProc = spawn({
         cmd: [self.process.execPath, "run", `${__dirname}/valkey.failing-subscriber.ts`],
-        stdout: "pipe",
-        stderr: "pipe",
+        stdout: "inherit",
+        stderr: "inherit",
         ipc: (msg) => {
-          console.log("Subprocess message", msg);
           currentMessage = msg;
           stepCounter.increment();
         },

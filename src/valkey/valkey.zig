@@ -630,7 +630,6 @@ pub const ValkeyClient = struct {
             // Loop continues with the remainder of current_data_slice
         }
 
-
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
     }
 
@@ -1075,7 +1074,14 @@ pub const ValkeyClient = struct {
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
                 } else {
-                    promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection is closed and offline queue is disabled", .{}).toJS());
+                    promise.reject(
+                        globalThis,
+                        globalThis.ERR(
+                            .REDIS_CONNECTION_CLOSED,
+                            "Connection is closed and offline queue is disabled",
+                            .{},
+                        ).toJS(),
+                    );
                 }
             },
             .failed => {

@@ -479,7 +479,7 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
     }
   });
 
-  it("should support JSON output", async () => {
+  it("should support JSON output with basic dependencies", async () => {
     await writeFile(
       join(package_dir, "package.json"),
       JSON.stringify({
@@ -521,6 +521,166 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
     expect(json[0].dependencies).toHaveProperty("lodash");
     expect(json[0].dependencies.lodash.from).toBe("lodash");
     expect(json[0].dependencies.lodash.version).toBe("4.17.21");
+    expect(json[0].dependencies.lodash.resolved).toContain("lodash");
+    expect(json[0].dependencies.lodash.path).toContain("node_modules/lodash");
+  });
+
+  it("should handle JSON output with special characters in package names", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-\"special\"-chars",
+        version: "1.0.0",
+        dependencies: {
+          "@types/node": "^20.0.0",
+        },
+      }),
+    );
+
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(install.exitCode).toBe(0);
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "@types/node", "--json"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(exitCode).toBe(0);
+    const output = stdout.toString();
+    // Should be valid JSON even with special characters
+    const json = JSON.parse(output);
+    expect(Array.isArray(json)).toBe(true);
+    expect(json[0].name).toBe("test-\"special\"-chars");
+  });
+
+  it("should handle JSON output with nested dependencies", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "nested-test",
+        version: "1.0.0",
+        dependencies: {
+          express: "^4.18.0",
+        },
+      }),
+    );
+
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(install.exitCode).toBe(0);
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "mime-types", "--json"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(exitCode).toBe(0);
+    const output = stdout.toString();
+    const json = JSON.parse(output);
+
+    expect(Array.isArray(json)).toBe(true);
+    expect(json[0].dependencies["mime-types"]).toBeDefined();
+    expect(json[0].dependencies["mime-types"].dependencies).toBeDefined();
+    // Should have express as a dependent
+    const deps = json[0].dependencies["mime-types"].dependencies;
+    expect(Object.keys(deps).length).toBeGreaterThan(0);
+  });
+
+  it("should handle JSON output for non-existent packages", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-missing",
+        version: "1.0.0",
+        dependencies: {
+          lodash: "^4.17.21",
+        },
+      }),
+    );
+
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(install.exitCode).toBe(0);
+
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "non-existent-pkg", "--json"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(exitCode).toBe(1);
+    // Error should still output valid JSON
+    const output = stdout.toString();
+    if (output.length > 0) {
+      expect(() => JSON.parse(output)).not.toThrow();
+    }
+  });
+
+  it("should handle JSON output with multiple matching packages", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "multi-match",
+        version: "1.0.0",
+        dependencies: {
+          "@types/node": "^20.0.0",
+          "@types/react": "^18.0.0",
+        },
+      }),
+    );
+
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(install.exitCode).toBe(0);
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "@types/*", "--json"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(exitCode).toBe(0);
+    const output = stdout.toString();
+    const json = JSON.parse(output);
+
+    expect(Array.isArray(json)).toBe(true);
+    // Should have multiple entries for multiple matches
+    expect(json.length).toBeGreaterThanOrEqual(1);
+    // Both packages should be in dependencies
+    const deps = json[0].dependencies;
+    const depNames = Object.keys(deps);
+    expect(depNames.some(name => name.includes("@types/"))).toBe(true);
   });
 
   it("should handle nested workspaces", async () => {

@@ -347,8 +347,8 @@ pub const WhyCommand = struct {
         }
 
         if (json_output) {
-            // Build simplified JSON output
-            var json_buf = std.ArrayList(u8).init(ctx.allocator);
+            // Build JSON output using proper JSON formatting
+            var json_buf = bun.MutableString.init(ctx.allocator, 0) catch unreachable;
             defer json_buf.deinit();
             var writer = json_buf.writer();
 
@@ -378,9 +378,17 @@ pub const WhyCommand = struct {
 
                 // Start JSON object
                 try writer.writeAll("  {\n");
-                try std.fmt.format(writer, "    \"name\": \"{s}\",\n", .{root_name});
-                try std.fmt.format(writer, "    \"version\": \"{s}\",\n", .{root_version});
-                try std.fmt.format(writer, "    \"path\": \"{s}\",\n", .{pm.root_dir.dir});
+
+                // Use proper JSON string escaping
+                try std.fmt.format(writer, "    \"name\": {},\n", .{
+                    bun.fmt.formatJSONStringUTF8(root_name, .{ .quote = true }),
+                });
+                try std.fmt.format(writer, "    \"version\": {},\n", .{
+                    bun.fmt.formatJSONStringUTF8(root_version, .{ .quote = true }),
+                });
+                try std.fmt.format(writer, "    \"path\": {},\n", .{
+                    bun.fmt.formatJSONStringUTF8(pm.root_dir.dir, .{ .quote = true }),
+                });
                 try writer.writeAll("    \"private\": false,\n");
 
                 // Add dependencies
@@ -398,18 +406,20 @@ pub const WhyCommand = struct {
                 const pkg_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, target_name });
                 defer ctx.allocator.free(pkg_path);
 
-                try std.fmt.format(writer,
-                    \\      "{s}": {{
-                    \\        "from": "{s}",
-                    \\        "version": "{s}",
-                    \\        "resolved": "{s}",
-                    \\        "path": "{s}"
-                , .{
-                    target_name,
-                    target_name,
-                    target_version.version,
-                    resolved_buf.items,
-                    pkg_path,
+                try std.fmt.format(writer, "      {}: {{\n", .{
+                    bun.fmt.formatJSONStringUTF8(target_name, .{ .quote = true }),
+                });
+                try std.fmt.format(writer, "        \"from\": {},\n", .{
+                    bun.fmt.formatJSONStringUTF8(target_name, .{ .quote = true }),
+                });
+                try std.fmt.format(writer, "        \"version\": {},\n", .{
+                    bun.fmt.formatJSONStringUTF8(target_version.version, .{ .quote = true }),
+                });
+                try std.fmt.format(writer, "        \"resolved\": {},\n", .{
+                    bun.fmt.formatJSONStringUTF8(resolved_buf.items, .{ .quote = true }),
+                });
+                try std.fmt.format(writer, "        \"path\": {}", .{
+                    bun.fmt.formatJSONStringUTF8(pkg_path, .{ .quote = true }),
                 });
 
                 // Add nested dependencies if they exist
@@ -431,20 +441,22 @@ pub const WhyCommand = struct {
                             const dep_path = try std.fmt.allocPrint(ctx.allocator, "{s}/node_modules/{s}", .{ pm.root_dir.dir, dep.name });
                             defer ctx.allocator.free(dep_path);
 
-                            try std.fmt.format(writer,
-                                \\          "{s}": {{
-                                \\            "from": "{s}",
-                                \\            "version": "{s}",
-                                \\            "resolved": "{s}",
-                                \\            "path": "{s}"
-                                \\          }}
-                            , .{
-                                dep.name,
-                                dep.name,
-                                dep.version,
-                                dep_resolved_buf.items,
-                                dep_path,
+                            try std.fmt.format(writer, "          {}: {{\n", .{
+                                bun.fmt.formatJSONStringUTF8(dep.name, .{ .quote = true }),
                             });
+                            try std.fmt.format(writer, "            \"from\": {},\n", .{
+                                bun.fmt.formatJSONStringUTF8(dep.name, .{ .quote = true }),
+                            });
+                            try std.fmt.format(writer, "            \"version\": {},\n", .{
+                                bun.fmt.formatJSONStringUTF8(dep.version, .{ .quote = true }),
+                            });
+                            try std.fmt.format(writer, "            \"resolved\": {},\n", .{
+                                bun.fmt.formatJSONStringUTF8(dep_resolved_buf.items, .{ .quote = true }),
+                            });
+                            try std.fmt.format(writer, "            \"path\": {}\n", .{
+                                bun.fmt.formatJSONStringUTF8(dep_path, .{ .quote = true }),
+                            });
+                            try writer.writeAll("          }");
                         }
 
                         try writer.writeAll("\n        }");
@@ -458,7 +470,7 @@ pub const WhyCommand = struct {
 
             try writer.writeAll("\n]\n");
 
-            Output.prettyln("{s}", .{json_buf.items});
+            Output.prettyln("{s}", .{json_buf.list.items});
             Output.flush();
         } else {
             for (target_versions.items) |target_version| {

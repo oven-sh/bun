@@ -27,7 +27,6 @@ pub const WhyCommand = struct {
         optional_peer,
     };
 
-
     fn getSpecifierSpecificity(spec: []const u8) u8 {
         if (spec.len == 0) return 9;
         if (spec[0] == '*') return 1;
@@ -673,7 +672,6 @@ pub const WhyCommand = struct {
             }
         }
     }
-
 };
 
 const string = []const u8;

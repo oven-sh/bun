@@ -394,18 +394,19 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] vendor/elysia/test/validator/params.test.ts
 - [ ] test/cli/test/bun-test.test.ts
 - [ ] test/js/bun/util/inspect-error.test.js
-- [ ] test/bake/dev-and-prod.test.ts
-- [ ] test/bake/dev/esm.test.ts
-- [ ] test/js/bun/util/bun-file.test.ts
-- [ ] test/js/web/websocket/autobahn.test.ts
-- [ ] test/js/bun/net/socket.test.ts
+  - stack traces different
+- [x] test/bake/dev-and-prod.test.ts
+- [x] test/bake/dev/esm.test.ts
+- [x] test/js/bun/util/bun-file.test.ts
+- [x] test/js/web/websocket/autobahn.test.ts
+- [x] test/js/bun/net/socket.test.ts
 - [ ] test/js/junit-reporter/junit.test.js
-- [ ] test/js/third_party/@duckdb/node-api/duckdb.test.ts
-- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
-- [ ] test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts
+- [x] test/js/third_party/@duckdb/node-api/duckdb.test.ts
+- [x] test/js/node/test/parallel/test-child-process-fork-exec-path.js
+- [x] test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts
 - [ ] test/js/third_party/prisma/prisma.test.ts
 - [ ] test/cli/install/bun-install-registry.test.ts
-- [ ] test/js/bun/s3/s3.test.ts
+- [x] test/js/bun/s3/s3.test.ts
 - [x] test/cli/test/test-timeout-behavior.test.ts
   - oh no. it's expecting timeouts to run while spawnSync runs. we need to start the timeout before calling the callback
   - the change here is to specify the timeout when calling the callback rather than returning it out
@@ -626,6 +627,7 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Follow-up:
 
+- [ ] a flag or path for tests which are default concurrent
 - [ ] consider memory pool + linked lists, or just 'next': usize rather than incrementing an index. this is to allow inserting items during test execution.
 - [ ] consider using a jsc Bound Function rather than callback with args. bound functions allow adding arguments.
 - [ ] consider modifying the junit reporter to print the whole describe tree at the end instead of trying to output as test results come in. and move it into its own file.
@@ -642,7 +644,7 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] `.concurrent.test.ts` to make all items concurrent. consider adding a concurrent directory for bunfig.toml?
 - [] `test.failing.if(false)` errors because it can't replace mode 'failing' with mode 'skip' (maybe failing should be a bool?)
 - [ ] if we hold a weak reference to the done param, we can gc(true) (if a done param is provided) and then when it is finalized, count that as the function finishing (assuming it's not a promise). that way it fixes the done discard problem without solving waitForPromise.
-- [ ] m_terminationException in timeouts
+- [ ] trigger timeout termination exception for `while(true) {}`
 - [ ] support test() inside test()
 - [ ] add a warning message when a test resolves after it times out
 - [ ] note interesting behaviour if DoneCallback gets garbage collected and then after that, the promise resolves, then the test will complete. but in the other order, it won't. interesting.

@@ -1,5 +1,4 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { expect, test } from "bun:test";
 import { zstdCompressSync } from "node:zlib";
 
 test("issue #20053 - multi-frame zstd responses should be fully decompressed", async () => {
@@ -7,7 +6,7 @@ test("issue #20053 - multi-frame zstd responses should be fully decompressed", a
   // This simulates what happens with chunked encoding where each chunk might be
   // compressed as a separate frame
   const part1 = "A".repeat(16384); // Exactly 16KB
-  const part2 = "B".repeat(3627);  // Remaining data to total ~20KB
+  const part2 = "B".repeat(3627); // Remaining data to total ~20KB
 
   const compressed1 = zstdCompressSync(Buffer.from(part1));
   const compressed2 = zstdCompressSync(Buffer.from(part2));

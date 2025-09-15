@@ -167,36 +167,19 @@ pub const SubscriptionCtx = struct {
             bun.assert(callbacks.isArray());
         }
 
-        const callback_count = callbacks.getLength(globalObject) catch 0;
-        debug("Starting callback invocation for channel {s}, {} callbacks registered", .{ channelName.asString().getZigString(globalObject), callback_count });
-
         const vm = jsc.VirtualMachine.get();
         const event_loop = vm.eventLoop();
-        debug("Event loop enter() before callbacks", .{});
-        event_loop.enter();
-        defer {
-            debug("Event loop exit() after callbacks", .{});
-            event_loop.exit();
-        }
 
         // If callbacks is an array, iterate and call each one
         var iter = try callbacks.arrayIterator(globalObject);
-        var callback_index: usize = 0;
         while (try iter.next()) |callback| {
-            debug("Invoking callback {} for channel {s}", .{ callback_index, channelName.asString().getZigString(globalObject) });
-
             if (comptime bun.Environment.isDebug) {
                 bun.assert(callback.isCallable());
             }
 
-            debug("About to call runCallback for callback {}", .{callback_index});
             event_loop.runCallback(callback, globalObject, .js_undefined, args);
-            debug("Finished runCallback for callback {}, calling updatePollRef", .{callback_index});
             this._parent.updatePollRef();
-            debug("Finished updatePollRef for callback {}", .{callback_index});
-            callback_index += 1;
         }
-        debug("Finished invoking all {} callbacks for channel {s}", .{ callback_index, channelName.asString().getZigString(globalObject) });
     }
 
     /// Return whether the subscription context is ready to be deleted by the JS garbage collector.

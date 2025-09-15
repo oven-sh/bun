@@ -173,6 +173,8 @@ pub const ZstdReaderArrayList = struct {
                     return;
                 }
                 // Reset the decompressor for the next frame
+                // ZSTD_initDStream() safely resets the stream state without needing cleanup
+                // It's designed to be called multiple times on the same DStream object
                 _ = c.ZSTD_initDStream(this.zstd);
                 continue;
             }

@@ -391,12 +391,12 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 };
             },
             .server => {
-                if (ctx.bundler_options.bake_debug_dump_server) {
-                    _ = file.writeToDisk(root_dir, ".") catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
-                    };
-                }
+                // Always write server files to disk for SSR support
+                // SSR pages need their server bundles available at runtime
+                _ = file.writeToDisk(root_dir, ".") catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                };
 
                 // If the file has a sourcemap, store it so we can put it on
                 // `PerThread` so we can provide sourcemapped stacktraces for
@@ -683,25 +683,55 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     const render_promise = BakeRenderRoutesForProdStatic(
         global,
+        // outBase: string
         bun.String.init(root_dir_path),
+        // allServerFiles: string[]
         pt.all_server_files,
+        // renderStatic: FrameworkPrerender[]
         server_render_funcs,
+        // getParams: FrameworkGetParams[]
         server_param_funcs,
+        // clientEntryUrl: string[]
         client_entry_urls,
 
+        // patterns: string[]
         route_patterns,
+        // files: FileIndex[][]
         route_nested_files,
+        // typeAndFlags: TypeAndFlags[]
         route_type_and_flags,
+        // sourceRouteFiles: string[]
         route_source_files,
+        // paramInformation: Array<null | string[]>
         route_param_info,
+        // styles: string[][]
         route_style_references,
     );
     render_promise.setHandled(vm.jsc_vm);
     vm.waitForPromise(.{ .normal = render_promise });
     switch (render_promise.unwrap(vm.jsc_vm, .mark_handled)) {
         .pending => unreachable,
-        .fulfilled => {
+        .fulfilled => |manifest_value| {
+            // Write manifest to file
+            const manifest_path = try std.fs.path.join(allocator, &.{ root_dir_path, "manifest.json" });
+            defer allocator.free(manifest_path);
+
+            // Convert JSValue to JSON string
+            var manifest_str = bun.String.empty;
+            defer manifest_str.deref();
+            try manifest_value.jsonStringify(global, 2, &manifest_str);
+
+            // Write the manifest file
+            const manifest_utf8 = manifest_str.toUTF8(allocator);
+            defer manifest_utf8.deinit();
+
+            try std.fs.cwd().writeFile(.{
+                .sub_path = manifest_path,
+                .data = manifest_utf8.slice(),
+            });
+
             Output.prettyln("done", .{});
+            Output.prettyln("Manifest written to: {s}", .{manifest_path});
             Output.flush();
         },
         .rejected => |err| {

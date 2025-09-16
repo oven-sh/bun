@@ -355,6 +355,35 @@ $> bun-after test ./beforeall-ordering.test.ts
 </d2>
 ```
 
+## afterAll inside test
+
+afterAll inside a test is no longer allowed
+
+```ts
+test("test 1", () => {
+  afterAll(() => console.log("afterAll"));
+  console.log("test 1");
+});
+test("test 2", () => {
+  console.log("test 2");
+});
+```
+
+```
+$> bun-before
+test 1
+✓ test 1 [0.05ms]
+test 2
+✓ test 2
+afterAll
+
+$> bun-after
+error: Cannot call afterAll() inside a test. Call it inside describe() instead.
+✗ test 1 [1.00ms]
+test 2
+✓ test 2 [0.20ms]
+```
+
 ## Only is not allowed in CI
 
 (TODO)

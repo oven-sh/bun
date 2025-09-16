@@ -69,6 +69,21 @@ $ bun --env-file=.env.1 src/index.ts
 $ bun --env-file=.env.abc --env-file=.env.def run build
 ```
 
+### Disabling `.env` files
+
+Use `--no-env-file` to disable loading `.env` files:
+
+```sh
+$ bun --no-env-file src/index.ts
+```
+
+Or in bunfig.toml:
+
+```toml
+[env]
+file = false
+```
+
 ### Quotation marks
 
 Bun supports double quotes, single quotes, and template literal backticks:

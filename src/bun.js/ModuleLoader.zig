@@ -1118,7 +1118,10 @@ pub fn transpileSourceCode(
                     .allocator = null,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .jsvalue_for_export = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
+                    .jsvalue_for_export = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject) catch |err| switch (err) {
+                        error.JSError, error.OutOfMemory => |e| return e,
+                        else => panic("Unexpected JS error: {s}", .{@errorName(err)}),
+                    },
                     .tag = .exports_object,
                 };
             }

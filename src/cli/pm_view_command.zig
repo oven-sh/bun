@@ -132,12 +132,15 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                     const sliced_literal = Semver.SlicedString.init(version, version);
                     const query = try Semver.Query.parse(allocator, version, sliced_literal);
                     defer query.deinit();
-                    // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                    if (parsed_manifest.findBestVersion(query, parsed_manifest.string_buf)) |result| {
-                        break :brk2 result.version;
+                    // Use the same pattern as outdated_command: findBestVersion with the Group from the query
+                    if (query.head.head) |group| {
+                        if (parsed_manifest.findBestVersion(group, parsed_manifest.string_buf, null, name)) |result| {
+                            break :brk2 result.version;
+                        }
                     }
                 }
 
+                // If we didn't find a matching version, skip
                 break :from_versions;
             };
 

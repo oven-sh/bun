@@ -610,6 +610,32 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("minimumReleaseAge")) |minimum_age| {
+                        if (minimum_age.data == .e_number) {
+                            install.minimum_release_age = @as(u32, @intFromFloat(minimum_age.data.e_number.value));
+                        } else {
+                            try this.addError(minimum_age.loc, "Expected number for minimumReleaseAge (minutes)");
+                        }
+                    }
+
+                    if (install_obj.get("minimumReleaseAgeExclude")) |exclude| {
+                        if (exclude.data == .e_array) {
+                            const items = exclude.data.e_array.items.slice();
+                            if (items.len > 0) {
+                                const list = try allocator.alloc([]const u8, items.len);
+                                for (items, 0..) |item, i| {
+                                    list[i] = try item.asStringCloned(allocator) orelse {
+                                        try this.addError(item.loc, "Expected string in minimumReleaseAgeExclude array");
+                                        return;
+                                    };
+                                }
+                                install.minimum_release_age_exclude = list;
+                            }
+                        } else {
+                            try this.addError(exclude.loc, "Expected array for minimumReleaseAgeExclude");
+                        }
+                    }
+
                     if (install_obj.get("security")) |security_obj| {
                         if (security_obj.data == .e_object) {
                             if (security_obj.get("scanner")) |scanner| {

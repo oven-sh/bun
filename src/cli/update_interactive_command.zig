@@ -775,7 +775,7 @@ pub const UpdateInteractiveCommand = struct {
                 // In interactive mode, show the constrained update version as "Target"
                 // but always include packages (don't filter out breaking changes)
                 const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse latest
+                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf, null, package_name) orelse latest
                 else
                     manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse latest;
 

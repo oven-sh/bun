@@ -1573,7 +1573,12 @@ fn getOrPutResolvedPackage(
             ) orelse return null; // manifest might still be downloading. This feels unreliable.
             const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
                 .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
-                .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
+                .npm => manifest.findBestVersion(
+                    version.value.npm.version,
+                    this.lockfile.buffers.string_bytes.items,
+                    &this.options.minimum_release_age,
+                    name_str,
+                ),
                 else => unreachable,
             } orelse {
                 resolve_workspace_from_dist_tag: {

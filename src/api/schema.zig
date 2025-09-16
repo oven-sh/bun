@@ -3048,6 +3048,12 @@ pub const api = struct {
 
         link_workspace_packages: ?bool = null,
 
+        /// Minimum age in minutes that a package version must have been published before installation
+        minimum_release_age: ?u32 = null,
+
+        /// List of packages exempt from the minimum release age restriction
+        minimum_release_age_exclude: ?[]const []const u8 = null,
+
         node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
 
         security_scanner: ?[]const u8 = null,

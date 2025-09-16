@@ -74,6 +74,40 @@ node_linker: NodeLinker = .auto,
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
 
+// Minimum release age configuration for security
+minimum_release_age: MinimumReleaseAge = .{},
+
+pub const MinimumReleaseAge = struct {
+    minutes: u32 = 0,
+    exclude: []const string = &.{},
+    exclude_set: ?bun.StringHashMapUnmanaged(void) = null,
+
+    pub fn isExcluded(this: *const MinimumReleaseAge, name: string) bool {
+        if (this.exclude_set) |*set| {
+            return set.contains(name);
+        }
+        for (this.exclude) |excluded| {
+            if (strings.eql(excluded, name)) return true;
+        }
+        return false;
+    }
+
+    pub fn isEnabled(this: *const MinimumReleaseAge) bool {
+        return this.minutes > 0;
+    }
+
+    pub fn isVersionTooNew(this: *const MinimumReleaseAge, publish_time_seconds: u32) bool {
+        if (!this.isEnabled()) return false;
+        if (publish_time_seconds == 0) return false; // Unknown publish time, allow it
+
+        const current_time = @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp())))));
+        const age_seconds = current_time -| publish_time_seconds;
+        const age_minutes = age_seconds / 60;
+
+        return age_minutes < this.minutes;
+    }
+};
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -363,6 +397,23 @@ pub fn load(
         if (config.ignore_scripts) |ignore_scripts| {
             if (ignore_scripts) {
                 this.do.run_scripts = false;
+            }
+        }
+
+        if (config.minimum_release_age) |minimum_age| {
+            this.minimum_release_age.minutes = minimum_age;
+        }
+
+        if (config.minimum_release_age_exclude) |exclude_list| {
+            this.minimum_release_age.exclude = exclude_list;
+            // Build a hashmap for fast lookups if we have many exclusions
+            if (exclude_list.len > 5) {
+                var exclude_set = bun.StringHashMapUnmanaged(void){};
+                try exclude_set.ensureTotalCapacity(allocator, @as(u32, @truncate(exclude_list.len)));
+                for (exclude_list) |name| {
+                    exclude_set.putAssumeCapacityNoClobber(name, {});
+                }
+                this.minimum_release_age.exclude_set = exclude_set;
             }
         }
 

@@ -846,7 +846,7 @@ pub const PackageVersion = extern struct {
     /// `"engines"` field in package.json
     engines: ExternalStringMap = ExternalStringMap{},
 
-    /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
+    /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
     /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
     non_optional_peer_dependencies_start: u32 = 0,
 
@@ -870,13 +870,17 @@ pub const PackageVersion = extern struct {
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,
 
+    /// Unix timestamp (seconds) when this version was published to npm registry
+    /// Used for minimum release age security feature
+    publish_time: u32 = 0,
+
     pub fn allDependenciesBundled(this: *const PackageVersion) bool {
         return this.bundled_dependencies.isInvalid();
     }
 };
 
 comptime {
-    if (@sizeOf(Npm.PackageVersion) != 232) {
+    if (@sizeOf(Npm.PackageVersion) != 240) {
         @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
     }
 }
@@ -1460,16 +1464,46 @@ pub const PackageManifest = struct {
         return null;
     }
 
-    pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group, group_buf: string) ?FindResult {
+    pub fn findBestVersion(
+        this: *const PackageManifest,
+        group: Semver.Query.Group,
+        group_buf: string,
+        minimum_release_age: ?*const PackageManager.Options.MinimumReleaseAge,
+        package_name: []const u8,
+    ) ?FindResult {
         const left = group.head.head.range.left;
         // Fast path: exact version
         if (left.op == .eql) {
             return this.findByVersion(left.version);
         }
 
+        // Track any newer versions that were skipped due to age restrictions
+        var skipped_newer_version: ?FindResult = null;
+
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                // Check minimum release age if enabled and not excluded
+                if (minimum_release_age) |min_age| {
+                    if (min_age.isEnabled() and !min_age.isExcluded(package_name)) {
+                        if (result.package.publish_time > 0 and min_age.isVersionTooNew(result.package.publish_time)) {
+                            // Version is too new, skip it but remember it
+                            skipped_newer_version = result;
+                        } else if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                            if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
+                                // if prerelease, use latest if semver+tag match range exactly
+                                return result;
+                            }
+                        } else {
+                            return result;
+                        }
+                    } else if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                        if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
+                            return result;
+                        }
+                    } else {
+                        return result;
+                    }
+                } else if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
                     if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
                         // if prerelease, use latest if semver+tag match range exactly
                         return result;
@@ -1489,9 +1523,24 @@ pub const PackageManifest = struct {
                 const version = releases[i - 1];
 
                 if (group.satisfies(version, group_buf, this.string_buf)) {
+                    const package = &this.pkg.releases.values.get(this.package_versions)[i - 1];
+
+                    // Check minimum release age if enabled and not excluded
+                    if (minimum_release_age) |min_age| {
+                        if (min_age.isEnabled() and !min_age.isExcluded(package_name)) {
+                            if (package.publish_time > 0 and min_age.isVersionTooNew(package.publish_time)) {
+                                // Version is too new, skip it but remember if it's newer than what we have
+                                if (skipped_newer_version == null) {
+                                    skipped_newer_version = .{ .version = version, .package = package };
+                                }
+                                continue;
+                            }
+                        }
+                    }
+
                     return .{
                         .version = version,
-                        .package = &this.pkg.releases.values.get(this.package_versions)[i - 1],
+                        .package = package,
                     };
                 }
             }
@@ -1506,9 +1555,24 @@ pub const PackageManifest = struct {
                 // This list is sorted at serialization time.
                 if (group.satisfies(version, group_buf, this.string_buf)) {
                     const packages = this.pkg.prereleases.values.get(this.package_versions);
+                    const package = &packages[i - 1];
+
+                    // Check minimum release age if enabled and not excluded
+                    if (minimum_release_age) |min_age| {
+                        if (min_age.isEnabled() and !min_age.isExcluded(package_name)) {
+                            if (package.publish_time > 0 and min_age.isVersionTooNew(package.publish_time)) {
+                                // Version is too new, skip it but remember if it's newer than what we have
+                                if (skipped_newer_version == null) {
+                                    skipped_newer_version = .{ .version = version, .package = package };
+                                }
+                                continue;
+                            }
+                        }
+                    }
+
                     return .{
                         .version = version,
-                        .package = &packages[i - 1],
+                        .package = package,
                     };
                 }
             }
@@ -1518,6 +1582,42 @@ pub const PackageManifest = struct {
     }
 
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
+
+    /// Parse ISO8601 timestamp to Unix seconds
+    /// Format: "2010-12-29T19:38:25.450Z"
+    fn parseISO8601ToUnixSeconds(timestamp: []const u8) !u32 {
+        if (timestamp.len < 19) return error.InvalidTimestamp;
+
+        // Parse year, month, day, hour, minute, second
+        const year = std.fmt.parseInt(u32, timestamp[0..4], 10) catch return error.InvalidTimestamp;
+        const month = std.fmt.parseInt(u32, timestamp[5..7], 10) catch return error.InvalidTimestamp;
+        const day = std.fmt.parseInt(u32, timestamp[8..10], 10) catch return error.InvalidTimestamp;
+        const hour = std.fmt.parseInt(u32, timestamp[11..13], 10) catch return error.InvalidTimestamp;
+        const minute = std.fmt.parseInt(u32, timestamp[14..16], 10) catch return error.InvalidTimestamp;
+        const second = std.fmt.parseInt(u32, timestamp[17..19], 10) catch return error.InvalidTimestamp;
+
+        // Simple conversion to Unix timestamp (seconds since 1970-01-01)
+        // This is approximate but good enough for our use case
+        // Days since epoch = (year - 1970) * 365 + leap days + days in months + day
+        const years_since_1970 = year -| 1970;
+        const leap_years = (years_since_1970 + 1) / 4 - (years_since_1970 + 69) / 100 + (years_since_1970 + 369) / 400;
+
+        var days_in_months: u32 = 0;
+        const days_per_month = [_]u32{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+        var m: u32 = 1;
+        while (m < month) : (m += 1) {
+            days_in_months += days_per_month[m - 1];
+        }
+        // Add leap day if applicable
+        if (month > 2 and ((year % 4 == 0 and year % 100 != 0) or year % 400 == 0)) {
+            days_in_months += 1;
+        }
+
+        const days_since_epoch = years_since_1970 * 365 + leap_years + days_in_months + day - 1;
+        const seconds_since_epoch = days_since_epoch * 86400 + hour * 3600 + minute * 60 + second;
+
+        return @as(u32, @truncate(seconds_since_epoch));
+    }
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
@@ -1571,6 +1671,27 @@ pub const PackageManifest = struct {
         var bundle_all_deps = false;
 
         var bundled_deps_count: usize = 0;
+
+        // Parse time field to get publish times for each version
+        var publish_times = std.StringHashMapUnmanaged(u32){};
+        defer publish_times.deinit(allocator);
+        if (json.asProperty("time")) |time_field| {
+            if (time_field.expr.data == .e_object) {
+                const time_entries = time_field.expr.data.e_object.properties.slice();
+                try publish_times.ensureTotalCapacity(allocator, @as(u32, @truncate(time_entries.len)));
+                for (time_entries) |entry| {
+                    const version_key = entry.key.?.asString(allocator) orelse continue;
+                    // Skip 'created' and 'modified' entries
+                    if (strings.eqlComptime(version_key, "created") or strings.eqlComptime(version_key, "modified")) continue;
+
+                    const time_str = entry.value.?.asString(allocator) orelse continue;
+                    // Parse ISO8601 timestamp to unix timestamp
+                    // Format is: "2010-12-29T19:38:25.450Z"
+                    const unix_timestamp = parseISO8601ToUnixSeconds(time_str) catch continue;
+                    publish_times.putAssumeCapacityNoClobber(version_key, unix_timestamp);
+                }
+            }
+        }
 
         var string_builder = String.Builder{
             .string_pool = string_pool,
@@ -1860,6 +1981,11 @@ pub const PackageManifest = struct {
                     }
 
                     var package_version: PackageVersion = empty_version;
+
+                    // Set publish time for this version if available
+                    if (publish_times.get(version_name)) |publish_time| {
+                        package_version.publish_time = publish_time;
+                    }
 
                     if (prop.value.?.asProperty("cpu")) |cpu_q| {
                         package_version.cpu = try Negatable(Architecture).fromJson(allocator, cpu_q.expr);

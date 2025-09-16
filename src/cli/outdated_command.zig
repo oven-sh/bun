@@ -441,7 +441,7 @@ pub const OutdatedCommand = struct {
                 const latest = manifest.findByDistTag("latest") orelse continue;
 
                 const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf, null, package_name) orelse continue
                 else
                     manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 
@@ -574,7 +574,7 @@ pub const OutdatedCommand = struct {
                 const latest = manifest.findByDistTag("latest") orelse continue;
                 const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
                 const update = if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf, null, package_name) orelse continue
                 else
                     manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
 

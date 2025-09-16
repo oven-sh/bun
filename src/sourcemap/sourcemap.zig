@@ -203,7 +203,7 @@ pub fn parseJSON(
                     }
 
                     map_data.mappings.names = names_list.items;
-                    map_data.mappings.names_buffer = .fromList(names_buffer);
+                    map_data.mappings.names_buffer = .moveFromList(&names_buffer);
                 }
             }
         }
@@ -427,7 +427,7 @@ pub const Mapping = struct {
                 inline else => |*list| list.deinit(allocator),
             }
 
-            self.names_buffer.deinitWithAllocator(allocator);
+            self.names_buffer.deinit(allocator);
             allocator.free(self.names);
         }
 

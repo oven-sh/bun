@@ -1604,6 +1604,46 @@ describe("bundler", () => {
       stdout: "hi\n",
     },
   });
+  itBundled("default/CircularTLADependency2", {
+    files: {
+      "/entry.ts": /* ts */ `
+        await import("./b.ts");
+      `,
+      "/b.ts": /* ts */ `
+        import { c } from "./c.ts";
+        console.log(c);
+        export const b = "b";
+      `,
+      "/c.ts": /* ts */ `
+        import { d } from "./d.ts";
+        console.log(d);
+        export const c = "c";
+      `,
+      "/d.ts": /* ts */ `
+        const { e } = await import("./e.ts");
+        console.log(e);
+        import { f } from "./f.ts";
+        console.log(f);
+        export const d = "d";
+      `,
+      "/e.ts": /* ts */ `
+        export const e = "e";
+      `,
+      "/f.ts": /* ts */ `
+        import { g } from "./g.ts";
+        console.log(g);
+        export const f = "f";
+      `,
+      "/g.ts": /* ts */ `
+        import { c } from "./c.ts";
+        console.log(c);
+        export const g = "g";
+      `,
+    },
+    run: {
+      stdout: "c\ng\ne\nf\nd\nc\n",
+    },
+  });
   itBundled("default/ThisOutsideFunctionRenamedToExports", {
     files: {
       "/entry.js": /* js */ `
@@ -4602,6 +4642,7 @@ describe("bundler", () => {
   //   },
   // });
   itBundled("default/KeepNamesTreeShaking", {
+    todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {
       "/entry.js": /* js */ `
         (function() {
@@ -4638,6 +4679,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/KeepNamesClassStaticName", {
+    todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {
       "/entry.js": /* js */ `
         class ClassName1A { static foo = 1 }

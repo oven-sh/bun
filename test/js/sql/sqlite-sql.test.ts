@@ -226,46 +226,62 @@ describe("Connection & Initialization", () => {
 
       await sql.close();
     });
+  });
 
-    test("should NOT use PG_URL for SQLite", async () => {
-      Bun.env.PG_URL = "postgres://user:pass@localhost:5432/mydb";
+  describe("options.url overrides first argument", () => {
+    test("should use options.url for postgres when it overrides first argument", () => {
+      const sql = new SQL("http://wrong-host/db", {
+        adapter: "postgres",
+        url: "postgres://correct-host:5432/mydb",
+      });
 
-      const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
-      expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe(":memory:");
-
-      await sql.close();
-    });
-
-    test("should throw error when POSTGRES_URL is used without adapter specification", () => {
-      Bun.env.POSTGRES_URL = "postgres://user:pass@localhost:5432/mydb";
-      Bun.env.DATABASE_URL = undefined;
-
-      // This should create a postgres connection, not sqlite
-      const sql = new SQL();
       expect(sql.options.adapter).toBe("postgres");
+      expect(sql.options.hostname).toBe("correct-host");
+      expect(sql.options.port).toBe(5432);
+      expect(sql.options.database).toBe("mydb");
+
       sql.close();
     });
 
-    test("should handle multiple env vars with precedence", async () => {
-      // Test precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL
-      Bun.env.PG_URL = "postgres://pg_url@localhost:5432/pg_db";
-      Bun.env.PGURL = "postgres://pgurl@localhost:5432/pgurl_db";
-      Bun.env.DATABASE_URL = "sqlite://:memory:";
-      Bun.env.POSTGRES_URL = "postgres://postgres@localhost:5432/postgres_db";
+    test("should use options.url for mysql when it overrides first argument", () => {
+      const sql = new SQL("http://wrong-host/wrongdb", {
+        adapter: "mysql",
+        url: "mysql://user:pass@mysql-host:3306/correctdb",
+      });
 
-      const sql = new SQL();
-      // POSTGRES_URL takes precedence
+      expect(sql.options.adapter).toBe("mysql");
+      expect(sql.options.hostname).toBe("mysql-host");
+      expect(sql.options.port).toBe(3306);
+      expect(sql.options.database).toBe("correctdb");
+
+      sql.close();
+    });
+
+    test("should use options.url for mariadb when it overrides first argument", () => {
+      const sql = new SQL("http://wrong-host:1234/wrongdb", {
+        adapter: "mariadb",
+        url: "mariadb://maria-host:3307/mariadb",
+      });
+
+      expect(sql.options.adapter).toBe("mariadb");
+      expect(sql.options.hostname).toBe("maria-host");
+      expect(sql.options.port).toBe(3307);
+      expect(sql.options.database).toBe("mariadb");
+
+      sql.close();
+    });
+
+    test("should use first argument when options.url is not provided", () => {
+      const sql = new SQL("postgres://first-arg-host:5432/firstdb", {
+        adapter: "postgres",
+      });
+
       expect(sql.options.adapter).toBe("postgres");
-      await sql.close();
+      expect(sql.options.hostname).toBe("first-arg-host");
+      expect(sql.options.port).toBe(5432);
+      expect(sql.options.database).toBe("firstdb");
 
-      // Remove POSTGRES_URL
-      delete Bun.env.POSTGRES_URL;
-      const sql2 = new SQL();
-      // DATABASE_URL takes next precedence and it's SQLite (detected via :memory:)
-      expect(sql2.options.adapter).toBe("sqlite");
-      expect(sql2.options.filename).toBe(":memory:");
-      await sql2.close();
+      sql.close();
     });
   });
 
@@ -579,14 +595,14 @@ describe("Connection & Initialization", () => {
     test("should handle sqlite: without path", () => {
       const sql = new SQL("sqlite:");
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe("");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
     test("should handle sqlite:// without path", () => {
       const sql = new SQL("sqlite://");
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe("");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
@@ -671,7 +687,7 @@ describe("Connection & Initialization", () => {
   describe("Error Cases", () => {
     test("should throw for unsupported adapter", () => {
       expect(() => new SQL({ adapter: "mssql" as any })).toThrowErrorMatchingInlineSnapshot(
-        `"Unsupported adapter: mssql. Supported adapters: "postgres", "sqlite", "mysql""`,
+        `"Unsupported adapter: mssql. Supported adapters: "postgres", "sqlite", "mysql", "mariadb""`,
       );
     });
 

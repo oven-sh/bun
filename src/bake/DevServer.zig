@@ -3859,7 +3859,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
         const kind = kinds[event.index];
 
         // copy because the watchlist memory can be invalidated elsewhere
-        const file_path_copy = dev.allocator().dupe(u8, file_path) catch file_path;
+        const file_path_copy = dev.allocator().dupe(u8, file_path) catch continue;
         defer if (file_path_copy.ptr != file_path.ptr) dev.allocator().free(file_path_copy);
 
         debug.log("{s} change: {s} {}", .{ @tagName(kind), file_path_copy, event.op });

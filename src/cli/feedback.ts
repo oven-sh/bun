@@ -1,11 +1,11 @@
+import { File } from "node:buffer";
 import { spawnSync } from "node:child_process";
-import { promises as fsp, openSync, closeSync } from "node:fs";
+import { closeSync, promises as fsp, openSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { parseArgs as nodeParseArgs } from "node:util";
 import tty from "node:tty";
-import { File } from "node:buffer";
+import { parseArgs as nodeParseArgs } from "node:util";
 
 const supportsAnsi = Boolean(process.stdout.isTTY && !("NO_COLOR" in process.env));
 const colors = {

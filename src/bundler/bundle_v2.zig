@@ -990,7 +990,7 @@ pub const BundleV2 = struct {
             // try this.graph.entry_points.append(allocator, Index.runtime);
             try this.graph.ast.append(this.allocator(), JSAst.empty);
             try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), "bun:wrap", Index.runtime.get());
-            try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), "bun:app", Index.runtime.get());
+            // try this.pathToSourceIndexMap(this.transpiler.options.target).put(this.allocator(), "bun:app", Index.runtime.get());
             var runtime_parse_task = try this.allocator().create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
@@ -3098,13 +3098,13 @@ pub const BundleV2 = struct {
                 }
             };
 
-            if (strings.eqlComptime(import_record.path.text, "bun:app")) {
-                import_record.path.namespace = "bun";
-                import_record.tag = .runtime;
-                import_record.path.text = "app";
-                import_record.source_index = .runtime;
-                continue;
-            }
+            // if (strings.eqlComptime(import_record.path.text, "bun:app")) {
+            //     import_record.path.namespace = "bun";
+            //     import_record.tag = .runtime;
+            //     import_record.path.text = "app";
+            //     import_record.source_index = .runtime;
+            //     continue;
+            // }
 
             if (strings.eqlComptime(import_record.path.text, "bun:wrap")) {
                 import_record.path.namespace = "bun";

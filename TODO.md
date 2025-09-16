@@ -420,13 +420,6 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] test/js/web/fetch/fetch.test.ts
 - [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
 
-## Uncategorized
-
-- [x] test/js/bun/test/describe2.test.ts
-- [ ] test/js/bun/net/socket.test.ts
-  - maybe a real failure
-- [x] test/js/junit-reporter/junit.test.js
-
 # Add features:
 
 - [ ] test/js/node/http2/node-http2.test.js

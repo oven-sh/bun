@@ -340,13 +340,18 @@ pub const LinkerContext = struct {
         }
     }
 
+    const LinkError = OOM || error{
+        BuildFailed,
+        ImportResolutionFailed,
+    };
+
     pub noinline fn link(
         this: *LinkerContext,
         bundle: *BundleV2,
         entry_points: []Index,
         server_component_boundaries: ServerComponentBoundary.List,
         reachable: []Index,
-    ) ![]Chunk {
+    ) LinkError![]Chunk {
         try this.load(
             bundle,
             entry_points,
@@ -364,10 +369,8 @@ pub const LinkerContext = struct {
             this.checkForMemoryCorruption();
         }
 
-        // Validate top-level await for all files first, like esbuild does.
-        // This must be done before scanImportsAndExports to ensure async
-        // status is properly propagated through cyclic imports.
-        {
+        // Validate top-level await for all files first.
+        if (bundle.has_any_top_level_await_modules) {
             const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
             const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
             const tla_checks = this.parse_graph.ast.items(.tla_check);
@@ -392,9 +395,11 @@ pub const LinkerContext = struct {
 
                 _ = try this.validateTLA(source_index, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
             }
+
+            // after validation propagate async through all importers.
+            try this.graph.propagateAsyncDependencies();
         }
 
-        try this.graph.propagateAsyncDependencies();
         try this.scanImportsAndExports();
 
         // Stop now if there were errors
@@ -413,6 +418,10 @@ pub const LinkerContext = struct {
         }
 
         const chunks = try this.computeChunks(bundle.unique_key);
+
+        if (this.log.hasErrors()) {
+            return error.BuildFailed;
+        }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
@@ -442,32 +451,32 @@ pub const LinkerContext = struct {
     pub const findImportedFilesInCSSOrder = @import("./linker_context/findImportedFilesInCSSOrder.zig").findImportedFilesInCSSOrder;
     pub const findImportedCSSFilesInJSOrder = @import("./linker_context/findImportedCSSFilesInJSOrder.zig").findImportedCSSFilesInJSOrder;
 
-    pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) !struct { Ref, u32 } {
+    pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) bun.OOM!struct { Ref, u32 } {
         const ref = this.graph.generateNewSymbol(source_index, .other, name);
-        const part_index = this.graph.addPartToFile(source_index, .{
-            .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
+        const part_index = try this.graph.addPartToFile(source_index, .{
+            .declared_symbols = try js_ast.DeclaredSymbol.List.fromSlice(
                 this.allocator(),
                 &[_]js_ast.DeclaredSymbol{
                     .{ .ref = ref, .is_top_level = true },
                 },
-            ) catch unreachable,
+            ),
             .can_be_removed_if_unused = true,
-        }) catch unreachable;
+        });
 
         try this.graph.generateSymbolImportAndUse(source_index, part_index, module_ref, 1, Index.init(source_index));
         var top_level = &this.graph.meta.items(.top_level_symbol_to_parts_overlay)[source_index];
-        var parts_list = this.allocator().alloc(u32, 1) catch unreachable;
+        var parts_list = try this.allocator().alloc(u32, 1);
         parts_list[0] = part_index;
 
-        top_level.put(this.allocator(), ref, BabyList(u32).fromOwnedSlice(parts_list)) catch unreachable;
+        try top_level.put(this.allocator(), ref, BabyList(u32).fromOwnedSlice(parts_list));
 
         var resolved_exports = &this.graph.meta.items(.resolved_exports)[source_index];
-        resolved_exports.put(this.allocator(), alias, ExportData{
+        try resolved_exports.put(this.allocator(), alias, ExportData{
             .data = ImportTracker{
                 .source_index = Index.init(source_index),
                 .import_ref = ref,
             },
-        }) catch unreachable;
+        });
         return .{ ref, part_index };
     }
 
@@ -549,7 +558,7 @@ pub const LinkerContext = struct {
         return &c.parse_graph.input_files.items(.source)[index];
     }
 
-    pub fn treeShakingAndCodeSplitting(c: *LinkerContext) !void {
+    pub fn treeShakingAndCodeSplitting(c: *LinkerContext) OOM!void {
         const trace = bun.perf.trace("Bundler.treeShakingAndCodeSplitting");
         defer trace.end();
 

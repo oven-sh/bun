@@ -78,7 +78,7 @@ pub fn generateRuntimeSymbolImportAndUse(
     entry_point_part_index: Index,
     name: []const u8,
     count: u32,
-) !void {
+) bun.OOM!void {
     if (count == 0) return;
     debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 

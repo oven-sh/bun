@@ -487,4 +487,140 @@ minimumReleaseAge = 10080 # 1 week
       registry.stop();
     }
   });
+
+  test("should honor frozen lockfile even when minimumReleaseAge would require older version", async () => {
+    const registry = new MinimumAgeRegistry();
+    const port = await registry.start();
+
+    try {
+      using dir = tempDir("minimum-release-age-frozen", {
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+          dependencies: {
+            "test-package": "*",
+          },
+        }),
+        "bunfig.toml": `
+[install]
+registry = "http://localhost:${port}"
+`,
+      });
+
+      // First install without age restriction - should get latest (3.0.0)
+      let { exitCode } = await Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "inherit",
+        stdout: "inherit",
+      }).exited;
+
+      expect(exitCode).toBe(0);
+
+      // Verify we have 3.0.0 in lockfile
+      let lockfile = await Bun.file(join(String(dir), "bun.lockb")).text();
+      expect(lockfile).toContain("3.0.0");
+
+      // Now add minimumReleaseAge restriction
+      await Bun.write(
+        join(String(dir), "bunfig.toml"),
+        `
+[install]
+registry = "http://localhost:${port}"
+minimumReleaseAge = 10080 # 1 week - would exclude 3.0.0 for new installs
+`,
+      );
+
+      // Install with --frozen-lockfile should SUCCEED and keep 3.0.0
+      // because frozen means use exactly what's in the lockfile
+      ({ exitCode } = await Bun.spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "inherit",
+        stdout: "inherit",
+      }).exited);
+
+      // Should succeed - frozen lockfile ignores minimumReleaseAge
+      expect(exitCode).toBe(0);
+
+      // Should still have 3.0.0
+      lockfile = await Bun.file(join(String(dir), "bun.lockb")).text();
+      expect(lockfile).toContain("3.0.0");
+
+      // But regular install (without frozen) would try to downgrade
+      // Remove node_modules to force re-resolution
+      await Bun.$`rm -rf ${join(String(dir), "node_modules")}`.quiet();
+
+      ({ exitCode } = await Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "inherit",
+        stdout: "inherit",
+      }).exited);
+
+      expect(exitCode).toBe(0);
+
+      // Without frozen, it should respect minimumReleaseAge and downgrade to 1.0.0
+      lockfile = await Bun.file(join(String(dir), "bun.lockb")).text();
+      expect(lockfile).toContain("1.0.0");
+      expect(lockfile).not.toContain("3.0.0");
+    } finally {
+      registry.stop();
+    }
+  });
+
+  test("should succeed with --frozen-lockfile when lockfile already respects minimumReleaseAge", async () => {
+    const registry = new MinimumAgeRegistry();
+    const port = await registry.start();
+
+    try {
+      using dir = tempDir("minimum-release-age-frozen-ok", {
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+          dependencies: {
+            "test-package": "*",
+          },
+        }),
+        "bunfig.toml": `
+[install]
+registry = "http://localhost:${port}"
+minimumReleaseAge = 10080 # 1 week
+`,
+      });
+
+      // First install WITH age restriction - should get 1.0.0
+      let { exitCode } = await Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "inherit",
+        stdout: "inherit",
+      }).exited;
+
+      expect(exitCode).toBe(0);
+
+      // Verify we have 1.0.0 in lockfile
+      let lockfile = await Bun.file(join(String(dir), "bun.lockb")).text();
+      expect(lockfile).toContain("1.0.0");
+      expect(lockfile).not.toContain("3.0.0");
+
+      // Now install with --frozen-lockfile should work fine
+      ({ exitCode } = await Bun.spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "inherit",
+        stdout: "inherit",
+      }).exited);
+
+      // Should succeed because lockfile already respects the age restriction
+      expect(exitCode).toBe(0);
+    } finally {
+      registry.stop();
+    }
+  });
 });

@@ -135,10 +135,8 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                     const query = try Semver.Query.parse(allocator, version, sliced_literal);
                     defer query.deinit();
                     // Pass null for minimum_release_age to disable filtering in info commands
-                    if (query.head.head) |group| {
-                        if (parsed_manifest.findBestVersion(group, parsed_manifest.string_buf, null, name)) |result| {
-                            break :brk2 result.version;
-                        }
+                    if (parsed_manifest.findBestVersion(query, parsed_manifest.string_buf, null, name)) |result| {
+                        break :brk2 result.version;
                     }
                 }
 

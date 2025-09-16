@@ -1483,9 +1483,23 @@ pub const PackageManifest = struct {
         package_name: []const u8,
     ) ?FindResult {
         const left = group.head.head.range.left;
-        // Fast path: exact version
+        // Fast path: exact version - but STILL CHECK SECURITY POLICY
         if (left.op == .eql) {
-            return this.findByVersion(left.version);
+            const exact_result = this.findByVersion(left.version);
+            if (exact_result) |result| {
+                // SECURITY: Even exact versions must respect minimumReleaseAge
+                // Otherwise someone could bypass security by specifying exact versions
+                if (minimum_release_age) |min_age| {
+                    if (min_age.isEnabled() and !min_age.isExcluded(package_name)) {
+                        if (result.package.publish_time > 0 and min_age.isVersionTooNew(result.package.publish_time)) {
+                            // NEVER install packages that violate the security policy
+                            // Even if explicitly requested by exact version
+                            return null;
+                        }
+                    }
+                }
+            }
+            return exact_result;
         }
 
         // Track any newer versions that were skipped due to age restrictions
@@ -1612,9 +1626,14 @@ pub const PackageManifest = struct {
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
     /// Parse ISO8601 timestamp to Unix seconds
-    /// Format: "2010-12-29T19:38:25.450Z"
+    /// NPM always sends exactly: "2010-12-29T19:38:25.450Z" format
     fn parseISO8601ToUnixSeconds(timestamp: []const u8) !u32 {
-        if (timestamp.len < 19) return error.InvalidTimestamp;
+        // NPM format is always exactly 24 chars: "YYYY-MM-DDTHH:MM:SS.sssZ"
+        // Reject anything else for security
+        if (timestamp.len != 24) return error.InvalidTimestamp;
+        if (timestamp[10] != 'T') return error.InvalidTimestamp;
+        if (timestamp[19] != '.') return error.InvalidTimestamp;
+        if (timestamp[23] != 'Z') return error.InvalidTimestamp;
 
         // Parse year, month, day, hour, minute, second
         const year = std.fmt.parseInt(u32, timestamp[0..4], 10) catch return error.InvalidTimestamp;
@@ -1715,7 +1734,12 @@ pub const PackageManifest = struct {
                     const time_str = entry.value.?.asString(allocator) orelse continue;
                     // Parse ISO8601 timestamp to unix timestamp
                     // Format is: "2010-12-29T19:38:25.450Z"
-                    const unix_timestamp = parseISO8601ToUnixSeconds(time_str) catch continue;
+                    const unix_timestamp = parseISO8601ToUnixSeconds(time_str) catch {
+                        // Invalid timestamp = treat as brand new (maximum restriction)
+                        // This is the safest approach for security
+                        publish_times.putAssumeCapacityNoClobber(version_key, std.math.maxInt(u32));
+                        continue;
+                    };
                     publish_times.putAssumeCapacityNoClobber(version_key, unix_timestamp);
                 }
             }

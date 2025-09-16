@@ -670,6 +670,10 @@ pub fn installWithManager(
 
     const packages_len_before_install = manager.lockfile.packages.len;
 
+    // Note: minimumReleaseAge security policy enforcement with frozen lockfile:
+    // - Binary lockfile (bun.lockb): Cannot enforce since publish_time isn't stored (backwards compatibility)
+    // - Text lockfile (bun.lock): Could potentially enforce by fetching metadata, but not implemented
+    // This maintains backwards compatibility while the feature primarily works at resolution time
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
         if (load_result.loadedFromTextLockfile()) {
             if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {

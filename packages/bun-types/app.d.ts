@@ -177,7 +177,7 @@ declare module "bun:app" {
      */
     separateSSRGraph: boolean;
     /** Server components runtime for the server */
-    serverRuntimeImportSource: ImportSource;
+    serverRuntimeImportSource: string;
     /**
      * When server code imports client code, a stub module is generated, where
      * every export calls this export from `serverRuntimeImportSource`. This
@@ -250,7 +250,7 @@ declare module "bun:app" {
      *
      * @default "react-refresh/runtime"
      */
-    importSource: ImportSource | undefined;
+    importSource: string | undefined;
   }
 
   type ReactRefreshSignatureFunction = () =>
@@ -378,12 +378,6 @@ declare module "bun:app" {
         pattern: string;
         type: "route" | "layout" | "extra";
       };
-
-  /**
-   * Will be resolved from the point of view of the framework user's project
-   * root Examples: `react-dom`, `./entry_point.tsx`, `/absolute/path.js`
-   */
-  type ImportSource<T = unknown> = string;
 
   interface ServerEntryPoint {
     /**

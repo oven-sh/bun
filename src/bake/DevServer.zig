@@ -3858,7 +3858,11 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
         counts[event.index] = update_count;
         const kind = kinds[event.index];
 
-        debug.log("{s} change: {s} {}", .{ @tagName(kind), file_path, event.op });
+        // copy because the watchlist memory can be invalidated elsewhere
+        const file_path_copy = dev.allocator().dupe(u8, file_path) catch file_path;
+        defer if (file_path_copy.ptr != file_path.ptr) dev.allocator().free(file_path_copy);
+
+        debug.log("{s} change: {s} {}", .{ @tagName(kind), file_path_copy, event.op });
 
         switch (kind) {
             .file => {
@@ -3867,15 +3871,15 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                     dev.bun_watcher.removeAtIndex(event.index, 0, &.{}, .file);
                 }
 
-                ev.appendFile(dev.allocator(), file_path);
+                ev.appendFile(dev.allocator(), file_path_copy);
             },
             .directory => {
                 // INotifyWatcher stores sub paths into `changed_files`
                 // the other platforms do not appear to write anything into `changed_files` ever.
                 if (Environment.isLinux) {
-                    ev.appendDir(dev.allocator(), file_path, if (event.name_len > 0) changed_files[event.name_off] else null);
+                    ev.appendDir(dev.allocator(), file_path_copy, if (event.name_len > 0) changed_files[event.name_off] else null);
                 } else {
-                    ev.appendDir(dev.allocator(), file_path, null);
+                    ev.appendDir(dev.allocator(), file_path_copy, null);
                 }
             },
         }

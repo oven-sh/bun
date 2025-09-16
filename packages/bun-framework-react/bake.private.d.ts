@@ -84,31 +84,34 @@ interface Window {
 }
 
 // The following interfaces have been transcribed manually.
-
-declare module "react-server-dom-bun/client.browser" {
+declare module "react-server-dom-webpack/client" {
   export function createFromReadableStream<T>(readable: ReadableStream<T>): Promise<T>;
 }
 
-declare module "react-server-dom-bun/client.node.unbundled.js" {
+declare module "react-server-dom-webpack/client" {
   import type { SSRManifest } from "bun:app/server";
   import type { Readable } from "node:stream";
+
   export interface Manifest {
     moduleMap: SSRManifest;
     moduleLoading?: ModuleLoading;
   }
+
   export interface ModuleLoading {
     prefix: string;
     crossOrigin?: string;
   }
+
   export interface Options {
     encodeFormAction?: any;
     findSourceMapURL?: any;
     environmentName?: string;
   }
+
   export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
 }
 
-declare module "react-server-dom-bun/server.node.unbundled.js" {
+declare module "react-server-dom-webpack/server" {
   import type { ServerManifest } from "bun:app/server";
   import type { ReactElement } from "react";
 

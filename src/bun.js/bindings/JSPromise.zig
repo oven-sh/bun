@@ -11,7 +11,7 @@ pub const JSPromise = opaque {
     /// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.
     extern fn JSC__JSPromise__rejectedPromiseValue(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
     extern fn JSC__JSPromise__resolvedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
-    extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
+    extern fn JSC__JSPromise__createResolved(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
     extern fn JSC__JSPromise__wrap(*jsc.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue) jsc.JSValue;
 
     pub fn Weak(comptime T: type) type {
@@ -188,9 +188,9 @@ pub const JSPromise = opaque {
 
     pub fn wrapValue(globalObject: *JSGlobalObject, value: JSValue) JSValue {
         if (value == .zero) {
-            return resolvedPromiseValue(globalObject, .js_undefined);
+            return createResolved(globalObject, .js_undefined);
         } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
-            return resolvedPromiseValue(globalObject, value);
+            return createResolved(globalObject, value);
         }
 
         if (value.jsType() == .JSPromise) {
@@ -201,7 +201,7 @@ pub const JSPromise = opaque {
             return dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, value);
         }
 
-        return resolvedPromiseValue(globalObject, value);
+        return createResolved(globalObject, value);
     }
 
     pub fn status(this: *const JSPromise, vm: *VM) Status {
@@ -226,8 +226,8 @@ pub const JSPromise = opaque {
 
     /// Create a new promise with an already fulfilled value
     /// This is the faster function for doing that.
-    pub fn resolvedPromiseValue(globalThis: *JSGlobalObject, value: JSValue) JSValue {
-        return JSC__JSPromise__resolvedPromiseValue(globalThis, value);
+    pub fn createResolved(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+        return JSC__JSPromise__createResolved(globalThis, value);
     }
 
     pub fn rejectedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
@@ -244,7 +244,7 @@ pub const JSPromise = opaque {
 
     /// Fulfill an existing promise with the value
     /// The value can be another Promise
-    /// If you want to create a new Promise that is already resolved, see JSPromise.resolvedPromiseValue
+    /// If you want to create a new Promise that is already resolved, see JSPromise.createResolved
     pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
         if (comptime bun.Environment.isDebug) {
             const loop = jsc.VirtualMachine.get().eventLoop();

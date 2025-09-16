@@ -165,7 +165,7 @@ pub const JSValkeyClient = struct {
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
-            return jsc.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .js_undefined);
+            return jsc.JSPromise.createResolved(globalObject, js.helloGetCached(this_value) orelse .js_undefined);
         }
 
         if (js.connectionPromiseGetCached(this_value)) |promise| {

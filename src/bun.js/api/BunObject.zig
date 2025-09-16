@@ -869,7 +869,7 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
         const err = globalObject.takeError(e);
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, err);
     };
-    return jsc.JSPromise.resolvedPromiseValue(globalObject, value);
+    return jsc.JSPromise.createResolved(globalObject, value);
 }
 
 export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) jsc.JSValue {
@@ -884,7 +884,7 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(global, err);
     };
 
-    return jsc.JSPromise.resolvedPromiseValue(global, value);
+    return jsc.JSPromise.createResolved(global, value);
 }
 
 export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool, is_user_require_resolve: bool) jsc.JSValue {

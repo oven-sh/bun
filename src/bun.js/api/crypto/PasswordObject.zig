@@ -693,12 +693,12 @@ pub const JSPasswordObject = struct {
 
         if (owned_hash.len == 0) {
             bun.default_allocator.free(owned_password);
-            return jsc.JSPromise.resolvedPromiseValue(globalObject, .false);
+            return jsc.JSPromise.createResolved(globalObject, .false);
         }
 
         if (owned_password.len == 0) {
             bun.default_allocator.free(owned_hash);
-            return jsc.JSPromise.resolvedPromiseValue(globalObject, .false);
+            return jsc.JSPromise.createResolved(globalObject, .false);
         }
 
         return verify(globalObject, owned_password, owned_hash, algorithm, false);

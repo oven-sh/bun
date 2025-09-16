@@ -1312,7 +1312,7 @@ pub fn Mixin(comptime Type: type) type {
                     blob.store.?.mime_type = MimeType.text;
                 }
             }
-            return jsc.JSPromise.resolvedPromiseValue(globalObject, blob.toJS(globalObject));
+            return jsc.JSPromise.createResolved(globalObject, blob.toJS(globalObject));
         }
 
         pub fn getBlobWithoutCallFrame(this: *Type, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {

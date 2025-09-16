@@ -1241,7 +1241,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (response_value.as(jsc.WebCore.Response)) |resp| {
                 resp.url = existing_request.url.clone();
             }
-            return jsc.JSPromise.resolvedPromiseValue(ctx, response_value);
+            return jsc.JSPromise.createResolved(ctx, response_value);
         }
 
         pub fn closeIdleConnections(this: *ThisServer, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

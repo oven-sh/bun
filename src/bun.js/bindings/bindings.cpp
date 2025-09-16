@@ -5533,7 +5533,7 @@ JSC::EncodedJSValue JSC__JSPromise__rejectedPromiseValue(JSC::JSGlobalObject* gl
     return JSC::JSValue::encode(promise);
 }
 
-JSC::EncodedJSValue JSC__JSPromise__resolvedPromiseValue(JSC::JSGlobalObject* globalObject,
+JSC::EncodedJSValue JSC__JSPromise__createResolved(JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue JSValue1)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -847,10 +847,10 @@ pub fn getExited(
 
     switch (this.process.status) {
         .exited => |exit| {
-            return jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(exit.code));
+            return jsc.JSPromise.createResolved(globalThis, JSValue.jsNumber(exit.code));
         },
         .signaled => |signal| {
-            return jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
+            return jsc.JSPromise.createResolved(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
         },
         .err => |err| {
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));

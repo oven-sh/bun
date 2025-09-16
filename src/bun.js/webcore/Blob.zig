@@ -912,7 +912,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                                 },
                                 .result => |fd| {
                                     fd.close();
-                                    return jsc.JSPromise.resolvedPromiseValue(ctx, .jsNumber(0));
+                                    return jsc.JSPromise.createResolved(ctx, .jsNumber(0));
                                 },
                             }
                         }
@@ -982,7 +982,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
         .bytes => {},
     }
 
-    return jsc.JSPromise.resolvedPromiseValue(ctx, jsc.JSValue.jsNumber(0));
+    return jsc.JSPromise.createResolved(ctx, jsc.JSValue.jsNumber(0));
 }
 
 pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Blob, destination_blob: *Blob, options: WriteFileOptions) bun.JSError!jsc.JSValue {
@@ -1080,11 +1080,11 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
         clone.allocator = bun.default_allocator;
         const cloned = Blob.new(clone);
         cloned.allocator = bun.default_allocator;
-        return JSPromise.resolvedPromiseValue(ctx, cloned.toJS(ctx));
+        return JSPromise.createResolved(ctx, cloned.toJS(ctx));
     } else if (destination_type == .bytes and (source_type == .file or source_type == .s3)) {
         const blob_value = source_blob.getSliceFrom(ctx, 0, 0, "", false);
 
-        return JSPromise.resolvedPromiseValue(
+        return JSPromise.createResolved(
             ctx,
             blob_value,
         );
@@ -1624,7 +1624,7 @@ fn writeStringToFileFast(
         }
     }
 
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
+    return jsc.JSPromise.createResolved(globalThis, jsc.JSValue.jsNumber(written));
 }
 
 fn writeBytesToFileFast(
@@ -1711,7 +1711,7 @@ fn writeBytesToFileFast(
         }
     }
 
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
+    return jsc.JSPromise.createResolved(globalThis, jsc.JSValue.jsNumber(written));
 }
 export fn JSDOMFile__construct(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) ?*Blob {
     return JSDOMFile__construct_(globalThis, callframe) catch |err| switch (err) {
@@ -2330,7 +2330,7 @@ pub fn getExists(
     if (this.isS3()) {
         return S3File.S3BlobStatTask.exists(globalThis, this);
     }
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, this.getExistsSync());
+    return jsc.JSPromise.createResolved(globalThis, this.getExistsSync());
 }
 
 pub const FileStreamWrapper = struct {
@@ -2570,7 +2570,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 .fulfilled => {
                     file_sink.deref();
                     readable_stream.done(globalThis);
-                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+                    return jsc.JSPromise.createResolved(globalThis, jsc.JSValue.jsNumber(0));
                 },
                 .rejected => {
                     file_sink.deref();
@@ -2590,7 +2590,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
     }
     file_sink.deref();
 
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+    return jsc.JSPromise.createResolved(globalThis, jsc.JSValue.jsNumber(0));
 }
 
 pub fn getWriter(

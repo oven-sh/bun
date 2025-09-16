@@ -1411,7 +1411,7 @@ fn dataURLResponse(
         },
     );
 
-    return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
+    return JSPromise.createResolved(globalThis, response.toJS(globalThis));
 }
 
 comptime {
@@ -2332,7 +2332,7 @@ pub fn Bun__fetch_(
             .url = url_string.clone(),
         });
 
-        return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
+        return JSPromise.createResolved(globalThis, response.toJS(globalThis));
     }
 
     if (url.protocol.len > 0) {

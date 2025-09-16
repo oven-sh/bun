@@ -355,7 +355,7 @@ pub const UDPSocket = struct {
         const thisValue = this.toJS(globalThis);
         thisValue.ensureStillAlive();
         this.thisValue = thisValue;
-        return jsc.JSPromise.resolvedPromiseValue(globalThis, thisValue);
+        return jsc.JSPromise.createResolved(globalThis, thisValue);
     }
 
     pub fn callErrorHandler(

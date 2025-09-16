@@ -267,7 +267,7 @@ pub const File = struct {
                     },
                 },
             }, globalThis.bunVM()),
-            .fd => jsc.JSPromise.resolvedPromiseValue(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
+            .fd => jsc.JSPromise.createResolved(globalThis, globalThis.createInvalidArgs("Is not possible to unlink a file descriptor", .{})),
         };
     }
     pub fn isSeekable(this: *const File) ?bool {

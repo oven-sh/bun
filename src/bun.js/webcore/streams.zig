@@ -957,7 +957,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             if (this.buffer.len == 0 or this.done) {
-                return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumberFromInt32(0)) };
+                return .{ .result = jsc.JSPromise.createResolved(globalThis, JSValue.jsNumberFromInt32(0)) };
             }
 
             if (!this.hasBackpressureAndIsTryEnd()) {
@@ -965,7 +965,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 assert(slice.len > 0);
                 const success = this.send(slice);
                 if (success) {
-                    return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(slice.len)) };
+                    return .{ .result = jsc.JSPromise.createResolved(globalThis, JSValue.jsNumber(slice.len)) };
                 }
             }
             this.wrote_at_start_of_flush = this.wrote;
@@ -1413,7 +1413,7 @@ pub const NetworkSink = struct {
 
         // nothing todo here
         if (this.done) {
-            return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
+            return .{ .result = jsc.JSPromise.createResolved(globalThis, JSValue.jsNumber(0)) };
         }
         // flush more
         if (this.task) |task| {
@@ -1424,7 +1424,7 @@ pub const NetworkSink = struct {
             }
         }
         // we are done flushing no backpressure
-        return .{ .result = jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(0)) };
+        return .{ .result = jsc.JSPromise.createResolved(globalThis, JSValue.jsNumber(0)) };
     }
     pub fn finalizeAndDestroy(this: *@This()) void {
         this.finalize();

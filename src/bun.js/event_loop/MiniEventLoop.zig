@@ -40,11 +40,9 @@ pub threadlocal var global: *MiniEventLoop = undefined;
 
 pub const ConcurrentTaskQueue = UnboundedQueue(AnyTaskWithExtraContext, .next);
 
-pub fn initGlobal(env: ?*bun.DotEnv.Loader, cwd: ?[]const u8) *MiniEventLoop {
+pub fn initGlobal(env: ?*bun.DotEnv.Loader, cwd: []const u8) *MiniEventLoop {
     if (globalInitialized) return global;
-    const loop = MiniEventLoop.init(bun.default_allocator);
-    global = bun.handleOom(bun.default_allocator.create(MiniEventLoop));
-    global.* = loop;
+    global = bun.new(MiniEventLoop, MiniEventLoop.init(bun.default_allocator));
     global.loop.internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(global));
     global.env = env orelse bun.DotEnv.instance orelse env_loader: {
         const map = bun.handleOom(bun.default_allocator.create(bun.DotEnv.Map));
@@ -54,22 +52,6 @@ pub fn initGlobal(env: ?*bun.DotEnv.Loader, cwd: ?[]const u8) *MiniEventLoop {
         loader.* = bun.DotEnv.Loader.init(map, bun.default_allocator);
         break :env_loader loader;
     };
-
-    // Set top_level_dir from provided cwd or get current working directory
-    if (cwd) |dir| {
-        global.top_level_dir = dir;
-    } else if (global.top_level_dir.len == 0) {
-        var buf: bun.PathBuffer = undefined;
-        switch (bun.sys.getcwd(&buf)) {
-            .result => |p| {
-                global.top_level_dir = bun.default_allocator.dupe(u8, p) catch "";
-            },
-            .err => {
-                global.top_level_dir = "";
-            },
-        }
-    }
-
     globalInitialized = true;
     return global;
 }

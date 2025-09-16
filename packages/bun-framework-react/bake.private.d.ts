@@ -84,11 +84,11 @@ interface Window {
 }
 
 // The following interfaces have been transcribed manually.
-declare module "react-server-dom-webpack/client" {
+declare module "react-server-dom-bun/client" {
   export function createFromReadableStream<T>(readable: ReadableStream<T>): Promise<T>;
 }
 
-declare module "react-server-dom-webpack/client" {
+declare module "react-server-dom-bun/client" {
   import type { SSRManifest } from "bun:app/server";
   import type { Readable } from "node:stream";
 
@@ -111,7 +111,7 @@ declare module "react-server-dom-webpack/client" {
   export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
 }
 
-declare module "react-server-dom-webpack/server" {
+declare module "react-server-dom-bun/server" {
   import type { ServerManifest } from "bun:app/server";
   import type { ReactElement } from "react";
 

@@ -528,10 +528,29 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (isAncientHTTP) {
           http_req.httpVersion = "1.0";
         }
+
+        if (method === "CONNECT") {
+          // Handle CONNECT method for HTTP tunneling/proxy
+          if (server.listenerCount("connect") > 0) {
+            // For CONNECT, emit the event and let the handler respond
+            server.emit("connect", http_req, socket, kEmptyBuffer);
+
+            // Don't assign the socket to a response for CONNECT
+            // The handler should write the raw response
+            const { promise, resolve } = $newPromiseCapability(Promise);
+            socket.on("close", resolve);
+            return promise;
+          } else {
+            // Node.js will close the socket and will NOT respond with 400 Bad Request
+            socketHandle.close();
+          }
+          return;
+        }
         const http_res = new ResponseClass(http_req, {
           [kHandle]: handle,
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
+
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
         // start buffering data if any, the user will need to resume() or .on("data") to read it
@@ -783,7 +802,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     nodeSocket.emit("error", err);
   }
 }
-
+const kRaw = Symbol("kRaw");
 const NodeHTTPServerSocket = class Socket extends Duplex {
   bytesRead = 0;
   connecting = false;
@@ -824,6 +843,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kHandle] = null;
     const message = this._httpMessage;
     const req = message?.req;
+
     if (req && !req.complete && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;

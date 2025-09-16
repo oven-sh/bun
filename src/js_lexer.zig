@@ -830,6 +830,7 @@ fn NewLexer_(
         pub inline fn expect(noalias self: *LexerType, comptime token: T) !void {
             if (self.token != token) {
                 try self.expected(token);
+                return error.SyntaxError;
             }
 
             try self.next();
@@ -1808,7 +1809,6 @@ fn NewLexer_(
 
             lexer.did_panic = true;
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
-            return error.SyntaxError;
         }
 
         pub fn raw(noalias self: *const LexerType) []const u8 {

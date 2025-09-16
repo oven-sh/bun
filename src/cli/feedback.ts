@@ -69,6 +69,9 @@ function openTerminal(): TerminalIO | null {
 const logError = (message: string) => {
   process.stderr.write(`${symbols.cross} ${message}\n`);
 };
+const logInfo = (message: string) => {
+  process.stdout.write(`${colors.bold}${message}${colors.reset}\n`);
+};
 
 const isValidEmail = (value: string | undefined): value is string => {
   if (!value) return false;
@@ -476,8 +479,8 @@ async function readFromPositionals(positionals: string[]): Promise<PositionalCon
     const filePath = await resolveFileCandidate(token);
     if (filePath) {
       try {
-        flushTokens();
         const fileContents = await fsp.readFile(filePath, "utf8");
+        flushTokens();
         files.push({ filename: path.basename(filePath), content: fileContents });
         continue;
       } catch {
@@ -566,10 +569,14 @@ async function main() {
     const positionalContent = await readFromPositionals(positionals);
     const positionalParts = positionalContent.messageParts;
     const pieces: string[] = [];
-    if (stdinContent) pieces.push(stdinContent);
-    pieces.push(...positionalParts);
+    if (stdinContent && stdinContent.trim().length > 0) pieces.push(stdinContent);
+    for (const part of positionalParts) {
+      if (part.trim().length > 0) {
+        pieces.push(part);
+      }
+    }
 
-    let message = pieces.join(pieces.length > 1 ? "\n\n" : "");
+    let message = pieces.length > 0 ? pieces.join(pieces.length > 1 ? "\n\n" : "") : "";
 
     if (message.trim().length === 0 && terminal) {
       const interactiveBody = await promptForBody(terminal, positionalContent.files);
@@ -592,7 +599,14 @@ async function main() {
 
     const form = new FormData();
     form.append("email", normalizedEmail);
-    form.append("message", messageBody);
+    const fileList = positionalContent.files.map(file => file.filename);
+    if (fileList.length > 0) {
+      const filenames = fileList.join(", ");
+      form.append("message", `${messageBody}\n\n+ files: ${filenames}`);
+      logInfo(`+ ${filenames}`);
+    } else {
+      form.append("message", messageBody);
+    }
     for (const file of positionalContent.files) {
       form.append("files[]", new File([file.content], file.filename));
     }

@@ -98,8 +98,8 @@ for (let i = 0; i < nativeStartIndex; i++) {
 
     // TODO: there is no reason this cannot be converted automatically.
     // import { ... } from '...' -> `const { ... } = require('...')`
-    const scannedImports = t.scanImports(input);
-    for (const imp of scannedImports) {
+    const scannedImports = t.scan(input);
+    for (const imp of scannedImports.imports) {
       if (imp.kind === "import-statement") {
         var isBuiltin = true;
         try {
@@ -120,6 +120,14 @@ for (let i = 0; i < nativeStartIndex; i++) {
       }
     }
 
+    if (scannedImports.exports.includes("default") && scannedImports.exports.length > 1) {
+      const err = new Error(
+        `Using \`export default\` AND named exports together in builtin modules is unsupported. See src/js/README.md (from ${moduleList[i]})`,
+      );
+      err.name = "BunError";
+      err.fileName = moduleList[i];
+      throw err;
+    }
     let importStatements: string[] = [];
 
     const processed = sliceSourceCode(

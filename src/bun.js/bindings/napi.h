@@ -303,11 +303,18 @@ public:
 
     void checkGC() const
     {
-        NAPI_RELEASE_ASSERT(!inGC(),
-            "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
-            "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
-            "inside the finalizer to defer the code to the next event loop tick.\n",
-            m_napiModule.nm_version);
+        // Only enforce GC checks for experimental NAPI versions, matching Node.js behavior
+        // See: https://github.com/nodejs/node/blob/main/src/js_native_api_v8.h#L132-L143
+        if (m_napiModule.nm_version == NAPI_VERSION_EXPERIMENTAL) {
+            if (inGC()) {
+                fprintf(stderr, "FATAL ERROR: Finalizer is calling a function that may affect GC state.\n");
+                fprintf(stderr, "The finalizers are run directly from GC and must not affect GC state.\n");
+                fprintf(stderr, "Use `node_api_post_finalizer` from inside of the finalizer to work around this issue.\n");
+                fprintf(stderr, "It schedules the call as a new task in the event loop.\n");
+                fflush(stderr);
+                NAPI_ABORT("napi_reference_unref");
+            }
+        }
     }
 
     bool isVMTerminating() const

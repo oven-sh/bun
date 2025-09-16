@@ -204,6 +204,7 @@ fn JSONLikeParser_(
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
                     var properties = std.ArrayList(G.Property).init(p.list_allocator);
+                    errdefer properties.deinit();
 
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;

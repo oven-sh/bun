@@ -293,7 +293,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
   return { command, firstKeyword, hasReturning };
 }
 
-export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
+class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   private mode = SQLQueryResultMode.objects;
 
   private readonly sql: string;
@@ -380,9 +380,7 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
   }
 }
 
-export class SQLiteAdapter
-  implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle>
-{
+class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
@@ -807,4 +805,5 @@ export default {
   SQLCommand,
   commandToString,
   parseSQLQuery,
+  SQLiteQueryHandle,
 };

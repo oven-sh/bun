@@ -35,5 +35,12 @@ leak:bun.js.node.fs_events.InitLibrary
 leak:bun.js.node.fs_events.FSEventsLoop._schedule
 leak:Bun__Path__join
 leak:Bun__Path__resolve
+leak:Zig::GlobalObject::moduleLoaderImportModule
+leak:bake.FrameworkRouter.JSFrameworkRouter.getFileIdForRouter
+leak:ast.Macro.MacroContext.call
+leak:bun.js.webcore.Blob.findOrCreateFileFromPath__anon
+leak:BunString::toWTFString(BunString::ZeroCopyTag)
+leak:bun.js.node.node_fs_binding.Bindings(.mkdtemp).runSync
+leak:bun.js.ModuleLoader.fetchBuiltinModule
 
 leak:fromErrorInstance

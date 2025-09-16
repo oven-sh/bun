@@ -3167,18 +3167,16 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
 
     return JSC::JSValue::encode(JSC::jsString(global->vm(), WTFMove(ref)));
 }
-// This must be a globally allocated string
-JSC::EncodedJSValue ZigString__toExternalValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
-{
 
+// This must be a globally allocated string
+[[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigString__toExternalValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
+{
     ZigString str = *arg0;
     if (str.len == 0) {
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
     }
-
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
-
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTFMove(ref)));
     } else {
         auto ref = String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));

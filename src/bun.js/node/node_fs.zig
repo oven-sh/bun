@@ -3193,7 +3193,7 @@ const Return = struct {
     pub const Link = void;
     pub const Lstat = StatOrNotFound;
     pub const Mkdir = StringOrUndefined;
-    pub const Mkdtemp = jsc.ZigString;
+    pub const Mkdtemp = jsc.JSValue;
     pub const Open = FD;
     pub const WriteFile = void;
     pub const Readv = Read;
@@ -4128,16 +4128,12 @@ pub const NodeFS = struct {
                     .path = prefix_buf[0 .. len + 6],
                 } };
             }
-            return .{
-                .result = bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator)),
-            };
+            return .initResult(bun.String.createUTF8ForJS(this.vm.?.global, bun.sliceTo(req.path, 0)) catch bun.outOfMemory());
         }
 
         const rc = c.mkdtemp(prefix_buf);
         if (rc) |ptr| {
-            return .{
-                .result = bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator)),
-            };
+            return .initResult(bun.String.createUTF8ForJS(this.vm.?.global, bun.sliceTo(ptr, 0)) catch bun.outOfMemory());
         }
 
         // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly

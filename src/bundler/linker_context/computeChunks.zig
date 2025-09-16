@@ -1,5 +1,3 @@
-const ComputeChunksError = bun.OOM || error{BuildFailed};
-
 pub noinline fn computeChunks(
     this: *LinkerContext,
     unique_key: u64,

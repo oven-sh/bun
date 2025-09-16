@@ -1,4 +1,3 @@
-import { File } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import { closeSync, promises as fsp, openSync } from "node:fs";
 import os from "node:os";
@@ -25,7 +24,7 @@ const symbols = {
 };
 const inputPrefix = `${colors.gray}> ${colors.reset}`;
 const thankYouBanner = `
-${supportsAnsi ? colors.green : ""}T H A N K   Y O U ! ${colors.reset}`;
+${supportsAnsi ? colors.bold : ""}THANK YOU! ${colors.reset}`;
 
 type TerminalIO = {
   input: tty.ReadStream;
@@ -324,7 +323,7 @@ async function promptForBody(
   const header = `${symbols.question} ${colors.bold}Share your feedback${colors.reset} ${colors.dim}(Enter to send, Shift+Enter for a newline)${colors.reset}`;
   output.write(`${header}\n`);
   if (attachments.length > 0) {
-    output.write(`${colors.dim}files: ${attachments.map(file => file.filename).join(", ")}${colors.reset}\n`);
+    output.write(`${colors.dim}+ ${attachments.map(file => file.filename).join(", ")}${colors.reset}\n`);
   }
   output.write(`${inputPrefix}`);
 
@@ -510,7 +509,7 @@ function getOldestGitSha(): string | undefined {
 }
 
 async function main() {
-  const rawArgv = [...Bun.argv.slice(2)];
+  const rawArgv = [...process.argv.slice(2)];
   if (rawArgv.length > 0 && /feedback(\.ts)?$/.test(rawArgv[0])) {
     rawArgv.shift();
   }
@@ -600,30 +599,27 @@ async function main() {
     const form = new FormData();
     form.append("email", normalizedEmail);
     const fileList = positionalContent.files.map(file => file.filename);
-    if (fileList.length > 0) {
-      const filenames = fileList.join(", ");
-      form.append("message", `${messageBody}\n\n+ files: ${filenames}`);
-      logInfo(`+ ${filenames}`);
-    } else {
-      form.append("message", messageBody);
-    }
+    form.append("message", messageBody);
     for (const file of positionalContent.files) {
-      form.append("files[]", new File([file.content], file.filename));
+      form.append("files[]", new Blob([file.content]), file.filename);
     }
-    form.append("bun_version", Bun.version_with_sha);
+
+    form.append("platform", process.platform);
+    form.append("arch", process.arch);
+    form.append("bunRevision", Bun.revision);
+    form.append("hardwareConcurrency", String(navigator.hardwareConcurrency));
+    form.append("bunVersion", Bun.version);
+    form.append("bunBuild", path.basename(process.release.sourceUrl!, path.extname(process.release.sourceUrl!)));
     if (projectId) {
-      form.append("project_id", projectId);
+      form.append("projectId", projectId);
     }
 
     const response = await fetch(endpoint, {
       method: "POST",
       body: form,
-      headers: {
-        "User-Agent": `bun-feedback/${Bun.version_with_sha}`,
-      },
     });
 
-    if (!response.ok) {
+    if (!response.ok || response.status !== 200) {
       const bodyText = await response.text().catch(() => "");
       logError(`Failed to send feedback (${response.status} ${response.statusText}).`);
       if (bodyText) {

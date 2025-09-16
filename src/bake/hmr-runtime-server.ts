@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
-import type * as Bake from "bun:app";
+import type { ServerEntryPoint } from "bun:app";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
 // import { AsyncLocalStorage } from "node:async_hooks";
@@ -55,7 +55,7 @@ server_exports = {
       });
     }
 
-    const exports = await loadExports<Bake.ServerEntryPoint>(routerTypeMain);
+    const exports = await loadExports<ServerEntryPoint>(routerTypeMain);
 
     const serverRenderer = exports.render;
 

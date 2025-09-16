@@ -352,6 +352,69 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    // Support loaders in test section
+                    if (test_.get("loader")) |expr| {
+                        try this.expect(expr, .e_object);
+                        const properties = expr.data.e_object.properties.slice();
+
+                        // If loaders already exist from top-level, we need to merge them
+                        const existing_count = if (this.bunfig.loaders) |existing| existing.extensions.len else 0;
+                        var loader_names = try this.allocator.alloc(string, existing_count + properties.len);
+                        var loader_values = try this.allocator.alloc(api.Loader, existing_count + properties.len);
+
+                        // Copy existing loaders first
+                        if (this.bunfig.loaders) |existing| {
+                            for (existing.extensions, 0..) |ext, i| {
+                                loader_names[i] = ext;
+                                loader_values[i] = existing.loaders[i];
+                            }
+                        }
+
+                        // Add new loaders from test section, overriding if duplicate
+                        var new_count: usize = existing_count;
+                        for (properties) |item| {
+                            const key = item.key.?.asString(allocator).?;
+                            if (key.len == 0) continue;
+                            if (key[0] != '.') {
+                                try this.addError(item.key.?.loc, "file extension for loader must start with a '.'");
+                            }
+                            var value = item.value.?;
+                            try this.expectString(value);
+
+                            const loader = options.Loader.fromString(value.asString(allocator).?) orelse {
+                                try this.addError(value.loc, "Invalid loader");
+                                unreachable;
+                            };
+
+                            // Check if this extension already exists and override it
+                            var found = false;
+                            for (loader_names[0..existing_count], 0..) |ext, i| {
+                                if (strings.eql(ext, key)) {
+                                    loader_values[i] = loader.toAPI();
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            if (!found) {
+                                loader_names[new_count] = key;
+                                loader_values[new_count] = loader.toAPI();
+                                new_count += 1;
+                            }
+                        }
+
+                        // Resize arrays to actual size used
+                        if (new_count < loader_names.len) {
+                            loader_names = loader_names[0..new_count];
+                            loader_values = loader_values[0..new_count];
+                        }
+
+                        this.bunfig.loaders = api.LoaderMap{
+                            .extensions = loader_names,
+                            .loaders = loader_values,
+                        };
+                    }
                 }
             }
 

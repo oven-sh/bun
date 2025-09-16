@@ -1101,6 +1101,7 @@ pub const LinkerContext = struct {
 
                     const promise_all_call = Expr.init(E.Call, .{ .target = promise_all, .args = args }, .Empty);
 
+                    // replace the `await init_` expr with `await __promiseAll`
                     this.stmts.items[this.sync_dependencies_end] = Stmt.alloc(S.SExpr, .{ .value = Expr.init(E.Await, .{ .value = promise_all_call }, .Empty) }, .Empty);
                 }
             }

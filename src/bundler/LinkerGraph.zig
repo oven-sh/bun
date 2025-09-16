@@ -157,7 +157,7 @@ pub fn generateSymbolImportAndUse(
     ref: Ref,
     use_count: u32,
     source_index_to_import_from: Index,
-) !void {
+) bun.OOM!void {
     if (use_count == 0) return;
 
     var parts_list = g.ast.items(.parts)[source_index].slice();
@@ -166,7 +166,7 @@ pub fn generateSymbolImportAndUse(
     // Mark this symbol as used by this part
 
     var uses = &part.symbol_uses;
-    var uses_entry = uses.getOrPut(g.allocator, ref) catch unreachable;
+    var uses_entry = try uses.getOrPut(g.allocator, ref);
 
     if (!uses_entry.found_existing) {
         uses_entry.value_ptr.* = .{ .count_estimate = use_count };

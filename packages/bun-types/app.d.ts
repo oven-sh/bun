@@ -380,6 +380,9 @@ declare module "bun:app" {
       };
 
   interface ServerEntryPoint {
+    readonly streaming?: boolean;
+    readonly mode?: "ssr" | "static";
+
     /**
      * Bun passes the route's module as an opaque argument `routeModule`. The
      * framework implementation decides and enforces the shape of the module.
@@ -387,7 +390,11 @@ declare module "bun:app" {
      * A common pattern would be to enforce the object is `{ default:
      * ReactComponent }`
      */
-    render: (request: Request, routeMetadata: RouteMetadata) => Bun.MaybePromise<Response>;
+    render: (
+      request: Request,
+      routeMetadata: RouteMetadata,
+      storage: AsyncLocalStorage<RequestContext> | undefined,
+    ) => Bun.MaybePromise<Response>;
 
     /**
      * Prerendering does not use a request, and is allowed to generate

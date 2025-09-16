@@ -30,7 +30,7 @@ interface Exports {
     styles: string[],
     params: Record<string, string> | null,
     setAsyncLocalStorage: Function,
-  ) => any;
+  ) => Bun.MaybePromise<Response>;
   registerUpdate: (
     modules: any,
     componentManifestAdd: null | string[],
@@ -66,7 +66,9 @@ server_exports = {
       throw new Error('Framework server entrypoint\'s "render" export is not a function.');
     }
 
-    const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
+    const [pageModule, ...layouts] = await Promise.all(
+      routeModules.map(loadExports) as [Promise<ServerEntryPoint>, ...Promise<ServerEntryPoint>[]],
+    );
 
     if (!pageModule) {
       throw new Error("Page module is missing for path: " + req.url);

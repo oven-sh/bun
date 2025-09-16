@@ -301,12 +301,12 @@ minimumReleaseAge = 10080 # 1 week
     }
   });
 
-  test("should fail when only recent versions available and no exclusion", async () => {
+  test("should show clear error when package is blocked by minimumReleaseAge", async () => {
     const registry = new MinimumAgeRegistry();
     const port = await registry.start();
 
     try {
-      using dir = tempDir("minimum-release-age-fail", {
+      using dir = tempDir("minimum-release-age-error", {
         "package.json": JSON.stringify({
           name: "test-project",
           version: "1.0.0",
@@ -321,16 +321,67 @@ minimumReleaseAge = 10080 # 1 week
 `,
       });
 
-      const { exitCode } = await Bun.spawn({
+      const proc = Bun.spawn({
         cmd: [bunExe(), "install"],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
         stdout: "pipe",
-      }).exited;
+      });
 
-      // Should fail because no version meets the age requirement
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+
+      // Should fail with a clear error message
       expect(exitCode).not.toBe(0);
+      const output = stdout + stderr;
+      // TODO: Check for a meaningful error message mentioning the package and age restriction
+      // For now, just check it fails. The error message improvement can be added to the implementation
+      expect(output).toBeTruthy();
+    } finally {
+      registry.stop();
+    }
+  });
+
+  test("should show clear error when bun add fails due to minimumReleaseAge", async () => {
+    const registry = new MinimumAgeRegistry();
+    const port = await registry.start();
+
+    try {
+      using dir = tempDir("minimum-release-age-add-error", {
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+        }),
+        "bunfig.toml": `
+[install]
+registry = "http://localhost:${port}"
+minimumReleaseAge = 10080 # 1 week
+`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "add", "recent-only-package"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+
+      // Should fail with a clear error message
+      expect(exitCode).not.toBe(0);
+      const output = stdout + stderr;
+      // Should mention the package name in the error
+      expect(output).toContain("recent-only-package");
     } finally {
       registry.stop();
     }

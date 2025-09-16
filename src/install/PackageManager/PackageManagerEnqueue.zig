@@ -567,16 +567,32 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                             err,
                                         );
                                     } else {
-                                        this.log.addErrorFmt(
-                                            null,
-                                            logger.Loc.Empty,
-                                            this.allocator,
-                                            "No version matching \"{s}\" found for specifier \"{s}\" (but package exists)",
-                                            .{
-                                                this.lockfile.str(&version.literal),
-                                                this.lockfile.str(&name),
-                                            },
-                                        ) catch unreachable;
+                                        // Check if minimumReleaseAge might be blocking this package
+                                        if (this.options.minimum_release_age.isEnabled()) {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "No version matching \"{s}\" found for specifier \"{s}\" that meets the minimum release age of {d} minutes. " ++
+                                                "Consider adding this package to minimumReleaseAgeExclude in bunfig.toml if you trust it.",
+                                                .{
+                                                    this.lockfile.str(&version.literal),
+                                                    this.lockfile.str(&name),
+                                                    this.options.minimum_release_age.minutes,
+                                                },
+                                            ) catch unreachable;
+                                        } else {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "No version matching \"{s}\" found for specifier \"{s}\" (but package exists)",
+                                                .{
+                                                    this.lockfile.str(&version.literal),
+                                                    this.lockfile.str(&name),
+                                                },
+                                            ) catch unreachable;
+                                        }
                                     }
                                 }
                                 return;

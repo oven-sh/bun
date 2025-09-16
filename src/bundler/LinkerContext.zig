@@ -19,8 +19,8 @@ pub const LinkerContext = struct {
     /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
 
-    /// We may need to refer to Promise for Promise.all in async imports
-    unbound_promise_ref: Ref = Ref.None,
+    /// We may need to refer to the "__promiseAll" runtime symbol
+    promise_all_runtime_ref: Ref = Ref.None,
 
     options: LinkerOptions = .{},
 
@@ -220,13 +220,11 @@ pub const LinkerContext = struct {
 
         this.esm_runtime_ref = runtime_named_exports.get("__esm").?.ref;
         this.cjs_runtime_ref = runtime_named_exports.get("__commonJS").?.ref;
+        this.promise_all_runtime_ref = runtime_named_exports.get("__promiseAll").?.ref;
 
         if (this.options.output_format == .cjs) {
             this.unbound_module_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "module");
         }
-
-        // Generate unbound Promise ref for Promise.all usage
-        this.unbound_promise_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "Promise");
 
         if (this.options.output_format == .cjs or this.options.output_format == .iife) {
             const exports_kind = this.graph.ast.items(.exports_kind);
@@ -938,7 +936,7 @@ pub const LinkerContext = struct {
         import_records: []const ImportRecord,
         meta_flags: []JSMeta.Flags,
         ast_import_records: []const bun.BabyList(ImportRecord),
-    ) bun.OOM!js_ast.TlaCheck {
+    ) OOM!js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
         if (result_tla_check.depth == 0) {
@@ -1035,38 +1033,130 @@ pub const LinkerContext = struct {
     }
 
     pub const StmtList = struct {
-        inside_wrapper_prefix: std.ArrayList(Stmt),
-        outside_wrapper_prefix: std.ArrayList(Stmt),
-        inside_wrapper_suffix: std.ArrayList(Stmt),
+        const InsideWrapperPrefix = struct {
+            allocator: std.mem.Allocator,
+            stmts: std.ArrayListUnmanaged(Stmt),
 
-        all_stmts: std.ArrayList(Stmt),
+            sync_dependencies_end: usize = 0,
 
-        // Collect async imports to generate Promise.all
-        async_imports: std.ArrayList(Expr),
+            // if true it will exist at `sync_dependencies_end`
+            has_async_dependency: bool = false,
+
+            pub fn init(alloc: std.mem.Allocator) InsideWrapperPrefix {
+                return .{ .stmts = .{}, .allocator = alloc };
+            }
+
+            pub fn deinit(this: *InsideWrapperPrefix) void {
+                this.stmts.deinit(this.allocator);
+                this.sync_dependencies_end = 0;
+                this.has_async_dependency = false;
+            }
+
+            pub fn reset(this: *InsideWrapperPrefix) void {
+                this.stmts.clearRetainingCapacity();
+                this.sync_dependencies_end = 0;
+                this.has_async_dependency = false;
+            }
+
+            pub fn appendNonDependency(this: *InsideWrapperPrefix, stmt: Stmt) OOM!void {
+                const i = this.sync_dependencies_end + @intFromBool(this.has_async_dependency);
+                try this.stmts.insert(this.allocator, i, stmt);
+            }
+
+            pub fn appendNonDependencySlice(this: *InsideWrapperPrefix, stmts: []const Stmt) OOM!void {
+                const off = this.sync_dependencies_end + @intFromBool(this.has_async_dependency);
+                try this.stmts.insertSlice(this.allocator, off, stmts);
+            }
+
+            pub fn appendSyncDependency(this: *InsideWrapperPrefix, call_expr: Expr) OOM!void {
+                try this.stmts.insert(this.allocator, this.sync_dependencies_end, Stmt.alloc(S.SExpr, .{ .value = call_expr }, call_expr.loc));
+                this.sync_dependencies_end += 1;
+            }
+
+            pub fn appendAsyncDependency(this: *InsideWrapperPrefix, call_expr: Expr, promise_all_ref: Ref) OOM!void {
+                if (!this.has_async_dependency) {
+                    this.has_async_dependency = true;
+                    try this.stmts.insert(
+                        this.allocator,
+                        this.sync_dependencies_end,
+                        Stmt.alloc(S.SExpr, .{ .value = Expr.init(E.Await, .{ .value = call_expr }, .Empty) }, .Empty),
+                    );
+                    return;
+                }
+
+                const first_dep_call_expr = this.stmts.items[this.sync_dependencies_end].data.s_expr.value.data.e_await.value;
+                const call = first_dep_call_expr.data.e_call;
+
+                if (call.target.data.e_identifier.ref.eql(promise_all_ref)) {
+                    // `await __promiseAll` already in place, append to the array argument
+                    try call.args.at(0).data.e_array.items.append(this.allocator, call_expr);
+                } else {
+                    // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
+
+                    const promise_all = Expr.init(E.Identifier, .{ .ref = promise_all_ref }, .Empty);
+
+                    var items: BabyList(Expr) = try .initCapacity(this.allocator, 2);
+                    items.appendSliceAssumeCapacity(&.{ first_dep_call_expr, call_expr });
+
+                    var args: BabyList(Expr) = try .initCapacity(this.allocator, 1);
+                    args.appendAssumeCapacity(Expr.init(E.Array, .{ .items = items }, .Empty));
+
+                    const promise_all_call = Expr.init(E.Call, .{ .target = promise_all, .args = args }, .Empty);
+
+                    this.stmts.items[this.sync_dependencies_end] = Stmt.alloc(S.SExpr, .{ .value = Expr.init(E.Await, .{ .value = promise_all_call }, .Empty) }, .Empty);
+                }
+            }
+        };
+
+        allocator: std.mem.Allocator,
+        inside_wrapper_prefix: InsideWrapperPrefix,
+        outside_wrapper_prefix: std.ArrayListUnmanaged(Stmt),
+        inside_wrapper_suffix: std.ArrayListUnmanaged(Stmt),
+        all_stmts: std.ArrayListUnmanaged(Stmt),
 
         pub fn reset(this: *StmtList) void {
-            this.inside_wrapper_prefix.clearRetainingCapacity();
+            this.inside_wrapper_prefix.reset();
             this.outside_wrapper_prefix.clearRetainingCapacity();
             this.inside_wrapper_suffix.clearRetainingCapacity();
             this.all_stmts.clearRetainingCapacity();
-            this.async_imports.clearRetainingCapacity();
         }
 
         pub fn deinit(this: *StmtList) void {
-            this.inside_wrapper_prefix.deinit();
-            this.outside_wrapper_prefix.deinit();
-            this.inside_wrapper_suffix.deinit();
-            this.all_stmts.deinit();
-            this.async_imports.deinit();
+            this.inside_wrapper_prefix.deinit(this.allocator);
+            this.outside_wrapper_prefix.deinit(this.allocator);
+            this.inside_wrapper_suffix.deinit(this.allocator);
+            this.all_stmts.deinit(this.allocator);
         }
 
         pub fn init(alloc: std.mem.Allocator) StmtList {
             return .{
-                .inside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
-                .outside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
-                .inside_wrapper_suffix = std.ArrayList(Stmt).init(alloc),
-                .all_stmts = std.ArrayList(Stmt).init(alloc),
-                .async_imports = std.ArrayList(Expr).init(alloc),
+                .allocator = alloc,
+                .inside_wrapper_prefix = .init(alloc),
+                .outside_wrapper_prefix = .{},
+                .inside_wrapper_suffix = .{},
+                .all_stmts = .{},
+            };
+        }
+
+        const List = enum {
+            outside_wrapper_prefix,
+            inside_wrapper_suffix,
+            all_stmts,
+        };
+
+        pub fn appendSlice(this: *StmtList, list: List, stmts: []const Stmt) OOM!void {
+            try switch (list) {
+                .outside_wrapper_prefix => this.outside_wrapper_prefix.appendSlice(this.allocator, stmts),
+                .inside_wrapper_suffix => this.inside_wrapper_suffix.appendSlice(this.allocator, stmts),
+                .all_stmts => this.all_stmts.appendSlice(this.allocator, stmts),
+            };
+        }
+
+        pub fn append(this: *StmtList, list: List, stmt: Stmt) OOM!void {
+            try switch (list) {
+                .outside_wrapper_prefix => this.outside_wrapper_prefix.append(this.allocator, stmt),
+                .inside_wrapper_suffix => this.inside_wrapper_suffix.append(this.allocator, stmt),
+                .all_stmts => this.all_stmts.append(this.allocator, stmt),
             };
         }
     };
@@ -1089,7 +1179,7 @@ pub const LinkerContext = struct {
             }
 
             // Otherwise, replace this statement with a call to "require()"
-            stmts.inside_wrapper_prefix.append(
+            stmts.inside_wrapper_prefix.appendNonDependency(
                 Stmt.alloc(
                     S.Local,
                     S.Local{
@@ -1132,7 +1222,7 @@ pub const LinkerContext = struct {
             .none => {},
             .cjs => {
                 // Replace the statement with a call to "require()" if this module is not wrapped
-                try stmts.inside_wrapper_prefix.append(
+                try stmts.inside_wrapper_prefix.appendNonDependency(
                     Stmt.alloc(S.Local, .{
                         .decls = try G.Decl.List.fromSlice(
                             alloc,
@@ -1172,15 +1262,9 @@ pub const LinkerContext = struct {
                 }, loc);
 
                 if (other_flags.is_async_or_has_async_dependency) {
-                    // Collect async imports to be awaited in parallel with Promise.all
-                    try stmts.async_imports.append(init_call);
+                    try stmts.inside_wrapper_prefix.appendAsyncDependency(init_call, c.promise_all_runtime_ref);
                 } else {
-                    // Non-async imports can be called directly
-                    try stmts.inside_wrapper_prefix.append(
-                        Stmt.alloc(S.SExpr, .{
-                            .value = init_call,
-                        }, loc),
-                    );
+                    try stmts.inside_wrapper_prefix.appendSyncDependency(init_call);
                 }
             },
         }
@@ -2553,6 +2637,7 @@ const strings = bun.strings;
 const sync = bun.threading;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const BabyList = bun.collections.BabyList;
+const OOM = bun.OOM;
 
 const js_ast = bun.ast;
 const B = js_ast.B;

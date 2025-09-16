@@ -40,11 +40,11 @@ pub fn generateCodeForFileInChunkJS(
                 return .{ .err = err };
         }
 
-        const main_stmts_len = stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len;
+        const main_stmts_len = stmts.inside_wrapper_prefix.stmts.items.len + stmts.inside_wrapper_suffix.items.len;
         const all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.items.len + 1;
 
-        bun.handleOom(stmts.all_stmts.ensureUnusedCapacity(all_stmts_len));
-        stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+        bun.handleOom(stmts.all_stmts.ensureUnusedCapacity(stmts.allocator, all_stmts_len));
+        stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.stmts.items);
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
 
         const inner = stmts.all_stmts.items[0..main_stmts_len];
@@ -128,7 +128,7 @@ pub fn generateCodeForFileInChunkJS(
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if (flags.wrap != .none and ast.flags.has_explicit_use_strict_directive and !chunk.isEntryPoint() and !output_format.isAlwaysStrictMode()) {
-        stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Directive, .{
+        stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.Directive, .{
             .value = "use strict",
         }, Logger.Loc.Empty)) catch unreachable;
     }
@@ -153,10 +153,10 @@ pub fn generateCodeForFileInChunkJS(
 
         switch (flags.wrap) {
             .esm => {
-                stmts.outside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                stmts.appendSlice(.outside_wrapper_prefix, stmts.inside_wrapper_suffix.items) catch unreachable;
             },
             else => {
-                stmts.inside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                stmts.inside_wrapper_prefix.appendNonDependencySlice(stmts.inside_wrapper_suffix.items) catch unreachable;
             },
         }
 
@@ -291,11 +291,11 @@ pub fn generateCodeForFileInChunkJS(
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    stmts.all_stmts.ensureUnusedCapacity(stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
-    stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+    stmts.all_stmts.ensureUnusedCapacity(stmts.allocator, stmts.inside_wrapper_prefix.stmts.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
+    stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.stmts.items);
     stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
-    stmts.inside_wrapper_prefix.items.len = 0;
-    stmts.inside_wrapper_suffix.items.len = 0;
+    stmts.inside_wrapper_prefix.reset();
+    stmts.inside_wrapper_suffix.clearRetainingCapacity();
 
     if (c.options.minify_syntax) {
         mergeAdjacentLocalStmts(&stmts.all_stmts, temp_allocator);
@@ -384,7 +384,8 @@ pub fn generateCodeForFileInChunkJS(
                         .value = commonjs_wrapper_definition,
                     };
 
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(
                             S.Local,
                             S.Local{
@@ -430,43 +431,6 @@ pub fn generateCodeForFileInChunkJS(
                     .allocator = temp_allocator,
                 };
 
-                // Generate Promise.all for parallel async imports if needed
-                if (stmts.async_imports.items.len > 0) {
-                    const await_expr = if (stmts.async_imports.items.len == 1)
-                        // await init_<mod> if there's only one
-                        Expr.init(E.Await, .{ .value = stmts.async_imports.items[0] }, .Empty)
-                    else await_expr: {
-                        // Promise.all for multiple async imports
-                        const promise_ref = c.unbound_promise_ref;
-
-                        break :await_expr Expr.init(E.Await, .{
-                            .value = Expr.init(E.Call, .{
-                                .target = Expr.init(
-                                    E.Dot,
-                                    .{
-                                        .target = Expr.init(E.Identifier, .{ .ref = promise_ref }, .Empty),
-                                        .name = "all",
-                                        .name_loc = .Empty,
-                                    },
-                                    .Empty,
-                                ),
-                                .args = BabyList(Expr).fromSlice(temp_allocator, &.{
-                                    Expr.init(
-                                        E.Array,
-                                        .{
-                                            .items = BabyList(Expr).fromSlice(temp_allocator, stmts.async_imports.items) catch |err| bun.handleOom(err),
-                                        },
-                                        .Empty,
-                                    ),
-                                }) catch |err| bun.handleOom(err),
-                            }, .Empty),
-                        }, .Empty);
-                    };
-
-                    // Insert Promise.all at the beginning of the wrapper body
-                    bun.handleOom(stmts.all_stmts.insert(0, Stmt.alloc(S.SExpr, .{ .value = await_expr }, .Empty)));
-                }
-
                 var inner_stmts = stmts.all_stmts.items;
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
@@ -505,12 +469,12 @@ pub fn generateCodeForFileInChunkJS(
                                 break :stmt Stmt.allocateExpr(temp_allocator, value);
                             },
                             .s_function => {
-                                bun.handleOom(stmts.outside_wrapper_prefix.append(stmt));
+                                bun.handleOom(stmts.append(.outside_wrapper_prefix, stmt));
                                 continue;
                             },
                             .s_class => |class| stmt: {
                                 if (class.class.canBeMoved()) {
-                                    bun.handleOom(stmts.outside_wrapper_prefix.append(stmt));
+                                    bun.handleOom(stmts.append(.outside_wrapper_prefix, stmt));
                                     continue;
                                 }
 
@@ -535,7 +499,8 @@ pub fn generateCodeForFileInChunkJS(
                 }
 
                 if (hoist.decls.items.len > 0) {
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(
                             S.Local,
                             S.Local{
@@ -581,7 +546,8 @@ pub fn generateCodeForFileInChunkJS(
                         .value = value,
                     };
 
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(S.Local, .{
                             .decls = G.Decl.List.fromOwnedSlice(decls),
                         }, Logger.Loc.Empty),
@@ -614,7 +580,8 @@ pub fn generateCodeForFileInChunkJS(
                             },
                         }, Logger.Loc.Empty);
 
-                        stmts.outside_wrapper_prefix.append(
+                        stmts.append(
+                            .outside_wrapper_prefix,
                             Stmt.alloc(S.Local, .{
                                 .decls = G.Decl.List.fromSlice(temp_allocator, &.{.{
                                     .binding = Binding.alloc(
@@ -635,40 +602,6 @@ pub fn generateCodeForFileInChunkJS(
         }
 
         out_stmts = stmts.outside_wrapper_prefix.items;
-    } else if (stmts.async_imports.items.len > 0) {
-        const await_expr = if (stmts.async_imports.items.len == 1)
-            // await init_<mod> if there's only one
-            Expr.init(E.Await, .{ .value = stmts.async_imports.items[0] }, .Empty)
-        else await_expr: {
-            // Promise.all for multiple async imports
-            const promise_ref = c.unbound_promise_ref;
-
-            break :await_expr Expr.init(E.Await, .{
-                .value = Expr.init(E.Call, .{
-                    .target = Expr.init(
-                        E.Dot,
-                        .{
-                            .target = Expr.init(E.Identifier, .{ .ref = promise_ref }, .Empty),
-                            .name = "all",
-                            .name_loc = .Empty,
-                        },
-                        .Empty,
-                    ),
-                    .args = BabyList(Expr).fromSlice(temp_allocator, &.{
-                        Expr.init(
-                            E.Array,
-                            .{
-                                .items = BabyList(Expr).fromSlice(temp_allocator, stmts.async_imports.items) catch |err| bun.handleOom(err),
-                            },
-                            .Empty,
-                        ),
-                    }) catch |err| bun.handleOom(err),
-                }, .Empty),
-            }, .Empty);
-        };
-
-        bun.handleOom(stmts.all_stmts.insert(0, Stmt.alloc(S.SExpr, .{ .value = await_expr }, .Empty)));
-        out_stmts = stmts.all_stmts.items;
     }
 
     if (out_stmts.len == 0) {
@@ -695,7 +628,7 @@ pub fn generateCodeForFileInChunkJS(
     );
 }
 
-fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Allocator) void {
+fn mergeAdjacentLocalStmts(stmts: *std.ArrayListUnmanaged(Stmt), allocator: std.mem.Allocator) void {
     if (stmts.items.len == 0)
         return;
 

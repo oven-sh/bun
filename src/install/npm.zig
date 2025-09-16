@@ -846,7 +846,7 @@ pub const PackageVersion = extern struct {
     /// `"engines"` field in package.json
     engines: ExternalStringMap = ExternalStringMap{},
 
-    /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependencies)
+    /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
     /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
     non_optional_peer_dependencies_start: u32 = 0,
 

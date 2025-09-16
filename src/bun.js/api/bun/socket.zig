@@ -846,7 +846,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-            return ZigString.init(text).toJS(globalThis);
+            return bun.String.createUTF8ForJS(globalThis, text) catch @panic("unreachable");
         }
 
         pub fn getRemotePort(this: *This, _: *jsc.JSGlobalObject) JSValue {

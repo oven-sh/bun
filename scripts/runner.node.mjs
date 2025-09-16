@@ -587,10 +587,10 @@ async function runTests() {
               env.BUN_JSC_dumpSimulatedThrows = "1";
             }
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
-              env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
-              env["ASAN_OPTIONS"] = "detect_leaks=1:allow_user_segv_handler=1";
+              env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
               // prettier-ignore
-              env["LSAN_OPTIONS"] = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1317,10 +1317,10 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.BUN_JSC_dumpSimulatedThrows = "1";
   }
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
-    env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
-    env["ASAN_OPTIONS"] = "detect_leaks=1:allow_user_segv_handler=1";
+    env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
     // prettier-ignore
-    env["LSAN_OPTIONS"] = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {

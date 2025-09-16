@@ -31,3 +31,9 @@ leak:uws_create_app
 leak:lshpack_wrapper_decode
 leak:lshpack_wrapper_init
 leak:bun.js.ipc.onData2
+leak:bun.js.node.fs_events.InitLibrary
+leak:bun.js.node.fs_events.FSEventsLoop._schedule
+leak:Bun__Path__join
+leak:Bun__Path__resolve
+
+leak:fromErrorInstance

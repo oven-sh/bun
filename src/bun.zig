@@ -23,6 +23,7 @@ pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Enviro
     debug_allocator_data.allocator
 else
     default_allocator;
+
 pub const debug_allocator_data = struct {
     comptime {
         if (!Environment.isDebug) @compileError("only available in debug");

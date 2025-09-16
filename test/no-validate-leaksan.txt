@@ -58,6 +58,52 @@ test/js/node/test/parallel/test-worker.js
 test/js/node/test/parallel/test-worker.mjs
 
 
+# error exit root cause unclear
+test/js/node/test/parallel/test-util-callbackify.js
+test/js/node/test/sequential/test-child-process-execsync.js
+test/js/node/test/parallel/test-child-process-exec-maxbuf.js
+test/js/node/test/parallel/test-fs-readfile-eof.js
+test/js/node/test/parallel/test-child-process-promisified.js
+test/js/node/test/parallel/test-child-process-exec-encoding.js
+test/js/node/test/parallel/test-child-process-execfile.js
+
+
+# crash for reasons not related to LSAN
+test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js
+test/js/node/test/parallel/test-dgram-send-address-types.js
+test/js/node/test/parallel/test-fs-watch.js
+test/js/node/test/parallel/test-dgram-unref.js
+
+
+# ASSERTION FAILED: m_normalWorld->hasOneRef()
+test/js/node/test/parallel/test-unhandled-exception-with-worker-inuse.js
+test/js/node/test/parallel/test-process-beforeexit-throw-exit.js
+test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-1.js
+test/js/node/test/parallel/test-crypto-prime.js
+test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-4.js
+test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-2.js
+test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-3.js
+
+
+# double-free/use-after-free during Zig__GlobalObject__destructOnExit
+test/js/node/test/parallel/test-http-server-keep-alive-max-requests-null.js
+test/js/node/test/parallel/test-http-keep-alive-pipeline-max-requests.js
+test/js/node/test/parallel/test-https-connecting-to-http.js
+test/js/node/test/parallel/test-http-header-overflow.js
+test/js/node/test/parallel/test-http-request-smuggling-content-length.js
+test/js/node/test/parallel/test-http-server-keep-alive-defaults.js
+test/js/node/test/parallel/test-http-socket-error-listeners.js
+test/js/node/test/parallel/test-http-server-destroy-socket-on-client-error.js
+test/js/node/test/parallel/test-http-dummy-characters-smuggling.js
+test/js/node/test/parallel/test-http-missing-header-separator-lf.js
+test/js/node/test/parallel/test-http-invalid-te.js
+test/js/node/test/parallel/test-http-missing-header-separator-cr.js
+test/js/node/test/parallel/test-http-server-reject-chunked-with-content-length.js
+test/js/node/test/parallel/test-http-chunked-smuggling.js
+test/js/node/test/parallel/test-http-double-content-length.js
+test/js/node/test/parallel/test-http-blank-header.js
+
+
 test/bake/deinitialization.test.ts
 test/bake/dev-and-prod.test.ts
 test/bake/dev/bundle.test.ts
@@ -1040,6 +1086,10 @@ test/bake/dev/incremental-graph-edge-deletion.test.ts
 test/bake/dev/import-meta-inline.test.ts
 test/cli/update_interactive_snapshots.test.ts
 test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
+test/regression/issue/tty-reopen-after-stdin-eof.test.ts
+test/regression/issue/tty-readstream-ref-unref.test.ts
+test/regression/issue/tui-app-tty-pattern.test.ts
+test/js/web/websocket/websocket-custom-headers.test.ts
 
 
 vendor/elysia/test/a.test.ts

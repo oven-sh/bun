@@ -2627,6 +2627,7 @@ const FeatureFlags = bun.FeatureFlags;
 const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
 const MutableString = bun.MutableString;
+const OOM = bun.OOM;
 const Output = bun.Output;
 const StringJoiner = bun.StringJoiner;
 const bake = bun.bake;
@@ -2637,7 +2638,6 @@ const strings = bun.strings;
 const sync = bun.threading;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const BabyList = bun.collections.BabyList;
-const OOM = bun.OOM;
 
 const js_ast = bun.ast;
 const B = js_ast.B;

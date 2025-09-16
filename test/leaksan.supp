@@ -42,5 +42,7 @@ leak:bun.js.webcore.Blob.findOrCreateFileFromPath__anon
 leak:BunString::toWTFString(BunString::ZeroCopyTag)
 leak:bun.js.node.node_fs_binding.Bindings(.mkdtemp).runSync
 leak:bun.js.ModuleLoader.fetchBuiltinModule
+leak:boringssl.checkX509ServerIdentity
+leak:cli.pack_command.bindings.jsReadTarball
 
 leak:fromErrorInstance

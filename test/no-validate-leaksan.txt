@@ -76,6 +76,20 @@ test/bake/dev/sourcemap.test.ts
 test/bake/dev/ssg-pages-router.test.ts
 test/bundler/bundler_compile.test.ts
 test/bundler/bundler_plugin.test.ts
+test/bundler/transpiler/bun-pragma.test.ts
+test/bundler/transpiler/runtime-transpiler.test.ts
+test/cli/hot/hot.test.ts
+test/cli/install/bun-add.test.ts
+test/cli/install/bun-create.test.ts
+test/cli/install/bun-install-lifecycle-scripts.test.ts
+test/cli/install/bun-install-patch.test.ts
+test/cli/install/bun-install-proxy.test.ts
+test/cli/install/bun-install-registry.test.ts
+test/cli/install/bun-install-retry.test.ts
+test/cli/install/bun-install.test.ts
+test/cli/install/bun-lock.test.ts
+test/cli/install/bun-lockb.test.ts
+test/cli/install/bun-patch.test.ts
 
 
 # crash for reasons not related to LSAN
@@ -126,6 +140,15 @@ test/bundler/bundler_edgecase.test.ts
 test/bundler/bundler_jsx.test.ts
 test/bundler/bundler_loader.test.ts
 test/bundler/bundler_minify.test.ts
+test/bundler/esbuild/dce.test.ts
+test/bundler/esbuild/default.test.ts
+test/bundler/esbuild/extra.test.ts
+test/bundler/esbuild/loader.test.ts
+test/bundler/esbuild/splitting.test.ts
+test/bundler/html-import-manifest.test.ts
+test/cli/inspect/BunFrontendDevServer.test.ts
+test/cli/inspect/HTTPServerAgent.test.ts
+test/cli/inspect/inspect.test.ts
 
 
 vendor/elysia/test/a.test.ts

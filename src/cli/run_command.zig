@@ -1603,6 +1603,18 @@ pub const RunCommand = struct {
             return true;
         }
 
+        if (ctx.filters.len == 0 and !ctx.workspaces and CLI.Cli.cmd != null and CLI.Cli.cmd.? == .AutoCommand) {
+            if (bun.strings.eqlComptime(target_name, "feedback")) {
+                const trigger = bun.pathLiteral("/[eval]");
+                var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+                const cwd = try std.posix.getcwd(&entry_point_buf);
+                @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+                ctx.runtime_options.eval.script = @embedFile("./feedback.ts");
+                try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+                Global.exit(0);
+            }
+        }
+
         if (log_errors) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);

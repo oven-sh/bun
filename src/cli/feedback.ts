@@ -1,0 +1,631 @@
+import { spawnSync } from "node:child_process";
+import { promises as fsp, openSync, closeSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import readline from "node:readline";
+import { parseArgs as nodeParseArgs } from "node:util";
+import tty from "node:tty";
+import { File } from "node:buffer";
+
+const supportsAnsi = Boolean(process.stdout.isTTY && !("NO_COLOR" in process.env));
+const colors = {
+  reset: supportsAnsi ? "\x1b[0m" : "",
+  bold: supportsAnsi ? "\x1b[1m" : "",
+  dim: supportsAnsi ? "\x1b[2m" : "",
+  red: supportsAnsi ? "\x1b[31m" : "",
+  green: supportsAnsi ? "\x1b[32m" : "",
+  yellow: supportsAnsi ? "\x1b[33m" : "",
+  cyan: supportsAnsi ? "\x1b[36m" : "",
+  gray: supportsAnsi ? "\x1b[90m" : "",
+};
+const symbols = {
+  question: `${colors.cyan}?${colors.reset}` || "?",
+  check: `${colors.green}✔${colors.reset}` || "✔",
+  cross: `${colors.red}✖${colors.reset}` || "✖",
+};
+const inputPrefix = `${colors.gray}> ${colors.reset}`;
+const thankYouBanner = `
+${supportsAnsi ? colors.green : ""}T H A N K   Y O U ! ${colors.reset}`;
+
+type TerminalIO = {
+  input: tty.ReadStream;
+  output: tty.WriteStream;
+  cleanup: () => void;
+};
+
+function openTerminal(): TerminalIO | null {
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    return {
+      input: process.stdin as unknown as tty.ReadStream,
+      output: process.stdout as unknown as tty.WriteStream,
+      cleanup: () => {},
+    };
+  }
+
+  const candidates = process.platform === "win32" ? ["CON"] : ["/dev/tty"];
+
+  for (const candidate of candidates) {
+    try {
+      const fd = openSync(candidate, "r+");
+      const input = new tty.ReadStream(fd);
+      const output = new tty.WriteStream(fd);
+      input.setEncoding("utf8");
+      return {
+        input,
+        output,
+        cleanup: () => {
+          input.destroy();
+          output.destroy();
+          try {
+            closeSync(fd);
+          } catch {}
+        },
+      };
+    } catch {}
+  }
+
+  return null;
+}
+const logError = (message: string) => {
+  process.stderr.write(`${symbols.cross} ${message}\n`);
+};
+
+const isValidEmail = (value: string | undefined): value is string => {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed.includes("@")) return false;
+  if (!trimmed.includes(".")) return false;
+  return true;
+};
+
+type ParsedArgs = {
+  email?: string;
+  help: boolean;
+  positionals: string[];
+};
+
+function parseCliArgs(argv: string[]): ParsedArgs {
+  try {
+    const { values, positionals } = nodeParseArgs({
+      args: argv,
+      allowPositionals: true,
+      strict: false,
+      options: {
+        email: {
+          type: "string",
+          short: "e",
+        },
+        help: {
+          type: "boolean",
+          short: "h",
+        },
+      },
+    });
+
+    return {
+      email: values.email,
+      help: Boolean(values.help),
+      positionals,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logError(message);
+    process.exit(1);
+    return { email: undefined, help: false, positionals: [] };
+  }
+}
+
+function printHelp() {
+  const heading = `${colors.bold}${colors.cyan}bun feedback${colors.reset}`;
+  const usage = `${colors.bold}Usage${colors.reset}
+  bun feedback [options] [feedback text ... | files ...]`;
+  const options = `${colors.bold}Options${colors.reset}
+  ${colors.cyan}-e${colors.reset}, ${colors.cyan}--email${colors.reset} <email>   Set the email address used for this submission
+  ${colors.cyan}-h${colors.reset}, ${colors.cyan}--help${colors.reset}            Show this help message and exit`;
+  const examples = `${colors.bold}Examples${colors.reset}
+  bun feedback "Love the new release!"
+  bun feedback report.txt details.log
+  echo "please document X" | bun feedback --email you@example.com`;
+
+  console.log([heading, "", usage, "", options, "", examples].join("\n"));
+}
+
+async function readEmailFromBunInstall(): Promise<string | undefined> {
+  const installRoot = process.env.BUN_INSTALL ?? path.join(os.homedir(), ".bun");
+  const emailFile = path.join(installRoot, "feedback");
+  try {
+    const data = await fsp.readFile(emailFile, "utf8");
+    const trimmed = data.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`Unable to read ${emailFile}:`, (error as Error).message);
+    }
+    return undefined;
+  }
+}
+
+async function persistEmailToBunInstall(email: string): Promise<void> {
+  const installRoot = process.env.BUN_INSTALL;
+  if (!installRoot) return;
+
+  const emailFile = path.join(installRoot, "feedback");
+  try {
+    await fsp.mkdir(path.dirname(emailFile), { recursive: true });
+    await fsp.writeFile(emailFile, `${email.trim()}\n`, "utf8");
+  } catch (error) {
+    console.warn(`Unable to persist email to ${emailFile}:`, (error as Error).message);
+  }
+}
+
+function readEmailFromGitConfig(): string | undefined {
+  const result = spawnSync("git", ["config", "user.email"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) {
+    return undefined;
+  }
+  const output = result.stdout.trim();
+  return output.length > 0 ? output : undefined;
+}
+
+async function promptForEmail(terminal: TerminalIO | null, defaultEmail?: string): Promise<string | undefined> {
+  if (!terminal) {
+    return defaultEmail && isValidEmail(defaultEmail) ? defaultEmail : undefined;
+  }
+
+  let currentDefault = defaultEmail;
+
+  for (;;) {
+    const answer = await promptForEmailInteractive(terminal, currentDefault);
+    if (typeof answer === "string" && isValidEmail(answer)) {
+      return answer.trim();
+    }
+
+    terminal.output.write(`${symbols.cross} Please provide a valid email address containing "@" and ".".\n`);
+    currentDefault = undefined;
+  }
+}
+
+async function promptForEmailInteractive(terminal: TerminalIO, defaultEmail?: string): Promise<string | undefined> {
+  const input = terminal.input;
+  const output = terminal.output;
+
+  readline.emitKeypressEvents(input);
+  const hadRawMode = typeof input.isRaw === "boolean" ? input.isRaw : undefined;
+  if (typeof input.setRawMode === "function") {
+    input.setRawMode(true);
+  }
+  if (typeof input.resume === "function") {
+    input.resume();
+  }
+
+  const placeholder = defaultEmail ?? "";
+  let placeholderActive = placeholder.length > 0;
+  let value = "";
+  let resolved = false;
+
+  const render = () => {
+    output.write(`\r\x1b[2K${symbols.question} ${colors.bold}Email${colors.reset}: `);
+    if (placeholderActive && placeholder.length > 0) {
+      output.write(`${colors.dim}<${placeholder}>${colors.reset}`);
+      output.write(`\x1b[${placeholder.length + 2}D`);
+    } else {
+      output.write(value);
+    }
+  };
+
+  render();
+
+  return await new Promise<string | undefined>(resolve => {
+    const cleanup = (result?: string) => {
+      if (resolved) return;
+      resolved = true;
+      input.removeListener("keypress", onKeypress);
+      if (typeof input.setRawMode === "function") {
+        if (typeof hadRawMode === "boolean") {
+          input.setRawMode(hadRawMode);
+        } else {
+          input.setRawMode(false);
+        }
+      }
+      if (typeof input.pause === "function") {
+        input.pause();
+      }
+      output.write("\n");
+      resolve(result);
+    };
+
+    const onKeypress = (str: string, key: readline.Key) => {
+      if (!key && str) {
+        if (placeholderActive) {
+          placeholderActive = false;
+          value = "";
+          render();
+        }
+        value += str;
+        output.write(str);
+        return;
+      }
+
+      if (key && (key.sequence === "\u0003" || (key.ctrl && key.name === "c"))) {
+        cleanup();
+        process.exit(130);
+        return;
+      }
+
+      if (key?.name === "return") {
+        if (placeholderActive && placeholder.length > 0) {
+          cleanup(placeholder);
+          return;
+        }
+        const trimmed = value.trim();
+        cleanup(trimmed.length > 0 ? trimmed : undefined);
+        return;
+      }
+
+      if (key?.name === "backspace") {
+        if (placeholderActive) {
+          return;
+        }
+        if (value.length > 0) {
+          value = value.slice(0, -1);
+          render();
+        }
+        return;
+      }
+
+      if (!str) {
+        return;
+      }
+
+      if (key && key.name && key.name.length > 1 && key.name !== "space") {
+        return;
+      }
+
+      if (placeholderActive) {
+        placeholderActive = false;
+        value = "";
+        render();
+      }
+
+      value += str;
+      output.write(str);
+    };
+
+    input.on("keypress", onKeypress);
+  });
+}
+
+async function promptForBody(
+  terminal: TerminalIO | null,
+  attachments: PositionalContent["files"],
+): Promise<string | undefined> {
+  if (!terminal) {
+    return undefined;
+  }
+
+  const input = terminal.input;
+  const output = terminal.output;
+
+  readline.emitKeypressEvents(input);
+  const hadRawMode = typeof input.isRaw === "boolean" ? input.isRaw : undefined;
+  if (typeof input.setRawMode === "function") {
+    input.setRawMode(true);
+  }
+  if (typeof input.resume === "function") {
+    input.resume();
+  }
+
+  const header = `${symbols.question} ${colors.bold}Share your feedback${colors.reset} ${colors.dim}(Enter to send, Shift+Enter for a newline)${colors.reset}`;
+  output.write(`${header}\n`);
+  if (attachments.length > 0) {
+    output.write(`${colors.dim}files: ${attachments.map(file => file.filename).join(", ")}${colors.reset}\n`);
+  }
+  output.write(`${inputPrefix}`);
+
+  const lines: string[] = [""];
+  let currentLine = 0;
+  let resolved = false;
+
+  return await new Promise<string | undefined>(resolve => {
+    const cleanup = (value?: string) => {
+      if (resolved) return;
+      resolved = true;
+      input.removeListener("keypress", onKeypress);
+      if (typeof input.setRawMode === "function") {
+        if (typeof hadRawMode === "boolean") {
+          input.setRawMode(hadRawMode);
+        } else {
+          input.setRawMode(false);
+        }
+      }
+      if (typeof input.pause === "function") {
+        input.pause();
+      }
+      output.write("\n");
+      resolve(value);
+    };
+
+    const onKeypress = (str: string, key: readline.Key) => {
+      if (!key) {
+        if (str) {
+          lines[currentLine] += str;
+          output.write(str);
+        }
+        return;
+      }
+
+      if (key.sequence === "\u0003" || (key.ctrl && key.name === "c")) {
+        cleanup();
+        process.exit(130);
+        return;
+      }
+
+      if (key.name === "return") {
+        if (key.shift) {
+          lines.push("");
+          currentLine += 1;
+          output.write(`\n${inputPrefix}`);
+          return;
+        }
+        const message = lines.join("\n");
+        cleanup(message);
+        return;
+      }
+
+      if (key.name === "backspace") {
+        const current = lines[currentLine];
+        if (current.length > 0) {
+          lines[currentLine] = current.slice(0, -1);
+          output.write("\b \b");
+        } else if (currentLine > 0) {
+          lines.pop();
+          currentLine -= 1;
+          output.write("\r\x1b[2K");
+          output.write("\x1b[F");
+          output.write("\r\x1b[2K");
+          output.write(`${inputPrefix}${lines[currentLine]}`);
+        }
+        return;
+      }
+
+      if (key.name && key.name.length > 1 && key.name !== "space") {
+        return;
+      }
+
+      if (str) {
+        lines[currentLine] += str;
+        output.write(str);
+      }
+    };
+
+    input.on("keypress", onKeypress);
+  });
+}
+
+async function readFromStdin(): Promise<string | undefined> {
+  const stdin = process.stdin;
+  if (!stdin || stdin.isTTY) return undefined;
+
+  if (typeof stdin.setEncoding === "function") {
+    stdin.setEncoding("utf8");
+  }
+
+  if (typeof stdin.resume === "function") {
+    stdin.resume();
+  }
+
+  const chunks: string[] = [];
+  for await (const chunk of stdin as AsyncIterable<string | Buffer>) {
+    chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+  }
+
+  const content = chunks.join("");
+  return content.length > 0 ? content : undefined;
+}
+
+type PositionalContent = {
+  messageParts: string[];
+  files: { filename: string; content: string }[];
+};
+
+async function resolveFileCandidate(token: string): Promise<string | undefined> {
+  const candidates = new Set<string>();
+  candidates.add(token);
+
+  if (token.startsWith("~/")) {
+    candidates.add(path.join(os.homedir(), token.slice(2)));
+  }
+
+  const resolved = path.resolve(process.cwd(), token);
+  candidates.add(resolved);
+
+  for (const candidate of candidates) {
+    try {
+      const stat = await fsp.stat(candidate);
+      if (stat.isFile()) {
+        return candidate;
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code && (code === "ENOENT" || code === "ENOTDIR")) {
+        continue;
+      }
+      console.warn(`Unable to inspect ${candidate}:`, (error as Error).message);
+    }
+  }
+
+  return undefined;
+}
+
+async function readFromPositionals(positionals: string[]): Promise<PositionalContent> {
+  const messageParts: string[] = [];
+  const files: PositionalContent["files"] = [];
+  let literalTokens: string[] = [];
+
+  const flushTokens = () => {
+    if (literalTokens.length > 0) {
+      messageParts.push(literalTokens.join(" "));
+      literalTokens = [];
+    }
+  };
+
+  for (const token of positionals) {
+    const filePath = await resolveFileCandidate(token);
+    if (filePath) {
+      try {
+        flushTokens();
+        const fileContents = await fsp.readFile(filePath, "utf8");
+        files.push({ filename: path.basename(filePath), content: fileContents });
+        continue;
+      } catch {
+        // Ignore read errors; treat token as part of the message instead.
+      }
+    }
+
+    literalTokens.push(token);
+  }
+
+  flushTokens();
+  return { messageParts, files };
+}
+
+function getOldestGitSha(): string | undefined {
+  const result = spawnSync("git", ["rev-list", "--max-parents=0", "HEAD"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  if (result.status !== 0) {
+    return undefined;
+  }
+
+  const firstLine = result.stdout.split(/\r?\n/).find(line => line.trim().length > 0);
+  return firstLine?.trim();
+}
+
+async function main() {
+  const rawArgv = [...Bun.argv.slice(2)];
+  if (rawArgv.length > 0 && /feedback(\.ts)?$/.test(rawArgv[0])) {
+    rawArgv.shift();
+  }
+
+  let terminal: TerminalIO | null = null;
+  try {
+    const { email: emailFlag, help, positionals } = parseCliArgs(rawArgv);
+    if (help) {
+      printHelp();
+      return;
+    }
+
+    terminal = openTerminal();
+
+    const exit = (code: number): never => {
+      terminal?.cleanup();
+      process.exit(code);
+    };
+
+    if (emailFlag && !isValidEmail(emailFlag)) {
+      logError("The provided email must include both '@' and '.'.");
+      exit(1);
+    }
+
+    const storedEmailRaw = await readEmailFromBunInstall();
+    const storedEmail = isValidEmail(storedEmailRaw) ? storedEmailRaw.trim() : undefined;
+
+    const gitEmailRaw = readEmailFromGitConfig();
+    const gitEmail = isValidEmail(gitEmailRaw) ? gitEmailRaw.trim() : undefined;
+
+    const canPrompt = terminal !== null;
+
+    let email = emailFlag?.trim() ?? storedEmail ?? gitEmail;
+
+    if (canPrompt && !emailFlag && !storedEmail) {
+      email = await promptForEmail(terminal, email ?? gitEmail ?? undefined);
+    }
+
+    if (!isValidEmail(email)) {
+      if (!canPrompt) {
+        logError("Unable to determine email automatically. Pass --email <address>.");
+      } else {
+        logError("An email address is required. Pass --email or configure git user.email.");
+      }
+      exit(1);
+      return;
+    }
+
+    const normalizedEmail = email.trim();
+
+    if (process.env.BUN_INSTALL && !storedEmail) {
+      await persistEmailToBunInstall(normalizedEmail);
+    }
+
+    const stdinContent = await readFromStdin();
+    const positionalContent = await readFromPositionals(positionals);
+    const positionalParts = positionalContent.messageParts;
+    const pieces: string[] = [];
+    if (stdinContent) pieces.push(stdinContent);
+    pieces.push(...positionalParts);
+
+    let message = pieces.join(pieces.length > 1 ? "\n\n" : "");
+
+    if (message.trim().length === 0 && terminal) {
+      const interactiveBody = await promptForBody(terminal, positionalContent.files);
+      if (interactiveBody && interactiveBody.trim().length > 0) {
+        message = interactiveBody;
+      }
+    }
+
+    const normalizedMessage = message.trim();
+    if (normalizedMessage.length === 0) {
+      logError("No feedback provided. Supply text, file paths, or pipe input.");
+      exit(1);
+      return;
+    }
+
+    const messageBody = normalizedMessage;
+
+    const projectId = getOldestGitSha();
+    const endpoint = process.env.BUN_FEEDBACK_URL || "https://bun.com/api/v1/feedback";
+
+    const form = new FormData();
+    form.append("email", normalizedEmail);
+    form.append("message", messageBody);
+    for (const file of positionalContent.files) {
+      form.append("files[]", new File([file.content], file.filename));
+    }
+    form.append("bun_version", Bun.version_with_sha);
+    if (projectId) {
+      form.append("project_id", projectId);
+    }
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      body: form,
+      headers: {
+        "User-Agent": `bun-feedback/${Bun.version_with_sha}`,
+      },
+    });
+
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      logError(`Failed to send feedback (${response.status} ${response.statusText}).`);
+      if (bodyText) {
+        process.stderr.write(`${bodyText}\n`);
+      }
+      exit(1);
+    }
+
+    process.stdout.write(`${symbols.check} Feedback sent.\n${thankYouBanner}\n`);
+  } finally {
+    terminal?.cleanup();
+  }
+}
+
+await main().catch(error => {
+  const detail = error instanceof Error ? error.message : String(error);
+  logError(`Unexpected error while sending feedback: ${detail}`);
+  process.exit(1);
+});

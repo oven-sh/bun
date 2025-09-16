@@ -384,8 +384,22 @@ $> bun-after test ./beforeall-ordering.test.ts
   - stacktrace is messed up. it's including an incorrect item in the stacktrace for some reason.
 - [ ] test/js/bun/util/inspect-error.test.js
   - same stacktrace issue
+- [x] test/js/third_party/prisma/prisma.test.ts
+  - the issue is that we are async-enqueueing describe()s
+  - the error is bad in this case
+    "error: Cannot call describe() inside a test. Call it inside describe() instead."
+    improved? error:
+    "error: describe() was called while test "(test_name)" is running. Call it inside describe() instead."
+- [ ] test/cli/install/bun-install-registry.test.ts
+  - not sure if this is real or flaky
+- [ ] test/js/bun/test/stack.test.ts
+  - we're adding an extra `at unknown` frame at the end of the stacktrace for some reason. likely same issue as the above stacktrace bugs.
+- [ ] test/js/web/fetch/fetch.stream.test.ts
+  - this is usually a flaky failure but was a failure. this is maybe related to missing retry/rerun options.
+- [ ] test/js/bun/shell/leak.test.ts
+  - likely real leak beacuse of DoneCallback & ScopeFunctions
 
-## Flaky
+## Flaky on main
 
 - [ ] test/bundler/compile-windows-metadata.test.ts
 - [ ] test/js/sql/sql-mysql.test.ts
@@ -395,30 +409,23 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] test/js/node/http2/node-http2.test.js
 - [ ] test/bake/dev/hot.test.ts
 - [ ] test/js/web/websocket/autobahn.test.ts
+- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
+- [ ] test/js/web/timers/setInterval.test.js
+- [ ] test/js/node/test/parallel/test-stdin-pipe-large.js
+- [ ] test/napi/napi.test.ts
+- [ ] test/js/bun/s3/s3.test.ts
+- [ ] test/cli/install/bun-install.test.ts
+- [ ] test/bundler/bundler_edgecase.test.ts
+- [ ] test/regression/issue/09041.test.ts
+- [ ] test/js/web/fetch/fetch.test.ts
+- [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
 
 ## Uncategorized
 
 - [x] test/js/bun/test/describe2.test.ts
 - [ ] test/js/bun/net/socket.test.ts
   - maybe a real failure
-- [ ] test/js/junit-reporter/junit.test.js
-  - hostname regex wrong on windows
-- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
-- [ ] test/js/third_party/prisma/prisma.test.ts
-- [ ] test/cli/install/bun-install-registry.test.ts
-- [ ] test/js/web/timers/setInterval.test.js
-- [ ] test/js/node/test/parallel/test-stdin-pipe-large.js
-- [ ] test/napi/napi.test.ts
-- [ ] test/js/bun/s3/s3.test.ts
-- [ ] test/cli/install/bun-install.test.ts
-- [ ] test/js/bun/test/stack.test.ts
-- [ ] test/js/web/fetch/fetch.stream.test.ts
-- [ ] test/bundler/bundler_edgecase.test.ts
-- [ ] test/js/bun/http/serve.test.ts
-- [ ] test/js/bun/shell/leak.test.ts
-- [ ] test/regression/issue/09041.test.ts
-- [ ] test/js/web/fetch/fetch.test.ts
-- [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
+- [x] test/js/junit-reporter/junit.test.js
 
 # Add features:
 
@@ -475,9 +482,16 @@ $> bun-after test ./beforeall-ordering.test.ts
 - [ ] add tests for debugger.test_reporter_agent reporting, maybe using `bun-debug x bun-inspect-echo` or using the existing setup but fixing it
 - [ ] test passing bad values to describe()/test()
 - [ ] move the testing files into being real behaviour tests
+- [ ] test that `test.concurrent(() => {}, 200) + test.concurrent(() => {}, 400)` both fail with timeout
 
 # Final validation:
 
+- [ ] consider potential for silently skipped/failing tests that are not skipped on main
+- [ ] run benchmarks again
+  - benchmark these cases:
+    - 1,000,000 tests () on branch vs merge-base (describe.each(1,000) > test.each(1,000))
+    - 1,000,000 test.skip() calls (one describe.each over a 1,000,000 item array)
+    - test also with the `--concurrent` flag
 - [ ] remove done_promise, unused.
 - [ ] remove runErrorHandlerWithDedupe, last_reported_error_for_dedupe
 - [ ] eliminate fn bunTest() in Execution.zig
@@ -565,6 +579,9 @@ $> bun-after test ./beforeall-ordering.test.ts
 
 # Code quality:
 
+- [ ] consider changing done so instead of the complex ref-counted thing, it is instead made by wrapping the return value of the function with a promise that resolves when the done callback is called
+  - in this case, the done function is instead a binding to a function with `[promise] (error) => error != null ? promise.$reject(error) : promise.$resolve()`
+  - this significantly simplifies implementation in exchange for runtime cost
 - [ ] migrate RefData to bun.ptr.Strong
 - [ ] setting both result and maybe_skip is not ideal, maybe there should be a function to do both at once?
 - [ ] try using a linked list rather than arraylist for describe/test children, see how it affects performance

@@ -1539,8 +1539,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn stop(this: *ThisServer, abrupt: bool) void {
-            this.js_value.downgrade();
-
+            if (this.js_value.isNotEmpty()) {
+                this.js_value.downgrade();
+            }
             if (this.config.allow_hot and this.config.id.len > 0) {
                 if (this.globalThis.bunVM().hotMap()) |hot| {
                     hot.remove(this.config.id);

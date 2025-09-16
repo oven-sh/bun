@@ -490,12 +490,12 @@ pub const PrintResult = union(enum) {
         source_map: ?SourceMap.Chunk = null,
     };
 
-    pub const Error = OOM || StackOverflow;
-
     pub fn fail(e: Error) PrintResult {
         return .{ .err = e };
     }
 };
+
+pub const Error = OOM || StackOverflow;
 
 // do not make this a packed struct
 // stage1 compiler bug:
@@ -633,9 +633,6 @@ fn NewPrinter(
 
         const Printer = @This();
 
-        /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
-        pub const Error = error{};
-
         /// The handling of binary expressions is convoluted because we're using
         /// iteration on the heap instead of recursion on the call stack to avoid
         /// stack overflow for deeply-nested ASTs. See the comments for the similar
@@ -655,7 +652,7 @@ fn NewPrinter(
             wrap: bool = false,
             right_level: Level = .lowest,
 
-            pub fn checkAndPrepare(v: *BinaryExpressionVisitor, p: *Printer) PrintResult.Error!bool {
+            pub fn checkAndPrepare(v: *BinaryExpressionVisitor, p: *Printer) Error!bool {
                 var e = v.e;
 
                 const entry: *const Op = Op.Table.getPtrConst(e.op);
@@ -766,7 +763,7 @@ fn NewPrinter(
 
                 return true;
             }
-            pub fn visitRightAndFinish(v: *BinaryExpressionVisitor, p: *Printer) PrintResult.Error!void {
+            pub fn visitRightAndFinish(v: *BinaryExpressionVisitor, p: *Printer) Error!void {
                 const e = v.e;
                 const entry = v.entry;
                 var flags = ExprFlag.Set{};
@@ -930,7 +927,7 @@ fn NewPrinter(
             }
         }
 
-        fn printBunJestImportStatement(p: *Printer, import: S.Import) PrintResult.Error!void {
+        fn printBunJestImportStatement(p: *Printer, import: S.Import) Error!void {
             comptime bun.assert(is_bun_platform);
 
             switch (p.options.module_type) {
@@ -943,12 +940,12 @@ fn NewPrinter(
             }
         }
 
-        fn printGlobalBunImportStatement(p: *Printer, import: S.Import) PrintResult.Error!void {
+        fn printGlobalBunImportStatement(p: *Printer, import: S.Import) Error!void {
             if (comptime !is_bun_platform) unreachable;
             try printInternalBunImport(p, import, @TypeOf("globalThis.Bun"), "globalThis.Bun");
         }
 
-        fn printInternalBunImport(p: *Printer, import: S.Import, comptime Statement: type, statement: Statement) PrintResult.Error!void {
+        fn printInternalBunImport(p: *Printer, import: S.Import, comptime Statement: type, statement: Statement) Error!void {
             if (comptime !is_bun_platform) unreachable;
 
             if (import.star_name_loc != null) {
@@ -1078,7 +1075,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printBody(p: *Printer, stmt: Stmt) PrintResult.Error!void {
+        pub fn printBody(p: *Printer, stmt: Stmt) Error!void {
             switch (stmt.data) {
                 .s_block => |block| {
                     try p.printSpace();
@@ -1094,14 +1091,14 @@ fn NewPrinter(
             }
         }
 
-        pub fn printBlockBody(p: *Printer, stmts: []const Stmt) PrintResult.Error!void {
+        pub fn printBlockBody(p: *Printer, stmts: []const Stmt) Error!void {
             for (stmts) |stmt| {
                 try p.printSemicolonIfNeeded();
                 try p.printStmt(stmt);
             }
         }
 
-        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) PrintResult.Error!void {
+        pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) Error!void {
             try p.addSourceMapping(loc);
             try p.print("{");
             if (stmts.len > 0) {
@@ -1137,7 +1134,7 @@ fn NewPrinter(
             try p.print("}");
         }
 
-        pub fn printDecls(p: *Printer, comptime keyword: string, decls_: []G.Decl, flags: ExprFlag.Set) PrintResult.Error!void {
+        pub fn printDecls(p: *Printer, comptime keyword: string, decls_: []G.Decl, flags: ExprFlag.Set) Error!void {
             try p.print(keyword);
             try p.printSpace();
             var decls = decls_;
@@ -1327,7 +1324,7 @@ fn NewPrinter(
             has_rest_arg: bool,
             // is_arrow can be used for minifying later
             _: bool,
-        ) PrintResult.Error!void {
+        ) Error!void {
             const wrap = true;
 
             if (wrap) {
@@ -1360,13 +1357,13 @@ fn NewPrinter(
             }
         }
 
-        pub fn printFunc(p: *Printer, func: G.Fn) PrintResult.Error!void {
+        pub fn printFunc(p: *Printer, func: G.Fn) Error!void {
             try p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             try p.printSpace();
             try p.printBlock(func.body.loc, func.body.stmts, null);
         }
 
-        pub fn printClass(p: *Printer, class: G.Class) PrintResult.Error!void {
+        pub fn printClass(p: *Printer, class: G.Class) Error!void {
             if (class.extends) |extends| {
                 try p.print(" extends");
                 try p.printSpace();
@@ -1598,7 +1595,7 @@ fn NewPrinter(
             import_options: Expr,
             level_: Level,
             flags: ExprFlag.Set,
-        ) PrintResult.Error!void {
+        ) Error!void {
             _ = leading_interior_comments; // TODO:
 
             var level = level_;
@@ -1973,7 +1970,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) PrintResult.Error!void {
+        pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) Error!void {
             var flags = in_flags;
 
             if (!p.stack_check.isSafeToRecurse()) {
@@ -3245,7 +3242,7 @@ fn NewPrinter(
             p.prev_reg_exp_end = p.writer.written;
         }
 
-        pub fn printProperty(p: *Printer, item_in: G.Property) PrintResult.Error!void {
+        pub fn printProperty(p: *Printer, item_in: G.Property) Error!void {
             var item = item_in;
             if (comptime !is_json) {
                 if (item.kind == .spread) {
@@ -3526,14 +3523,14 @@ fn NewPrinter(
             }
         }
 
-        pub fn printInitializer(p: *Printer, initial: Expr) PrintResult.Error!void {
+        pub fn printInitializer(p: *Printer, initial: Expr) Error!void {
             try p.printSpace();
             try p.print("=");
             try p.printSpace();
             try p.printExpr(initial, .comma, ExprFlag.None());
         }
 
-        pub fn printBinding(p: *Printer, binding: Binding) PrintResult.Error!void {
+        pub fn printBinding(p: *Printer, binding: Binding) Error!void {
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |b| {
@@ -3691,7 +3688,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn maybePrintDefaultBindingValue(p: *Printer, property: anytype) PrintResult.Error!void {
+        pub fn maybePrintDefaultBindingValue(p: *Printer, property: anytype) Error!void {
             if (property.default_value) |default| {
                 try p.printSpace();
                 try p.print("=");
@@ -3700,7 +3697,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printStmt(p: *Printer, stmt: Stmt) PrintResult.Error!void {
+        pub fn printStmt(p: *Printer, stmt: Stmt) Error!void {
             if (!p.stack_check.isSafeToRecurse()) {
                 return error.StackOverflow;
             }
@@ -4779,7 +4776,7 @@ fn NewPrinter(
             try p.print(", enumerable: true, configurable: true})");
         }
 
-        pub fn printForLoopInit(p: *Printer, initSt: Stmt) PrintResult.Error!void {
+        pub fn printForLoopInit(p: *Printer, initSt: Stmt) Error!void {
             switch (initSt.data) {
                 .s_expr => |s| {
                     try p.printExpr(
@@ -4814,7 +4811,7 @@ fn NewPrinter(
                 },
             }
         }
-        pub fn printIf(p: *Printer, s: *const S.If, loc: logger.Loc) PrintResult.Error!void {
+        pub fn printIf(p: *Printer, s: *const S.If, loc: logger.Loc) Error!void {
             try p.printSpaceBeforeIdentifier();
             try p.addSourceMapping(loc);
             try p.print("if");
@@ -4944,7 +4941,7 @@ fn NewPrinter(
             inlined: js_ast.InlinedEnumValue.Decoded,
             comment: []const u8,
             level: Level,
-        ) PrintResult.Error!void {
+        ) Error!void {
             switch (inlined) {
                 .number => |num| try p.printNumber(num, level),
 
@@ -4965,7 +4962,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) PrintResult.Error!void {
+        pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) Error!void {
             if (!rewrite_esm_to_cjs and is_export) {
                 try p.print("export ");
             }
@@ -5225,7 +5222,7 @@ fn NewPrinter(
             source: *const logger.Source,
             ast: *const Ast,
             part: *const js_ast.Part,
-        ) PrintResult.Error!void {
+        ) Error!void {
             p.indent();
             try p.printIndent();
 
@@ -5622,7 +5619,7 @@ pub fn printAst(
     comptime ascii_only: bool,
     opts: Options,
     comptime generate_source_map: bool,
-) PrintResult.Error!usize {
+) Error!usize {
     var renamer: rename.Renamer = undefined;
     var no_op_renamer: rename.NoOpRenamer = undefined;
     var module_scope = tree.module_scope;
@@ -5785,7 +5782,7 @@ pub fn printJSON(
     expr: Expr,
     source: *const logger.Source,
     opts: Options,
-) PrintResult.Error!usize {
+) Error!usize {
     const PrinterType = NewPrinter(false, Writer, false, false, true, false);
     const writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
@@ -5889,7 +5886,7 @@ pub fn printWithWriterAndPlatform(
     parts: []const js_ast.Part,
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
-) PrintResult.Error!PrintResult {
+) Error!PrintResult {
     const prev_action = bun.crash_handler.current_action;
     defer bun.crash_handler.current_action = prev_action;
     bun.crash_handler.current_action = .{ .print = source.path.text };

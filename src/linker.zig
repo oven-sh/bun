@@ -234,7 +234,7 @@ pub const Linker = struct {
         import_record: *ImportRecord,
         result: *_transpiler.ParseResult,
         comptime is_bun: bool,
-    ) !bool {
+    ) bun.OOM!bool {
         if (import_record.handles_import_errors) {
             import_record.path.is_disabled = true;
             return false;

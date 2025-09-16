@@ -1491,6 +1491,8 @@ pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, 
     return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
 }
 
+const FetchWithoutOnLoadPluginsError = ModuleLoader.TranspileSourceCodeError || error{ModuleNotFound};
+
 pub fn fetchWithoutOnLoadPlugins(
     jsc_vm: *VirtualMachine,
     globalObject: *JSGlobalObject,
@@ -1498,10 +1500,10 @@ pub fn fetchWithoutOnLoadPlugins(
     referrer: String,
     log: *logger.Log,
     comptime flags: FetchFlags,
-) anyerror!ResolvedSource {
+) FetchWithoutOnLoadPluginsError!ResolvedSource {
     bun.assert(VirtualMachine.isLoaded());
 
-    if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
+    if (ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
         return builtin;
     }
 
@@ -1686,7 +1688,7 @@ pub fn resolve(
     source: bun.String,
     query_string: ?*ZigString,
     is_esm: bool,
-) !void {
+) bun.JSError!void {
     try resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
 }
 

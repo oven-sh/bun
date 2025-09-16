@@ -1037,13 +1037,13 @@ pub const LinkerContext = struct {
             allocator: std.mem.Allocator,
             stmts: std.ArrayListUnmanaged(Stmt),
 
-            sync_dependencies_end: usize = 0,
+            sync_dependencies_end: usize,
 
             // if true it will exist at `sync_dependencies_end`
-            has_async_dependency: bool = false,
+            has_async_dependency: bool,
 
             pub fn init(alloc: std.mem.Allocator) InsideWrapperPrefix {
-                return .{ .stmts = .{}, .allocator = alloc };
+                return .{ .stmts = .{}, .allocator = alloc, .sync_dependencies_end = 0, .has_async_dependency = false };
             }
 
             pub fn deinit(this: *InsideWrapperPrefix) void {
@@ -1059,13 +1059,11 @@ pub const LinkerContext = struct {
             }
 
             pub fn appendNonDependency(this: *InsideWrapperPrefix, stmt: Stmt) OOM!void {
-                const i = this.sync_dependencies_end + @intFromBool(this.has_async_dependency);
-                try this.stmts.insert(this.allocator, i, stmt);
+                try this.stmts.append(this.allocator, stmt);
             }
 
             pub fn appendNonDependencySlice(this: *InsideWrapperPrefix, stmts: []const Stmt) OOM!void {
-                const off = this.sync_dependencies_end + @intFromBool(this.has_async_dependency);
-                try this.stmts.insertSlice(this.allocator, off, stmts);
+                try this.stmts.appendSlice(this.allocator, stmts);
             }
 
             pub fn appendSyncDependency(this: *InsideWrapperPrefix, call_expr: Expr) OOM!void {

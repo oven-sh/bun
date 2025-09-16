@@ -402,6 +402,9 @@ pub fn load(
 
         if (config.minimum_release_age) |minimum_age| {
             this.minimum_release_age.minutes = minimum_age;
+            if (bun.Environment.isDebug) {
+                bun.Output.debugWarn("Loaded minimum_release_age: {d} minutes", .{minimum_age});
+            }
         }
 
         if (config.minimum_release_age_exclude) |exclude_list| {

@@ -1588,7 +1588,32 @@ fn getOrPutResolvedPackage(
                 .load_from_memory_fallback_to_disk,
             ) orelse return null; // manifest might still be downloading. This feels unreliable.
             const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
-                .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
+                .dist_tag => brk: {
+                    const dist_tag_result = manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag));
+                    if (dist_tag_result) |result| {
+                        // Check minimum release age for dist tags too (e.g., "latest")
+                        if (bun.Environment.isDebug) {
+                            bun.Output.debugWarn("dist_tag check: package={s} enabled={} excluded={} publish_time={d} too_new={}", .{
+                                name_str,
+                                this.options.minimum_release_age.isEnabled(),
+                                this.options.minimum_release_age.isExcluded(name_str),
+                                result.package.publish_time,
+                                if (result.package.publish_time > 0) this.options.minimum_release_age.isVersionTooNew(result.package.publish_time) else false,
+                            });
+                        }
+                        if (this.options.minimum_release_age.isEnabled() and
+                            !this.options.minimum_release_age.isExcluded(name_str) and
+                            result.package.publish_time > 0 and
+                            this.options.minimum_release_age.isVersionTooNew(result.package.publish_time)) {
+                            // Package is too new, don't install it
+                            if (bun.Environment.isDebug) {
+                                bun.Output.debugWarn("Blocking package {s} due to minimumReleaseAge", .{name_str});
+                            }
+                            break :brk null;
+                        }
+                    }
+                    break :brk dist_tag_result;
+                },
                 .npm => manifest.findBestVersion(
                     version.value.npm.version,
                     this.lockfile.buffers.string_bytes.items,

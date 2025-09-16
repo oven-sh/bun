@@ -566,32 +566,6 @@ pub const Bunfig = struct {
                         try this.loadLogLevel(expr);
                     }
 
-                    // Parse minimumReleaseAge security feature
-                    if (install_obj.get("minimumReleaseAge")) |min_age| {
-                        if (min_age.asNumber()) |value| {
-                            install.minimum_release_age = @as(u32, @intFromFloat(value));
-                        } else {
-                            try this.addError(min_age.loc, "Invalid minimumReleaseAge. Expected a number (minutes).");
-                        }
-                    }
-
-                    // Parse minimumReleaseAgeExclude list
-                    if (install_obj.get("minimumReleaseAgeExclude")) |exclude| {
-                        if (exclude.data == .e_array) {
-                            const arr = exclude.data.e_array;
-                            var list = try allocator.alloc([]const u8, arr.items.len);
-                            for (arr.items.slice(), 0..) |item, i| {
-                                list[i] = try item.asStringCloned(allocator) orelse {
-                                    try this.addError(item.loc, "Invalid minimumReleaseAgeExclude item. Expected a string.");
-                                    return;
-                                };
-                            }
-                            install.minimum_release_age_exclude = list;
-                        } else {
-                            try this.addError(exclude.loc, "Invalid minimumReleaseAgeExclude. Expected an array of package names.");
-                        }
-                    }
-
                     if (install_obj.get("cache")) |cache| {
                         load: {
                             if (cache.asBool()) |value| {
@@ -639,6 +613,9 @@ pub const Bunfig = struct {
                     if (install_obj.get("minimumReleaseAge")) |minimum_age| {
                         if (minimum_age.data == .e_number) {
                             install.minimum_release_age = @as(u32, @intFromFloat(minimum_age.data.e_number.value));
+                            if (bun.Environment.isDebug) {
+                                bun.Output.debugWarn("Parsed minimumReleaseAge from bunfig.toml: {d} minutes", .{install.minimum_release_age.?});
+                            }
                         } else {
                             try this.addError(minimum_age.loc, "Expected number for minimumReleaseAge (minutes)");
                         }

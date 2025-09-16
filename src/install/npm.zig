@@ -1482,6 +1482,17 @@ pub const PackageManifest = struct {
         minimum_release_age: ?*const PackageManager.Options.MinimumReleaseAge,
         package_name: []const u8,
     ) ?FindResult {
+        if (bun.Environment.isDebug) {
+            if (minimum_release_age) |min_age| {
+                bun.Output.debugWarn("findBestVersion: package={s} min_age_minutes={d} enabled={}", .{
+                    package_name,
+                    min_age.minutes,
+                    min_age.isEnabled(),
+                });
+            } else {
+                bun.Output.debugWarn("findBestVersion: package={s} min_age=null", .{package_name});
+            }
+        }
         const left = group.head.head.range.left;
         // Fast path: exact version - but STILL CHECK SECURITY POLICY
         if (left.op == .eql) {
@@ -1742,6 +1753,13 @@ pub const PackageManifest = struct {
                     };
                     publish_times.putAssumeCapacityNoClobber(version_key, unix_timestamp);
                 }
+                if (bun.Environment.isDebug) {
+                    bun.Output.debugWarn("Parsed {d} publish times for package", .{publish_times.count()});
+                }
+            }
+        } else {
+            if (bun.Environment.isDebug) {
+                bun.Output.debugWarn("No time field in npm response", .{});
             }
         }
 
@@ -2037,6 +2055,13 @@ pub const PackageManifest = struct {
                     // Set publish time for this version if available
                     if (publish_times.get(version_name)) |publish_time| {
                         package_version.publish_time = publish_time;
+                        if (bun.Environment.isDebug) {
+                            bun.Output.debugWarn("Set publish_time for {s}: {d}", .{ version_name, publish_time });
+                        }
+                    } else {
+                        if (bun.Environment.isDebug) {
+                            bun.Output.debugWarn("No publish_time for {s}", .{version_name});
+                        }
                     }
 
                     if (prop.value.?.asProperty("cpu")) |cpu_q| {

@@ -38,12 +38,12 @@ pub const ZigString = extern struct {
     pub fn dupeForJS(utf8: []const u8, allocator: std.mem.Allocator) !ZigString {
         if (try strings.toUTF16Alloc(allocator, utf8, false, false)) |utf16| {
             var out = ZigString.initUTF16(utf16);
-            out.mark();
+            out.markGlobal();
             out.markUTF16();
             return out;
         } else {
             var out = ZigString.init(try allocator.dupe(u8, utf8));
-            out.mark();
+            out.markGlobal();
             return out;
         }
     }
@@ -174,7 +174,7 @@ pub const ZigString = extern struct {
         }
 
         if (this.isGloballyAllocated()) {
-            out.mark();
+            out.markGlobal();
         }
 
         return out;
@@ -513,7 +513,7 @@ pub const ZigString = extern struct {
         var str = init(@as([*]const u8, @alignCast(@ptrCast(slice_.ptr)))[0..slice_.len]);
         str.markUTF16();
         if (global) {
-            str.mark();
+            str.markGlobal();
         }
         return str;
     }
@@ -522,7 +522,7 @@ pub const ZigString = extern struct {
     pub fn from16(slice_: [*]const u16, len: usize) ZigString {
         var str = init(@as([*]const u8, @ptrCast(slice_))[0..len]);
         str.markUTF16();
-        str.mark();
+        str.markGlobal();
         str.assertGlobal();
         return str;
     }
@@ -576,8 +576,6 @@ pub const ZigString = extern struct {
     pub inline fn deinitGlobal(this: ZigString) void {
         bun.default_allocator.free(this.slice());
     }
-
-    pub const mark = markGlobal;
 
     pub inline fn markGlobal(this: *ZigString) void {
         this._unsafe_ptr_do_not_use = @as([*]const u8, @ptrFromInt(@intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 62)));

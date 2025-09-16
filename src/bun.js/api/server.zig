@@ -1590,7 +1590,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // However, when the JS VM terminates, it hypothetically might not call stopListening
             this.notifyInspectorServerStopped();
 
-            this.cached_hostname.deref();
             this.all_closed_promise.deinit();
             for (this.user_routes.items) |*user_route| {
                 user_route.deinit();

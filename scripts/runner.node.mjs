@@ -589,7 +589,8 @@ async function runTests() {
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
               env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
               env["ASAN_OPTIONS=detect_leaks"] = "1";
-              env["LSAN_OPTIONS"] = "malloc_context_size=100:print_suppressions=0:suppressions=test/leaksan.supp";
+              // prettier-ignore
+              env["LSAN_OPTIONS"] = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1318,7 +1319,8 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
     env["BUN_DESTRUCT_VM_ON_EXIT"] = "1";
     env["ASAN_OPTIONS=detect_leaks"] = "1";
-    env["LSAN_OPTIONS"] = "malloc_context_size=100:print_suppressions=0:suppressions=test/leaksan.supp";
+    // prettier-ignore
+    env["LSAN_OPTIONS"] = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {

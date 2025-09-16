@@ -74,7 +74,7 @@ declare const side: "client" | "server";
  * helpful information to someone working on the bundler itself. Assertions
  * aimed for the end user should always be enabled.
  */
-declare const IS_BUN_DEVELOPMENT: any;
+declare const IS_BUN_DEVELOPMENT: unknown;
 
 /** If this is the fallback error page */
 declare const IS_ERROR_RUNTIME: boolean;

@@ -1464,6 +1464,17 @@ pub const PackageManifest = struct {
         return null;
     }
 
+    /// Check if a package version was published recently (within threshold)
+    pub fn isRecentlyPublished(publish_time: u32, threshold_minutes: u32) bool {
+        if (publish_time == 0) return false; // Unknown publish time
+
+        const current_time = @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp())))));
+        const age_seconds = current_time -| publish_time;
+        const age_minutes = age_seconds / 60;
+
+        return age_minutes < threshold_minutes;
+    }
+
     pub fn findBestVersion(
         this: *const PackageManifest,
         group: Semver.Query.Group,
@@ -1488,28 +1499,45 @@ pub const PackageManifest = struct {
                         if (result.package.publish_time > 0 and min_age.isVersionTooNew(result.package.publish_time)) {
                             // Version is too new, skip it but remember it
                             skipped_newer_version = result;
-                        } else if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                        } else {
+                            // Version is old enough, but maybe still warn if it's very recent
+                            if (isRecentlyPublished(result.package.publish_time, 1440)) { // 24 hours
+                                // TODO: Add warning output about recently published package
+                                // This will be shown during installation
+                            }
+                            if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                                if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
+                                    return result;
+                                }
+                            } else {
+                                return result;
+                            }
+                        }
+                    } else {
+                        // Package is excluded from age check, but still warn if very recent
+                        if (isRecentlyPublished(result.package.publish_time, 1440)) { // 24 hours
+                            // TODO: Add warning output about recently published package
+                        }
+                        if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
                             if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
-                                // if prerelease, use latest if semver+tag match range exactly
                                 return result;
                             }
                         } else {
                             return result;
                         }
-                    } else if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                    }
+                } else {
+                    // No minimum age configured, but still warn if very recent
+                    if (result.package.publish_time > 0 and isRecentlyPublished(result.package.publish_time, 1440)) { // 24 hours
+                        // TODO: Add warning output about recently published package
+                    }
+                    if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
                         if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
                             return result;
                         }
                     } else {
                         return result;
                     }
-                } else if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-                    if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
-                        // if prerelease, use latest if semver+tag match range exactly
-                        return result;
-                    }
-                } else {
-                    return result;
                 }
             }
         }

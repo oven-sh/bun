@@ -128,11 +128,13 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                 if (parsed_manifest.findByDistTag(version)) |result| {
                     break :brk2 result.version;
                 } else {
-                    // Parse as semver query and find best version - exactly like outdated_command.zig line 325
+                    // For bun view/info commands, we don't filter by minimumReleaseAge
+                    // Just find the best matching version from the manifest
+                    // We'll pass null for the age filter parameter
                     const sliced_literal = Semver.SlicedString.init(version, version);
                     const query = try Semver.Query.parse(allocator, version, sliced_literal);
                     defer query.deinit();
-                    // Use the same pattern as outdated_command: findBestVersion with the Group from the query
+                    // Pass null for minimum_release_age to disable filtering in info commands
                     if (query.head.head) |group| {
                         if (parsed_manifest.findBestVersion(group, parsed_manifest.string_buf, null, name)) |result| {
                             break :brk2 result.version;

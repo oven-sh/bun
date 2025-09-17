@@ -36,6 +36,7 @@ jobs:
           fi
 
           echo "current=$current" >> $GITHUB_OUTPUT
+          echo "repository=$repository" >> $GITHUB_OUTPUT
 
           LATEST_RELEASE=$(curl -sL https://api.github.com/repos/${repository}/releases/latest)
           if [ -z "$LATEST_RELEASE" ]; then
@@ -73,6 +74,6 @@ jobs:
 
             Updates ${{ matrix.package }} to version ${{ steps.check-version.outputs.latest }}
 
-            Compare: https://github.com/${repository}/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+            Compare: https://github.com/${{ steps.check-version.outputs.repository }}/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
 
             Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-vendor.yml)

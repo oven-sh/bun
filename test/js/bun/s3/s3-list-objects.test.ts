@@ -1168,11 +1168,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
   });
 
   it("should preserve trailing slashes in S3 keys", async () => {
-    const testKeys = [
-      "test_folder/",
-      "test_folder/subfolder/",
-      "test_file_without_slash",
-    ];
+    const testKeys = ["test_folder/", "test_folder/subfolder/", "test_file_without_slash"];
     const uploadedKeys: string[] = [];
 
     using server = createBunServer(async req => {
@@ -1195,9 +1191,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
       // Handle GET requests (list operations)
       if (req.method === "GET" && url.search.includes("list-type=2")) {
         // Return the keys exactly as they were uploaded
-        const contents = uploadedKeys.map(key =>
-          `<Contents><Key>${key}</Key><Size>0</Size></Contents>`
-        ).join("");
+        const contents = uploadedKeys.map(key => `<Contents><Key>${key}</Key><Size>0</Size></Contents>`).join("");
 
         return new Response(
           `<?xml version="1.0" encoding="UTF-8"?>

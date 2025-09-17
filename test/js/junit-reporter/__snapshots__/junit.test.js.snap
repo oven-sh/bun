@@ -5,10 +5,10 @@ exports[`junit reporter more scenarios 1`] = `
 <testsuites name="bun test" tests="22" assertions="16" failures="1" skipped="6">
   <testsuite name="comprehensive.test.js" file="comprehensive.test.js" tests="22" assertions="16" failures="1" skipped="6">
     <testsuite name="comprehensive test suite" file="comprehensive.test.js" line="4" tests="22" assertions="16" failures="1" skipped="6">
-      <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="5" tests="1" assertions="1" failures="0" skipped="0">
+      <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="8" tests="1" assertions="1" failures="0" skipped="0">
         <testcase name="should divide correctly" classname="division suite 10 / 5 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="1" />
       </testsuite>
-      <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="5" tests="1" assertions="1" failures="0" skipped="0">
+      <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="8" tests="1" assertions="1" failures="0" skipped="0">
         <testcase name="should divide correctly" classname="division suite 20 / 10 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="1" />
       </testsuite>
       <testsuite name="conditional describe that runs" file="comprehensive.test.js" line="14" tests="1" assertions="1" failures="0" skipped="0">
@@ -29,11 +29,11 @@ exports[`junit reporter more scenarios 1`] = `
       <testcase name="basic todo test" classname="comprehensive test suite" file="comprehensive.test.js" line="38" assertions="0">
         <skipped message="TODO" />
       </testcase>
-      <testcase name="addition 1 + 2 = 3" classname="comprehensive test suite" file="comprehensive.test.js" line="40" assertions="1" />
-      <testcase name="addition 2 + 3 = 5" classname="comprehensive test suite" file="comprehensive.test.js" line="40" assertions="1" />
-      <testcase name="addition 4 + 5 = 9" classname="comprehensive test suite" file="comprehensive.test.js" line="40" assertions="1" />
-      <testcase name="string concat hello + world = helloworld" classname="comprehensive test suite" file="comprehensive.test.js" line="48" assertions="1" />
-      <testcase name="string concat foo + bar = foobar" classname="comprehensive test suite" file="comprehensive.test.js" line="48" assertions="1" />
+      <testcase name="addition 1 + 2 = 3" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="1" />
+      <testcase name="addition 2 + 3 = 5" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="1" />
+      <testcase name="addition 4 + 5 = 9" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="1" />
+      <testcase name="string concat hello + world = helloworld" classname="comprehensive test suite" file="comprehensive.test.js" line="51" assertions="1" />
+      <testcase name="string concat foo + bar = foobar" classname="comprehensive test suite" file="comprehensive.test.js" line="51" assertions="1" />
       <testcase name="conditional test that runs" classname="comprehensive test suite" file="comprehensive.test.js" line="55" assertions="1" />
       <testcase name="conditional test that skips" classname="comprehensive test suite" file="comprehensive.test.js" line="59" assertions="0">
         <skipped />
@@ -60,12 +60,12 @@ exports[`junit reporter more scenarios 2`] = `
 <testsuites name="bun test" tests="22" assertions="1" failures="0" skipped="21">
   <testsuite name="comprehensive.test.js" file="comprehensive.test.js" tests="22" assertions="1" failures="0" skipped="21">
     <testsuite name="comprehensive test suite" file="comprehensive.test.js" line="4" tests="22" assertions="1" failures="0" skipped="21">
-      <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="5" tests="1" assertions="0" failures="0" skipped="1">
+      <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="8" tests="1" assertions="0" failures="0" skipped="1">
         <testcase name="should divide correctly" classname="division suite 10 / 5 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
           <skipped />
         </testcase>
       </testsuite>
-      <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="5" tests="1" assertions="0" failures="0" skipped="1">
+      <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="8" tests="1" assertions="0" failures="0" skipped="1">
         <testcase name="should divide correctly" classname="division suite 20 / 10 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
           <skipped />
         </testcase>
@@ -92,19 +92,19 @@ exports[`junit reporter more scenarios 2`] = `
       <testcase name="basic todo test" classname="comprehensive test suite" file="comprehensive.test.js" line="38" assertions="0">
         <skipped />
       </testcase>
-      <testcase name="addition 1 + 2 = 3" classname="comprehensive test suite" file="comprehensive.test.js" line="40" assertions="0">
+      <testcase name="addition 1 + 2 = 3" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="0">
         <skipped />
       </testcase>
-      <testcase name="addition 2 + 3 = 5" classname="comprehensive test suite" file="comprehensive.test.js" line="40" assertions="0">
+      <testcase name="addition 2 + 3 = 5" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="0">
         <skipped />
       </testcase>
-      <testcase name="addition 4 + 5 = 9" classname="comprehensive test suite" file="comprehensive.test.js" line="40" assertions="0">
+      <testcase name="addition 4 + 5 = 9" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="0">
         <skipped />
       </testcase>
-      <testcase name="string concat hello + world = helloworld" classname="comprehensive test suite" file="comprehensive.test.js" line="48" assertions="0">
+      <testcase name="string concat hello + world = helloworld" classname="comprehensive test suite" file="comprehensive.test.js" line="51" assertions="0">
         <skipped />
       </testcase>
-      <testcase name="string concat foo + bar = foobar" classname="comprehensive test suite" file="comprehensive.test.js" line="48" assertions="0">
+      <testcase name="string concat foo + bar = foobar" classname="comprehensive test suite" file="comprehensive.test.js" line="51" assertions="0">
         <skipped />
       </testcase>
       <testcase name="conditional test that runs" classname="comprehensive test suite" file="comprehensive.test.js" line="55" assertions="0">

@@ -64,15 +64,7 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
-    return createBound(globalThis, this.mode, array, addLineNumberToCfg(this.cfg, globalThis, callFrame), strings.each);
-}
-
-pub fn addLineNumberToCfg(cfg: describe2.BaseScopeCfg, globalThis: *JSGlobalObject, callFrame: *CallFrame) describe2.BaseScopeCfg {
-    var cfg_mut = cfg;
-    if (cfg_mut.line_no == 0) {
-        cfg_mut.line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
-    }
-    return cfg_mut;
+    return createBound(globalThis, this.mode, array, this.cfg, strings.each);
 }
 
 pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -80,7 +72,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     defer groupLog.end();
 
     const this = ScopeFunctions.fromJS(callFrame.this()) orelse return globalThis.throw("Expected callee to be ScopeFunctions", .{});
-    const line_no = addLineNumberToCfg(this.cfg, globalThis, callFrame).line_no;
+    const line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
 
     var buntest_strong = try describe2.js_fns.cloneActiveStrong(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
     defer buntest_strong.deinit();
@@ -254,9 +246,9 @@ fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Cal
     if (callFrame.arguments().len == 0) return globalThis.throw("Expected condition to be a boolean", .{});
     const cond = condition.toBoolean();
     if (cond != invert) {
-        return genericExtend(this, globalThis, addLineNumberToCfg(conditional_cfg, globalThis, callFrame), name, fn_name);
+        return genericExtend(this, globalThis, conditional_cfg, name, fn_name);
     } else {
-        return createBound(globalThis, this.mode, this.each, addLineNumberToCfg(this.cfg, globalThis, callFrame), fn_name);
+        return createBound(globalThis, this.mode, this.each, this.cfg, fn_name);
     }
 }
 fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: describe2.BaseScopeCfg, name: []const u8, fn_name: bun.String) bun.JSError!JSValue {

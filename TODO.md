@@ -407,7 +407,7 @@ test 2
     - if we implement it, we would want it to execute after the test?
     - jest errors "Hooks cannot be defined inside tests. Hook of type "afterAll" is nested within "jkl"."
     - vitest silently ignores the hook
-- [ ] vendor/elysia/test/validator/params.test.ts
+- [x] maybe fixed, maybe not. vendor/elysia/test/validator/params.test.ts
   - probably test() inside test(). should be fixed in elysia unless we want to do the linked list test-in-test support
 - [x] test/js/third_party/prisma/prisma.test.ts
   - the issue is that we are async-enqueueing describe()s

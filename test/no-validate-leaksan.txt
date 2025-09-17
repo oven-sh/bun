@@ -90,6 +90,43 @@ test/cli/install/bun-install.test.ts
 test/cli/install/bun-lock.test.ts
 test/cli/install/bun-lockb.test.ts
 test/cli/install/bun-patch.test.ts
+test/cli/install/bun-pm.test.ts
+test/cli/install/bun-repl.test.ts
+test/cli/install/bun-update.test.ts
+test/cli/install/bun-workspaces.test.ts
+test/cli/install/bunx.test.ts
+test/cli/install/isolated-install.test.ts
+test/cli/install/migration/complex-workspace.test.ts
+test/cli/install/npmrc.test.ts
+test/cli/install/overrides.test.ts
+test/cli/install/test-dev-peer-dependency-priority.test.ts
+test/cli/run/commonjs-invalid.test.ts
+test/cli/run/preload-test.test.js
+test/cli/run/require-cache.test.ts
+test/cli/update_interactive_formatting.test.ts
+test/integration/esbuild/esbuild.test.ts
+test/integration/expo-app/expo.test.ts
+test/integration/next-pages/test/dev-server-ssr-100.test.ts
+test/integration/next-pages/test/dev-server.test.ts
+test/integration/next-pages/test/next-build.test.ts
+test/integration/vite-build/vite-build.test.ts
+test/js/bun/css/css-fuzz.test.ts
+test/js/bun/ffi/cc.test.ts
+test/js/bun/http/bun-serve-html-manifest.test.ts
+test/js/bun/http/bun-server.test.ts
+test/js/bun/import-attributes/import-attributes.test.ts
+test/js/bun/resolve/import-custom-condition.test.ts
+test/js/bun/s3/s3.leak.test.ts
+test/js/bun/shell/bunshell.test.ts
+test/js/bun/shell/commands/ls.test.ts
+test/js/bun/shell/leak.test.ts
+test/js/bun/shell/lex.test.ts
+test/js/bun/spawn/spawn-stdin-destroy.test.ts
+test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts
+test/js/bun/test/test-only.test.ts
+test/js/node/http/node-http-maxHeaderSize.test.ts
+test/js/node/http/node-http.test.ts
+test/js/node/http2/node-http2.test.js
 
 
 # crash for reasons not related to LSAN
@@ -103,6 +140,8 @@ test/bake/dev/html.test.ts
 test/bake/dev/plugins.test.ts
 test/bake/dev/stress.test.ts
 test/bake/dev/vfile.test.ts
+test/js/bun/http/serve.test.ts
+test/js/bun/resolve/import-meta.test.js
 
 
 # ASSERTION FAILED: m_normalWorld->hasOneRef()
@@ -149,6 +188,36 @@ test/bundler/html-import-manifest.test.ts
 test/cli/inspect/BunFrontendDevServer.test.ts
 test/cli/inspect/HTTPServerAgent.test.ts
 test/cli/inspect/inspect.test.ts
+test/cli/install/bun-publish.test.ts
+test/cli/install/catalogs.test.ts
+test/cli/run/self-reference.test.ts
+test/cli/watch/watch.test.ts
+test/js/bun/console/console-iterator.test.ts
+test/js/bun/http/async-iterator-stream.test.ts
+test/js/bun/http/bun-serve-body-json-async.test.ts
+test/js/bun/http/bun-serve-html.test.ts
+test/js/bun/resolve/resolve.test.ts
+test/js/bun/s3/s3-storage-class.test.ts
+test/js/bun/s3/s3.test.ts
+test/js/bun/shell/env.positionals.test.ts
+test/js/bun/shell/shell-hang.test.ts
+test/js/bun/spawn/bun-ipc-inherit.test.ts
+test/js/bun/spawn/spawn-stdin-readable-stream-integration.test.ts
+test/js/bun/spawn/spawn.ipc.node-bun.test.ts
+test/js/bun/spawn/spawn.ipc.test.ts
+test/js/bun/udp/dgram.test.ts
+test/js/bun/util/BunObject.test.ts
+test/js/bun/util/fuzzy-wuzzy.test.ts
+test/js/bun/util/heap-snapshot.test.ts
+test/js/bun/util/inspect.test.js
+test/js/bun/util/reportError.test.ts
+test/js/bun/websocket/websocket-server.test.ts
+test/js/first_party/ws/ws.test.ts
+test/js/node/child_process/child_process-node.test.js
+test/js/node/child_process/child_process.test.ts
+test/js/node/crypto/crypto.test.ts
+test/js/node/dgram/node-dgram.test.js
+test/js/node/fs/abort-signal-leak-read-write-file.test.ts
 
 
 vendor/elysia/test/a.test.ts

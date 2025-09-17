@@ -543,11 +543,11 @@ String sourceURL(JSC::CodeBlock* codeBlock)
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     if (frame.isWasmFrame()) {
-        return "[wasm code]"_s;
+        return MAKE_STATIC_STRING_IMPL("[wasm code]");
     }
 
     if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
-        return "[native code]"_s;
+        return MAKE_STATIC_STRING_IMPL("[native code]");
     }
 
     return sourceURL(frame.codeBlock());

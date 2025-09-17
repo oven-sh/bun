@@ -120,7 +120,8 @@ pub const BunTestRoot = struct {
 
         bun.assert(this.active_file.get() == null);
 
-        this.active_file = .new(.init(this.gpa, this, file_id, reporter));
+        this.active_file = .new(undefined);
+        this.active_file.get().?.init(this.gpa, this, file_id, reporter);
     }
     pub fn exitFile(this: *BunTestRoot) void {
         group.begin(@src());
@@ -149,7 +150,7 @@ pub const BunTest = struct {
 
     buntest: *BunTestRoot,
     in_run_loop: bool,
-    allocation_scope: *bun.AllocationScope,
+    allocation_scope: bun.AllocationScope,
     gpa: std.mem.Allocator,
     done_promise: Strong.Optional = .empty,
     file_id: jsc.Jest.TestRunner.File.ID,
@@ -166,23 +167,24 @@ pub const BunTest = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) BunTest {
+    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) void {
         group.begin(@src());
         defer group.end();
 
-        var allocation_scope = bun.create(outer_gpa, bun.AllocationScope, bun.AllocationScope.init(outer_gpa));
-        const gpa = allocation_scope.allocator();
-        return .{
+        this.allocation_scope = .init(outer_gpa);
+        this.gpa = this.allocation_scope.allocator();
+
+        this.* = .{
             .buntest = bunTest,
             .in_run_loop = false,
-            .allocation_scope = allocation_scope,
-            .gpa = gpa,
+            .allocation_scope = this.allocation_scope,
+            .gpa = this.gpa,
             .phase = .collection,
             .file_id = file_id,
-            .collection = .init(gpa, bunTest),
-            .execution = .init(gpa),
+            .collection = .init(this.gpa, bunTest),
+            .execution = .init(this.gpa),
             .reporter = reporter,
-            .result_queue = .init(gpa),
+            .result_queue = .init(this.gpa),
         };
     }
     pub fn deinit(this: *BunTest) void {

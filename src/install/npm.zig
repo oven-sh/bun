@@ -870,13 +870,17 @@ pub const PackageVersion = extern struct {
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,
 
+    /// URL to attestations endpoint for packages with provenance
+    /// e.g., "https://registry.npmjs.org/-/npm/v1/attestations/pkg@version"
+    attestations_url: ExternalString = ExternalString{},
+
     pub fn allDependenciesBundled(this: *const PackageVersion) bool {
         return this.bundled_dependencies.isInvalid();
     }
 };
 
 comptime {
-    if (@sizeOf(Npm.PackageVersion) != 232) {
+    if (@sizeOf(Npm.PackageVersion) != 248) {
         @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
     }
 }
@@ -928,7 +932,7 @@ pub const PackageManifest = struct {
         // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
         // - v0.0.4: fixed bug with cpu & os tag not being added correctly
         // - v0.0.5: added bundled dependencies
-        pub const version = "bun-npm-manifest-cache-v0.0.5\n";
+        pub const version = "bun-npm-manifest-cache-v0.0.6\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
@@ -2030,6 +2034,16 @@ pub const PackageManifest = struct {
                                 if (dist.expr.asProperty("shasum")) |shasum| {
                                     if (shasum.expr.asString(allocator)) |shasum_str| {
                                         package_version.integrity = Integrity.parseSHASum(shasum_str) catch Integrity{};
+                                    }
+                                }
+
+                                // Parse attestations URL if present
+                                if (dist.expr.asProperty("attestations")) |attestations| {
+                                    if (attestations.expr.asProperty("url")) |url| {
+                                        if (url.expr.asString(allocator)) |url_str| {
+                                            const hash = String.Builder.stringHash(url_str);
+                                            package_version.attestations_url = ExternalString.init(url_str, url_str, hash);
+                                        }
                                     }
                                 }
                             }

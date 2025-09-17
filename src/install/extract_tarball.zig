@@ -9,6 +9,8 @@ skip_verify: bool = false,
 integrity: Integrity = .{},
 url: strings.StringOrTinyString,
 package_manager: *PackageManager,
+attestations_url: strings.StringOrTinyString = .{},
+verify_attestations: bool = false,
 
 pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
@@ -23,6 +25,45 @@ pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const 
             return error.IntegrityCheckFailed;
         }
     }
+
+    // Verify attestations if enabled
+    if (this.verify_attestations and this.attestations_url.slice().len > 0) {
+        const AttestationVerifier = @import("./attestation_verifier.zig").AttestationVerifier;
+        var verifier = AttestationVerifier{
+            .allocator = bun.default_allocator,
+            .package_manager = this.package_manager,
+        };
+
+        const result = verifier.verify(
+            this.attestations_url.slice(),
+            this.name.slice(),
+            "", // TODO: get version
+            "", // TODO: get integrity string
+        ) catch |err| {
+            log.addWarningFmt(
+                null,
+                logger.Loc.Empty,
+                bun.default_allocator,
+                "Failed to verify attestations for {s}: {any}",
+                .{ this.name.slice(), err },
+            ) catch unreachable;
+            // Don't fail installation, just warn
+            return this.extract(log, bytes);
+        };
+
+        if (!result.verified) {
+            const msg = result.error_message orelse "Unknown verification failure";
+            log.addWarningFmt(
+                null,
+                logger.Loc.Empty,
+                bun.default_allocator,
+                "Attestation verification failed for {s}: {s}",
+                .{ this.name.slice(), msg },
+            ) catch unreachable;
+            // Don't fail installation, just warn
+        }
+    }
+
     return this.extract(log, bytes);
 }
 

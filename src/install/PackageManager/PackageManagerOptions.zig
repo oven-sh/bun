@@ -571,6 +571,10 @@ pub fn load(
             this.do.verify_integrity = false;
         }
 
+        if (cli.verify_attestations) {
+            this.do.verify_attestations = true;
+        }
+
         if (cli.yarn) {
             this.do.save_yarn_lock = true;
         }
@@ -675,6 +679,7 @@ pub const Do = packed struct(u16) {
     save_yarn_lock: bool = false,
     print_meta_hash_string: bool = false,
     verify_integrity: bool = true,
+    verify_attestations: bool = false,
     summary: bool = true,
     trust_dependencies_from_args: bool = false,
     update_to_latest: bool = false,

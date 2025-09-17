@@ -38,6 +38,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--no-progress                         Disable the progress bar") catch unreachable,
     clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
     clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
+    clap.parseParam("--verify-attestations                  Verify package attestations from npm registry (experimental)") catch unreachable,
     clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
     clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
     clap.parseParam("-g, --global                          Install globally") catch unreachable,
@@ -189,6 +190,7 @@ quiet: bool = false,
 verbose: bool = false,
 no_progress: bool = false,
 no_verify: bool = false,
+verify_attestations: bool = false,
 ignore_scripts: bool = false,
 trusted: bool = false,
 no_summary: bool = false,
@@ -785,6 +787,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.global = args.flag("--global");
     cli.force = args.flag("--force");
     cli.no_verify = args.flag("--no-verify");
+    cli.verify_attestations = args.flag("--verify-attestations");
     cli.no_cache = args.flag("--no-cache");
     cli.silent = args.flag("--silent");
     cli.quiet = args.flag("--quiet");

@@ -1074,6 +1074,7 @@ pub fn generateNetworkTaskForTarball(
                 *FileSystem.FilenameStore,
                 FileSystem.FilenameStore.instance,
             ) catch |err| bun.handleOom(err),
+            .verify_attestations = this.options.do.verify_attestations,
         },
         scope,
         authorization,

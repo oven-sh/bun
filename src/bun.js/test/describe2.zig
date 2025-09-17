@@ -154,7 +154,6 @@ pub const BunTest = struct {
     gpa: std.mem.Allocator,
     arena_allocator: std.heap.ArenaAllocator,
     arena: std.mem.Allocator,
-    done_promise: Strong.Optional = .empty,
     file_id: jsc.Jest.TestRunner.File.ID,
     /// null if the runner has moved on to the next file
     reporter: ?*test_command.CommandLineReporter,
@@ -202,7 +201,6 @@ pub const BunTest = struct {
             bun.jsc.VirtualMachine.get().timer.remove(&this.timer);
         }
 
-        this.done_promise.deinit();
         this.execution.deinit();
         this.collection.deinit();
         this.result_queue.deinit();
@@ -453,7 +451,7 @@ pub const BunTest = struct {
         }
     }
 
-    fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
+    fn _advance(this: *BunTest, _: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
         group.begin(@src());
         defer group.end();
         group.log("advance from {s}", .{@tagName(this.phase)});
@@ -479,7 +477,6 @@ pub const BunTest = struct {
                 return .cont;
             },
             .execution => {
-                if (this.done_promise.get()) |value| if (value.asPromise()) |promise| promise.resolve(globalThis, .js_undefined);
                 this.in_run_loop = false;
                 this.phase = .done;
 

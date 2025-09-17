@@ -519,7 +519,7 @@ test 2
     - 1,000,000 tests () on branch vs merge-base (describe.each(1,000) > test.each(1,000))
     - 1,000,000 test.skip() calls (one describe.each over a 1,000,000 item array)
     - test also with the `--concurrent` flag
-- [ ] remove done_promise, unused.
+- [x] remove done_promise, unused.
 - [ ] remove runErrorHandlerWithDedupe, last_reported_error_for_dedupe
 - [ ] eliminate fn bunTest() in Execution.zig
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)

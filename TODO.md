@@ -409,10 +409,6 @@ test 2
     - vitest silently ignores the hook
 - [ ] vendor/elysia/test/validator/params.test.ts
   - probably test() inside test(). should be fixed in elysia unless we want to do the linked list test-in-test support
-- [ ] test/js/bun/test/test-error-code-done-callback.test.ts
-  - stacktrace is messed up. it's including an incorrect item in the stacktrace for some reason.
-- [ ] test/js/bun/util/inspect-error.test.js
-  - same stacktrace issue
 - [x] test/js/third_party/prisma/prisma.test.ts
   - the issue is that we are async-enqueueing describe()s
   - the error is bad in this case
@@ -421,12 +417,19 @@ test 2
     "error: describe() was called while test "(test_name)" is running. Call it inside describe() instead."
 - [ ] test/cli/install/bun-install-registry.test.ts
   - not sure if this is real or flaky
-- [ ] test/js/bun/test/stack.test.ts
-  - we're adding an extra `at unknown` frame at the end of the stacktrace for some reason. likely same issue as the above stacktrace bugs.
 - [ ] test/js/web/fetch/fetch.stream.test.ts
   - this is usually a flaky failure but was a failure. this is maybe related to missing retry/rerun options.
 - [ ] test/js/bun/shell/leak.test.ts
   - likely real leak beacuse of DoneCallback & ScopeFunctions
+
+## Stacktrace
+
+- [ ] test/js/bun/test/test-error-code-done-callback.test.ts
+  - stacktrace is messed up. it's including an incorrect item in the stacktrace for some reason.
+- [ ] test/js/bun/util/inspect-error.test.js
+  - same stacktrace issue
+- [ ] test/js/bun/test/stack.test.ts
+  - we're adding an extra `at unknown` frame at the end of the stacktrace for some reason. likely same issue as the above stacktrace bugs.
 
 ## Flaky on main
 

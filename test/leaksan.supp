@@ -75,5 +75,36 @@ leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:bun.js.api.bun.dns.Resolver.globalLookupService
 leak:jsHTTPParser_execute
+leak:Resolver__nodeModulePathsJSValue
+leak:URL__host
+leak:bun.js.node.node_os.version
+leak:bun.js.node.node_os.release
+leak:JSC::stringProtoFuncReplaceUsingRegExp
+leak:WebCore::parseTypeAndSubtype
+leak:bun.js.node.util.parse_args.parseArgs
+leak:JSC::IntlDateTimeFormat::initializeDateTimeFormat
+leak:WebCore__DOMURL__fileSystemPath
+leak:bun.js.node.node_fs_watcher.FSWatcher.Arguments.fromJS
+leak:WebWorker__updatePtr
+leak:bun.js.node.zlib.NativeZlib.Context.init
+leak:sql.postgres.PostgresSQLStatement.structure
+leak:sql.postgres.DataCell.parseArray__anon
+leak:sql.postgres.protocol.FieldMessage.FieldMessage.init
+leak:JSC::intlCollatorAvailableLocales
+leak:Bun__canonicalizeIP
+leak:dlopen
+leak:Bun::evaluateCommonJSModuleOnce
+leak:fse_run_loop
+leak:Zig::NapiClass_ConstructorFunction
+leak:bun.js.webcore.fetch.FetchTasklet.toResponse
+leak:JSC::jsonProtoFuncStringify
+leak:deps.lol-html.HTMLString.toString
+leak:libarchive.libarchive-bindings.Archive.readNew
+leak:Zig::SourceProvider::create
 
 leak:fromErrorInstance
+
+# JSC_TO_STRING_TAG_WITHOUT_TRANSITION
+leak:TLSSocket__create
+leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
+leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation

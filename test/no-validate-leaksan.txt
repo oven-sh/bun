@@ -56,6 +56,8 @@ test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
 test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
 test/js/node/test/parallel/test-worker.mjs
+test/js/node/worker_threads/worker_destruction.test.ts
+test/js/web/broadcastchannel/broadcast-channel.test.ts
 
 
 # error exit root cause unclear
@@ -127,6 +129,21 @@ test/js/bun/test/test-only.test.ts
 test/js/node/http/node-http-maxHeaderSize.test.ts
 test/js/node/http/node-http.test.ts
 test/js/node/http2/node-http2.test.js
+test/js/node/no-addons.test.ts
+test/js/node/readline/readline_never_unrefs.test.ts
+test/js/third_party/@napi-rs/canvas/napi-rs-canvas.test.ts
+test/js/third_party/next-auth/next-auth.test.ts
+test/js/third_party/pnpm/pnpm.test.ts
+test/js/web/console/console-log.test.ts
+test/js/web/fetch/fetch-leak.test.ts
+test/js/web/fetch/fetch.tls.test.ts
+test/regression/issue/09559.test.ts
+test/regression/issue/14477/14477.test.ts
+test/js/node/process/stdin/stdin-fixtures.test.ts
+test/cli/install/bun-run.test.ts
+test/bake/dev/import-meta-inline.test.ts
+test/integration/sharp/sharp.test.ts
+test/cli/test/bun-test.test.ts
 
 
 # crash for reasons not related to LSAN
@@ -142,6 +159,10 @@ test/bake/dev/stress.test.ts
 test/bake/dev/vfile.test.ts
 test/js/bun/http/serve.test.ts
 test/js/bun/resolve/import-meta.test.js
+test/js/node/worker_threads/worker_threads.test.ts
+test/js/third_party/@duckdb/node-api/duckdb.test.ts
+test/js/third_party/body-parser/express-bun-build-compile.test.ts
+test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 
 
 # ASSERTION FAILED: m_normalWorld->hasOneRef()
@@ -152,6 +173,18 @@ test/js/node/test/parallel/test-crypto-prime.js
 test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-4.js
 test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-2.js
 test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-3.js
+test/js/third_party/@fastify/websocket/fastity-test-websocket.test.js
+test/js/third_party/esbuild/esbuild-child_process.test.ts
+test/js/third_party/pino/pino.test.js
+test/js/third_party/socket.io/socket.io-close.test.ts
+test/js/web/websocket/websocket-permessage-deflate-edge-cases.test.ts
+test/js/web/websocket/websocket-permessage-deflate-simple.test.ts
+test/js/web/websocket/websocket-upgrade.test.ts
+test/js/web/workers/message-channel.test.ts
+test/js/web/workers/worker_blob.test.ts
+test/regression/issue/012040.test.ts
+test/js/web/websocket/websocket-blob.test.ts
+test/regression/issue/14338.test.ts
 
 
 # double-free/use-after-free during Zig__GlobalObject__destructOnExit
@@ -218,6 +251,34 @@ test/js/node/child_process/child_process.test.ts
 test/js/node/crypto/crypto.test.ts
 test/js/node/dgram/node-dgram.test.js
 test/js/node/fs/abort-signal-leak-read-write-file.test.ts
+test/js/node/process/process-args.test.js
+test/js/node/process/process-on.test.ts
+test/js/node/process/process.test.js
+test/js/node/tls/node-tls-upgrade.test.ts
+test/js/node/tls/renegotiation.test.ts
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
+test/js/node/v8/capture-stack-trace.test.js
+test/js/node/vm/vm.test.ts
+test/js/third_party/astro/astro-post.test.js
+test/js/third_party/grpc-js/test-tonic.test.ts
+test/js/web/fetch/fetch.test.ts
+test/js/web/timers/setImmediate.test.js
+test/js/web/websocket/autobahn.test.ts
+test/js/web/websocket/websocket-client.test.ts
+test/js/web/websocket/websocket.test.js
+test/js/web/workers/worker.test.ts
+test/regression/issue/04298/04298.test.ts
+test/regression/issue/08095.test.ts
+test/regression/issue/11664.test.ts
+test/regression/issue/20144/20144.test.ts
+test/regression/issue/update-interactive-formatting.test.ts
+test/v8/v8.test.ts
+test/regression/issue/246-child_process_object_assign_compatibility.test.ts
+test/cli/install/bun-pm-scan.test.ts
+test/bake/dev/production.test.ts
+test/bake/dev/incremental-graph-edge-deletion.test.ts
+test/cli/update_interactive_snapshots.test.ts
+test/js/web/websocket/websocket-custom-headers.test.ts
 
 
 vendor/elysia/test/a.test.ts

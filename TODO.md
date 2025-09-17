@@ -451,6 +451,7 @@ test 2
 
 # Add features:
 
+- [ ] revert how scopefunctions works to how it was before. add all the props to everything. `.skip.only` is the same as `.only.skip`. 32 possible combinations so it's fine.
 - [ ] need to cache the JSValue created from DoneCallback.callAsFunction
 - [ ] test/js/node/http2/node-http2.test.js
   - this spams output with 'killed 1 dangling process' now - consider only showing that for timeout failures

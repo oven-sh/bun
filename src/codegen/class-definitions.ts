@@ -119,7 +119,7 @@ export class ClassDefinition {
    * The Zig implementation must provide a `callAsFunction` method.
    */
   instanceCallable?: boolean;
-  customBasePrototype?: string;
+  forBind?: boolean;
   /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!

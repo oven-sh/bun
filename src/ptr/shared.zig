@@ -245,8 +245,8 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// pointer from which it came must remain valid (i.e., not be deinitialized) at least until
         /// this function returns.
         pub fn cloneFromRawUnsafe(pointer: Pointer) Self {
-            var raw: Self = .{ .#pointer = pointer };
-            return raw.clone();
+            const temp: Self = .{ .#pointer = pointer };
+            return temp.clone();
         }
     };
 }

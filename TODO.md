@@ -402,7 +402,7 @@ test 2
   - ExecutionSequence: first: \*ExecutionEntry, current: \*ExecutionEntry
   - ExecutionEntry: next_orig: \*ExecutionEntry, next: \*ExecutionEntry (on reset, set it back to next_orig)
   - or use indices?
-- [ ] test/js/bun/http/serve.test.ts
+- [x] test/js/bun/http/serve.test.ts
   - unfortunately, afterAll is supported inside of tests concurrently and causes the block to execute at the end
     - if we implement it, we would want it to execute after the test?
     - jest errors "Hooks cannot be defined inside tests. Hook of type "afterAll" is nested within "jkl"."

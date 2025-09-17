@@ -7,24 +7,27 @@ import tty from "node:tty";
 import { parseArgs as nodeParseArgs } from "node:util";
 
 const supportsAnsi = Boolean(process.stdout.isTTY && !("NO_COLOR" in process.env));
-const colors = {
-  reset: supportsAnsi ? "\x1b[0m" : "",
-  bold: supportsAnsi ? "\x1b[1m" : "",
-  dim: supportsAnsi ? "\x1b[2m" : "",
-  red: supportsAnsi ? "\x1b[31m" : "",
-  green: supportsAnsi ? "\x1b[32m" : "",
-  yellow: supportsAnsi ? "\x1b[33m" : "",
-  cyan: supportsAnsi ? "\x1b[36m" : "",
-  gray: supportsAnsi ? "\x1b[90m" : "",
-};
+const reset = supportsAnsi ? "\x1b[0m" : "";
+const bold = supportsAnsi ? "\x1b[1m" : "";
+const dim = supportsAnsi ? "\x1b[2m" : "";
+const red = supportsAnsi ? "\x1b[31m" : "";
+const green = supportsAnsi ? "\x1b[32m" : "";
+const cyan = supportsAnsi ? "\x1b[36m" : "";
+const gray = supportsAnsi ? "\x1b[90m" : "";
 const symbols = {
-  question: `${colors.cyan}?${colors.reset}` || "?",
-  check: `${colors.green}✔${colors.reset}` || "✔",
-  cross: `${colors.red}✖${colors.reset}` || "✖",
+  question: `${cyan}?${reset}` || "?",
+  check: `${green}✔${reset}` || "✔",
+  cross: `${red}✖${reset}` || "✖",
 };
-const inputPrefix = `${colors.gray}> ${colors.reset}`;
+const inputPrefix = `${gray}> ${reset}`;
 const thankYouBanner = `
-${supportsAnsi ? colors.bold : ""}THANK YOU! ${colors.reset}`;
+${supportsAnsi ? bold : ""}THANK YOU! ${reset}`;
+const enum IPSupport {
+  ipv4 = "ipv4",
+  ipv6 = "ipv6",
+  ipv4_and_ipv6 = "ipv4_and_ipv6",
+  none = "none",
+}
 
 type TerminalIO = {
   input: tty.ReadStream;
@@ -69,7 +72,7 @@ const logError = (message: string) => {
   process.stderr.write(`${symbols.cross} ${message}\n`);
 };
 const logInfo = (message: string) => {
-  process.stdout.write(`${colors.bold}${message}${colors.reset}\n`);
+  process.stdout.write(`${bold}${message}${reset}\n`);
 };
 
 const isValidEmail = (value: string | undefined): value is string => {
@@ -118,13 +121,13 @@ function parseCliArgs(argv: string[]): ParsedArgs {
 }
 
 function printHelp() {
-  const heading = `${colors.bold}${colors.cyan}bun feedback${colors.reset}`;
-  const usage = `${colors.bold}Usage${colors.reset}
+  const heading = `${bold}${cyan}bun feedback${reset}`;
+  const usage = `${bold}Usage${reset}
   bun feedback [options] [feedback text ... | files ...]`;
-  const options = `${colors.bold}Options${colors.reset}
-  ${colors.cyan}-e${colors.reset}, ${colors.cyan}--email${colors.reset} <email>   Set the email address used for this submission
-  ${colors.cyan}-h${colors.reset}, ${colors.cyan}--help${colors.reset}            Show this help message and exit`;
-  const examples = `${colors.bold}Examples${colors.reset}
+  const options = `${bold}Options${reset}
+  ${cyan}-e${reset}, ${cyan}--email${reset} <email>   Set the email address used for this submission
+  ${cyan}-h${reset}, ${cyan}--help${reset}            Show this help message and exit`;
+  const examples = `${bold}Examples${reset}
   bun feedback "Love the new release!"
   bun feedback report.txt details.log
   echo "please document X" | bun feedback --email you@example.com`;
@@ -209,9 +212,9 @@ async function promptForEmailInteractive(terminal: TerminalIO, defaultEmail?: st
   let resolved = false;
 
   const render = () => {
-    output.write(`\r\x1b[2K${symbols.question} ${colors.bold}Email${colors.reset}: `);
+    output.write(`\r\x1b[2K${symbols.question} ${bold}Email${reset}: `);
     if (placeholderActive && placeholder.length > 0) {
-      output.write(`${colors.dim}<${placeholder}>${colors.reset}`);
+      output.write(`${dim}<${placeholder}>${reset}`);
       output.write(`\x1b[${placeholder.length + 2}D`);
     } else {
       output.write(value);
@@ -320,10 +323,10 @@ async function promptForBody(
     input.resume();
   }
 
-  const header = `${symbols.question} ${colors.bold}Share your feedback${colors.reset} ${colors.dim}(Enter to send, Shift+Enter for a newline)${colors.reset}`;
+  const header = `${symbols.question} ${bold}Share your feedback${reset} ${dim}(Enter to send, Shift+Enter for a newline)${reset}`;
   output.write(`${header}\n`);
   if (attachments.length > 0) {
-    output.write(`${colors.dim}+ ${attachments.map(file => file.filename).join(", ")}${colors.reset}\n`);
+    output.write(`${dim}+ ${attachments.map(file => file.filename).join(", ")}${reset}\n`);
   }
   output.write(`${inputPrefix}`);
 
@@ -430,7 +433,7 @@ async function readFromStdin(): Promise<string | undefined> {
 
 type PositionalContent = {
   messageParts: string[];
-  files: { filename: string; content: string }[];
+  files: { filename: string; content: Uint8Array<ArrayBuffer> }[];
 };
 
 async function resolveFileCandidate(token: string): Promise<string | undefined> {
@@ -478,7 +481,12 @@ async function readFromPositionals(positionals: string[]): Promise<PositionalCon
     const filePath = await resolveFileCandidate(token);
     if (filePath) {
       try {
-        const fileContents = await fsp.readFile(filePath, "utf8");
+        let fileContents = await Bun.file(filePath).bytes();
+        // Truncate to
+        if (fileContents.length > 1024 * 1024 * 10) {
+          fileContents = fileContents.slice(0, 1024 * 1024 * 10);
+        }
+
         flushTokens();
         files.push({ filename: path.basename(filePath), content: fileContents });
         continue;
@@ -492,6 +500,33 @@ async function readFromPositionals(positionals: string[]): Promise<PositionalCon
 
   flushTokens();
   return { messageParts, files };
+}
+
+function getIPSupport(networkInterface: os.NetworkInterfaceInfo, original: IPSupport): IPSupport {
+  if (networkInterface.family === "IPv4") {
+    switch (original) {
+      case IPSupport.none:
+        return IPSupport.ipv4;
+      case IPSupport.ipv4:
+        return IPSupport.ipv4_and_ipv6;
+      case IPSupport.ipv6:
+        return IPSupport.ipv4_and_ipv6;
+      case IPSupport.ipv4_and_ipv6:
+        return IPSupport.ipv4_and_ipv6;
+    }
+  } else if (networkInterface.family === "IPv6") {
+    switch (original) {
+      case IPSupport.none:
+        return IPSupport.ipv6;
+      case IPSupport.ipv4:
+        return IPSupport.ipv4_and_ipv6;
+      case IPSupport.ipv6:
+        return IPSupport.ipv4_and_ipv6;
+      case IPSupport.ipv4_and_ipv6:
+        return IPSupport.ipv4_and_ipv6;
+    }
+  }
+  return original;
 }
 
 function getOldestGitSha(): string | undefined {
@@ -604,12 +639,89 @@ async function main() {
       form.append("files[]", new Blob([file.content]), file.filename);
     }
 
+    const id = Bun.randomUUIDv7();
+
     form.append("platform", process.platform);
     form.append("arch", process.arch);
     form.append("bunRevision", Bun.revision);
     form.append("hardwareConcurrency", String(navigator.hardwareConcurrency));
     form.append("bunVersion", Bun.version);
     form.append("bunBuild", path.basename(process.release.sourceUrl!, path.extname(process.release.sourceUrl!)));
+    form.append("availableMemory", String(process.availableMemory()));
+    form.append("totalMemory", String(os.totalmem()));
+    form.append("osVersion", String(os.version()));
+    form.append("osRelease", String(os.release()));
+    form.append("id", id);
+
+    // Check if we're running in Docker
+    let inDocker = false;
+    if (process.platform === "linux") {
+      if (require("fs").existsSync("/.dockerenv")) {
+        inDocker = true;
+      }
+    }
+
+    if (inDocker) {
+      form.append("docker", "true");
+    }
+
+    let remoteIP: IPSupport = IPSupport.none;
+    let localIP: IPSupport = IPSupport.none;
+
+    try {
+      const networkInterfaces = Object.entries(os.networkInterfaces() || {});
+
+      for (const [name, interfaces] of networkInterfaces) {
+        for (const networkInterface of interfaces || []) {
+          if (networkInterface.family === "IPv4") {
+            if (networkInterface.internal) {
+              localIP = getIPSupport(networkInterface, localIP);
+            } else {
+              remoteIP = getIPSupport(networkInterface, remoteIP);
+            }
+          } else if (networkInterface.family === "IPv6") {
+            if (networkInterface.internal) {
+              localIP = getIPSupport(networkInterface, localIP);
+            } else {
+              remoteIP = getIPSupport(networkInterface, remoteIP);
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore errors; treat as no IP support.
+    }
+
+    form.append("localIPSupport", localIP);
+    form.append("remoteIPSupport", remoteIP);
+
+    // Check if current working directory is on a remote filesystem
+    if (process.platform === "linux" || process.platform === "darwin") {
+      let isRemoteFilesystem = false;
+      try {
+        const cwd = process.cwd();
+        const stats = await fsp.statfs(cwd);
+
+        // Check filesystem type based on the type field
+        // Common remote filesystem types have specific type values
+        const remoteFsTypes = new Set([
+          0x6969, // NFS
+          0xff534d42, // CIFS/SMB
+          0x65735546, // FUSE (used by sshfs, etc.)
+        ]);
+
+        if (remoteFsTypes.has(stats.type)) {
+          isRemoteFilesystem = true;
+        }
+      } catch {
+        // Ignore errors; treat as local filesystem
+      }
+
+      if (isRemoteFilesystem) {
+        form.append("remoteFilesystem", "true");
+      }
+    }
+
     if (projectId) {
       form.append("projectId", projectId);
     }
@@ -628,7 +740,14 @@ async function main() {
       exit(1);
     }
 
-    process.stdout.write(`${symbols.check} Feedback sent.\n${thankYouBanner}\n`);
+    let IDBanner = ``;
+    if (supportsAnsi) {
+      IDBanner = `\n${dim}ID: ${id}${reset}`;
+    } else {
+      IDBanner = `\nID: ${id}`;
+    }
+
+    process.stdout.write(`${symbols.check} Feedback sent.\n${IDBanner}${thankYouBanner}\n`);
   } finally {
     terminal?.cleanup();
   }

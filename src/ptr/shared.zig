@@ -140,7 +140,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         pub const cloneWeak = if (options.allow_weak) struct {
             pub fn cloneWeak(self: Self) Self.Weak {
                 const data = if (comptime info.isOptional())
-                    self.getData() orelse return
+                    self.getData() orelse return .initNull()
                 else
                     self.getData();
                 data.incrementWeak();
@@ -239,8 +239,14 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             return .fromValuePtr(self.#pointer);
         }
 
-        pub fn unsafeGetStrongFromPointer(pointer: Pointer) Self {
-            return .{ .#pointer = pointer };
+        /// Clones a shared pointer, given a raw pointer that originally came from a shared pointer.
+        ///
+        /// `pointer` must have come from a shared pointer (e.g., from `get` or `leak`), and the shared
+        /// pointer from which it came must remain valid (i.e., not be deinitialized) at least until
+        /// this function returns.
+        pub fn cloneFromRawUnsafe(pointer: Pointer) Self {
+            const temp: Self = .{ .#pointer = pointer };
+            return temp.clone();
         }
     };
 }

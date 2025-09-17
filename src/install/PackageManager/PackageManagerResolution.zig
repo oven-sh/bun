@@ -77,12 +77,6 @@ pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.A
 }
 
 pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, version: Dependency.Version) ?PackageID {
-    // Disable disk cache fast path when minimum release age is enabled
-    // We need to fetch manifests to get publish_time metadata for security validation
-    if (this.options.minimum_release_age.isEnabled()) {
-        return null;
-    }
-
     if (version.tag != .npm) {
         // only npm supported right now
         // tags are more ambiguous

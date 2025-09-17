@@ -64,7 +64,7 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
-    return create(globalThis, this.mode, array, addLineNumberToCfg(this.cfg, globalThis, callFrame), strings.each);
+    return createBound(globalThis, this.mode, array, addLineNumberToCfg(this.cfg, globalThis, callFrame), strings.each);
 }
 
 pub fn addLineNumberToCfg(cfg: describe2.BaseScopeCfg, globalThis: *JSGlobalObject, callFrame: *CallFrame) describe2.BaseScopeCfg {
@@ -79,7 +79,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const this = ScopeFunctions.fromJS(callFrame.callee()) orelse return globalThis.throw("Expected callee to be ScopeFunctions", .{});
+    const this = ScopeFunctions.fromJS(callFrame.this()) orelse return globalThis.throw("Expected callee to be ScopeFunctions", .{});
     const line_no = addLineNumberToCfg(this.cfg, globalThis, callFrame).line_no;
 
     var buntest_strong = try describe2.js_fns.cloneActiveStrong(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
@@ -256,7 +256,7 @@ fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Cal
     if (cond != invert) {
         return genericExtend(this, globalThis, addLineNumberToCfg(conditional_cfg, globalThis, callFrame), name, fn_name);
     } else {
-        return create(globalThis, this.mode, this.each, addLineNumberToCfg(this.cfg, globalThis, callFrame), fn_name);
+        return createBound(globalThis, this.mode, this.each, addLineNumberToCfg(this.cfg, globalThis, callFrame), fn_name);
     }
 }
 fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: describe2.BaseScopeCfg, name: []const u8, fn_name: bun.String) bun.JSError!JSValue {
@@ -266,7 +266,7 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: descri
     if (cfg.self_mode == .failing and this.mode == .describe) return globalThis.throw("Cannot {s} on {f}", .{ name, this });
     if (cfg.self_only) try errorInCI(globalThis, ".only");
     const extended = this.cfg.extend(cfg) orelse return globalThis.throw("Cannot {s} on {f}", .{ name, this });
-    return create(globalThis, this.mode, this.each, extended, fn_name);
+    return createBound(globalThis, this.mode, this.each, extended, fn_name);
 }
 
 fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
@@ -418,17 +418,31 @@ pub fn finalize(
     VirtualMachine.get().allocator.destroy(this);
 }
 
-pub fn create(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: describe2.BaseScopeCfg, name: bun.String) JSValue {
+pub fn createUnbound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: describe2.BaseScopeCfg) JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
     var scope_functions = bun.handleOom(globalThis.bunVM().allocator.create(ScopeFunctions));
     scope_functions.* = .{ .mode = mode, .cfg = cfg, .each = each };
 
-    var name_copy = name;
-    const value = scope_functions.toJS(globalThis, 1, &name_copy);
+    const value = scope_functions.toJS(globalThis);
     value.ensureStillAlive();
     return value;
+}
+
+pub fn bind(value: JSValue, globalThis: *JSGlobalObject, name: *const bun.String) bun.JSError!JSValue {
+    const callFn = jsc.host_fn.NewFunction(globalThis, &name.toZigString(), 1, callAsFunction, false); // TODO: cache this value
+    const bound = try callFn.bind(globalThis, value, name, 1);
+    try bound.setPrototypeDirect(value.getPrototype(globalThis), globalThis);
+    return bound;
+}
+
+pub fn createBound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: describe2.BaseScopeCfg, name: bun.String) bun.JSError!JSValue {
+    groupLog.begin(@src());
+    defer groupLog.end();
+
+    const value = createUnbound(globalThis, mode, each, cfg);
+    return bind(value, globalThis, &name);
 }
 
 const bun = @import("bun");

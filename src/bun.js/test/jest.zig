@@ -124,24 +124,24 @@ pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
 
     pub fn Bun__Jest__createTestModuleObject(globalObject: *JSGlobalObject) callconv(.C) JSValue {
-        return createTestModule(globalObject);
+        return createTestModule(globalObject) catch return .zero;
     }
 
-    pub fn createTestModule(globalObject: *JSGlobalObject) JSValue {
+    pub fn createTestModule(globalObject: *JSGlobalObject) bun.JSError!JSValue {
         const module = JSValue.createEmptyObject(globalObject, 14);
 
-        const test_scope_functions = describe2.ScopeFunctions.create(globalObject, .@"test", .zero, .{}, describe2.ScopeFunctions.strings.@"test");
+        const test_scope_functions = try describe2.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{}, describe2.ScopeFunctions.strings.@"test");
         module.put(globalObject, ZigString.static("test"), test_scope_functions);
         module.put(globalObject, ZigString.static("it"), test_scope_functions);
 
-        const xtest_scope_functions = describe2.ScopeFunctions.create(globalObject, .@"test", .zero, .{ .self_mode = .skip }, describe2.ScopeFunctions.strings.xtest);
+        const xtest_scope_functions = try describe2.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{ .self_mode = .skip }, describe2.ScopeFunctions.strings.xtest);
         module.put(globalObject, ZigString.static("xtest"), xtest_scope_functions);
         module.put(globalObject, ZigString.static("xit"), xtest_scope_functions);
 
-        const describe_scope_functions = describe2.ScopeFunctions.create(globalObject, .describe, .zero, .{}, describe2.ScopeFunctions.strings.describe);
+        const describe_scope_functions = try describe2.ScopeFunctions.createBound(globalObject, .describe, .zero, .{}, describe2.ScopeFunctions.strings.describe);
         module.put(globalObject, ZigString.static("describe"), describe_scope_functions);
 
-        const xdescribe_scope_functions = describe2.ScopeFunctions.create(globalObject, .describe, .zero, .{ .self_mode = .skip }, describe2.ScopeFunctions.strings.xdescribe);
+        const xdescribe_scope_functions = describe2.ScopeFunctions.createBound(globalObject, .describe, .zero, .{ .self_mode = .skip }, describe2.ScopeFunctions.strings.xdescribe) catch return .zero;
         module.put(globalObject, ZigString.static("xdescribe"), xdescribe_scope_functions);
 
         module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, describe2.js_fns.genericHook(.beforeEach).hookFn, false));

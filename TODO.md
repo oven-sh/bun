@@ -602,6 +602,7 @@ test 2
 
 # Code quality:
 
+- [ ] consider migrating CallbackWithArgs to be a bound function. the length of the bound function can exclude the specified args.
 - [ ] consider changing done so instead of the complex ref-counted thing, it is instead made by wrapping the return value of the function with a promise that resolves when the done callback is called
   - in this case, the done function is instead a binding to a function with `[promise] (error) => error != null ? promise.$reject(error) : promise.$resolve()`
   - this significantly simplifies implementation in exchange for runtime cost

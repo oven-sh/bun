@@ -799,7 +799,7 @@ export default [
     name: "ScopeFunctions",
     construct: false,
     noConstructor: true,
-    instanceCallable: true,
+    customBasePrototype: "globalObject->functionPrototype()",
     finalize: true,
     JSType: "0b11101110",
     values: ["each"],

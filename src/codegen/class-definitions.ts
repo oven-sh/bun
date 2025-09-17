@@ -286,7 +286,9 @@ export function define(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
-          v["DOMJIT"] = undefined;
+          if ("DOMJIT" in v) {
+            v.DOMJIT = undefined;
+          }
           return [k, v];
         }),
     ),
@@ -294,7 +296,9 @@ export function define(
       Object.entries(proto)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => {
-          v["DOMJIT"] = undefined;
+          if ("DOMJIT" in v) {
+            v.DOMJIT = undefined;
+          }
           return [k, v];
         }),
     ),

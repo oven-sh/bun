@@ -217,6 +217,5 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       const valueAfterStop = await ctx.redis.get(TEST_KEY);
       expect(valueAfterStop).toBe(TEST_VALUE);
     });
-
   });
 });

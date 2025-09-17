@@ -667,6 +667,10 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         const name_str = this.lockfile.str(&name);
                         const task_id = Task.Id.forManifest(name_str);
 
+                        if (bun.Environment.isDebug) {
+                            bun.Output.debugWarn("Checking if manifest needed for {s}", .{name_str});
+                        }
+
                         if (comptime Environment.allow_assert) bun.assert(task_id.get() != 0);
 
                         if (comptime Environment.allow_assert)
@@ -719,7 +723,16 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if (this.options.enable.manifest_cache_control and !expired) {
+                                        // BUT: if minimumReleaseAge is enabled and the cached manifest lacks publish times,
+                                        // we need to fetch fresh data from npm
+                                        const needs_fresh_for_age = this.options.minimum_release_age.isEnabled() and
+                                            loaded_manifest != null and !hasPublishTimes(loaded_manifest.?);
+
+                                        if (bun.Environment.isDebug and needs_fresh_for_age) {
+                                            bun.Output.debugWarn("Need fresh manifest for {s} due to minimumReleaseAge", .{name_str});
+                                        }
+
+                                        if (this.options.enable.manifest_cache_control and !expired and !needs_fresh_for_age) {
                                             _ = this.network_dedupe_map.remove(task_id);
                                             continue :retry_from_manifests_ptr;
                                         }
@@ -1589,7 +1602,8 @@ fn getOrPutResolvedPackage(
             ) orelse return null; // manifest might still be downloading. This feels unreliable.
             const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
                 .dist_tag => brk: {
-                    const dist_tag_result = manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag));
+                    const dist_tag_str = this.lockfile.str(&version.value.dist_tag.tag);
+                    const dist_tag_result = manifest.findByDistTag(dist_tag_str);
                     if (dist_tag_result) |result| {
                         // Check minimum release age for dist tags too (e.g., "latest")
                         if (bun.Environment.isDebug) {
@@ -1605,10 +1619,36 @@ fn getOrPutResolvedPackage(
                             !this.options.minimum_release_age.isExcluded(name_str) and
                             result.package.publish_time > 0 and
                             this.options.minimum_release_age.isVersionTooNew(result.package.publish_time)) {
-                            // Package is too new, don't install it
+                            // Latest is too new, try to find an older version that meets the age requirement
                             if (bun.Environment.isDebug) {
-                                bun.Output.debugWarn("Blocking package {s} due to minimumReleaseAge", .{name_str});
+                                bun.Output.debugWarn("Latest version of {s} is too new, searching for older version", .{name_str});
                             }
+
+                            // For "latest" tag, fall back to finding best version with age restriction
+                            if (strings.eqlComptime(dist_tag_str, "latest")) {
+                                // Use a wildcard range to find any version that meets the age requirement
+                                const any_version = Semver.Query.parse(
+                                    this.lockfile.allocator,
+                                    "*",
+                                    SlicedString.init("*", "*"),
+                                ) catch break :brk null;
+
+                                const older_result = manifest.findBestVersion(
+                                    any_version,
+                                    this.lockfile.buffers.string_bytes.items,
+                                    &this.options.minimum_release_age,
+                                    name_str,
+                                );
+
+                                if (older_result) |old| {
+                                    if (bun.Environment.isDebug) {
+                                        bun.Output.debugWarn("Found older version {any} that meets age requirement", .{old.version});
+                                    }
+                                }
+                                break :brk older_result;
+                            }
+
+                            // For other dist tags, we have to block entirely
                             break :brk null;
                         }
                     }
@@ -1815,6 +1855,15 @@ fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, 
 
 const string = []const u8;
 
+fn hasPublishTimes(manifest: Npm.PackageManifest) bool {
+    // Check if any package version has publish_time set
+    // If not, we need to fetch fresh data
+    for (manifest.package_versions) |pkg| {
+        if (pkg.publish_time > 0) return true;
+    }
+    return false;
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1827,6 +1876,7 @@ const strings = bun.strings;
 
 const Semver = bun.Semver;
 const String = Semver.String;
+const SlicedString = Semver.SlicedString;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;

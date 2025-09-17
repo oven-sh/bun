@@ -44,6 +44,9 @@ pub const Authorization = enum {
 // https://www.jfrog.com/jira/browse/RTFACT-18398
 const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 
+// When minimumReleaseAge is enabled, we need the abbreviated format with time field
+const accept_header_value_with_time = "application/json";
+
 const default_headers_buf: string = "Accept" ++ accept_header_value;
 
 fn appendAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
@@ -163,8 +166,39 @@ pub fn forManifest(
         header_builder.count("If-Modified-Since", last_modified);
     }
 
+    // Smart header selection based on minimumReleaseAge and cached data
+    // If minimumReleaseAge is enabled and we don't have time field data cached, get abbreviated format
+    var use_abbreviated = false;
+    if (this.package_manager.options.minimum_release_age.isEnabled()) {
+        // Check if loaded manifest has time field data (publish_time > 0 for any version)
+        if (loaded_manifest) |manifest| {
+            var has_time_data = false;
+            for (manifest.package_versions) |pkg| {
+                if (pkg.publish_time > 0) {
+                    has_time_data = true;
+                    break;
+                }
+            }
+            // If no time data in cache, fetch abbreviated format to get it
+            if (!has_time_data) {
+                use_abbreviated = true;
+                if (bun.Environment.isDebug) {
+                    bun.Output.debugWarn("Using abbreviated format for {s} to get time field", .{name});
+                }
+            }
+        } else {
+            // No cached manifest, fetch abbreviated format if package might be recent
+            // As a heuristic, popular packages that update frequently should use abbreviated
+            use_abbreviated = true;
+            if (bun.Environment.isDebug) {
+                bun.Output.debugWarn("Using abbreviated format for {s} (no cache)", .{name});
+            }
+        }
+    }
+    const header_to_use = if (use_abbreviated) accept_header_value_with_time else accept_header_value;
+
     if (header_builder.header_count > 0) {
-        header_builder.count("Accept", accept_header_value);
+        header_builder.count("Accept", header_to_use);
         if (last_modified.len > 0 and etag.len > 0) {
             header_builder.content.count(last_modified);
         }
@@ -178,7 +212,7 @@ pub fn forManifest(
             header_builder.append("If-Modified-Since", last_modified);
         }
 
-        header_builder.append("Accept", accept_header_value);
+        header_builder.append("Accept", header_to_use);
 
         if (last_modified.len > 0 and etag.len > 0) {
             last_modified = header_builder.content.append(last_modified);

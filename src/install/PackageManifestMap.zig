@@ -30,6 +30,15 @@ pub const CacheBehavior = enum {
     load_from_memory_fallback_to_disk,
 };
 
+fn hasPublishTimes(manifest: *const Npm.PackageManifest) bool {
+    // Check if any package version has publish_time set
+    // If not, we need to fetch fresh data
+    for (manifest.package_versions) |pkg| {
+        if (pkg.publish_time > 0) return true;
+    }
+    return false;
+}
+
 pub fn byNameHashAllowExpired(
     this: *PackageManifestMap,
     pm: *PackageManager,
@@ -73,7 +82,11 @@ pub fn byNameHashAllowExpired(
             pm.getCacheDirectory(),
             name_hash,
         ) catch null) |manifest| {
-            if (pm.options.enable.manifest_cache_control and manifest.pkg.public_max_age > pm.timestamp_for_manifest_cache_control) {
+            // If minimumReleaseAge is enabled, treat cached manifests without publish times as expired
+            // This ensures we fetch fresh data with time field from npm
+            const needs_fresh_for_age = pm.options.minimum_release_age.isEnabled() and !hasPublishTimes(&manifest);
+
+            if (!needs_fresh_for_age and pm.options.enable.manifest_cache_control and manifest.pkg.public_max_age > pm.timestamp_for_manifest_cache_control) {
                 entry.value_ptr.* = .{ .manifest = manifest };
                 return &entry.value_ptr.manifest;
             } else {

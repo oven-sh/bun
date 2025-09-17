@@ -1700,6 +1700,9 @@ pub const PackageManifest = struct {
         etag: []const u8,
         public_max_age: u32,
     ) !?PackageManifest {
+        if (bun.Environment.isDebug) {
+            bun.Output.debugWarn("PackageManifest.parse() called for package: {s}", .{expected_name});
+        }
         const source = &logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.ast.Stmt.Data.Store.memory_allocator.?.pop();
@@ -1773,7 +1776,24 @@ pub const PackageManifest = struct {
             }
         }
 
+        if (bun.Environment.isDebug) {
+            // List all properties to debug
+            if (json.data == .e_object) {
+                const props = json.data.e_object.properties.slice();
+                bun.Output.debugWarn("JSON has {d} properties", .{props.len});
+                for (props[0..@min(props.len, 10)]) |prop| {
+                    if (prop.key) |key| {
+                        const key_str = key.asString(allocator) orelse "unknown";
+                        bun.Output.debugWarn("  Property: {s}", .{key_str});
+                    }
+                }
+            }
+        }
+
         if (json.asProperty("time")) |time_field| {
+            if (bun.Environment.isDebug) {
+                bun.Output.debugWarn("Found time field in npm response for package", .{});
+            }
             if (time_field.expr.data == .e_object) {
                 const time_entries = time_field.expr.data.e_object.properties.slice();
                 try publish_times.ensureTotalCapacity(allocator, @as(u32, @truncate(time_entries.len)));

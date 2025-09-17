@@ -565,8 +565,8 @@ describe("bundler", () => {
       "-123.567",
       "8.325",
       "1e8",
-      "0.1",
-      "0.1",
+      ".1", // Our optimization drops leading zero
+      ".1", // Our optimization drops leading zero
       "NaN",
       // untouched
       '+"æ"',
@@ -758,6 +758,91 @@ describe("bundler", () => {
     },
     run: {
       stdout: "foo\ntrue\ntrue\ndisabled_for_development",
+    },
+  });
+
+  itBundled("minify/FractionalLiteralOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        // Should drop leading zeros
+        capture(0.5);
+        capture(0.25);
+        capture(0.125);
+        capture(0.999);
+        capture(0.001);
+        
+        // Should NOT drop zeros for numbers >= 1
+        capture(1.5);
+        capture(10.5);
+        
+        // Should NOT affect zero itself
+        capture(0.0);
+      `,
+    },
+    capture: [".5", ".25", ".125", ".999", ".001", "1.5", "10.5", "0"],
+    minifySyntax: true,
+  });
+
+  itBundled("minify/StrictEqualToLooseEqualInNumericContext", {
+    files: {
+      "/entry.js": /* js */ `
+        // Should optimize - any numeric comparison
+        const x = 5;
+        capture((x & 7) === 0);
+        capture(1 === (x | 3));
+        capture((x ^ 3) === 6);
+        
+        // Should optimize - arithmetic operations
+        capture((x + 10) === 15);
+        capture((x * 2) === 10);
+        capture(1 === (x / 5));
+        
+        // With variables - still optimizes if one side is numeric
+        capture((someVar & 0xFF) === 128);
+        capture(someVar === 42);
+        capture(100 === otherVar);
+        
+        // Should NOT optimize when neither side is definitely numeric
+        capture(someVar === otherVar);
+        capture("5" === "5");
+      `,
+    },
+    capture: [
+      "!1", // (5 & 7) === 0 is false, constant folded
+      "!1", // 1 === 7 is false, constant folded
+      "!0", // (5 ^ 3) === 6 is true, constant folded
+      "!0", // 15 === 15 is true, constant folded
+      "!0", // 10 === 10 is true, constant folded
+      "!0", // 1 === 1 is true, constant folded
+      "(someVar & 255) == 128", // Optimized to ==
+      "someVar == 42", // Optimized to == (42 is numeric)
+      "otherVar == 100", // Optimized to == (100 is numeric)
+      "someVar === otherVar", // NOT optimized (neither side is definitely numeric)
+      "!0", // "5" === "5" is true, constant folded
+    ],
+    minifySyntax: true,
+  });
+
+  itBundled("minify/CombinedOptimizations", {
+    files: {
+      "/entry.js": /* js */ `
+        // Combining multiple optimizations
+        function calculate(a, b, c) {
+          const fraction = 0.5;
+          const check = (a & 0xFF) === 0;
+          return fraction + (check ? 1 : 0);
+        }
+        
+        capture(calculate(10, 20, 30));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Check fractional optimization
+      expect(code).toContain(".5");
+      // Check === to == optimization
+      expect(code).toContain("(a & 255) == 0");
     },
   });
 

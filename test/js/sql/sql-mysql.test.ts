@@ -9,14 +9,10 @@ const dir = tempDirWithFiles("sql-test", {
 });
 
 const keepAliveTests = {
-  "simple-connection.js": `const sql = new Bun.SQL()`,
-  "simple-connection-with-using.js": `await using sql = new Bun.SQL()`,
-  "simple-connection-connected.js": `const sql = new Bun.SQL(); await sql.connect()`,
-  "simple-connection-connected-with-using.js": `await using sql = new Bun.SQL(); await sql.connect()`,
-  "simple-connection-connected-with-query.js": `const sql = new Bun.SQL(); await sql\`select 1 as x\``,
-  "simple-connection-connected-with-using-and-query.js": `await using sql = new Bun.SQL(); await sql\`select 1 as x\``,
-  "simple-connection-connected-with-multiple-queries.js": `const sql = new Bun.SQL(); for(let i = 0; i < 100; i++) { await sql\`select 1 as x\` }`,
-  "simple-connection-connected-with-using-and-multiple-queries.js": `await using sql = new Bun.SQL(); for(let i = 0; i < 100; i++) { await sql\`select 1 as x\` }`,
+  "simple-connection.js": `const sql = new Bun.SQL({ adapter: "mysql" })`,
+  "simple-connection-connected.js": `const sql = new Bun.SQL({ adapter: "mysql" }); await sql.connect()`,
+  "simple-connection-connected-with-query.js": `const sql = new Bun.SQL({ adapter: "mysql" }); await sql\`select 1 as x\``,
+  "simple-connection-connected-with-multiple-queries.js": `const sql = new Bun.SQL({ adapter: "mysql" }); for(let i = 0; i < 100; i++) { await sql\`select 1 as x\` }`,
 };
 
 const keepAliveTestDir = tempDirWithFiles("sql-connection-test", keepAliveTests);
@@ -78,7 +74,7 @@ if (docker) {
           for (const filename of Object.keys(keepAliveTests)) {
             test(filename, async () => {
               const result = bunRun(path.join(keepAliveTestDir, filename), {
-                [isTLS ? "MYSQL_DATABASE_URL" : "TLS_MYSQL_DATABASE_URL"]: options.url as string,
+                [isTLS ? "TLS_MYSQL_DATABASE_URL" : "DATABASE_URL"]: options.url as string,
                 "NODE_EXTRA_CA_CERTS": extraCertPath,
               });
               expect(result.stdout).toBe("");

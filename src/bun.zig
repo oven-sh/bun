@@ -3755,7 +3755,7 @@ pub const highway = @import("./highway.zig");
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
 /// Automatically generated C++ bindings for functions marked with `[[ZIG_EXPORT(...)]]`
-pub const cpp = @import("cpp").bindings;
+pub const cpp = @import("cpp");
 
 pub const asan = @import("./asan.zig");
 

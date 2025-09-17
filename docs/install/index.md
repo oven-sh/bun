@@ -202,6 +202,30 @@ To remove a dependency:
 $ bun remove preact
 ```
 
+## Package executables
+
+When packages define executables in their `"bin"` field, Bun automatically creates links to these executables in `node_modules/.bin`. This allows you to run them with `bun run`, `bunx`, or directly from `package.json` scripts.
+
+```json
+{
+  "name": "my-package",
+  "bin": {
+    "my-cli": "./cli.js"
+  }
+}
+```
+
+### `.bunx` files on Windows
+
+On Windows, Bun uses a special `.bunx` file format for package executables instead of traditional symlinks. This provides several benefits:
+
+- **Cross-filesystem compatibility** - Works reliably across different Windows filesystems where symlinks may not be supported
+- **No shebang limitations** - Windows doesn't read shebangs (`#!/usr/bin/env node`), but `.bunx` files handle this automatically
+- **Simplified execution** - Avoids creating multiple wrapper files (`.cmd`, `.sh`, `.ps1`) for each executable
+- **Better developer experience** - Eliminates the annoying "Terminate batch job? (Y/n)" prompts when stopping scripts
+
+The `.bunx` format allows executables to work seamlessly with both Bun and Node.js, making it ideal even if you're only using Bun as a package manager.
+
 ## Git dependencies
 
 To add a dependency from a git repository:

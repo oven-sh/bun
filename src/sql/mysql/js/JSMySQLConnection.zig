@@ -304,9 +304,10 @@ fn SocketHandler(comptime ssl: bool) type {
 }
 
 fn updateReferenceType(this: *@This()) void {
-    // We need to keep a strong ref when we have a connection that is active
-    // But we can have a unref poll ref if the connection dont have pending commands
-    // This allows better DX so the user can exit the process after all commands are executed
+    // We need to keep a strong reference while a connection is active.
+    // If the connection has no pending commands, we can downgrade it to an unref poll reference.
+    // This improves the developer experience by allowing the process to exit automatically
+    // once all commands have been executed.
     if (this.#connection.isActive()) {
         if (this.#js_value.isNotEmpty() and this.#js_value == .weak) {
             this.#js_value.upgrade(this.#globalObject);

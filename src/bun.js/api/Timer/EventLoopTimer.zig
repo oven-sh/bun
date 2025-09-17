@@ -218,7 +218,8 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
             return .disarm;
         },
         .BunTest => {
-            const container_strong = jsc.Jest.describe2.BunTestPtr.unsafeGetStrongFromPointer(@fieldParentPtr("timer", self));
+            var container_strong = jsc.Jest.describe2.BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self));
+            defer container_strong.deinit();
             return jsc.Jest.describe2.BunTest.bunTestTimeoutCallback(container_strong, now, vm);
         },
         .EventLoopDelayMonitor => {

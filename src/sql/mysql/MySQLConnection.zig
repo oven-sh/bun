@@ -71,7 +71,7 @@ pub fn canExecuteQuery(this: *@This()) bool {
     return this.queue.canExecuteQuery(this.getJSConnection());
 }
 
-pub inline fn isAbleToWrite(this: *@This()) bool {
+pub inline fn isAbleToWrite(this: *const @This()) bool {
     return this.status == .connected and
         !this.#flags.has_backpressure and
         this.#write_buffer.len() < MAX_PIPELINE_SIZE;
@@ -80,7 +80,7 @@ pub inline fn isAbleToWrite(this: *@This()) bool {
 pub inline fn isProcessingData(this: *@This()) bool {
     return this.#flags.is_processing_data;
 }
-pub inline fn hasBackpressure(this: *@This()) bool {
+pub inline fn hasBackpressure(this: *const @This()) bool {
     return this.#flags.has_backpressure;
 }
 pub inline fn resetBackpressure(this: *@This()) void {
@@ -99,19 +99,19 @@ pub const AuthState = union(enum) {
     };
 };
 
-pub fn canFlush(this: *@This()) bool {
+pub inline fn canFlush(this: *const @This()) bool {
     return !this.#flags.has_backpressure and // if has backpressure we need to wait for onWritable event
         this.status == .connected and //and we need to be connected
         // we need data to send
         (this.#write_buffer.len() > 0 or
-            if (this.queue.current()) |request| request.isPending() else false);
+            if (this.queue.current()) |request| request.isPending() and !request.isBeingPrepared() else false);
 }
 
-pub fn isIdle(this: *@This()) bool {
+pub inline fn isIdle(this: *const @This()) bool {
     return this.queue.current() == null and this.#write_buffer.len() == 0;
 }
 
-pub fn enqueueRequest(this: *@This(), request: *JSMySQLQuery) void {
+pub inline fn enqueueRequest(this: *@This(), request: *JSMySQLQuery) void {
     this.queue.add(request);
 }
 

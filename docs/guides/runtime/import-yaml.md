@@ -73,4 +73,30 @@ console.log(data.hobbies); // => ["reading", "coding"]
 
 ---
 
+## TypeScript Support
+
+To add TypeScript support for your YAML imports, create a declaration file with `.d.ts` appended to the YAML filename (e.g., `config.yaml` → `config.yaml.d.ts`);
+
+```ts#config.yaml.d.ts
+const contents: {
+  database: {
+    host: string;
+    port: number;
+    name: string;
+  };
+  server: {
+    port: number;
+    timeout: number;
+  };
+  features: {
+    auth: boolean;
+    rateLimit: boolean;
+  };
+};
+
+export = contents;
+```
+
+---
+
 See [Docs > API > YAML](https://bun.com/docs/api/yaml) for complete documentation on YAML support in Bun.

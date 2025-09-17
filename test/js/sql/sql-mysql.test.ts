@@ -34,6 +34,13 @@ if (docker) {
         MYSQL_ROOT_PASSWORD: "bun",
       },
     },
+    {
+      name: "MySQL 9",
+      image: "mysql:9",
+      env: {
+        MYSQL_ROOT_PASSWORD: "bun",
+      },
+    },
   ];
 
   for (const image of images) {

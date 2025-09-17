@@ -699,7 +699,7 @@ function generateZigFn(
     }
   } else assertNever(fn.tag);
   resultBindings.push(
-    `pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
+    `pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${fn.tag === "false_is_throw" ? "void" : returnType} {`,
     `    if (comptime Environment.ci_assert) {`,
     `        var scope: jsc.ExceptionValidationScope = undefined;`,
     `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
@@ -707,11 +707,11 @@ function generateZigFn(
     ``,
     `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
     `        scope.assertExceptionPresenceMatches(value == ${equalsValue});`,
-    `        return if (value == ${equalsValue}) error.JSError else value;`,
+    `        return if (value == ${equalsValue}) error.JSError ${fn.tag === "false_is_throw" ? "" : "else value"};`,
     `    } else {`,
     `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
     `        if (value == ${equalsValue}) return error.JSError;`,
-    `        return value;`,
+    ...(fn.tag === "false_is_throw" ? [] : [`        return value;`]),
     `    }`,
     `}`,
   );

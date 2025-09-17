@@ -696,7 +696,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                                 if (!str->isEmpty()) {
                                     setTypeFlagsIfNecessary();
 
-                                    return str.data;
+                                    return str;
                                 }
                             }
                         }
@@ -711,7 +711,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                             if (name && name.isString()) {
                                 auto str = asString(name)->tryGetValueWithoutGC();
                                 if (!str->isEmpty()) {
-                                    functionName = str.data;
+                                    functionName = str;
                                     if (!functionName.isEmpty()) {
                                         setTypeFlagsIfNecessary();
                                         return functionName;

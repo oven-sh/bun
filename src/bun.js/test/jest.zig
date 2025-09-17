@@ -299,8 +299,7 @@ pub const on_unhandled_rejection = struct {
             return;
         }
 
-        jsc_vm.last_reported_error_for_dedupe = .zero;
-        jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
+        jsc_vm.runErrorHandler(rejection, jsc_vm.onUnhandledRejectionExceptionList);
     }
 };
 

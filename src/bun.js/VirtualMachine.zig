@@ -61,7 +61,6 @@ is_printing_plugin: bool = false,
 is_shutting_down: bool = false,
 plugin_runner: ?PluginRunner = null,
 is_main_thread: bool = false,
-last_reported_error_for_dedupe: JSValue = .zero,
 exit_handler: ExitHandler = .{},
 
 default_tls_reject_unauthorized: ?bool = null,
@@ -1952,17 +1951,8 @@ pub fn printException(
     }
 }
 
-pub fn runErrorHandlerWithDedupe(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
-    if (this.last_reported_error_for_dedupe == result and !this.last_reported_error_for_dedupe.isEmptyOrUndefinedOrNull())
-        return;
-
-    this.runErrorHandler(result, exception_list);
-}
-
 pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
     @branchHint(.cold);
-    if (!result.isEmptyOrUndefinedOrNull())
-        this.last_reported_error_for_dedupe = result;
 
     const prev_had_errors = this.had_errors;
     this.had_errors = false;

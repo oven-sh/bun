@@ -202,81 +202,30 @@ To remove a dependency:
 $ bun remove preact
 ```
 
-## Package executables and bin linking
+## Package executables
 
-When you install packages that define executables in their `"bin"` field, Bun automatically creates links to these executables in `node_modules/.bin`. This makes them available for execution via `bun run`, `bunx`, or directly in `package.json` scripts.
+When packages define executables in their `"bin"` field, Bun creates links in `node_modules/.bin`.
 
-```json
-{
-  "name": "my-package",
-  "bin": {
-    "my-cli": "./cli.js"
-  }
-}
-```
+### `.bunx` files on Windows
 
-After running `bun install`, you can execute these binaries in several ways:
+On Windows, `bun install` creates `.bunx` files instead of symlinks for package executables.
 
-```bash
-# Via bun run
-$ bun run my-cli
+The `.bunx` file is a cross-filesystem symlink that starts scripts with Bun or Node.js. We created this because:
 
-# Via bunx
-$ bunx my-cli
+- Symlinks aren't guaranteed to work on Windows
+- Windows doesn't read shebangs (`#!/usr/bin/env bun`)
+- Avoids creating multiple wrapper files (`.cmd`, `.sh`, `.ps1`)
+- Eliminates "Terminate batch job? (Y/n)" prompts
 
-# In package.json scripts
-{
-  "scripts": {
-    "build": "my-cli --build"
-  }
-}
-```
-
-### How bin linking works on Windows with `.bunx` files
-
-On Windows, `bun install` uses a special `.bunx` file format when creating executable links instead of traditional symlinks. This innovative approach solves several Windows-specific challenges:
-
-#### Why `.bunx` files?
-
-Traditional package managers struggle with executables on Windows, often creating multiple wrapper files (`.cmd`, `.sh`, `.ps1`) for each binary. Bun's `.bunx` format was engineered to address these issues:
-
-- **Symlinks are not guaranteed to work on Windows** - Different filesystems and permission levels can prevent symlink creation
-- **Shebangs (`#!/usr/bin/env node`) are not read on Windows** - Windows doesn't natively support Unix-style shebangs
-- **Multiple wrapper files cause confusion** - Having `.cmd`, `.sh`, and `.ps1` versions of each executable clutters `node_modules/.bin`
-- **Poor developer experience** - The infamous "Terminate batch job? (Y/n)" prompt interrupts workflow when stopping scripts
-
-#### How `.bunx` files work
-
-The `.bunx` file is a cross-filesystem symlink that can start scripts or executables using either Bun or Node.js. When `bun install` processes a package with binaries:
-
-1. Instead of creating traditional symlinks or wrapper scripts, it creates a single `.bunx` file
-2. This file acts as a universal executable that works across different Windows configurations
-3. The file correctly handles both Bun and Node.js execution contexts
-4. No additional wrapper files are needed
-
-#### Performance benefits
-
-The `.bunx` format delivers significant performance improvements:
-
-- `bun run` is **11x faster** than `npm run` on Windows
-- `bunx` is **11x faster** than `npx` for executing package binaries
-- Startup time is dramatically reduced by avoiding batch file indirection
+Performance: `bun run` is 11x faster than `npm run`, `bunx` is 11x faster than `npx`.
 
 {% image src="/images/bun-run-on-windows.png" caption="Time spent running `bunx cowsay` vs `npx cowsay` on Windows." /%}
 
-#### Better developer experience
-
-Beyond performance, `.bunx` files improve the development workflow:
-
-- **No more "Terminate batch job?" prompts** - Clean interruption when pressing Ctrl+C
-- **Works with both Bun and Node.js** - Even if you only use Bun as a package manager, executables work correctly with Node.js
-- **Simplified debugging** - Single file format makes it easier to understand what's being executed
+Even if you only use Bun as a package manager, `.bunx` works with Node.js.
 
 {% image src="/images/terminate-batch-job-bun.gif" /%}
 
 {% image src="/images/terminate-batch-job-npm.gif" /%}
-
-The `.bunx` format is automatically used when you run `bun install` on Windows - no configuration needed. It's part of Bun's commitment to making JavaScript development faster and more enjoyable on every platform.
 
 ## Git dependencies
 

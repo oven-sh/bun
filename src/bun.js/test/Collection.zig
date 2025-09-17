@@ -137,7 +137,7 @@ pub fn step(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObjec
         this.active_scope = new_scope;
         group.log("collection:runOne set scope to {s}", .{this.active_scope.base.name orelse "undefined"});
 
-        try BunTest.runTestCallback(buntest_strong, globalThis, .{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = .{
+        BunTest.runTestCallback(buntest_strong, globalThis, .{ .callback = callback.dupe(buntest.gpa), .done_parameter = false, .data = .{
             .collection = .{
                 .active_scope = previous_scope,
             },

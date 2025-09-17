@@ -6751,6 +6751,23 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalOb
 }
 #endif
 
+CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JSValue__bind(JSC::EncodedJSValue functionToBindEncoded, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue bindThisArgEncoded, const BunString* name, double length)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    JSC::JSValue value = JSC::JSValue::decode(functionToBindEncoded);
+    if (!value.isObject()) {
+        throwTypeError(globalObject, scope, "bind() called on non-object"_s);
+        RELEASE_AND_RETURN(scope, {});
+    }
+
+    SourceCode bindSourceCode = makeSource("bind"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+    JSC::JSObject* valueObject = value.getObject();
+    JSC::JSValue bound = JSC::JSValue::decode(bindThisArgEncoded);
+    auto boundFunction = JSBoundFunction::create(globalObject->vm(), globalObject, valueObject, bound, ArgList(), length, jsString(globalObject->vm(), name->toWTFString()), bindSourceCode);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(boundFunction));
+}
+
 CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

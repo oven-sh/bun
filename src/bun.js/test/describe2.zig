@@ -493,7 +493,7 @@ pub const BunTest = struct {
     }
 
     /// if sync, the result is queued and appended later
-    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry, timeout: bun.timespec) bun.JSError!void {
+    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry, timeout: bun.timespec) void {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
@@ -504,8 +504,11 @@ pub const BunTest = struct {
         var done_callback: ?jsc.JSValue = null;
         if (cfg.done_parameter) {
             group.log("callTestCallback -> appending done callback param: data {}", .{cfg.data});
-            done_callback = DoneCallback.create(globalThis);
-            args.append(this.gpa, done_callback.?);
+            done_callback = DoneCallback.createUnbound(globalThis);
+            args.append(this.gpa, DoneCallback.bind(done_callback.?, globalThis) catch |e| blk: {
+                this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg.data);
+                break :blk jsc.JSValue.js_undefined; // failed to bind done callback
+            });
         }
 
         this.updateMinTimeout(globalThis, timeout);

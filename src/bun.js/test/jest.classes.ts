@@ -788,7 +788,6 @@ export default [
     name: "DoneCallback",
     construct: false,
     noConstructor: true,
-    instanceCallable: true,
     finalize: true,
     JSType: "0b11101110",
     values: [],

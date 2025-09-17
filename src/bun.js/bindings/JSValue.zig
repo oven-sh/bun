@@ -2376,6 +2376,8 @@ pub const JSValue = enum(i64) {
         Output.flush();
     }
 
+    pub const bind = bun.cpp.Bun__JSValue__bind;
+
     pub const JSPropertyNameIterator = struct {
         array: jsc.C.JSPropertyNameArrayRef,
         count: u32,

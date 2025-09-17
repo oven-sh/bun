@@ -377,7 +377,7 @@ fn stepSequenceOne(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlob
         };
         groupLog.log("runSequence queued callback: {}", .{callback_data});
 
-        try BunTest.runTestCallback(buntest_strong, globalThis, .{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = next_item.has_done_parameter, .data = callback_data }, next_item.timespec);
+        BunTest.runTestCallback(buntest_strong, globalThis, .{ .callback = cb.dupe(this.bunTest().gpa), .done_parameter = next_item.has_done_parameter, .data = callback_data }, next_item.timespec);
         return .{ .execute = .{ .timeout = next_item.timespec } };
     } else {
         switch (next_item.base.mode) {

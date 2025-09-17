@@ -23,7 +23,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     groupLog.begin(@src());
     defer groupLog.end();
 
-    const this = DoneCallback.fromJS(callFrame.callee()) orelse return globalThis.throw("Expected callee to be DoneCallback", .{});
+    const this = DoneCallback.fromJS(callFrame.this()) orelse return globalThis.throw("Expected callee to be DoneCallback", .{});
 
     const value = callFrame.argumentsAsArray(1)[0];
 
@@ -58,7 +58,6 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
 pub const js = jsc.Codegen.JSDoneCallback;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
-pub const fromJSDirect = js.fromJSDirect;
 
 pub fn finalize(
     this: *DoneCallback,
@@ -70,17 +69,21 @@ pub fn finalize(
     VirtualMachine.get().allocator.destroy(this);
 }
 
-pub fn create(globalThis: *JSGlobalObject) JSValue {
+pub fn createUnbound(globalThis: *JSGlobalObject) JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
     var done_callback = bun.handleOom(globalThis.bunVM().allocator.create(DoneCallback));
     done_callback.* = .{ .ref = null };
 
-    var done_callback_copy = bun.String.static("done");
-    const value = done_callback.toJS(globalThis, 1, &done_callback_copy);
+    const value = done_callback.toJS(globalThis);
     value.ensureStillAlive();
     return value;
+}
+
+pub fn bind(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    const callFn = jsc.host_fn.NewFunction(globalThis, bun.ZigString.static("done"), 1, callAsFunction, false); // TODO: cache this value
+    return try callFn.bind(globalThis, value, &bun.String.static("done"), 1);
 }
 
 const bun = @import("bun");

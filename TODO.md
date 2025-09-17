@@ -451,6 +451,7 @@ test 2
 
 # Add features:
 
+- [ ] need to cache the JSValue created from DoneCallback.callAsFunction
 - [ ] test/js/node/http2/node-http2.test.js
   - this spams output with 'killed 1 dangling process' now - consider only showing that for timeout failures
 - [ ] change DoneCallback and ScopeFunctions to both use bound functions

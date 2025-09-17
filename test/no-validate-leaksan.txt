@@ -186,6 +186,7 @@ test/regression/issue/012040.test.ts
 test/js/web/websocket/websocket-blob.test.ts
 test/regression/issue/14338.test.ts
 test/js/bun/util/heap-snapshot.test.ts
+test/regression/issue/02499/02499.test.ts
 
 
 # double-free/use-after-free during Zig__GlobalObject__destructOnExit
@@ -206,6 +207,7 @@ test/js/node/test/parallel/test-http-server-reject-chunked-with-content-length.j
 test/js/node/test/parallel/test-http-chunked-smuggling.js
 test/js/node/test/parallel/test-http-double-content-length.js
 test/js/node/test/parallel/test-http-blank-header.js
+test/js/node/test/parallel/test-http-server-keepalive-req-gc.js
 
 # double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
@@ -252,6 +254,8 @@ test/cli/install/bun-pm-scan.test.ts
 test/bake/dev/incremental-graph-edge-deletion.test.ts
 test/cli/update_interactive_snapshots.test.ts
 test/js/web/websocket/websocket-custom-headers.test.ts
+test/js/third_party/body-parser/express-memory-leak.test.ts
+test/js/bun/http/serve-body-leak.test.ts
 
 # double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # Zig::SourceProvider::~SourceProvider()
@@ -302,6 +306,10 @@ test/v8/v8.test.ts
 
 # double-free/use-after-free during Zig__GlobalObject__destructOnExit
 test/bake/dev/production.test.ts
+test/js/third_party/pg-gateway/pglite.test.ts
+test/js/web/websocket/websocket-subprotocol-strict.test.ts
+test/js/node/net/node-net-server.test.ts
+test/js/third_party/grpc-js/test-channel-credentials.test.ts
 
 
 vendor/elysia/test/a.test.ts

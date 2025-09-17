@@ -419,7 +419,9 @@ async function runTests() {
 
   const okResults = [];
   const flakyResults = [];
+  const flakyResults2 = [];
   const failedResults = [];
+  const failedResults2 = [];
   const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
@@ -454,9 +456,10 @@ async function runTests() {
       const { ok, stdoutPreview, error } = result;
       if (ok) {
         if (failure) {
-          flakyResults.push(title);
+          flakyResults.push(failure);
+          flakyResults2.push(title);
         } else {
-          okResults.push(title);
+          okResults.push(result);
         }
         break;
       }
@@ -473,7 +476,8 @@ async function runTests() {
 
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
-        failedResults.push(title);
+        failedResults.push(failure);
+        failedResults2.push(title);
         break;
       }
     }
@@ -834,14 +838,14 @@ async function runTests() {
 
     if (failedResults.length) {
       console.log(`${getAnsi("red")}Failing Tests:${getAnsi("reset")}`);
-      for (const testPath of failedResults) {
+      for (const testPath of failedResults2) {
         console.log(`${getAnsi("red")}- ${testPath}${getAnsi("reset")}`);
       }
     }
 
     if (flakyResults.length) {
       console.log(`${getAnsi("yellow")}Flaky Tests:${getAnsi("reset")}`);
-      for (const testPath of flakyResults) {
+      for (const testPath of flakyResults2) {
         console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
       }
     }

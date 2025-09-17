@@ -187,6 +187,7 @@ test/js/web/websocket/websocket-blob.test.ts
 test/regression/issue/14338.test.ts
 test/js/bun/util/heap-snapshot.test.ts
 test/regression/issue/02499/02499.test.ts
+test/js/node/test/parallel/test-http-server-stale-close.js
 
 
 # double-free/use-after-free during Zig__GlobalObject__destructOnExit

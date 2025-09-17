@@ -546,10 +546,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         allocator: std.mem.Allocator,
         poll_ref: Async.KeepAlive = .{},
 
-        flags: packed struct(u4) {
+        flags: packed struct(u3) {
             deinit_scheduled: bool = false,
             terminated: bool = false,
-            has_js_deinited: bool = false,
             has_handled_all_closed_promise: bool = false,
         } = .{},
 
@@ -1422,7 +1421,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn finalize(this: *ThisServer) void {
             httplog("finalize", .{});
             this.js_value.finalize();
-            this.flags.has_js_deinited = true;
             this.deinitIfWeCan();
         }
 
@@ -1455,7 +1453,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     if (this.hasActiveWebSockets()) "active" else "no",
                     this.flags.has_handled_all_closed_promise,
                     if (this.all_closed_promise.strong.has()) "has" else "no",
-                    this.flags.has_js_deinited,
+                    this.js_value == .finalized,
                 });
 
             const vm = this.globalThis.bunVM();
@@ -1505,7 +1503,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
 
                 // Only free the memory if the JS reference has been freed too
-                if (this.flags.has_js_deinited) {
+                if (this.js_value == .finalized) {
                     this.scheduleDeinit();
                 }
             }
@@ -1534,8 +1532,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn stop(this: *ThisServer, abrupt: bool) void {
-            this.js_value.downgrade();
-
+            if (this.js_value.isNotEmpty()) {
+                this.js_value.downgrade();
+            }
             if (this.config.allow_hot and this.config.id.len > 0) {
                 if (this.globalThis.bunVM().hotMap()) |hot| {
                     hot.remove(this.config.id);

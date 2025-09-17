@@ -8,13 +8,13 @@ pub const MySQLRequestQueue = @This();
 #waiting_to_prepare: bool = false,
 #is_ready_for_query: bool = true,
 
-pub inline fn canExecuteQuery(this: *@This(), connection: *MySQLConnection) bool {
+pub inline fn canExecuteQuery(this: *const @This(), connection: *const MySQLConnection) bool {
     return connection.isAbleToWrite() and
         this.#is_ready_for_query and
         this.#nonpipelinable_requests == 0 and
         this.#pipelined_requests == 0;
 }
-pub inline fn canPrepareQuery(this: *@This(), connection: *MySQLConnection) bool {
+pub inline fn canPrepareQuery(this: *const @This(), connection: *const MySQLConnection) bool {
     return connection.isAbleToWrite() and
         this.#is_ready_for_query and
         !this.#waiting_to_prepare and
@@ -169,7 +169,7 @@ pub fn add(this: *@This(), request: *JSMySQLQuery) void {
     bun.handleOom(this.#requests.writeItem(request));
 }
 
-pub fn current(this: *@This()) ?*JSMySQLQuery {
+pub inline fn current(this: *const @This()) ?*JSMySQLQuery {
     if (this.#requests.readableLength() == 0) {
         return null;
     }

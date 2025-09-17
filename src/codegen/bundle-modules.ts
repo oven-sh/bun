@@ -346,7 +346,7 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
         const inner =
           n >= nativeStartIndex
             ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
-            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, MAKE_STATIC_STRING_IMPL("${moduleName}"), MAKE_STATIC_STRING_IMPL(${fileBase}), InternalModuleRegistryConstants::${idToEnumName(id)}Code, MAKE_STATIC_STRING_IMPL("${urlString}"));`;
+            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "${urlString}"_s);`;
         return `case Field::${idToEnumName(id)}: {
       ${inner}
     }`;

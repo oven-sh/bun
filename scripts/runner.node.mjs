@@ -454,9 +454,9 @@ async function runTests() {
       const { ok, stdoutPreview, error } = result;
       if (ok) {
         if (failure) {
-          flakyResults.push(failure);
+          flakyResults.push(title);
         } else {
-          okResults.push(result);
+          okResults.push(title);
         }
         break;
       }
@@ -473,7 +473,7 @@ async function runTests() {
 
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
-        failedResults.push(failure);
+        failedResults.push(title);
         break;
       }
     }
@@ -834,14 +834,14 @@ async function runTests() {
 
     if (failedResults.length) {
       console.log(`${getAnsi("red")}Failing Tests:${getAnsi("reset")}`);
-      for (const { testPath } of failedResults) {
+      for (const testPath of failedResults) {
         console.log(`${getAnsi("red")}- ${testPath}${getAnsi("reset")}`);
       }
     }
 
     if (flakyResults.length) {
       console.log(`${getAnsi("yellow")}Flaky Tests:${getAnsi("reset")}`);
-      for (const { testPath } of flakyResults) {
+      for (const testPath of flakyResults) {
         console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
       }
     }
@@ -1316,7 +1316,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.BUN_JSC_validateExceptionChecks = "1";
     env.BUN_JSC_dumpSimulatedThrows = "1";
   }
-  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
     // prettier-ignore

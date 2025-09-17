@@ -348,7 +348,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
         wrapped,
         defaultPropertyAttributes,
         obj.supportsObjectCreate || false,
-        !!obj.customBasePrototype,
+        !!obj.forBind,
       ),
     );
   }
@@ -1815,7 +1815,7 @@ ${
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.customBasePrototype ?? "globalObject->objectPrototype()"});
+    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.forBind ? "globalObject->functionPrototype()" : "globalObject->objectPrototype()"});
     structure->setMayBePrototype(true);
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }

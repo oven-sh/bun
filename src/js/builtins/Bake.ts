@@ -122,12 +122,12 @@ export async function renderRoutesForProdStatic(
   };
 
   type ManifestEntry = SSRManifest | SSGManifest;
-  
+
   type Manifest = {
-    version: number;
+    version: string;
     entries: ManifestEntry[];
   };
-  
+
   let entries: ManifestEntry[] = [];
 
   await Promise.all(
@@ -145,8 +145,9 @@ export async function renderRoutesForProdStatic(
           mode: "ssr",
           route_index: i,
           client_entrypoint: clientEntryUrl[type] || "",
-          modules: allServerFiles.filter((_, index) => files[i].includes(index))
-            .map(path => path.startsWith("bake:/") ? path.slice(6) : path), // Remove "bake:/" prefix
+          modules: allServerFiles
+            .filter((_, index) => files[i].includes(index))
+            .map(path => (path.startsWith("bake:/") ? path.slice(6) : path)), // Remove "bake:/" prefix
           styles: styles[i],
         };
         entries.push(ssrEntry);
@@ -162,13 +163,14 @@ export async function renderRoutesForProdStatic(
           pageModule,
           layouts,
         });
-        
+
         // Get the bundled output file path for this route
-        const serverModule = allServerFiles.filter((_, index) => files[i].includes(index))
-          .map(path => path.startsWith("bake:/") ? path.slice(6) : path)[0];
-        
+        const serverModule = allServerFiles
+          .filter((_, index) => files[i].includes(index))
+          .map(path => (path.startsWith("bake:/") ? path.slice(6) : path))[0];
+
         // Create an entry for each param combination
-        const addSsgEntry = (params) => {
+        const addSsgEntry = params => {
           const ssgEntry: SSGManifest = {
             mode: "ssg",
             route_index: i,
@@ -178,7 +180,7 @@ export async function renderRoutesForProdStatic(
           };
           entries.push(ssgEntry);
         };
-        
+
         let result;
         if (paramGetter[Symbol.asyncIterator] != undefined) {
           for await (const params of paramGetter) {
@@ -206,9 +208,10 @@ export async function renderRoutesForProdStatic(
         }
       } else {
         // No params, single SSG entry
-        const serverModule = allServerFiles.filter((_, index) => files[i].includes(index))
-          .map(path => path.startsWith("bake:/") ? path.slice(6) : path)[0];
-        
+        const serverModule = allServerFiles
+          .filter((_, index) => files[i].includes(index))
+          .map(path => (path.startsWith("bake:/") ? path.slice(6) : path))[0];
+
         const ssgEntry: SSGManifest = {
           mode: "ssg",
           route_index: i,
@@ -216,16 +219,16 @@ export async function renderRoutesForProdStatic(
           styles: styles[i],
         };
         entries.push(ssgEntry);
-        
+
         await doGenerateRoute(type, noClient, i, layouts, pageModule, null);
       }
     }),
   );
 
   const manifest: Manifest = {
-    version: 1,
+    version: "0.0.1",
     entries: entries,
   };
-  
+
   return manifest;
 }

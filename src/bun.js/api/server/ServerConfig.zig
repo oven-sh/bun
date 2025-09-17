@@ -62,6 +62,7 @@ negative_routes: std.ArrayList([:0]const u8) = std.ArrayList([:0]const u8).init(
 user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteBuilder).init(bun.default_allocator),
 
 bake: ?bun.bake.UserOptions = null,
+bake_manifest: ?*bun.bake.Manifest = null,
 
 pub const DevelopmentOption = enum {
     development,
@@ -828,7 +829,28 @@ pub fn fromJS(
                 }
 
                 if (args.development == .production) {
-                    return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
+                    const fd = switch (bun.sys.open("dist/manifest.json", bun.O.RDONLY, 0)) {
+                        .result => |fd| fd,
+                        .err => |err| {
+                            const path: []const u8 = "dist/manifest.json";
+                            const errjs = err.withPath(path).toJS(global);
+                            return global.throwValue(errjs);
+                        },
+                    };
+                    defer fd.close();
+                    var log = bun.logger.Log.init(bun.default_allocator);
+                    defer log.deinit();
+                    var manifest = bun.bake.Manifest{
+                        .arena = std.heap.ArenaAllocator.init(bun.default_allocator),
+                    };
+                    errdefer manifest.deinit();
+                    manifest.fromFD(fd, &log) catch |err| {
+                        if (err == error.InvalidManifest) {
+                            return global.throwValue(try log.toJS(global, bun.default_allocator, "Failed to parse manifest.json"));
+                        }
+                        return global.throwError(err, "Failed to parse manifest.json");
+                    };
+                    args.bake_manifest = try manifest.allocate();
                 }
 
                 args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);

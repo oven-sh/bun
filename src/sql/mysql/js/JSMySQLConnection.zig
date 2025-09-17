@@ -661,6 +661,7 @@ fn fail(this: *@This(), message: []const u8, err: AnyMySQLError.Error) void {
     this.failWithJSValue(instance);
 }
 pub fn onConnectionEstabilished(this: *@This()) void {
+    defer this.updateReferenceType();
     if (this.#vm.isShuttingDown()) return;
     const on_connect = this.consumeOnConnectCallback(this.#globalObject) orelse return;
     on_connect.ensureStillAlive();

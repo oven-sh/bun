@@ -1636,24 +1636,57 @@ pub const PackageManifest = struct {
 
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
-    /// Parse date string to Unix seconds using WTF::parseDate
-    /// This handles various date formats that NPM might send
+    /// Parse ISO8601 date string to Unix seconds
+    /// NPM sends dates like "2022-06-19T02:47:09.161Z"
     fn parseDateToUnixSeconds(timestamp: []const u8) !u32 {
-        // Use WTF::parseDate which returns milliseconds since epoch
-        const milliseconds = bun.jsc.wtf.parseDate(timestamp);
+        // Use simpler parsing that works with npm's ISO8601 format
+        // Expected format: "YYYY-MM-DDTHH:mm:ss[.sss]Z"
+
+        if (timestamp.len < 19) return error.InvalidTimestamp;
+
+        // Parse components
+        const year = std.fmt.parseInt(u32, timestamp[0..4], 10) catch return error.InvalidTimestamp;
+        const month = std.fmt.parseInt(u32, timestamp[5..7], 10) catch return error.InvalidTimestamp;
+        const day = std.fmt.parseInt(u32, timestamp[8..10], 10) catch return error.InvalidTimestamp;
+        const hour = std.fmt.parseInt(u32, timestamp[11..13], 10) catch return error.InvalidTimestamp;
+        const minute = std.fmt.parseInt(u32, timestamp[14..16], 10) catch return error.InvalidTimestamp;
+        const second = std.fmt.parseInt(u32, timestamp[17..19], 10) catch return error.InvalidTimestamp;
+
+        // Calculate days since epoch (1970-01-01)
+        var total_days: u32 = 0;
+
+        // Add days for complete years
+        var y: u32 = 1970;
+        while (y < year) : (y += 1) {
+            if ((y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)) {
+                total_days += 366; // leap year
+            } else {
+                total_days += 365;
+            }
+        }
+
+        // Add days for complete months in the current year
+        const days_per_month = [_]u32{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+        var m: u32 = 1;
+        while (m < month) : (m += 1) {
+            total_days += days_per_month[m - 1];
+            // Add leap day if February in a leap year
+            if (m == 2 and ((year % 4 == 0 and year % 100 != 0) or (year % 400 == 0))) {
+                total_days += 1;
+            }
+        }
+
+        // Add remaining days
+        total_days += day - 1;
+
+        // Convert to seconds
+        const total_seconds = total_days * 86400 + hour * 3600 + minute * 60 + second;
 
         if (bun.Environment.isDebug) {
-            bun.Output.debugWarn("WTF.parseDate({s}) returned: {d}", .{ timestamp, milliseconds });
+            bun.Output.debugWarn("Parsed date {s} to unix seconds: {d}", .{ timestamp, total_seconds });
         }
 
-        // Check if the parsing failed (returns NaN)
-        if (std.math.isNan(milliseconds)) {
-            return error.InvalidTimestamp;
-        }
-
-        // Convert milliseconds to seconds
-        const seconds = @as(u32, @truncate(@as(u64, @intFromFloat(milliseconds / 1000.0))));
-        return seconds;
+        return @as(u32, @intCast(total_seconds));
     }
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)

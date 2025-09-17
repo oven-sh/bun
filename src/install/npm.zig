@@ -1636,45 +1636,24 @@ pub const PackageManifest = struct {
 
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
-    /// Parse ISO8601 timestamp to Unix seconds
-    /// NPM always sends exactly: "2010-12-29T19:38:25.450Z" format
-    fn parseISO8601ToUnixSeconds(timestamp: []const u8) !u32 {
-        // NPM format is always exactly 24 chars: "YYYY-MM-DDTHH:MM:SS.sssZ"
-        // Reject anything else for security
-        if (timestamp.len != 24) return error.InvalidTimestamp;
-        if (timestamp[10] != 'T') return error.InvalidTimestamp;
-        if (timestamp[19] != '.') return error.InvalidTimestamp;
-        if (timestamp[23] != 'Z') return error.InvalidTimestamp;
+    /// Parse date string to Unix seconds using WTF::parseDate
+    /// This handles various date formats that NPM might send
+    fn parseDateToUnixSeconds(timestamp: []const u8) !u32 {
+        // Use WTF::parseDate which returns milliseconds since epoch
+        const milliseconds = bun.jsc.wtf.parseDate(timestamp);
 
-        // Parse year, month, day, hour, minute, second
-        const year = std.fmt.parseInt(u32, timestamp[0..4], 10) catch return error.InvalidTimestamp;
-        const month = std.fmt.parseInt(u32, timestamp[5..7], 10) catch return error.InvalidTimestamp;
-        const day = std.fmt.parseInt(u32, timestamp[8..10], 10) catch return error.InvalidTimestamp;
-        const hour = std.fmt.parseInt(u32, timestamp[11..13], 10) catch return error.InvalidTimestamp;
-        const minute = std.fmt.parseInt(u32, timestamp[14..16], 10) catch return error.InvalidTimestamp;
-        const second = std.fmt.parseInt(u32, timestamp[17..19], 10) catch return error.InvalidTimestamp;
-
-        // Simple conversion to Unix timestamp (seconds since 1970-01-01)
-        // This is approximate but good enough for our use case
-        // Days since epoch = (year - 1970) * 365 + leap days + days in months + day
-        const years_since_1970 = year -| 1970;
-        const leap_years = (years_since_1970 + 1) / 4 - (years_since_1970 + 69) / 100 + (years_since_1970 + 369) / 400;
-
-        var days_in_months: u32 = 0;
-        const days_per_month = [_]u32{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-        var m: u32 = 1;
-        while (m < month) : (m += 1) {
-            days_in_months += days_per_month[m - 1];
-        }
-        // Add leap day if applicable
-        if (month > 2 and ((year % 4 == 0 and year % 100 != 0) or year % 400 == 0)) {
-            days_in_months += 1;
+        if (bun.Environment.isDebug) {
+            bun.Output.debugWarn("WTF.parseDate({s}) returned: {d}", .{ timestamp, milliseconds });
         }
 
-        const days_since_epoch = years_since_1970 * 365 + leap_years + days_in_months + day - 1;
-        const seconds_since_epoch = days_since_epoch * 86400 + hour * 3600 + minute * 60 + second;
+        // Check if the parsing failed (returns NaN)
+        if (std.math.isNan(milliseconds)) {
+            return error.InvalidTimestamp;
+        }
 
-        return @as(u32, @truncate(seconds_since_epoch));
+        // Convert milliseconds to seconds
+        const seconds = @as(u32, @truncate(@as(u64, @intFromFloat(milliseconds / 1000.0))));
+        return seconds;
     }
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
@@ -1733,6 +1712,34 @@ pub const PackageManifest = struct {
         // Parse time field to get publish times for each version
         var publish_times = std.StringHashMapUnmanaged(u32){};
         defer publish_times.deinit(allocator);
+
+        // As a fallback when the time field is not present (abbreviated metadata),
+        // parse the package-level modified timestamp
+        var package_modified_time: u32 = 0;
+        if (json.asProperty("modified")) |modified_field| {
+            if (bun.Environment.isDebug) {
+                bun.Output.debugWarn("Found modified field", .{});
+            }
+            if (modified_field.expr.asString(allocator)) |modified_str| {
+                if (bun.Environment.isDebug) {
+                    bun.Output.debugWarn("Modified string: {s}", .{modified_str});
+                }
+                package_modified_time = parseDateToUnixSeconds(modified_str) catch blk: {
+                    if (bun.Environment.isDebug) {
+                        bun.Output.debugWarn("Failed to parse modified time", .{});
+                    }
+                    break :blk 0;
+                };
+                if (bun.Environment.isDebug and package_modified_time > 0) {
+                    bun.Output.debugWarn("Package modified time: {d}", .{package_modified_time});
+                }
+            }
+        } else {
+            if (bun.Environment.isDebug) {
+                bun.Output.debugWarn("No modified field found", .{});
+            }
+        }
+
         if (json.asProperty("time")) |time_field| {
             if (time_field.expr.data == .e_object) {
                 const time_entries = time_field.expr.data.e_object.properties.slice();
@@ -1745,7 +1752,7 @@ pub const PackageManifest = struct {
                     const time_str = entry.value.?.asString(allocator) orelse continue;
                     // Parse ISO8601 timestamp to unix timestamp
                     // Format is: "2010-12-29T19:38:25.450Z"
-                    const unix_timestamp = parseISO8601ToUnixSeconds(time_str) catch {
+                    const unix_timestamp = parseDateToUnixSeconds(time_str) catch {
                         // Invalid timestamp = treat as brand new (maximum restriction)
                         // This is the safest approach for security
                         publish_times.putAssumeCapacityNoClobber(version_key, std.math.maxInt(u32));
@@ -1759,7 +1766,7 @@ pub const PackageManifest = struct {
             }
         } else {
             if (bun.Environment.isDebug) {
-                bun.Output.debugWarn("No time field in npm response", .{});
+                bun.Output.debugWarn("No time field in npm response, will use package modified time as approximation", .{});
             }
         }
 
@@ -2057,6 +2064,13 @@ pub const PackageManifest = struct {
                         package_version.publish_time = publish_time;
                         if (bun.Environment.isDebug) {
                             bun.Output.debugWarn("Set publish_time for {s}: {d}", .{ version_name, publish_time });
+                        }
+                    } else if (package_modified_time > 0) {
+                        // Fallback: Use package modified time as approximation for all versions
+                        // This is conservative - if ANY version was published recently, we treat ALL as recent
+                        package_version.publish_time = package_modified_time;
+                        if (bun.Environment.isDebug) {
+                            bun.Output.debugWarn("Using package modified time for {s}: {d}", .{ version_name, package_modified_time });
                         }
                     } else {
                         if (bun.Environment.isDebug) {

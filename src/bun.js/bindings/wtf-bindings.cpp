@@ -4,6 +4,7 @@
 #include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
+#include <wtf/DateMath.h>
 #include <atomic>
 
 #include "wtf/SIMDUTF.h"
@@ -173,6 +174,13 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
 extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
 {
     return WTF::parseDouble({ string, length }, *position);
+}
+
+extern "C" double WTF__parseDate(const LChar* string, size_t length)
+{
+    // WTF::parseDate expects a std::span<const LChar>
+    double result = WTF::parseDate(std::span<const LChar>(string, length));
+    return result;
 }
 
 extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,

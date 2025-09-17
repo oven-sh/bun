@@ -1,5 +1,6 @@
 pub const WTF = struct {
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
+    extern fn WTF__parseDate(bytes: [*]const u8, length: usize) f64;
 
     extern fn WTF__releaseFastMallocFreeMemoryForThisThread() void;
 
@@ -22,6 +23,17 @@ pub const WTF = struct {
         return res;
     }
 
+    /// Parse a date string and return milliseconds since epoch
+    /// Returns NaN if the date cannot be parsed
+    pub fn parseDate(buf: []const u8) f64 {
+        jsc.markBinding(@src());
+
+        if (buf.len == 0)
+            return std.math.nan(f64);
+
+        return WTF__parseDate(buf.ptr, buf.len);
+    }
+
     extern fn Bun__writeHTTPDate(buffer: *[32]u8, length: usize, timestampMs: u64) c_int;
 
     pub fn writeHTTPDate(buffer: *[32]u8, timestampMs: u64) []u8 {
@@ -42,3 +54,4 @@ pub const WTF = struct {
 
 const bun = @import("bun");
 const jsc = bun.jsc;
+const std = @import("std");

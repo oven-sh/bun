@@ -2,6 +2,8 @@ import { which } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { isLinux, tempDirWithFiles } from "harness";
+import * as dockerCompose from "../../../docker/index.ts";
+
 const dockerCLI = which("docker") as string;
 function isDockerEnabled(): boolean {
   if (!dockerCLI) {
@@ -21,7 +23,6 @@ function isDockerEnabled(): boolean {
   }
 }
 
-let docker: child_process.ChildProcess | null = null;
 let url: string = "";
 const agent = encodeURIComponent("bun/1.0.0");
 async function load() {
@@ -29,73 +30,37 @@ async function load() {
     url = process.env.BUN_AUTOBAHN_URL;
     return true;
   }
-  url = "ws://localhost:9002";
 
-  const { promise, resolve } = Promise.withResolvers();
-  // we can exclude cases by adding them to the exclude-cases array
-  // "exclude-cases": [
-  //   "9.*"
-  // ],
-  const CWD = tempDirWithFiles("autobahn", {
-    "fuzzingserver.json": `{
-        "url": "ws://127.0.0.1:9002",
-        "outdir": "./",
-        "cases": ["*"],
-        "exclude-agent-cases": {}
-      }`,
-    "index.json": "{}",
-  });
+  // Use docker-compose to start Autobahn
+  const autobahnInfo = await dockerCompose.ensure("autobahn");
 
-  docker = child_process.spawn(
-    dockerCLI,
-    [
-      "run",
-      "-t",
-      "--rm",
-      "-v",
-      `${CWD}:/config`,
-      "-v",
-      `${CWD}:/reports`,
-      "-p",
-      "9002:9002",
-      "--platform",
-      "linux/amd64",
-      "--name",
-      "fuzzingserver",
-      "crossbario/autobahn-testsuite",
-    ],
-    {
-      cwd: CWD,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  // Autobahn expects port 9002 in the Host header, but we might be on a different port
+  const actualPort = autobahnInfo.ports[9002];
+  url = `ws://${autobahnInfo.host}:${actualPort}`;
 
-  let out = "";
-  let pending = true;
-  docker.stdout?.on("data", data => {
-    out += data;
-    if (pending) {
-      if (out.indexOf("Autobahn WebSocket") !== -1) {
-        pending = false;
-        resolve(true);
-      }
-    }
-  });
+  // If we're on a different port, we'll need to pass a Host header
+  if (actualPort !== 9002) {
+    // Store for later use in WebSocket connections
+    process.env.BUN_AUTOBAHN_HOST_HEADER = `${autobahnInfo.host}:9002`;
+  }
 
-  docker.on("close", () => {
-    if (pending) {
-      pending = false;
-      resolve(false);
-    }
-  });
-  return await promise;
+  // Wait for service to be ready - Autobahn takes a bit to start up
+  // We can't use waitTcp because Autobahn doesn't accept plain TCP connections
+  await new Promise(resolve => setTimeout(resolve, 3000));
+
+  return true;
 }
 
 if (isDockerEnabled() && (await load())) {
+  // Prepare WebSocket options with Host header if needed
+  const wsOptions = process.env.BUN_AUTOBAHN_HOST_HEADER
+    ? { headers: { Host: process.env.BUN_AUTOBAHN_HOST_HEADER } }
+    : undefined;
+
   describe("autobahn", async () => {
     function getCaseStatus(testID: number) {
       return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${url}/getCaseStatus?case=${testID}&agent=${agent}`);
+        const socket = new WebSocket(`${url}/getCaseStatus?case=${testID}&agent=${agent}`, wsOptions);
         socket.binaryType = "arraybuffer";
 
         socket.addEventListener("message", event => {
@@ -109,7 +74,7 @@ if (isDockerEnabled() && (await load())) {
 
     function getTestCaseCount() {
       return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${url}/getCaseCount`);
+        const socket = new WebSocket(`${url}/getCaseCount`, wsOptions);
         let count: number | null = null;
         socket.addEventListener("message", event => {
           count = parseInt(event.data as string, 10);
@@ -125,7 +90,7 @@ if (isDockerEnabled() && (await load())) {
 
     function getCaseInfo(testID: number) {
       return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${url}/getCaseInfo?case=${testID}`);
+        const socket = new WebSocket(`${url}/getCaseInfo?case=${testID}`, wsOptions);
         socket.binaryType = "arraybuffer";
 
         socket.addEventListener("message", event => {
@@ -139,7 +104,7 @@ if (isDockerEnabled() && (await load())) {
 
     function runTestCase(testID: number) {
       return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${url}/runCase?case=${testID}&agent=${agent}`);
+        const socket = new WebSocket(`${url}/runCase?case=${testID}&agent=${agent}`, wsOptions);
         socket.binaryType = "arraybuffer";
 
         socket.addEventListener("message", event => {
@@ -169,7 +134,7 @@ if (isDockerEnabled() && (await load())) {
     }
 
     afterAll(() => {
-      docker?.kill();
+      // Container managed by docker-compose, no need to kill
     });
   });
 } else {

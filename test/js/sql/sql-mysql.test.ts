@@ -10,29 +10,15 @@ const dir = tempDirWithFiles("sql-test", {
 function rel(filename: string) {
   return path.join(dir, filename);
 }
-const docker = isDockerEnabled() ? dockerExe() : null;
-if (docker) {
-  const dockerfilePath = path.join(import.meta.dir, "mysql-tls", ".");
-  console.log("Building Docker image...");
-  const dockerProcess = Bun.spawn([docker, "build", "-t", "mysql-tls", dockerfilePath], {
-    cwd: path.join(import.meta.dir, "mysql-tls"),
-  });
-  expect(await dockerProcess.exited).toBe(0);
-  console.log("Docker image built");
+if (isDockerEnabled()) {
   const images = [
     {
       name: "MySQL with TLS",
-      image: "mysql-tls",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
+      image: "mysql_tls",
     },
     {
       name: "MySQL",
-      image: "mysql:8",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
+      image: "mysql_plain",
     },
   ];
 
@@ -43,9 +29,10 @@ if (docker) {
         image: image.image,
         env: image.env,
       },
-      (port: number) => {
+      container => {
+        const password = image.image === "mysql_plain" ? "" : "bun";
         const options: Bun.SQL.Options = {
-          url: `mysql://root:bun@localhost:${port}`,
+          url: `mysql://root:${password}@${container.host}:${container.port}/bun_sql_test`,
           max: 1,
           tls:
             image.name === "MySQL with TLS"

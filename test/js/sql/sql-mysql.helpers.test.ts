@@ -5,14 +5,13 @@ import { describeWithContainer } from "harness";
 describeWithContainer(
   "mysql",
   {
-    image: "mysql:8",
-    env: {
-      MYSQL_ROOT_PASSWORD: "bun",
-    },
+    image: "mysql_plain",
+    env: {},
+    args: [],
   },
-  (port: number) => {
+  container => {
     const options = {
-      url: `mysql://root:bun@localhost:${port}`,
+      url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
       max: 1,
       bigint: true,
     };

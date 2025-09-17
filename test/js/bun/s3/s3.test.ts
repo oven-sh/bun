@@ -8,6 +8,9 @@ import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
+// Import docker-compose helper
+import * as dockerCompose from "../../../docker/index.ts";
+
 const dockerCLI = which("docker") as string;
 function isDockerEnabled(): boolean {
   if (!dockerCLI) {
@@ -36,48 +39,26 @@ const allCredentials: S3Credentials[] = [
 ];
 
 if (isDockerEnabled()) {
-  const result = child_process.spawnSync(
-    "docker",
-    [
-      "run",
-      "-d",
-      "--name",
-      "minio",
-      "-p",
-      "9000:9000",
-      "-p",
-      "9001:9001",
-      "-e",
-      "MINIO_ROOT_USER=minioadmin",
-      "-e",
-      "MINIO_ROOT_PASSWORD=minioadmin",
-      "--mount",
-      "type=tmpfs,destination=/data",
-      "minio/minio",
-      "server",
-      "--console-address",
-      ":9001",
-      "/data",
-    ],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  // Use docker-compose to start MinIO
+  const minioInfo = await dockerCompose.ensure("minio");
 
-  if (result.error) {
-    if (!result.error.message.includes('The container name "/minio" is already in use by container'))
-      throw result.error;
+  // Get container name for docker exec
+  const containerName = child_process
+    .execSync(
+      `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
+      { encoding: "utf-8" },
+    )
+    .trim();
+
+  if (containerName) {
+    // Create a bucket using mc inside the container
+    child_process.spawnSync(dockerCLI, [`exec`, containerName, `mc`, `mb`, `data/buntest`], {
+      stdio: "ignore",
+    });
   }
-  // wait for minio to be ready
-  await Bun.sleep(1_000);
-
-  /// create a bucket
-  child_process.spawnSync(dockerCLI, [`exec`, `minio`, `mc`, `mb`, `data/buntest`], {
-    stdio: "ignore",
-  });
 
   minioCredentials = {
-    endpoint: "http://localhost:9000", // MinIO endpoint
+    endpoint: `http://${minioInfo.host}:${minioInfo.ports[9000]}`, // MinIO endpoint from docker-compose
     accessKeyId: "minioadmin",
     secretAccessKey: "minioadmin",
     bucket: "buntest",

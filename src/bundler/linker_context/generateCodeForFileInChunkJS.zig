@@ -142,7 +142,6 @@ pub fn generateCodeForFileInChunkJS(
             part_range.source_index.get(),
             stmts,
             parts[namespace_export_part_index].stmts,
-            &parts[namespace_export_part_index].symbol_uses,
             chunk,
             temp_allocator,
             flags.wrap,
@@ -165,7 +164,7 @@ pub fn generateCodeForFileInChunkJS(
     }
 
     // Add all other parts in this chunk
-    for (parts, 0..) |*part, index_| {
+    for (parts, 0..) |part, index_| {
         const index = part_range.part_index_begin + @as(u32, @truncate(index_));
         if (!part.is_live) {
             // Skip the part if it's not in this chunk
@@ -185,7 +184,6 @@ pub fn generateCodeForFileInChunkJS(
 
         var single_stmts_list = [1]Stmt{undefined};
         var part_stmts = part.stmts;
-        const part_symbol_uses = &part.symbol_uses;
 
         // If this could be a JSON or TOML file that exports a top-level object literal, go
         // over the non-default top-level properties that ended up being imported
@@ -278,7 +276,6 @@ pub fn generateCodeForFileInChunkJS(
             part_range.source_index.get(),
             stmts,
             part_stmts,
-            part_symbol_uses,
             chunk,
             temp_allocator,
             flags.wrap,

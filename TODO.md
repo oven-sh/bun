@@ -664,6 +664,7 @@ test 2
 
 # Follow-up:
 
+- [ ] Remove finalizer on ScopeFunctions.zig by storing the data in 3 jsvalues passed in bind rather than using a custom class. Class generator can pass the this value into the function and it can extract the data from bind.
 - [ ] concurrent limit
 - [ ] `test.failing` should have its own style in the same way `test.todo` passing marks as 'todo' insetead of 'passing'
 - [ ] remove all instances of bun.jsc.Jest.Jest.current

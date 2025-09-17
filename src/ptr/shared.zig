@@ -239,8 +239,10 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
             return .fromValuePtr(self.#pointer);
         }
 
-        pub fn unsafeGetStrongFromPointer(pointer: Pointer) Self {
-            return .{ .#pointer = pointer };
+        /// Assumes that the pointer is valid and was created by Shared.new().
+        pub fn cloneFromRawUnsafe(pointer: Pointer) Self {
+            var raw: Self = .{ .#pointer = pointer };
+            return raw.clone();
         }
     };
 }
@@ -293,7 +295,7 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
         pub fn deinit(self: *Self) void {
             defer self.* = undefined;
             const data = if (comptime info.isOptional())
-                self.getData() orelse return
+                self.getData() orelse return .initNull()
             else
                 self.getData();
             data.decrementWeak();

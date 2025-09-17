@@ -1104,6 +1104,19 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 
   updateHasBody(response, statusCode);
+
+  // RFC 2616: 204, 304, and 1xx responses MUST NOT include a message-body
+  // and therefore must not include content-related headers
+  if (!response._hasBody) {
+    response.removeHeader("content-length");
+    response.removeHeader("content-encoding");
+    response.removeHeader("content-language");
+    response.removeHeader("content-location");
+    response.removeHeader("content-md5");
+    response.removeHeader("content-range");
+    response.removeHeader("content-type");
+    response.removeHeader("transfer-encoding");
+  }
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
@@ -1539,6 +1552,22 @@ ServerResponse.prototype.flushHeaders = function () {
   if (handle) {
     if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+
+      // Remove content-related headers for responses that must not have a body
+      const statusCode = this.statusCode;
+      if (statusCode === 204 || statusCode === 304 || (statusCode >= 100 && statusCode <= 199)) {
+        const headers = this[headersSymbol];
+        if (headers) {
+          headers.delete("content-length");
+          headers.delete("content-encoding");
+          headers.delete("content-language");
+          headers.delete("content-location");
+          headers.delete("content-md5");
+          headers.delete("content-range");
+          headers.delete("content-type");
+          headers.delete("transfer-encoding");
+        }
+      }
 
       handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
     }

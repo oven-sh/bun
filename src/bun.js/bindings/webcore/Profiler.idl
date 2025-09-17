@@ -1,0 +1,10 @@
+[
+    Exposed=Window,
+    EnabledAtRuntime=ProfilerEnabled
+] interface Profiler : EventTarget {
+    readonly attribute DOMHighResTimeStamp sampleInterval;
+    readonly attribute boolean stopped;
+
+    [CallWith=CurrentScriptExecutionContext] constructor(ProfilerInitOptions options);
+    Promise<ProfilerTrace> stop();
+};

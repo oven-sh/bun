@@ -1,0 +1,4 @@
+dictionary ProfilerInitOptions {
+  required DOMHighResTimeStamp sampleInterval;
+  required unsigned long maxBufferSize;
+};

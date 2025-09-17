@@ -111,6 +111,7 @@
 #include "JSPerformanceMeasure.h"
 #include "JSPerformanceObserver.h"
 #include "JSPerformanceObserverEntryList.h"
+#include "JSProfiler.h"
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamBYOBReader.h"
@@ -1499,6 +1500,7 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserverEntryList)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceResourceTiming)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceServerTiming)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceTiming)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Profiler);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableByteStreamController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamBYOBReader)

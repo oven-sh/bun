@@ -1,0 +1,25 @@
+typedef DOMString ProfilerResource;
+
+dictionary ProfilerSample {
+  required DOMHighResTimeStamp timestamp;
+  unsigned long long stackId;
+};
+
+dictionary ProfilerFrame {
+  required DOMString name;
+  unsigned long long resourceId;
+  unsigned long long line;
+  unsigned long long column;
+};
+
+dictionary ProfilerStack {
+  unsigned long long parentId;
+  required unsigned long long frameId;
+};
+
+dictionary ProfilerTrace {
+  required sequence<ProfilerResource> resources;
+  required sequence<ProfilerFrame> frames;
+  required sequence<ProfilerStack> stacks;
+  required sequence<ProfilerSample> samples;
+};

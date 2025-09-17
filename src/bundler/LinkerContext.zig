@@ -1080,7 +1080,7 @@ pub const LinkerContext = struct {
                 this.sync_dependencies_end += 1;
             }
 
-            pub fn appendAsyncDependency(this: *InsideWrapperPrefix, call_expr: Expr, promise_all_ref: Ref) OOM!void {
+            pub fn appendAsyncDependency(this: *InsideWrapperPrefix, call_expr: Expr, c: *LinkerContext, part_symbol_uses: *Part.SymbolUseMap) OOM!void {
                 if (!this.has_async_dependency) {
                     this.has_async_dependency = true;
                     try this.stmts.insert(
@@ -1094,13 +1094,21 @@ pub const LinkerContext = struct {
                 const first_dep_call_expr = this.stmts.items[this.sync_dependencies_end].data.s_expr.value.data.e_await.value;
                 const call = first_dep_call_expr.data.e_call;
 
-                if (call.target.data.e_identifier.ref.eql(promise_all_ref)) {
+                if (call.target.data.e_identifier.ref.eql(c.promise_all_runtime_ref)) {
                     // `await __promiseAll` already in place, append to the array argument
                     try call.args.at(0).data.e_array.items.append(this.allocator, call_expr);
                 } else {
                     // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
 
-                    const promise_all = Expr.init(E.Identifier, .{ .ref = promise_all_ref }, .Empty);
+                    const entry = try part_symbol_uses.getOrPut(c.graph.allocator, c.promise_all_runtime_ref);
+
+                    if (entry.found_existing) {
+                        entry.value_ptr.count_estimate += 1;
+                    } else {
+                        entry.value_ptr.* = .{ .count_estimate = 1 };
+                    }
+
+                    const promise_all = Expr.init(E.Identifier, .{ .ref = c.promise_all_runtime_ref }, .Empty);
 
                     var items: BabyList(Expr) = try .initCapacity(this.allocator, 2);
                     items.appendSliceAssumeCapacity(&.{ first_dep_call_expr, call_expr });
@@ -1177,6 +1185,7 @@ pub const LinkerContext = struct {
         import_record_index: u32,
         alloc: std.mem.Allocator,
         ast: *const JSAst,
+        part_symbol_uses: *js_ast.Part.SymbolUseMap,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
         // Is this an external import?
@@ -1270,7 +1279,7 @@ pub const LinkerContext = struct {
                 }, loc);
 
                 if (other_flags.is_async_or_has_async_dependency) {
-                    try stmts.inside_wrapper_prefix.appendAsyncDependency(init_call, c.promise_all_runtime_ref);
+                    try stmts.inside_wrapper_prefix.appendAsyncDependency(init_call, c, part_symbol_uses);
                 } else {
                     try stmts.inside_wrapper_prefix.appendSyncDependency(init_call);
                 }

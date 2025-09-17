@@ -28,6 +28,7 @@ pub fn convertStmtsForChunk(
     source_index: u32,
     stmts: *StmtList,
     part_stmts: []const js_ast.Stmt,
+    part_symbol_uses: *js_ast.Part.SymbolUseMap,
     chunk: *Chunk,
     allocator: std.mem.Allocator,
     wrap: WrapKind,
@@ -81,6 +82,7 @@ pub fn convertStmtsForChunk(
                         s.import_record_index,
                         allocator,
                         ast,
+                        part_symbol_uses,
                     )) {
                         continue;
                     }
@@ -101,6 +103,7 @@ pub fn convertStmtsForChunk(
                             s.import_record_index,
                             allocator,
                             ast,
+                            part_symbol_uses,
                         )) {
                             continue;
                         }
@@ -296,6 +299,7 @@ pub fn convertStmtsForChunk(
                         s.import_record_index,
                         allocator,
                         ast,
+                        part_symbol_uses,
                     )) {
                         continue;
                     }

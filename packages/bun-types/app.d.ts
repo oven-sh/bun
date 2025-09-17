@@ -370,10 +370,10 @@ declare module "bun:app" {
      */
     | {
         /**
-         * Route pattern can include `:param` for parameters, '*' for
-         * catch-all, and '*?' for optional catch-all. Parameters must take
-         * the full component of a path segment. Parameters cannot have
-         * constraints at this moment.
+         * Route pattern can include `:param` for parameters, '*' for catch-all,
+         * and '*?' for optional catch-all. Parameters must take the full
+         * component of a path segment. Parameters cannot have constraints at
+         * this moment.
          */
         pattern: string;
         type: "route" | "layout" | "extra";
@@ -504,7 +504,13 @@ declare module "bun:app" {
      *       route = <Layout>{route}</Layout>;
      *     }
      */
-    readonly layouts: ReadonlyArray<any>;
+    readonly layouts: ReadonlyArray<{
+      default: import("react").JSXElementConstructor<
+        import("react").PropsWithChildren<{
+          params: Record<string, string | string[]> | null;
+        }>
+      >;
+    }>;
 
     /**
      * Received route params. `null` if the route does not take params
@@ -534,8 +540,8 @@ declare module "bun:app" {
    * is not safe to mutate it at all.
    */
   interface ParamsMetadata {
-    readonly pageModule: any;
-    readonly layouts: ReadonlyArray<any>;
+    readonly pageModule: ServerEntryPoint;
+    readonly layouts: ReadonlyArray<{ default: import("react").JSXElementConstructor<unknown> }>;
   }
 }
 

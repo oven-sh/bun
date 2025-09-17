@@ -1166,4 +1166,83 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     expect(storedFile.owner).toBeObject();
     expect(storedFile.owner!.id).toBeString();
   });
+
+  it("should preserve trailing slashes in S3 keys", async () => {
+    const testKeys = [
+      "test_folder/",
+      "test_folder/subfolder/",
+      "test_file_without_slash",
+    ];
+    const uploadedKeys: string[] = [];
+
+    using server = createBunServer(async req => {
+      const url = new URL(req.url);
+
+      // Handle PUT requests (write operations)
+      if (req.method === "PUT") {
+        // Extract the key from the URL path (remove leading slash)
+        const key = url.pathname.substring(1);
+        uploadedKeys.push(key);
+
+        return new Response("", {
+          headers: {
+            ETag: '"test-etag"',
+          },
+          status: 200,
+        });
+      }
+
+      // Handle GET requests (list operations)
+      if (req.method === "GET" && url.search.includes("list-type=2")) {
+        // Return the keys exactly as they were uploaded
+        const contents = uploadedKeys.map(key =>
+          `<Contents><Key>${key}</Key><Size>0</Size></Contents>`
+        ).join("");
+
+        return new Response(
+          `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult>
+            <Name>test-bucket</Name>
+            ${contents}
+            <IsTruncated>false</IsTruncated>
+          </ListBucketResult>`,
+          {
+            headers: {
+              "Content-Type": "application/xml",
+            },
+            status: 200,
+          },
+        );
+      }
+
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    // Write objects with and without trailing slashes
+    for (const key of testKeys) {
+      await client.write(key, new ArrayBuffer(0));
+    }
+
+    // List objects and verify trailing slashes are preserved
+    const listResult = await client.list({});
+
+    expect(listResult.contents).toBeArray();
+    expect(listResult.contents).toHaveLength(3);
+
+    // Verify each key is preserved exactly as written
+    const listedKeys = listResult.contents!.map((item: any) => item.key);
+    expect(listedKeys).toContain("test_folder/");
+    expect(listedKeys).toContain("test_folder/subfolder/");
+    expect(listedKeys).toContain("test_file_without_slash");
+
+    // Specifically verify trailing slashes are preserved
+    expect(listedKeys[0]).toEndWith("/");
+    expect(listedKeys[1]).toEndWith("/");
+    expect(listedKeys[2]).not.toEndWith("/");
+  });
 });

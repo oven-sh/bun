@@ -311,12 +311,8 @@ pub const S3 = struct {
 
     pub fn path(this: *@This()) []const u8 {
         var path_name = bun.URL.parse(this.pathlike.slice()).s3Path();
-        // normalize start and ending
-        if (strings.endsWith(path_name, "/")) {
-            path_name = path_name[0..path_name.len];
-        } else if (strings.endsWith(path_name, "\\")) {
-            path_name = path_name[0 .. path_name.len - 1];
-        }
+        // For S3, we only remove leading slashes but preserve trailing slashes
+        // as they are semantically significant (e.g., for folder representations)
         if (strings.startsWith(path_name, "/")) {
             path_name = path_name[1..];
         } else if (strings.startsWith(path_name, "\\")) {

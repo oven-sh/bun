@@ -1,6 +1,5 @@
-import { describe, test, expect, beforeAll } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, normalizeBunSnapshot } from "harness";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("minimumReleaseAge", () => {
   describe("configuration", () => {

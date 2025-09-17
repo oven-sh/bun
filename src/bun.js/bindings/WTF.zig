@@ -52,6 +52,7 @@ pub const WTF = struct {
     pub const StringBuilder = @import("./StringBuilder.zig");
 };
 
+const std = @import("std");
+
 const bun = @import("bun");
 const jsc = bun.jsc;
-const std = @import("std");

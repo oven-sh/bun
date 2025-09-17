@@ -574,7 +574,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                 logger.Loc.Empty,
                                                 this.allocator,
                                                 "No version matching \"{s}\" found for specifier \"{s}\" that meets the minimum release age of {d} minutes. " ++
-                                                "Consider adding this package to minimumReleaseAgeExclude in bunfig.toml if you trust it.",
+                                                    "Consider adding this package to minimumReleaseAgeExclude in bunfig.toml if you trust it.",
                                                 .{
                                                     this.lockfile.str(&version.literal),
                                                     this.lockfile.str(&name),
@@ -1618,7 +1618,8 @@ fn getOrPutResolvedPackage(
                         if (this.options.minimum_release_age.isEnabled() and
                             !this.options.minimum_release_age.isExcluded(name_str) and
                             result.package.publish_time > 0 and
-                            this.options.minimum_release_age.isVersionTooNew(result.package.publish_time)) {
+                            this.options.minimum_release_age.isVersionTooNew(result.package.publish_time))
+                        {
                             // Latest is too new, try to find an older version that meets the age requirement
                             if (bun.Environment.isDebug) {
                                 bun.Output.debugWarn("Latest version of {s} is too new, searching for older version", .{name_str});
@@ -1875,8 +1876,8 @@ const logger = bun.logger;
 const strings = bun.strings;
 
 const Semver = bun.Semver;
-const String = Semver.String;
 const SlicedString = Semver.SlicedString;
+const String = Semver.String;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;

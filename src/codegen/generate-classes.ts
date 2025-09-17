@@ -1084,7 +1084,21 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${
+      obj.forBind
+        ? `
+      JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(JSValue::decode(encodedThisValue));
+      if (!thisBoundFunction) [[unlikely]] {
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
+      }
+      JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
+      ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+      if (!thisObject) [[unlikely]] {
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
+      }
+    `
+        : `${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));`
+    }
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     if (JSValue cachedValue = thisObject->${cacheName}.get())
@@ -1251,7 +1265,19 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   auto& vm = JSC::getVM(lexicalGlobalObject);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
-  ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
+  ${
+    obj.forBind
+      ? `
+        JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(callFrame->thisValue());
+        if (!thisBoundFunction) [[unlikely]] {
+          scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
+          return {};
+        }
+        JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
+        ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+    `
+      : `${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());`
+  }
 
   if (!thisObject) [[unlikely]] {
       ${

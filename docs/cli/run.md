@@ -223,25 +223,4 @@ When there is a package.json script and a file with the same name, `bun run` pri
 3. Binaries from project packages, eg `bun add eslint && bun run eslint`
 4. (`bun run` only) System commands, eg `bun run ls`
 
-## `.bunx` files on Windows
-
-To make `bun run` even faster on Windows, we engineered a new file format: `.bunx`.
-
-The `.bunx` file is a cross-filesystem symlink that is able to start scripts or executables using Bun or Node.js. We decided to create this for several reasons:
-
-- Symlinks are not guaranteed to work on Windows.
-- Shebangs at the top of a file (`#!/usr/bin/env bun`) are not read on Windows.
-- We want to avoid creating three permutations of each executable: `.cmd`, `.sh`, and `.ps1`.
-- We want to avoid confusing "Terminate batch job? (Y/n)" prompts.
-
-The end result is that `bun run` is 11x faster than `npm run`, and `bunx` is also 11x faster than `npx`.
-
-{% image src="/images/bun-run-on-windows.png" caption="Time spent running `bunx cowsay` vs `npx cowsay` on Windows." /%}
-
-Even if you only use Bun as a package manager and not a runtime, `.bunx` just works with Node.js. This also solves the annoying "Terminate batch job?" prompt that Windows developers are used to when sending ctrl-c to a running script.
-
-{% image src="/images/terminate-batch-job-bun.gif" /%}
-
-{% image src="/images/terminate-batch-job-npm.gif" /%}
-
 {% bunCLIUsage command="run" /%}

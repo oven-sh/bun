@@ -542,6 +542,27 @@ declare module "module" {
 
 mark("Generate Code");
 
+const evalFiles = new Bun.Glob(path.join(BASE, "eval", "*.ts")).scanSync();
+for (const file of evalFiles) {
+  const {
+    outputs: [output],
+  } = await Bun.build({
+    entrypoints: [file],
+
+    // Shrink it.
+    minify: !debug,
+
+    target: "bun",
+    format: "esm",
+    env: "disable",
+    define: {
+      "process.platform": JSON.stringify(process.platform),
+      "process.arch": JSON.stringify(process.arch),
+    },
+  });
+  writeIfNotChanged(path.join(CODEGEN_DIR, "eval", path.basename(file)), await output.text());
+}
+
 if (!silent) {
   console.log("");
   console.timeEnd(timeString);

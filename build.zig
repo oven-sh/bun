@@ -739,6 +739,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
         .{ .file = "node-fallbacks/url.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/util.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/zlib.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "eval/feedback.ts", .enable = opts.shouldEmbedCode() },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
             const path = b.pathJoin(&.{ opts.codegen_path, entry.file });

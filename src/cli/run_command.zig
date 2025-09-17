@@ -1605,13 +1605,7 @@ pub const RunCommand = struct {
 
         if (ctx.filters.len == 0 and !ctx.workspaces and CLI.Cli.cmd != null and CLI.Cli.cmd.? == .AutoCommand) {
             if (bun.strings.eqlComptime(target_name, "feedback")) {
-                const trigger = bun.pathLiteral("/[eval]");
-                var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-                const cwd = try std.posix.getcwd(&entry_point_buf);
-                @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-                ctx.runtime_options.eval.script = @embedFile("./feedback.ts");
-                try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
-                Global.exit(0);
+                try @"bun feedback"(ctx);
             }
         }
 
@@ -1676,6 +1670,19 @@ pub const RunCommand = struct {
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
             Global.exit(1);
         };
+    }
+
+    fn @"bun feedback"(ctx: Command.Context) !noreturn {
+        const trigger = bun.pathLiteral("/[eval]");
+        var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+        const cwd = try std.posix.getcwd(&entry_point_buf);
+        @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+        ctx.runtime_options.eval.script = if (bun.Environment.codegen_embed)
+            @embedFile("eval/feedback.ts")
+        else
+            bun.runtimeEmbedFile(.codegen, "eval/feedback.ts");
+        try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+        Global.exit(0);
     }
 };
 

@@ -495,6 +495,9 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             const path = ctx.sources[index.get()].path;
             const key = path.keyForIncrementalGraph();
 
+            const log = bun.Output.scoped(.IncrementalGraphReceiveChunk, .visible);
+            log("receiveChunk({s}, {s})", .{ @tagName(side), key });
+
             if (Environment.allow_assert) {
                 switch (content) {
                     .css => {},

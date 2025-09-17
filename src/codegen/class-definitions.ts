@@ -113,12 +113,8 @@ export class ClassDefinition {
    */
   call?: boolean;
   /**
-   * Make instances of this class callable like functions.
-   * When true, the generated class will extend InternalFunction instead of
-   * JSDestructibleObject/JSNonFinalObject, allowing instances to be called.
-   * The Zig implementation must provide a `callAsFunction` method.
+   * The instances of this class are intended to be inside the this of a bound function.
    */
-  instanceCallable?: boolean;
   forBind?: boolean;
   /**
    * ## IMPORTANT

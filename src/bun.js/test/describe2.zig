@@ -152,6 +152,8 @@ pub const BunTest = struct {
     in_run_loop: bool,
     allocation_scope: bun.AllocationScope,
     gpa: std.mem.Allocator,
+    arena_allocator: std.heap.ArenaAllocator,
+    arena: std.mem.Allocator,
     done_promise: Strong.Optional = .empty,
     file_id: jsc.Jest.TestRunner.File.ID,
     /// null if the runner has moved on to the next file
@@ -173,12 +175,16 @@ pub const BunTest = struct {
 
         this.allocation_scope = .init(outer_gpa);
         this.gpa = this.allocation_scope.allocator();
+        this.arena_allocator = .init(this.gpa);
+        this.arena = this.arena_allocator.allocator();
 
         this.* = .{
             .buntest = bunTest,
             .in_run_loop = false,
             .allocation_scope = this.allocation_scope,
             .gpa = this.gpa,
+            .arena_allocator = this.arena_allocator,
+            .arena = this.arena,
             .phase = .collection,
             .file_id = file_id,
             .collection = .init(this.gpa, bunTest),
@@ -200,6 +206,7 @@ pub const BunTest = struct {
         this.execution.deinit();
         this.collection.deinit();
         this.result_queue.deinit();
+        this.arena_allocator.deinit();
         this.allocation_scope.deinit();
     }
 

@@ -299,7 +299,7 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
         pub fn deinit(self: *Self) void {
             defer self.* = undefined;
             const data = if (comptime info.isOptional())
-                self.getData() orelse return .initNull()
+                self.getData() orelse return
             else
                 self.getData();
             data.decrementWeak();

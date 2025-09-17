@@ -140,7 +140,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         pub const cloneWeak = if (options.allow_weak) struct {
             pub fn cloneWeak(self: Self) Self.Weak {
                 const data = if (comptime info.isOptional())
-                    self.getData() orelse return
+                    self.getData() orelse return .initNull()
                 else
                     self.getData();
                 data.incrementWeak();

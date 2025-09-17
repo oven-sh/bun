@@ -38,8 +38,10 @@ JSC_DEFINE_CUSTOM_SETTER(noOpSetter, (JSGlobalObject * globalObject, JSC::Encode
 }
 
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnDrain);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosed);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose);
+JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterRaw);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRaw);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
@@ -54,6 +56,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished);
 // Create a static hash table of values containing an onclose DOMAttributeGetterSetter and a close function
 static const HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
     { "onclose"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnClose, jsNodeHttpServerSocketSetterOnClose } },
+    { "ondrain"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnDrain, jsNodeHttpServerSocketSetterOnDrain } },
     { "raw"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterRaw, jsNodeHttpServerSocketSetterRaw } },
     { "closed"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosed, noOpSetter } },
     { "response"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterResponse, noOpSetter } },
@@ -176,6 +179,7 @@ public:
     }
 
     mutable WriteBarrier<JSObject> functionToCallOnClose;
+    mutable WriteBarrier<JSObject> functionToCallOnDrain;
     mutable WriteBarrier<WebCore::JSNodeHTTPResponse> currentResponseObject;
     mutable WriteBarrier<JSObject> m_remoteAddress;
     mutable WriteBarrier<JSObject> m_localAddress;
@@ -394,6 +398,36 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose, (JSC::JSGlobalObje
     return JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnDrain, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+
+    if (thisObject->functionToCallOnDrain) {
+        return JSValue::encode(thisObject->functionToCallOnDrain.get());
+    }
+
+    return JSValue::encode(JSC::jsUndefined());
+}
+JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    JSValue value = JSC::JSValue::decode(encodedValue);
+
+    if (value.isUndefined() || value.isNull()) {
+        thisObject->functionToCallOnDrain.clear();
+        return true;
+    }
+
+    if (!value.isCallable()) {
+        return false;
+    }
+
+    thisObject->functionToCallOnDrain.set(vm, thisObject, value.getObject());
+    return true;
+}
 JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
@@ -462,6 +496,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(fn->currentResponseObject);
     visitor.append(fn->functionToCallOnClose);
+    visitor.append(fn->functionToCallOnDrain);
     visitor.append(fn->m_remoteAddress);
     visitor.append(fn->m_localAddress);
     visitor.append(fn->m_duplex);

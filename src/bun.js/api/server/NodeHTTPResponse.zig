@@ -17,7 +17,7 @@ raw_response: uws.AnyResponse,
 
 flags: Flags = .{},
 
-js_ref: jsc.Ref = .{},
+poll_ref: jsc.Ref = .{},
 
 body_read_state: BodyReadState = .none,
 body_read_ref: jsc.Ref = .{},
@@ -145,7 +145,7 @@ const OnBeforeOpen = struct {
         Bun__setNodeHTTPServerSocketUsSocketValue(ctx.socketValue, socket.asSocket());
         ServerWebSocket.js.gc.socket.set(js_websocket, ctx.globalObject, ctx.socketValue);
         ctx.this.flags.upgraded = true;
-        defer ctx.this.js_ref.unref(ctx.globalObject.bunVM());
+        defer ctx.this.poll_ref.unref(ctx.globalObject.bunVM());
         switch (ctx.this.raw_response) {
             .SSL => ctx.this.raw_response = uws.AnyResponse.init(uws.NewApp(true).Response.castRes(@alignCast(@ptrCast(socket)))),
             .TCP => ctx.this.raw_response = uws.AnyResponse.init(uws.NewApp(false).Response.castRes(@alignCast(@ptrCast(socket)))),
@@ -168,10 +168,7 @@ pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_proto
     }
     data_value.ensureStillAlive();
 
-    const ws = ServerWebSocket.new(.{
-        .handler = ws_handler,
-        .this_value = data_value,
-    });
+    const ws = ServerWebSocket.init(ws_handler, data_value, null);
 
     var sec_websocket_protocol_str: ?ZigString.Slice = null;
     defer if (sec_websocket_protocol_str) |*str| str.deinit();
@@ -275,7 +272,7 @@ fn markRequestAsDone(this: *NodeHTTPResponse) void {
 
     this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
     const server = this.server;
-    this.js_ref.unref(jsc.VirtualMachine.get());
+    this.poll_ref.unref(jsc.VirtualMachine.get());
     this.deref();
     server.onRequestComplete();
 }
@@ -331,7 +328,7 @@ pub fn create(
     if (has_body.*) {
         response.body_read_ref.ref(vm);
     }
-    response.js_ref.ref(vm);
+    response.poll_ref.ref(vm);
     const js_this = response.toJS(globalObject);
     node_response_ptr.* = response;
     return js_this;
@@ -400,14 +397,14 @@ pub fn getBufferedAmount(this: *const NodeHTTPResponse, _: *jsc.JSGlobalObject) 
 
 pub fn jsRef(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     if (!this.isDone()) {
-        this.js_ref.ref(globalObject.bunVM());
+        this.poll_ref.ref(globalObject.bunVM());
     }
     return .js_undefined;
 }
 
 pub fn jsUnref(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     if (!this.isDone()) {
-        this.js_ref.unref(globalObject.bunVM());
+        this.poll_ref.unref(globalObject.bunVM());
     }
     return .js_undefined;
 }
@@ -626,7 +623,7 @@ pub fn onRequestComplete(this: *NodeHTTPResponse) void {
     }
     log("onRequestComplete", .{});
     this.flags.request_has_completed = true;
-    this.js_ref.unref(jsc.VirtualMachine.get());
+    this.poll_ref.unref(jsc.VirtualMachine.get());
 
     this.markRequestAsDoneIfNecessary();
 }
@@ -1133,12 +1130,12 @@ pub fn finalize(this: *NodeHTTPResponse) void {
 
 fn deinit(this: *NodeHTTPResponse) void {
     bun.debugAssert(!this.body_read_ref.has);
-    bun.debugAssert(!this.js_ref.has);
+    bun.debugAssert(!this.poll_ref.has);
     bun.debugAssert(!this.flags.is_request_pending);
     bun.debugAssert(this.flags.socket_closed or this.flags.request_has_completed);
 
     this.buffered_request_body_data_during_pause.deinit(bun.default_allocator);
-    this.js_ref.unref(jsc.VirtualMachine.get());
+    this.poll_ref.unref(jsc.VirtualMachine.get());
     this.body_read_ref.unref(jsc.VirtualMachine.get());
 
     this.promise.deinit();

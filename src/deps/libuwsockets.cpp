@@ -1624,7 +1624,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
 
     return uwsRes->template upgrade<void *>(
-        data ? std::move(data) : NULL,
+        data ? std::move(data) : nullptr,
         stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,
@@ -1634,7 +1634,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
 
     return uwsRes->template upgrade<void *>(
-        data ? std::move(data) : NULL,
+        data ? std::move(data) : nullptr,
         stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,

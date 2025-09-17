@@ -961,18 +961,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // obviously invalid pointer marks it as used
             upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
             const signal = upgrader.signal;
-
             upgrader.signal = null;
             upgrader.resp = null;
             request.request_context = AnyRequestContext.Null;
             upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
-            const ws = ServerWebSocket.new(.{
-                .handler = &this.config.websocket.?.handler,
-                .this_value = data_value,
-                .signal = signal,
-            });
+            const ws = ServerWebSocket.init(&this.config.websocket.?.handler, data_value, signal);
             data_value.ensureStillAlive();
 
             var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);

@@ -193,7 +193,7 @@ Profiler* JSProfiler::toWrapped(VM& vm, JSValue value)
 }
 
 // Attribute getters
-JSC_DEFINE_CUSTOM_GETTER(jsProfilerConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsProfilerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -211,7 +211,7 @@ static inline JSValue jsProfiler_sampleIntervalGetter(JSGlobalObject& lexicalGlo
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDouble>(lexicalGlobalObject, throwScope, impl.sampleInterval())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsProfiler_sampleInterval, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsProfiler_sampleInterval, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSProfiler>::get<jsProfiler_sampleIntervalGetter>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -224,13 +224,13 @@ static inline JSValue jsProfiler_stoppedGetter(JSGlobalObject& lexicalGlobalObje
     RELEASE_AND_RETURN(throwScope, (toJS<IDLBoolean>(lexicalGlobalObject, throwScope, impl.stopped())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsProfiler_stopped, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsProfiler_stopped, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSProfiler>::get<jsProfiler_stoppedGetter>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
 // stop() method
-JSC_DEFINE_HOST_FUNCTION(jsProfilerPrototypeFunction_stop, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsProfilerPrototypeFunction_stop, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -248,8 +248,7 @@ JSC_DEFINE_HOST_FUNCTION(jsProfilerPrototypeFunction_stop, (JSGlobalObject* lexi
         *callFrame,
         [&impl](JSC::JSGlobalObject&, JSC::CallFrame&, Ref<DeferredPromise>&& promise) {
             impl.stop(WTFMove(promise));
-        }
-    ));
+        }));
 }
 
 // toJS functions

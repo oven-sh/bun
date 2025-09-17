@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Profiler API exists and is a constructor", () => {
   expect(typeof Profiler).toBe("function");
@@ -27,7 +27,7 @@ test("Profiler constructor validates maxBufferSize", () => {
 test("Can create a Profiler instance", () => {
   const profiler = new Profiler({
     sampleInterval: 10, // 10ms sample interval
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   expect(profiler).toBeInstanceOf(Profiler);
@@ -47,7 +47,7 @@ test("Profiler has EventTarget methods", () => {
 test("Profiler.stop() returns a promise", async () => {
   const profiler = new Profiler({
     sampleInterval: 10,
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   // Run some code to profile
@@ -67,7 +67,7 @@ test("Profiler.stop() returns a promise", async () => {
 test("ProfilerTrace has correct structure", async () => {
   const profiler = new Profiler({
     sampleInterval: 10,
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   // Run some code to profile
@@ -93,7 +93,7 @@ test("ProfilerTrace has correct structure", async () => {
 test("Profiler collects real samples with timestamps", async () => {
   const profiler = new Profiler({
     sampleInterval: 1, // 1ms for more samples
-    maxBufferSize: 10000
+    maxBufferSize: 10000,
   });
 
   // Run some code for a known duration
@@ -140,7 +140,7 @@ test("Profiler collects real samples with timestamps", async () => {
 test("Can't stop profiler twice", async () => {
   const profiler = new Profiler({
     sampleInterval: 10,
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   await profiler.stop();
@@ -154,7 +154,7 @@ test("Rejects invalid sampleInterval", () => {
   expect(() => {
     new Profiler({
       sampleInterval: -1,
-      maxBufferSize: 1000
+      maxBufferSize: 1000,
     });
   }).toThrow();
 
@@ -162,7 +162,7 @@ test("Rejects invalid sampleInterval", () => {
   // Very large values should work
   const profiler = new Profiler({
     sampleInterval: 1000000, // 1 second
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
   expect(profiler.sampleInterval).toBe(1000000);
 });
@@ -171,7 +171,7 @@ test("Profiler respects sampleInterval", async () => {
   const sampleInterval = 5; // 5ms
   const profiler = new Profiler({
     sampleInterval,
-    maxBufferSize: 10000
+    maxBufferSize: 10000,
   });
 
   // Profile for 100ms with more intensive work
@@ -208,7 +208,7 @@ test("Profiler respects sampleInterval", async () => {
 test("ProfilerTrace contains valid frame and stack data", async () => {
   const profiler = new Profiler({
     sampleInterval: 1,
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   // Do more intensive work to ensure samples
@@ -252,12 +252,12 @@ test("ProfilerTrace contains valid frame and stack data", async () => {
 test("Multiple profilers can run simultaneously", async () => {
   const profiler1 = new Profiler({
     sampleInterval: 1,
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   const profiler2 = new Profiler({
     sampleInterval: 2,
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   // Both profilers were created successfully
@@ -272,10 +272,7 @@ test("Multiple profilers can run simultaneously", async () => {
     }
   }
 
-  const [trace1, trace2] = await Promise.all([
-    profiler1.stop(),
-    profiler2.stop()
-  ]);
+  const [trace1, trace2] = await Promise.all([profiler1.stop(), profiler2.stop()]);
 
   // Both should return valid traces
   expect(trace1).toHaveProperty("samples");
@@ -290,7 +287,7 @@ test("Multiple profilers can run simultaneously", async () => {
 test("Profiler works with async code", async () => {
   const profiler = new Profiler({
     sampleInterval: 1,
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   // Run async code with more intensive work
@@ -317,7 +314,7 @@ test("Profiler works with async code", async () => {
 test("Profiler with very small sampleInterval", async () => {
   const profiler = new Profiler({
     sampleInterval: 0.1, // 0.1ms
-    maxBufferSize: 10000
+    maxBufferSize: 10000,
   });
 
   // Run intensive work
@@ -338,7 +335,7 @@ test("Profiler with very small sampleInterval", async () => {
 test("Profiler with large sampleInterval", async () => {
   const profiler = new Profiler({
     sampleInterval: 20, // 20ms
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   // Run intensive work for 100ms
@@ -360,7 +357,7 @@ test("Profiler with large sampleInterval", async () => {
 test("Profiler handles idle time", async () => {
   const profiler = new Profiler({
     sampleInterval: 1,
-    maxBufferSize: 1000
+    maxBufferSize: 1000,
   });
 
   // Just wait without much work

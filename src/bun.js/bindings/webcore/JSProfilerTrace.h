@@ -33,7 +33,7 @@ template<> inline ProfilerInitOptions convertDictionary<ProfilerInitOptions>(JSC
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (!isNullOrUndefined && !object) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
 
     ProfilerInitOptions result;
@@ -43,14 +43,14 @@ template<> inline ProfilerInitOptions convertDictionary<ProfilerInitOptions>(JSC
         sampleIntervalValue = JSC::jsUndefined();
     else {
         sampleIntervalValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "sampleInterval"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!sampleIntervalValue.isUndefined()) {
         result.sampleInterval = Converter<IDLDouble>::convert(lexicalGlobalObject, sampleIntervalValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "sampleInterval", "ProfilerInitOptions", "double");
-        return { };
+        return {};
     }
 
     JSValue maxBufferSizeValue;
@@ -58,14 +58,14 @@ template<> inline ProfilerInitOptions convertDictionary<ProfilerInitOptions>(JSC
         maxBufferSizeValue = JSC::jsUndefined();
     else {
         maxBufferSizeValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "maxBufferSize"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!maxBufferSizeValue.isUndefined()) {
         result.maxBufferSize = Converter<IDLUnsignedLong>::convert(lexicalGlobalObject, maxBufferSizeValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "maxBufferSize", "ProfilerInitOptions", "unsigned long");
-        return { };
+        return {};
     }
 
     return result;
@@ -92,7 +92,7 @@ template<> inline ProfilerSample convertDictionary<ProfilerSample>(JSC::JSGlobal
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (!isNullOrUndefined && !object) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
 
     ProfilerSample result;
@@ -102,14 +102,14 @@ template<> inline ProfilerSample convertDictionary<ProfilerSample>(JSC::JSGlobal
         timestampValue = JSC::jsUndefined();
     else {
         timestampValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "timestamp"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!timestampValue.isUndefined()) {
         result.timestamp = Converter<IDLDouble>::convert(lexicalGlobalObject, timestampValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "timestamp", "ProfilerSample", "double");
-        return { };
+        return {};
     }
 
     JSValue stackIdValue;
@@ -117,11 +117,11 @@ template<> inline ProfilerSample convertDictionary<ProfilerSample>(JSC::JSGlobal
         stackIdValue = JSC::jsUndefined();
     else {
         stackIdValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "stackId"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!stackIdValue.isUndefined()) {
         result.stackId = Converter<IDLUnsignedLongLong>::convert(lexicalGlobalObject, stackIdValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     return result;
@@ -149,7 +149,7 @@ template<> inline ProfilerFrame convertDictionary<ProfilerFrame>(JSC::JSGlobalOb
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (!isNullOrUndefined && !object) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
 
     ProfilerFrame result;
@@ -159,43 +159,43 @@ template<> inline ProfilerFrame convertDictionary<ProfilerFrame>(JSC::JSGlobalOb
         nameValue = JSC::jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "name"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = Converter<IDLDOMString>::convert(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "ProfilerFrame", "DOMString");
-        return { };
+        return {};
     }
 
     JSValue resourceIdValue;
     if (!isNullOrUndefined) {
         resourceIdValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "resourceId"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!resourceIdValue.isUndefined()) {
             result.resourceId = Converter<IDLUnsignedLongLong>::convert(lexicalGlobalObject, resourceIdValue);
-            RETURN_IF_EXCEPTION(throwScope, { });
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 
     JSValue lineValue;
     if (!isNullOrUndefined) {
         lineValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "line"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!lineValue.isUndefined()) {
             result.line = Converter<IDLUnsignedLongLong>::convert(lexicalGlobalObject, lineValue);
-            RETURN_IF_EXCEPTION(throwScope, { });
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 
     JSValue columnValue;
     if (!isNullOrUndefined) {
         columnValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "column"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!columnValue.isUndefined()) {
             result.column = Converter<IDLUnsignedLongLong>::convert(lexicalGlobalObject, columnValue);
-            RETURN_IF_EXCEPTION(throwScope, { });
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 
@@ -228,7 +228,7 @@ template<> inline ProfilerStack convertDictionary<ProfilerStack>(JSC::JSGlobalOb
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (!isNullOrUndefined && !object) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
 
     ProfilerStack result;
@@ -236,10 +236,10 @@ template<> inline ProfilerStack convertDictionary<ProfilerStack>(JSC::JSGlobalOb
     JSValue parentIdValue;
     if (!isNullOrUndefined) {
         parentIdValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "parentId"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!parentIdValue.isUndefined()) {
             result.parentId = Converter<IDLUnsignedLongLong>::convert(lexicalGlobalObject, parentIdValue);
-            RETURN_IF_EXCEPTION(throwScope, { });
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 
@@ -248,14 +248,14 @@ template<> inline ProfilerStack convertDictionary<ProfilerStack>(JSC::JSGlobalOb
         frameIdValue = JSC::jsUndefined();
     else {
         frameIdValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "frameId"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!frameIdValue.isUndefined()) {
         result.frameId = Converter<IDLUnsignedLongLong>::convert(lexicalGlobalObject, frameIdValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "frameId", "ProfilerStack", "unsigned long long");
-        return { };
+        return {};
     }
 
     return result;
@@ -283,7 +283,7 @@ template<> inline ProfilerTrace convertDictionary<ProfilerTrace>(JSC::JSGlobalOb
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (!isNullOrUndefined && !object) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
 
     ProfilerTrace result;
@@ -293,14 +293,14 @@ template<> inline ProfilerTrace convertDictionary<ProfilerTrace>(JSC::JSGlobalOb
         resourcesValue = JSC::jsUndefined();
     else {
         resourcesValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "resources"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!resourcesValue.isUndefined()) {
         result.resources = Converter<IDLSequence<IDLDOMString>>::convert(lexicalGlobalObject, resourcesValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "resources", "ProfilerTrace", "sequence");
-        return { };
+        return {};
     }
 
     JSValue framesValue;
@@ -308,14 +308,14 @@ template<> inline ProfilerTrace convertDictionary<ProfilerTrace>(JSC::JSGlobalOb
         framesValue = JSC::jsUndefined();
     else {
         framesValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "frames"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!framesValue.isUndefined()) {
         result.frames = Converter<IDLSequence<IDLDictionary<ProfilerFrame>>>::convert(lexicalGlobalObject, framesValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "frames", "ProfilerTrace", "sequence");
-        return { };
+        return {};
     }
 
     JSValue stacksValue;
@@ -323,14 +323,14 @@ template<> inline ProfilerTrace convertDictionary<ProfilerTrace>(JSC::JSGlobalOb
         stacksValue = JSC::jsUndefined();
     else {
         stacksValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "stacks"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!stacksValue.isUndefined()) {
         result.stacks = Converter<IDLSequence<IDLDictionary<ProfilerStack>>>::convert(lexicalGlobalObject, stacksValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "stacks", "ProfilerTrace", "sequence");
-        return { };
+        return {};
     }
 
     JSValue samplesValue;
@@ -338,14 +338,14 @@ template<> inline ProfilerTrace convertDictionary<ProfilerTrace>(JSC::JSGlobalOb
         samplesValue = JSC::jsUndefined();
     else {
         samplesValue = object->get(&lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "samples"_s)));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!samplesValue.isUndefined()) {
         result.samples = Converter<IDLSequence<IDLDictionary<ProfilerSample>>>::convert(lexicalGlobalObject, samplesValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "samples", "ProfilerTrace", "sequence");
-        return { };
+        return {};
     }
 
     return result;
@@ -358,19 +358,19 @@ inline JSC::JSValue convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObje
     auto* object = constructEmptyObject(&lexicalGlobalObject);
 
     auto resourcesArray = toJS<IDLSequence<IDLDOMString>>(lexicalGlobalObject, globalObject, throwScope, value.resources);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "resources"_s)), resourcesArray);
 
     auto framesArray = toJS<IDLSequence<IDLDictionary<ProfilerFrame>>>(lexicalGlobalObject, globalObject, throwScope, value.frames);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "frames"_s)), framesArray);
 
     auto stacksArray = toJS<IDLSequence<IDLDictionary<ProfilerStack>>>(lexicalGlobalObject, globalObject, throwScope, value.stacks);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "stacks"_s)), stacksArray);
 
     auto samplesArray = toJS<IDLSequence<IDLDictionary<ProfilerSample>>>(lexicalGlobalObject, globalObject, throwScope, value.samples);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "samples"_s)), samplesArray);
 
     return object;

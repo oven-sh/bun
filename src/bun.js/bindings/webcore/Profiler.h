@@ -76,8 +76,8 @@ public:
     // ContextDestructionObserver
     void contextDestroyed() override;
 
-    using RefCounted::ref;
     using RefCounted::deref;
+    using RefCounted::ref;
 
 private:
     Profiler(ScriptExecutionContext&, double sampleInterval, unsigned maxBufferSize);

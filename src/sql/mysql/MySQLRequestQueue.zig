@@ -147,7 +147,7 @@ pub fn init() @This() {
     return .{ .#requests = Queue.init(bun.default_allocator) };
 }
 
-pub fn isEmpty(this: *@This()) bool {
+pub fn isEmpty(this: *const @This()) bool {
     return this.#requests.readableLength() == 0;
 }
 

@@ -225,6 +225,14 @@ pub fn isActive(this: *MySQLConnection) bool {
     // if is connected or connecting we keep alive until idle timeout is reached
     return true;
 }
+pub fn hasPendingCommands(this: *const MySQLConnection) bool {
+    if (this.status == .disconnected or this.status == .failed) {
+        // we are disconnected or failed so no pending commands
+        return false;
+    }
+    // we are connecting/handshaking/authenticating or we have a pending command in the queue
+    return this.status != .connected or !this.queue.isEmpty();
+}
 pub inline fn isConnected(this: *MySQLConnection) bool {
     return this.status == .connected;
 }

@@ -1,12 +1,26 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { describeWithContainer, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { describeWithContainer, dockerExe, isDockerEnabled, tempDirWithFiles, bunRun } from "harness";
 import net from "net";
 import path from "path";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
   "select.sql": `select CAST(1 AS SIGNED) as x`,
 });
+
+const keepAliveTests = {
+  "simple-connection.js": `const sql = new Bun.SQL()`,
+  "simple-connection-with-using.js": `await using sql = new Bun.SQL()`,
+  "simple-connection-connected.js": `const sql = new Bun.SQL(); await sql.connect()`,
+  "simple-connection-connected-with-using.js": `await using sql = new Bun.SQL(); await sql.connect()`,
+  "simple-connection-connected-with-query.js": `const sql = new Bun.SQL(); await sql\`select 1 as x\``,
+  "simple-connection-connected-with-using-and-query.js": `await using sql = new Bun.SQL(); await sql\`select 1 as x\``,
+  "simple-connection-connected-with-multiple-queries.js": `const sql = new Bun.SQL(); for(let i = 0; i < 100; i++) { await sql\`select 1 as x\` }`,
+  "simple-connection-connected-with-using-and-multiple-queries.js": `await using sql = new Bun.SQL(); for(let i = 0; i < 100; i++) { await sql\`select 1 as x\` }`,
+};
+
+const keepAliveTestDir = tempDirWithFiles("sql-connection-test", keepAliveTests);
+
 function rel(filename: string) {
   return path.join(dir, filename);
 }
@@ -51,15 +65,27 @@ if (docker) {
         env: image.env,
       },
       (port: number) => {
+        const isTLS = image.name === "MySQL with TLS";
+        const extraCertPath = path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem");
         const options: Bun.SQL.Options = {
           url: `mysql://root:bun@localhost:${port}`,
           max: 1,
-          tls:
-            image.name === "MySQL with TLS"
-              ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))
-              : undefined,
+          tls: isTLS ? Bun.file(extraCertPath) : undefined,
         };
         const sql = new SQL(options);
+
+        describe("Should not keep the process alive", () => {
+          for (const filename of Object.keys(keepAliveTests)) {
+            test(filename, async () => {
+              const result = bunRun(path.join(keepAliveTestDir, filename), {
+                [isTLS ? "MYSQL_DATABASE_URL" : "TLS_MYSQL_DATABASE_URL"]: options.url as string,
+                "NODE_EXTRA_CA_CERTS": extraCertPath,
+              });
+              expect(result.stdout).toBe("");
+              expect(result.stderr).toBe("");
+            });
+          }
+        });
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...options, max: 1, idleTimeout: 5 });
           using sql = await db.reserve();

@@ -923,12 +923,14 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _final(callback) {
+    console.log("final");
     const handle = this[kHandle];
     if (!handle) {
       callback();
       return;
     }
-    this.#closeHandle(handle, callback);
+    handle.end();
+    callback();
   }
 
   get localAddress() {
@@ -1037,6 +1039,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _write(_chunk, _encoding, _callback) {
+    console.log("write", _chunk, _encoding, _callback);
     const handle = this[kHandle];
     if (handle) {
       handle.write(_chunk, _encoding);

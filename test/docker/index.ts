@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import * as net from "net";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -144,6 +145,28 @@ class DockerComposeHelper {
     return parseInt(match[1], 10);
   }
 
+  async waitForPort(port: number, timeout: number = 10000): Promise<void> {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      try {
+        const socket = new net.Socket();
+        await new Promise<void>((resolve, reject) => {
+          socket.once('connect', () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.once('error', reject);
+          socket.connect(port, '127.0.0.1');
+        });
+        return;
+      } catch {
+        // Wait 100ms before retrying
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    throw new Error(`Port ${port} did not become ready within ${timeout}ms`);
+  }
+
   async ensure(service: ServiceName): Promise<ServiceInfo> {
     try {
       await this.ensureDocker();
@@ -229,8 +252,10 @@ class DockerComposeHelper {
         break;
 
       case "autobahn":
-        // Autobahn requires port 9002 to be fixed
-        info.ports[9002] = 9002;
+        info.ports[9002] = await this.port(service, 9002);
+        // Autobahn takes a bit to fully initialize after container starts
+        // Use a simple TCP wait since WebSocket endpoints may not be immediately available
+        await this.waitForPort(info.ports[9002], 10000);
         break;
     }
 

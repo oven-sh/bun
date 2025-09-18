@@ -203,7 +203,7 @@ services:
     command: wstest -m fuzzingserver -s /config/fuzzingserver.json
     ports:
       - target: 9002
-        published: 9002  # Must be 9002, not dynamic (0)
+        published: 0  # Dynamic port
         protocol: tcp
 
 volumes:

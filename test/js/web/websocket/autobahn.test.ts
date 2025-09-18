@@ -44,10 +44,6 @@ async function load() {
     process.env.BUN_AUTOBAHN_HOST_HEADER = `${autobahnInfo.host}:9002`;
   }
 
-  // Wait for service to be ready - Autobahn takes a bit to start up
-  // We can't use waitTcp because Autobahn doesn't accept plain TCP connections
-  await new Promise(resolve => setTimeout(resolve, 3000));
-
   return true;
 }
 

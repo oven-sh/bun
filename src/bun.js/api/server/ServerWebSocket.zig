@@ -207,6 +207,12 @@ pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
     if (this.isClosed() or vm.isShuttingDown())
         return;
 
+    if (this.#this_value.tryGet()) |this_value| {
+        if (js.socketGetCached(this_value)) |socket| {
+            Bun__callNodeHTTPServerSocketOnDrain(socket);
+        }
+    }
+
     if (handler.onDrain != .zero) {
         const globalObject = handler.globalObject;
 
@@ -1310,6 +1316,7 @@ const Corker = struct {
 };
 
 extern "c" fn Bun__callNodeHTTPServerSocketOnClose(jsc.JSValue) void;
+extern "c" fn Bun__callNodeHTTPServerSocketOnDrain(jsc.JSValue) void;
 
 const string = []const u8;
 

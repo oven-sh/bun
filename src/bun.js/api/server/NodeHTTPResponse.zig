@@ -553,7 +553,14 @@ fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent, js_
     }
 
     if (event == .abort) {
+        this.ref();
+        defer this.deref();
         this.onDataOrAborted("", true, .abort, js_this);
+
+        const socketValue = this.getServerSocketValue();
+        if (socketValue != .zero) {
+            Bun__callNodeHTTPServerSocketOnClose(socketValue);
+        }
     }
 }
 
@@ -950,6 +957,10 @@ pub fn setOnWritable(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalObje
     } else {
         js.onWritableSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
     }
+    const socketValue = this.getServerSocketValue();
+    if (socketValue != .zero) {
+        Bun__callNodeHTTPServerSocketOnDrain(socketValue);
+    }
 }
 
 pub fn getOnWritable(_: *NodeHTTPResponse, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
@@ -1146,6 +1157,8 @@ comptime {
     @export(&create, .{ .name = "NodeHTTPResponse__createForJS" });
 }
 extern "c" fn Bun__setNodeHTTPServerSocketUsSocketValue(jsc.JSValue, ?*anyopaque) void;
+extern "c" fn Bun__callNodeHTTPServerSocketOnClose(jsc.JSValue) void;
+extern "c" fn Bun__callNodeHTTPServerSocketOnDrain(jsc.JSValue) void;
 
 pub export fn Bun__NodeHTTPResponse_onClose(response: *NodeHTTPResponse, js_value: jsc.JSValue) void {
     response.onAbort(js_value);

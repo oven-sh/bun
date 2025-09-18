@@ -214,6 +214,8 @@ public:
 
     void onClose()
     {
+        if (!this->socket) return;
+
         this->socket = nullptr;
         if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
             Bun__NodeHTTPResponse_setClosed(res->m_ctx);
@@ -261,6 +263,41 @@ public:
                     }
                 }
                 thisObject->detach();
+            });
+        }
+    }
+
+    void onDrain()
+    {
+        // This function can be called during GC!
+        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+        if (!functionToCallOnDrain) {
+            return;
+        }
+
+        WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
+
+        if (scriptExecutionContext) {
+            scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
+                WTF::NakedPtr<JSC::Exception> exception;
+                auto* globalObject = defaultGlobalObject(context.globalObject());
+                auto* thisObject = self;
+                auto* callbackObject = thisObject->functionToCallOnDrain.get();
+                if (!callbackObject) {
+                    return;
+                }
+                auto callData = JSC::getCallData(callbackObject);
+                MarkedArgumentBuffer args;
+                EnsureStillAliveScope ensureStillAlive(self);
+
+                if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+                    profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+
+                    if (auto* ptr = exception.get()) {
+                        exception.clear();
+                        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                    }
+                }
             });
         }
     }
@@ -563,6 +600,12 @@ extern "C" void Bun__callNodeHTTPServerSocketOnClose(EncodedJSValue thisValue)
 {
     auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
     response->onClose();
+}
+
+extern "C" void Bun__callNodeHTTPServerSocketOnDrain(EncodedJSValue thisValue)
+{
+    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
+    response->onDrain();
 }
 
 extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocket(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)

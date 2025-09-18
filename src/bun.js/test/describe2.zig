@@ -348,7 +348,7 @@ pub const BunTest = struct {
         }
 
         this.addResult(refdata.phase);
-        try run(this_strong, globalThis);
+        runNextTick(refdata.buntest_weak, globalThis, refdata.phase);
     }
     fn bunTestThen(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         try bunTestThenOrCatch(globalThis, callframe, false);
@@ -358,17 +358,45 @@ pub const BunTest = struct {
         try bunTestThenOrCatch(globalThis, callframe, true);
         return .js_undefined;
     }
-    pub fn bunTestDoneCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, data: RefDataValue, has_one_ref: bool, was_error: bool) bun.JSError!void {
+    pub fn bunTestDoneCallback(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         group.begin(@src());
         defer group.end();
-        const this = this_strong.get();
 
-        if (!has_one_ref and !was_error) {
-            return group.log("bunTestDoneCallback -> refdata has multiple refs; don't add result until the last ref", .{});
+        const this = DoneCallback.fromJS(callframe.this()) orelse return globalThis.throw("Expected callee to be DoneCallback", .{});
+
+        const value = callframe.argumentsAsArray(1)[0];
+
+        const was_error = !value.isEmptyOrUndefinedOrNull();
+        if (this.called) {
+            // in Bun 1.2.20, this is a no-op
+            // in Jest, this is "Expected done to be called once, but it was called multiple times."
+            // Vitest does not support done callbacks
+        } else {
+            // error is only reported for the first done() call
+            if (was_error) {
+                _ = globalThis.bunVM().uncaughtException(globalThis, value, false);
+            }
         }
+        this.called = true;
+        const ref_in = this.ref orelse return .js_undefined;
+        defer this.ref = null;
+        defer ref_in.deref();
 
-        this.addResult(data);
-        try run(this_strong, globalThis);
+        // dupe the ref and enqueue a task to call the done callback.
+        // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
+
+        const has_one_ref = ref_in.ref_count.hasOneRef();
+        const should_run = has_one_ref or was_error;
+
+        if (!should_run) return .js_undefined;
+
+        var strong = ref_in.buntest_weak.clone().upgrade() orelse return .js_undefined;
+        defer strong.deinit();
+        const buntest = strong.get();
+        buntest.addResult(ref_in.phase);
+        runNextTick(ref_in.buntest_weak, globalThis, ref_in.phase);
+
+        return .js_undefined;
     }
     pub fn bunTestTimeoutCallback(this_strong: BunTestPtr, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
         group.begin(@src());
@@ -390,6 +418,27 @@ pub const BunTest = struct {
 
         return .disarm; // this won't disable the timer if .run() re-arms it
     }
+    pub fn runNextTick(weak: BunTestPtr.Weak, globalThis: *jsc.JSGlobalObject, phase: RefDataValue) void {
+        const done_callback_test = bun.new(RunTestsTask, .{ .weak = weak.clone(), .globalThis = globalThis, .phase = phase });
+        errdefer bun.destroy(done_callback_test);
+        const task = jsc.ManagedTask.New(RunTestsTask, RunTestsTask.call).init(done_callback_test);
+        jsc.VirtualMachine.get().enqueueTask(task);
+    }
+    pub const RunTestsTask = struct {
+        weak: BunTestPtr.Weak,
+        globalThis: *jsc.JSGlobalObject,
+        phase: RefDataValue,
+
+        pub fn call(this: *RunTestsTask) void {
+            defer bun.destroy(this);
+            defer this.weak.deinit();
+            var strong = this.weak.clone().upgrade() orelse return;
+            defer strong.deinit();
+            BunTest.run(strong, this.globalThis) catch |e| {
+                strong.get().onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.phase);
+            };
+        }
+    };
 
     pub fn addResult(this: *BunTest, result: RefDataValue) void {
         bun.handleOom(this.result_queue.writeItem(result));

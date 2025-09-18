@@ -499,15 +499,13 @@ test("the error", async () => {
 - [x] `done` is missing `.call()`/`.apply()`
 - [ ] switch to a memory pool instead of individually-tracked scope allocations
 - [x] `describe.skip()` is not displaying the tests it skipped; fix
-- [ ] ~~drain microtasks / tick? between callback calls? tickImmediateTasks()? use a Task to queue callback execution? for "unhandled errors between tests are reported"~~
-  - instead of this, let's modify the test
 - [x] add back vm.auto_killer.kill() https://github.com/oven-sh/bun/blob/973fa98796a3be79b48f0d078485b5833d956593/src/bun.js/test/jest.zig#L1690
-- [ ] add retry/repeat back
-- [ ] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
+- [x] never had ~~add retry/repeat back~~
+- [x] make sure ScopeFunctions class can finalize (see napi_handle_scope NapiHandleScopeImpl as an example)
   - currently, it never calls its finalize method because it no longer extends from finalize
-- [ ] make sure DoneCallback class can finalize, same as above
+- [x] make sure DoneCallback class can finalize, same as above
 - [x] weak pointers to BunTest
-- [ ] fix `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, fails 3. note that existing behaviour is similar?
+- [x] bug to fix for later ~~fix `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, works 3. note that existing behaviour is similar?~~
 - [ ] bun test > support for Github Actions > should annotate a test timeout
 - [ ] a failure in beforeAll should prevent tests from running "unhandled errors between tests are reported"
 
@@ -760,6 +758,7 @@ test("the error", async () => {
 
 # Follow-up:
 
+- [ ] `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3` <- this runs the first and third time but not the second time. fix.
 - [ ] should to cache the JSValue created from DoneCallback.callAsFunction
 - [ ] fix rerun-each. implement retry and rerun params for tests.
 - [ ] Remove finalizer on ScopeFunctions.zig by storing the data in 3 jsvalues passed in bind rather than using a custom class. Class generator can pass the this value into the function and it can extract the data from bind.

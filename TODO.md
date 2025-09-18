@@ -390,6 +390,34 @@ test 2
 
 # Test failures:
 
+## Flaky on main
+
+- [ ] test/cli/install/bun-install-registry.test.ts
+  - not sure if this is real or flaky
+- [ ] test/js/web/fetch/fetch.stream.test.ts
+  - this is usually a flaky failure but was a failure. this is maybe related to missing retry/rerun options.
+  - maybe it just ran the test 5 times and had a failure each time
+- [ ] test/js/bun/shell/leak.test.ts
+  - probably flaky
+- [ ] test/bundler/compile-windows-metadata.test.ts
+- [ ] test/js/sql/sql-mysql.test.ts
+- [ ] test/js/bun/http/bun-serve-file.test.ts
+- [ ] test/cli/inspect/BunFrontendDevServer.test.ts
+- [ ] test/bake/dev/stress.test.ts
+- [ ] test/js/node/http2/node-http2.test.js
+- [ ] test/bake/dev/hot.test.ts
+- [ ] test/js/web/websocket/autobahn.test.ts
+- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
+- [ ] test/js/web/timers/setInterval.test.js
+- [ ] test/js/node/test/parallel/test-stdin-pipe-large.js
+- [ ] test/napi/napi.test.ts
+- [ ] test/js/bun/s3/s3.test.ts
+- [ ] test/cli/install/bun-install.test.ts
+- [ ] test/bundler/bundler_edgecase.test.ts
+- [ ] test/regression/issue/09041.test.ts
+- [ ] test/js/web/fetch/fetch.test.ts
+- [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
+
 ## Real
 
 - [ ] test/js/bun/net/tcp-server.test.ts
@@ -443,34 +471,6 @@ test("the error", async () => {
   - same stacktrace issue
 - [ ] test/js/bun/test/stack.test.ts
   - we're adding an extra `at unknown` frame at the end of the stacktrace for some reason. likely same issue as the above stacktrace bugs.
-
-## Flaky on main
-
-- [ ] test/cli/install/bun-install-registry.test.ts
-  - not sure if this is real or flaky
-- [ ] test/js/web/fetch/fetch.stream.test.ts
-  - this is usually a flaky failure but was a failure. this is maybe related to missing retry/rerun options.
-  - maybe it just ran the test 5 times and had a failure each time
-- [ ] test/js/bun/shell/leak.test.ts
-  - probably flaky
-- [ ] test/bundler/compile-windows-metadata.test.ts
-- [ ] test/js/sql/sql-mysql.test.ts
-- [ ] test/js/bun/http/bun-serve-file.test.ts
-- [ ] test/cli/inspect/BunFrontendDevServer.test.ts
-- [ ] test/bake/dev/stress.test.ts
-- [ ] test/js/node/http2/node-http2.test.js
-- [ ] test/bake/dev/hot.test.ts
-- [ ] test/js/web/websocket/autobahn.test.ts
-- [ ] test/js/node/test/parallel/test-child-process-fork-exec-path.js
-- [ ] test/js/web/timers/setInterval.test.js
-- [ ] test/js/node/test/parallel/test-stdin-pipe-large.js
-- [ ] test/napi/napi.test.ts
-- [ ] test/js/bun/s3/s3.test.ts
-- [ ] test/cli/install/bun-install.test.ts
-- [ ] test/bundler/bundler_edgecase.test.ts
-- [ ] test/regression/issue/09041.test.ts
-- [ ] test/js/web/fetch/fetch.test.ts
-- [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
 
 # Add features:
 

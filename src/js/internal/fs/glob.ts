@@ -1,8 +1,7 @@
 import type { GlobScanOptions } from "bun";
 const { validateObject, validateString, validateFunction, validateArray } = require("internal/validators");
 const { sep } = require("node:path");
-
-const isWindows = process.platform === "win32";
+const { isWindows } = require("internal/platform");
 
 interface GlobOptions {
   /** @default process.cwd() */

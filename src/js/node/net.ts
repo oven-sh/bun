@@ -39,7 +39,7 @@ const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
-const isWindows = process.platform === "win32";
+const { isWindows, isLinux } = require("internal/platform");
 
 const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
@@ -2272,7 +2272,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         port = 0;
       }
 
-      const isLinux = process.platform === "linux";
 
       if (!Number.isSafeInteger(port) || port < 0) {
         if (path) {

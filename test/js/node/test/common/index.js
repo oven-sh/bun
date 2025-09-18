@@ -159,12 +159,10 @@ if (process.argv.length === 2 &&
   }
 }
 
-const isWindows = process.platform === 'win32';
+const { isWindows, isLinux, isMacOS } = require('../../../harness');
 const isSunOS = process.platform === 'sunos';
 const isFreeBSD = process.platform === 'freebsd';
 const isOpenBSD = process.platform === 'openbsd';
-const isLinux = process.platform === 'linux';
-const isMacOS = process.platform === 'darwin';
 const isASan = process.config.variables.asan === 1;
 const isRiscv64 = process.arch === 'riscv64';
 const isDebug = process.features.debug;

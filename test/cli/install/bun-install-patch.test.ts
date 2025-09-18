@@ -1,14 +1,8 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { normalizeBunSnapshotForPatch as normalizeBunSnapshot } from "../../harness-patch";
 import { join } from "path";
-
-const normalizeBunSnapshot = (str: string) => {
-  str = normalizeBunSnapshot_(str);
-  str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
-  str = str.replaceAll("fstatat()", "stat()");
-  return str;
-};
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);

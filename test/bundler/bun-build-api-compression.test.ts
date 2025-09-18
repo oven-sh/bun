@@ -227,7 +227,7 @@ describe("Bun.build compress API", () => {
     expect(zstdSize).toBeLessThan(originalSize * 0.2);
   });
 
-  test("compress with sourcemap", async () => {
+  test("compress with sourcemap compresses both files", async () => {
     const tmpdir = tmpdirSync();
     const entryPath = path.join(tmpdir, "entry.ts");
     const outdir = path.join(tmpdir, "out");
@@ -241,17 +241,35 @@ console.log(message);`,
     const result = await Bun.build({
       entrypoints: [entryPath],
       outdir,
-      compress: "gzip",
+      compress: { gzip: true, zstd: true },
       sourcemap: "external",
     });
 
     expect(result.success).toBe(true);
+
+    // Check all files exist
     expect(fs.existsSync(path.join(outdir, "entry.js"))).toBe(true);
     expect(fs.existsSync(path.join(outdir, "entry.js.gz"))).toBe(true);
+    expect(fs.existsSync(path.join(outdir, "entry.js.zst"))).toBe(true);
     expect(fs.existsSync(path.join(outdir, "entry.js.map"))).toBe(true);
+    expect(fs.existsSync(path.join(outdir, "entry.js.map.gz"))).toBe(true);
+    expect(fs.existsSync(path.join(outdir, "entry.js.map.zst"))).toBe(true);
 
-    // Verify compressed file is valid
-    const gzContent = fs.readFileSync(path.join(outdir, "entry.js.gz"));
-    expect(() => zlib.gunzipSync(gzContent)).not.toThrow();
+    // Verify gzip files are valid
+    const jsGz = fs.readFileSync(path.join(outdir, "entry.js.gz"));
+    const mapGz = fs.readFileSync(path.join(outdir, "entry.js.map.gz"));
+    expect(() => zlib.gunzipSync(jsGz)).not.toThrow();
+    expect(() => zlib.gunzipSync(mapGz)).not.toThrow();
+
+    // Verify zstd files have correct magic bytes
+    const jsZst = fs.readFileSync(path.join(outdir, "entry.js.zst"));
+    const mapZst = fs.readFileSync(path.join(outdir, "entry.js.map.zst"));
+    expect(jsZst[0]).toBe(0x28);
+    expect(mapZst[0]).toBe(0x28);
+
+    // Verify decompressed content matches
+    const original = fs.readFileSync(path.join(outdir, "entry.js"));
+    const decompressed = zlib.gunzipSync(jsGz);
+    expect(decompressed).toEqual(original);
   });
 });

@@ -235,7 +235,7 @@ describe("bun build --compress", () => {
     expect(stderr.toString()).toContain("Valid formats: 'gzip', 'zstd'");
   });
 
-  test("compression works with source maps", () => {
+  test("compression works with source maps and compresses both", () => {
     const tmpdir = tmpdirSync();
     const srcFile = path.join(tmpdir, "index.ts");
     const outdir = path.join(tmpdir, "out");
@@ -249,7 +249,7 @@ describe("bun build --compress", () => {
     );
 
     const { exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), "build", srcFile, "--outdir", outdir, "--sourcemap=external", "--compress=gzip"],
+      cmd: [bunExe(), "build", srcFile, "--outdir", outdir, "--sourcemap=external", "--compress=gzip", "--compress=zstd"],
       env: bunEnv,
       stderr: "pipe",
     });
@@ -257,17 +257,27 @@ describe("bun build --compress", () => {
     expect(stderr.toString()).toBe("");
     expect(exitCode).toBe(0);
 
-    // Check that main file and its compressed version exist
+    // Check that all files and their compressed versions exist
     expect(fs.existsSync(path.join(outdir, "index.js"))).toBe(true);
     expect(fs.existsSync(path.join(outdir, "index.js.gz"))).toBe(true);
+    expect(fs.existsSync(path.join(outdir, "index.js.zst"))).toBe(true);
     expect(fs.existsSync(path.join(outdir, "index.js.map"))).toBe(true);
+    expect(fs.existsSync(path.join(outdir, "index.js.map.gz"))).toBe(true);
+    expect(fs.existsSync(path.join(outdir, "index.js.map.zst"))).toBe(true);
 
-    // Note: Source maps are not compressed in the current implementation
-    // This could be added as a future enhancement
-
-    // Verify compressed file is valid
+    // Verify compressed files are valid
     const jsGz = fs.readFileSync(path.join(outdir, "index.js.gz"));
+    const mapGz = fs.readFileSync(path.join(outdir, "index.js.map.gz"));
     expect(() => zlib.gunzipSync(jsGz)).not.toThrow();
+    expect(() => zlib.gunzipSync(mapGz)).not.toThrow();
+
+    // Verify zstd files have correct magic bytes
+    const jsZst = fs.readFileSync(path.join(outdir, "index.js.zst"));
+    const mapZst = fs.readFileSync(path.join(outdir, "index.js.map.zst"));
+    expect(jsZst[0]).toBe(0x28);
+    expect(jsZst[1]).toBe(0xb5);
+    expect(mapZst[0]).toBe(0x28);
+    expect(mapZst[1]).toBe(0xb5);
   });
 
   test("large file compression works correctly", () => {

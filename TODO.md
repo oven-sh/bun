@@ -418,6 +418,25 @@ test 2
 
 ## Stacktrace
 
+```
+DoneCallbackTask -> RunTask
+use RunTask from promise resolve/reject
+we can `this.addResult(data);` immediately and then queue the task
+
+that might not be the cause. we'll want to find what specific case has the changed stacktraces
+
+that will *probably* fix it. here's the repro:
+
+test("have to wait first", async () => {
+    await Bun.sleep(100);
+  });
+
+test("the error", async () => {
+    const error = new Error("error from qux");
+    console.log(error.stack);
+  });
+```
+
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
   - stacktrace is messed up. it's including an incorrect item in the stacktrace for some reason.
 - [ ] test/js/bun/util/inspect-error.test.js

@@ -1363,7 +1363,6 @@ fn getOrPutResolvedPackageWithFindResult(
         manifest,
         find_result.version,
         find_result.package,
-        manifest.string_buf,
         Features.npm,
     ));
 

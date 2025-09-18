@@ -542,6 +542,18 @@ pub fn clean(
     return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
 }
 
+pub fn resolveCatalogDependency(this: *Lockfile, dep: *const Dependency) ?Dependency.Version {
+    if (dep.version.tag != .catalog) {
+        return dep.version;
+    }
+
+    const catalog_dep = this.catalogs.get(this, dep.version.value.catalog, dep.name) orelse {
+        return null;
+    };
+
+    return catalog_dep.version;
+}
+
 /// Is this a direct dependency of the workspace root package.json?
 pub fn isWorkspaceRootDependency(this: *const Lockfile, id: DependencyID) bool {
     return this.packages.items(.dependencies)[0].contains(id);
@@ -933,6 +945,79 @@ const PendingResolution = struct {
 };
 
 const PendingResolutions = std.ArrayList(PendingResolution);
+
+pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, manager: *PackageManager) !void {
+    try manager.populateManifestCache(.all);
+
+    const pkgs = this.packages.slice();
+
+    const pkg_names = pkgs.items(.name);
+    const pkg_name_hashes = pkgs.items(.name_hash);
+    const pkg_resolutions = pkgs.items(.resolution);
+    const pkg_bins = pkgs.items(.bin);
+
+    var builder = manager.lockfile.stringBuilder();
+
+    var bin_extern_strings_count: u32 = 0;
+
+    for (pkg_names, pkg_name_hashes, pkg_resolutions, 0..) |pkg_name, pkg_name_hash, pkg_res, _pkg_id| {
+        const pkg_id: PackageID = @intCast(_pkg_id);
+        _ = pkg_id;
+
+        switch (pkg_res.tag) {
+            .npm => {
+                const manifest = manager.manifests.byNameHash(
+                    manager,
+                    manager.scopeForPackageName(pkg_name.slice(builder.lockfile.buffers.string_bytes.items)),
+                    pkg_name_hash,
+                    .load_from_memory_fallback_to_disk,
+                ) orelse {
+                    continue;
+                };
+
+                const pkg = manifest.findByVersion(pkg_res.value.npm.version) orelse {
+                    continue;
+                };
+
+                bin_extern_strings_count += pkg.package.bin.count(manifest.string_buf, manifest.extern_strings_bin_entries, @TypeOf(&builder), &builder);
+            },
+            else => {},
+        }
+    }
+
+    try builder.allocate();
+    defer builder.clamp();
+
+    var extern_strings_list = &manager.lockfile.buffers.extern_strings;
+    try extern_strings_list.ensureUnusedCapacity(manager.lockfile.allocator, bin_extern_strings_count);
+    extern_strings_list.items.len += bin_extern_strings_count;
+    const extern_strings = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
+
+    for (pkg_names, pkg_name_hashes, pkg_resolutions, pkg_bins, 0..) |pkg_name, pkg_name_hash, pkg_res, *pkg_bin, _pkg_id| {
+        const pkg_id: PackageID = @intCast(_pkg_id);
+        _ = pkg_id;
+
+        switch (pkg_res.tag) {
+            .npm => {
+                const manifest = manager.manifests.byNameHash(
+                    manager,
+                    manager.scopeForPackageName(pkg_name.slice(builder.lockfile.buffers.string_bytes.items)),
+                    pkg_name_hash,
+                    .load_from_memory_fallback_to_disk,
+                ) orelse {
+                    continue;
+                };
+
+                const pkg = manifest.findByVersion(pkg_res.value.npm.version) orelse {
+                    continue;
+                };
+
+                pkg_bin.* = pkg.package.bin.clone(manifest.string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings, @TypeOf(&builder), &builder);
+            },
+            else => {},
+        }
+    }
+}
 
 pub const Printer = struct {
     lockfile: *Lockfile,

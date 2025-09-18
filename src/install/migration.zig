@@ -90,22 +90,25 @@ pub fn detectAndLoadOtherLockfile(
         defer lockfile.close();
         const data = lockfile.readToEnd(allocator).unwrap() catch break :pnpm;
         const migrate_result = @import("./pnpm.zig").migratePnpmLockfile(this, manager, allocator, log, data, dir) catch |err| {
-            if (err == error.PnpmLockfileTooOld) {
-                Output.prettyErrorln(
-                    \\<red><b>error<r><d>:<r> pnpm-lock.yaml version is too old (v5 or v6)
-                    \\
-                    \\Please upgrade using 'pnpm install --lockfile-only' first, then try again.
-                , .{});
-                Global.exit(1);
-            }
-            if (err == error.PnpmLockfileTooNew) {
-                Output.prettyErrorln(
-                    \\<red><b>error<r><d>:<r> pnpm-lock.yaml version is too new
-                    \\
-                    \\This version of Bun supports pnpm lockfile versions 7, 8, and 9.
-                    \\Please open an issue at https://github.com/oven-sh/bun/issues
-                , .{});
-                Global.exit(1);
+            switch (err) {
+                error.PnpmLockfileTooOld => {
+                    Output.prettyErrorln(
+                        \\<red><b>error<r><d>:<r> pnpm-lock.yaml version is too old (v5 or v6)
+                        \\
+                        \\Please upgrade using 'pnpm install --lockfile-only' first, then try again.
+                    , .{});
+                    Global.exit(1);
+                },
+                error.PnpmLockfileTooNew => {
+                    Output.prettyErrorln(
+                        \\<red><b>error<r><d>:<r> pnpm-lock.yaml version is too new
+                        \\
+                        \\This version of Bun supports pnpm lockfile versions 7, 8, and 9.
+                        \\Please open an issue at https://github.com/oven-sh/bun/issues
+                    , .{});
+                    Global.exit(1);
+                },
+                else => {},
             }
             if (Environment.isDebug) {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());

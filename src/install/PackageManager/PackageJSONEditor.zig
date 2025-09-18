@@ -5,17 +5,6 @@ const dependency_groups = &.{
     .{ "peerDependencies", .{ .peer = true } },
 };
 
-fn resolveCatalogDependency(manager: *PackageManager, dep: Dependency) ?Dependency.Version {
-    return if (dep.version.tag == .catalog) blk: {
-        const catalog_dep = manager.lockfile.catalogs.get(
-            manager.lockfile,
-            dep.version.value.catalog,
-            dep.name,
-        ) orelse return null;
-        break :blk catalog_dep.version;
-    } else dep.version;
-}
-
 pub const EditOptions = struct {
     exact_versions: bool = false,
     add_trusted_dependencies: bool = false,
@@ -293,7 +282,7 @@ pub fn editUpdateNoArgs(
                             if (manager.updating_packages.fetchSwapRemove(key_str)) |entry| {
                                 const is_alias = entry.value.is_alias;
                                 const dep_name = entry.key;
-                                for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
+                                for (workspace_deps, workspace_resolution_ids) |*workspace_dep, package_id| {
                                     if (package_id == invalid_package_id) continue;
 
                                     const resolution = resolutions[package_id];
@@ -302,7 +291,7 @@ pub fn editUpdateNoArgs(
                                     const workspace_dep_name = workspace_dep.name.slice(string_buf);
                                     if (!strings.eqlLong(workspace_dep_name, dep_name, true)) continue;
 
-                                    const resolved_version = resolveCatalogDependency(manager, workspace_dep) orelse workspace_dep.version;
+                                    const resolved_version = manager.lockfile.resolveCatalogDependency(workspace_dep) orelse workspace_dep.version;
                                     if (resolved_version.npm()) |npm_version| {
                                         // It's possible we inserted a dependency that won't update (version is an exact version).
                                         // If we find one, skip to keep the original version literal.

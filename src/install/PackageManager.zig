@@ -1243,6 +1243,8 @@ pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks
 pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
 pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
 
+pub const populateManifestCache = @import("./PackageManager/PopulateManifestCache.zig").populateManifestCache;
+
 const string = []const u8;
 const stringZ = [:0]const u8;
 

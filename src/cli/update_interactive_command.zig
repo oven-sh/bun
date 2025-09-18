@@ -111,17 +111,6 @@ pub const UpdateInteractiveCommand = struct {
         };
     }
 
-    fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
-        return if (dep.version.tag == .catalog) blk: {
-            const catalog_dep = manager.lockfile.catalogs.get(
-                manager.lockfile,
-                dep.version.value.catalog,
-                dep.name,
-            ) orelse return null;
-            break :blk catalog_dep.version;
-        } else dep.version;
-    }
-
     pub fn exec(ctx: Command.Context) !void {
         Output.prettyln("<r><b>bun update --interactive <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
@@ -383,7 +372,7 @@ pub const UpdateInteractiveCommand = struct {
         };
         defer bun.default_allocator.free(workspace_pkg_ids);
 
-        try OutdatedCommand.updateManifestsIfNecessary(manager, workspace_pkg_ids);
+        try manager.populateManifestCache(.{ .ids = workspace_pkg_ids });
 
         // Get outdated packages
         const outdated_packages = try getOutdatedPackages(bun.default_allocator, manager, workspace_pkg_ids);
@@ -752,8 +741,8 @@ pub const UpdateInteractiveCommand = struct {
             for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
                 const package_id = lockfile.buffers.resolutions.items[dep_id];
                 if (package_id == invalid_package_id) continue;
-                const dep = lockfile.buffers.dependencies.items[dep_id];
-                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                const dep = &lockfile.buffers.dependencies.items[dep_id];
+                const resolved_version = manager.lockfile.resolveCatalogDependency(dep) orelse continue;
                 if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;

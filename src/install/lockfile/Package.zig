@@ -302,7 +302,6 @@ pub const Package = extern struct {
         manifest: *const Npm.PackageManifest,
         version: Semver.Version,
         package_version_ptr: *const Npm.PackageVersion,
-        string_buf: []const u8,
         comptime features: Features,
     ) !Package {
         var package = Package{};
@@ -348,7 +347,7 @@ pub const Package = extern struct {
         // --- Counting
         {
             string_builder.count(manifest.name());
-            version.count(string_buf, @TypeOf(&string_builder), &string_builder);
+            version.count(manifest.string_buf, @TypeOf(&string_builder), &string_builder);
 
             inline for (dependency_groups) |group| {
                 const map: ExternalStringMap = @field(package_version, group.field);
@@ -359,12 +358,12 @@ pub const Package = extern struct {
                 if (comptime Environment.isDebug) assert(keys.len == version_strings.len);
 
                 for (keys, version_strings) |key, ver| {
-                    string_builder.count(key.slice(string_buf));
-                    string_builder.count(ver.slice(string_buf));
+                    string_builder.count(key.slice(manifest.string_buf));
+                    string_builder.count(ver.slice(manifest.string_buf));
                 }
             }
 
-            bin_extern_strings_count = package_version.bin.count(string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
+            bin_extern_strings_count = package_version.bin.count(manifest.string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
         }
 
         string_builder.count(manifest.str(&package_version_ptr.tarball_url));
@@ -431,8 +430,8 @@ pub const Package = extern struct {
                         }
                     }
 
-                    const name: ExternalString = string_builder.appendWithHash(ExternalString, key.slice(string_buf), key.hash);
-                    const dep_version = string_builder.appendWithHash(String, version_string_.slice(string_buf), version_string_.hash);
+                    const name: ExternalString = string_builder.appendWithHash(ExternalString, key.slice(manifest.string_buf), key.hash);
+                    const dep_version = string_builder.appendWithHash(String, version_string_.slice(manifest.string_buf), version_string_.hash);
                     const sliced = dep_version.sliced(lockfile.buffers.string_bytes.items);
 
                     var behavior = group.behavior;
@@ -483,7 +482,7 @@ pub const Package = extern struct {
                 }
             }
 
-            package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
+            package.bin = package_version.bin.clone(manifest.string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
 
             package.meta.arch = package_version.cpu;
             package.meta.os = package_version.os;

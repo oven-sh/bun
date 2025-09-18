@@ -91,7 +91,7 @@ const PnpmLockfile = struct {
         string_buf: *String.Buf,
         log: *logger.Log,
         manager: *Install.PackageManager,
-    ) !bun.StringHashMap(Dependency.Version) {
+    ) OOM!bun.StringHashMap(Dependency.Version) {
         var catalog_map = bun.StringHashMap(Dependency.Version).init(allocator);
 
         if (self.catalogs) |catalogs_obj| {
@@ -270,6 +270,16 @@ fn parseGitUrl(url: []const u8) struct { owner: []const u8, repo: []const u8, co
     return .{ .owner = owner, .repo = repo, .commit = commit };
 }
 
+const MigratePnpmLockfileError = OOM || error{
+    YamlParseError,
+    InvalidPnpmLockfile,
+    PnpmLockfileVersionMissing,
+    PnpmLockfileVersionInvalid,
+    PnpmLockfileTooOld,
+    PnpmLockfileTooNew,
+    DependencyLoop,
+};
+
 /// Main migration function - convert PNPM lockfile to Bun lockfile
 pub fn migratePnpmLockfile(
     this: *Lockfile,
@@ -278,7 +288,7 @@ pub fn migratePnpmLockfile(
     log: *logger.Log,
     data: string,
     dir: bun.FD,
-) !LoadResult {
+) MigratePnpmLockfileError!LoadResult {
     this.initEmpty(allocator);
     Install.initializeStore();
 
@@ -2700,7 +2710,7 @@ pub fn migratePnpmLockfile(
 }
 
 /// Updates package.json with workspace and catalog information after migration
-fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: bun.FD) !void {
+fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: bun.FD) OOM!void {
     const package_json_path = "package.json";
 
     const package_json_file = bun.sys.File.openat(dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch return;
@@ -3066,6 +3076,7 @@ const JSPrinter = bun.js_printer;
 const logger = bun.logger;
 const strings = bun.strings;
 const YAML = bun.interchange.yaml.YAML;
+const OOM = bun.OOM;
 
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;

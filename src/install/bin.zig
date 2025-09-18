@@ -123,44 +123,6 @@ pub const Bin = extern struct {
         unreachable;
     }
 
-    pub fn cloneAppend(this: *const Bin, this_buf: string, this_extern_strings: []const ExternalString, lockfile: *Lockfile) OOM!Bin {
-        var string_buf = lockfile.stringBuf();
-        defer string_buf.apply(lockfile);
-
-        const cloned: Bin = .{
-            .tag = this.tag,
-
-            .value = switch (this.tag) {
-                .none => Value.init(.{ .none = {} }),
-                .file => Value.init(.{
-                    .file = try string_buf.append(this.value.file.slice(this_buf)),
-                }),
-                .named_file => Value.init(.{ .named_file = .{
-                    try string_buf.append(this.value.named_file[0].slice(this_buf)),
-                    try string_buf.append(this.value.named_file[1].slice(this_buf)),
-                } }),
-                .dir => Value.init(.{
-                    .dir = try string_buf.append(this.value.dir.slice(this_buf)),
-                }),
-                .map => map: {
-                    const off = lockfile.buffers.extern_strings.items.len;
-                    for (this.value.map.get(this_extern_strings)) |extern_string| {
-                        try lockfile.buffers.extern_strings.append(
-                            lockfile.allocator,
-                            try string_buf.appendExternal(extern_string.slice(this_buf)),
-                        );
-                    }
-                    const new = lockfile.buffers.extern_strings.items[off..];
-                    break :map Value.init(.{
-                        .map = ExternalStringList.init(lockfile.buffers.extern_strings.items, new),
-                    });
-                },
-            },
-        };
-
-        return cloned;
-    }
-
     /// Used for packages read from text lockfile.
     pub fn parseAppend(
         allocator: std.mem.Allocator,

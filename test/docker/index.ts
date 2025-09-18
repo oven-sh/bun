@@ -60,13 +60,8 @@ class DockerComposeHelper {
   }
 
   private async exec(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    // Try docker compose v2 first (docker compose)
-    let cmd = ["docker", "compose", "-p", this.projectName, "-f", this.composeFile, ...args];
-
-    // Check if we should use docker-compose v1 instead
-    if (process.env.USE_DOCKER_COMPOSE_V1 === "true") {
-      cmd = ["docker-compose", "-p", this.projectName, "-f", this.composeFile, ...args];
-    }
+    // Only support docker compose v2
+    const cmd = ["docker", "compose", "-p", this.projectName, "-f", this.composeFile, ...args];
 
     const proc = spawn({
       cmd,
@@ -97,32 +92,16 @@ class DockerComposeHelper {
       throw new Error("Docker is not available. Please ensure Docker is installed and running.");
     }
 
-    // Check docker compose - try v2 first, then v1
-    const composeV2Check = spawn({
+    // Check docker compose v2 is available
+    const composeCheck = spawn({
       cmd: ["docker", "compose", "version"],
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const composeV2ExitCode = await composeV2Check.exited;
-    if (composeV2ExitCode !== 0) {
-      // Try docker-compose v1
-      const composeV1Check = spawn({
-        cmd: ["docker-compose", "version"],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const composeV1ExitCode = await composeV1Check.exited;
-      if (composeV1ExitCode !== 0) {
-        throw new Error("Neither Docker Compose v2 nor v1 is available. Please install Docker Compose.");
-      }
-
-      // Use v1 for all subsequent commands
-      process.env.USE_DOCKER_COMPOSE_V1 = "true";
-      console.log("Using docker-compose v1 (legacy)");
-    } else {
-      console.log("Using docker compose v2");
+    const composeExitCode = await composeCheck.exited;
+    if (composeExitCode !== 0) {
+      throw new Error("Docker Compose v2 is not available. Please ensure Docker Compose v2 is installed.");
     }
   }
 

@@ -10,14 +10,16 @@ describeWithContainer(
     args: [],
   },
   container => {
-    const options = {
+    // Use a getter to avoid reading port/host at define time
+    const getOptions = () => ({
       url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
       max: 1,
       bigint: true,
-    };
+    });
 
     test("Transaction works", async () => {
-      await using sql = new SQL(options);
+      await container.ready;
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
 
@@ -31,7 +33,8 @@ describeWithContainer(
     });
 
     test("Throws on illegal transactions", async () => {
-      await using sql = new SQL({ ...options, max: 2 });
+      await container.ready;
+      await using sql = new SQL({ ...getOptions(), max: 2 });
       try {
         await sql`BEGIN`;
         expect.unreachable();
@@ -41,13 +44,15 @@ describeWithContainer(
     });
 
     test(".catch suppresses uncaught promise rejection", async () => {
-      await using sql = new SQL({ ...options, max: 2 });
+      await container.ready;
+      await using sql = new SQL({ ...getOptions(), max: 2 });
       const error = await sql`BEGIN`.catch(e => e);
       return expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
     });
 
     test("Transaction throws", async () => {
-      await using sql = new SQL(options);
+      await container.ready;
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       expect(
@@ -61,7 +66,8 @@ describeWithContainer(
     });
 
     test("Transaction rolls back", async () => {
-      await using sql = new SQL(options);
+      await container.ready;
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
 
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;

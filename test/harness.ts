@@ -910,7 +910,7 @@ export async function describeWithContainer(
     args?: string[];
     archs?: NodeJS.Architecture[];
   },
-  fn: (container: { port: number; host: string }) => void,
+  fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
   describe(label, () => {
     // Check if this is one of our docker-compose services
@@ -929,18 +929,41 @@ export async function describeWithContainer(
 
     const servicePort = services[image];
     if (servicePort) {
-      let containerInfo = { host: "127.0.0.1", port: 0 };
+      // Create a container descriptor with stable references and a ready promise
+      let readyResolver: () => void;
+      let readyRejecter: (error: any) => void;
+      const readyPromise = new Promise<void>((resolve, reject) => {
+        readyResolver = resolve;
+        readyRejecter = reject;
+      });
+
+      // Internal state that will be updated when container is ready
+      let _host = "127.0.0.1";
+      let _port = 0;
+
+      // Container descriptor with live getters and ready promise
+      const containerDescriptor = {
+        get host() { return _host; },
+        get port() { return _port; },
+        ready: readyPromise,
+      };
 
       // Start the service before any tests
       beforeAll(async () => {
-        const dockerHelper = await import("./docker/index.ts");
-        const info = await dockerHelper.ensure(image as any);
-        containerInfo.host = info.host;
-        containerInfo.port = info.ports[servicePort];
-        console.log(`Container ready via docker-compose: ${image} at ${containerInfo.host}:${containerInfo.port}`);
+        try {
+          const dockerHelper = await import("./docker/index.ts");
+          const info = await dockerHelper.ensure(image as any);
+          _host = info.host;
+          _port = info.ports[servicePort];
+          console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
+          readyResolver!();
+        } catch (error) {
+          readyRejecter!(error);
+          throw error;
+        }
       });
 
-      fn(containerInfo);
+      fn(containerDescriptor);
       return;
     }
 
@@ -1007,7 +1030,7 @@ export async function describeWithContainer(
         stderr: "ignore",
       });
     });
-    fn({ port, host: "127.0.0.1" });
+    fn({ port, host: "127.0.0.1", ready: Promise.resolve() });
   });
 }
 

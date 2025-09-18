@@ -456,10 +456,9 @@ test 2
 # Add features:
 
 - [x] nvm ~~revert how scopefunctions works to how it was before. add all the props to everything. `.skip.only` is the same as `.only.skip`. 32 possible combinations so it's fine.~~
-- [ ] need to cache the JSValue created from DoneCallback.callAsFunction
 - [ ] test/js/node/http2/node-http2.test.js
   - this spams output with 'killed 1 dangling process' now - consider only showing that for timeout failures
-- [ ] change DoneCallback and ScopeFunctions to both use bound functions
+- [x] change DoneCallback and ScopeFunctions to both use bound functions
   - DoneCallback will hold a jsvalue with the data
   - ScopeFunctions could be implemented by using 3 jsvalues and packing the data
   - A prototype can be set on a bound function for ScopeFunctions
@@ -742,6 +741,7 @@ test 2
 
 # Follow-up:
 
+- [ ] should to cache the JSValue created from DoneCallback.callAsFunction
 - [ ] fix rerun-each. implement retry and rerun params for tests.
 - [ ] Remove finalizer on ScopeFunctions.zig by storing the data in 3 jsvalues passed in bind rather than using a custom class. Class generator can pass the this value into the function and it can extract the data from bind.
 - [ ] concurrent limit

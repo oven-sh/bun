@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 // This test covers the issue where Bun.spawn doesn't inherit environment variables on Windows

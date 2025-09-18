@@ -35,45 +35,7 @@ if (isDockerEnabled()) {
         host: info.host,
       };
       process.env.DATABASE_URL = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-    });
 
-    afterAll(async () => {
-      // Containers persist - managed by docker-compose
-      if (!process.env.BUN_KEEP_DOCKER) {
-        await dockerCompose.down();
-      }
-    });
-
-    // require("./bootstrap.js");
-
-    // macOS location: /opt/homebrew/var/postgresql@14/pg_hba.conf
-    // --- Expected pg_hba.conf ---
-    // local all ${USERNAME} trust
-    // local all postgres trust
-    // local all bun_sql_test_scram scram-sha-256
-    // local all bun_sql_test trust
-    // local all bun_sql_test_md5 md5
-
-    // # IPv4 local connections:
-    // host all ${USERNAME} 127.0.0.1/32 trust
-    // host all postgres 127.0.0.1/32 trust
-    // host all bun_sql_test_scram 127.0.0.1/32 scram-sha-256
-    // host all bun_sql_test 127.0.0.1/32 trust
-    // host all bun_sql_test_md5 127.0.0.1/32 md5
-    // # IPv6 local connections:
-    // host all ${USERNAME} ::1/128 trust
-    // host all postgres ::1/128 trust
-    // host all bun_sql_test ::1/128 trust
-    // host all bun_sql_test_scram ::1/128 scram-sha-256
-    // host all bun_sql_test_md5 ::1/128 md5
-    // # Allow replication connections from localhost, by a user with the
-    // # replication privilege.
-    // local replication all trust
-    // host replication all 127.0.0.1/32 trust
-    // host replication all ::1/128 trust
-    // --- Expected pg_hba.conf ---
-
-    beforeAll(async () => {
       // Create Unix socket proxy for PostgreSQL
       socketProxy = await UnixDomainSocketProxy.create("PostgreSQL", container.host, container.port);
 
@@ -113,7 +75,44 @@ if (isDockerEnabled()) {
         port: container.port,
         max: 1,
       };
-    }); // End of new beforeAll
+    });
+
+    afterAll(async () => {
+      // Containers persist - managed by docker-compose
+      if (!process.env.BUN_KEEP_DOCKER) {
+        await dockerCompose.down();
+      }
+    });
+
+    // require("./bootstrap.js");
+
+    // macOS location: /opt/homebrew/var/postgresql@14/pg_hba.conf
+    // --- Expected pg_hba.conf ---
+    // local all ${USERNAME} trust
+    // local all postgres trust
+    // local all bun_sql_test_scram scram-sha-256
+    // local all bun_sql_test trust
+    // local all bun_sql_test_md5 md5
+
+    // # IPv4 local connections:
+    // host all ${USERNAME} 127.0.0.1/32 trust
+    // host all postgres 127.0.0.1/32 trust
+    // host all bun_sql_test_scram 127.0.0.1/32 scram-sha-256
+    // host all bun_sql_test 127.0.0.1/32 trust
+    // host all bun_sql_test_md5 127.0.0.1/32 md5
+    // # IPv6 local connections:
+    // host all ${USERNAME} ::1/128 trust
+    // host all postgres ::1/128 trust
+    // host all bun_sql_test ::1/128 trust
+    // host all bun_sql_test_scram ::1/128 scram-sha-256
+    // host all bun_sql_test_md5 ::1/128 md5
+    // # Allow replication connections from localhost, by a user with the
+    // # replication privilege.
+    // local replication all trust
+    // host replication all 127.0.0.1/32 trust
+    // host replication all ::1/128 trust
+    // --- Expected pg_hba.conf ---
+
 
     // Clean up the socket on exit
     afterAll(() => {
@@ -404,8 +403,10 @@ if (isDockerEnabled()) {
       const onclose = mock();
       const onconnect = mock();
       await using sql = postgres({
-        ...options,
-        hostname: "example.com",
+        db: "bun_sql_test",
+        username: "bun_sql_test",
+        host: "example.com",
+        port: 5432,
         connection_timeout: 4,
         onconnect,
         onclose,

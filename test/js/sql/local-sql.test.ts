@@ -1,10 +1,10 @@
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDirWithFiles, isDockerEnabled } from "harness";
+import { bunEnv, bunExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
-import { exec, execSync } from "child_process";
+import { exec } from "child_process";
 import net from "net";
 import { promisify } from "util";
 

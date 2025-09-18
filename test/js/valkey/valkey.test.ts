@@ -1,6 +1,14 @@
 import { randomUUIDv7, RedisClient } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, DEFAULT_REDIS_URL, expectType, isEnabled, setupDockerContainer } from "./test-utils";
+import {
+  ConnectionType,
+  createClient,
+  ctx,
+  DEFAULT_REDIS_URL,
+  expectType,
+  isEnabled,
+  setupDockerContainer,
+} from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   beforeAll(async () => {

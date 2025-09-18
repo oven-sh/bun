@@ -1,5 +1,5 @@
 import { SQL, randomUUIDv7 } from "bun";
-import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeAll, describe, expect, mock, test } from "bun:test";
 import { describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import net from "net";
 import path from "path";
@@ -70,7 +70,7 @@ if (isDockerEnabled()) {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {
               test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
-                      const longQuery = `select ${Array.from({ length: size }, (_, i) => {
+                const longQuery = `select ${Array.from({ length: size }, (_, i) => {
                   if (duplicated) {
                     return i % 2 === 0 ? `${i + 1} as f${i}, ${i} as f${i}` : `${i} as f${i}`;
                   }

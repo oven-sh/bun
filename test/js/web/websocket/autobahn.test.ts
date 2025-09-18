@@ -45,99 +45,95 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
   });
 
   function getCaseStatus(testID: number) {
-      return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${url}/getCaseStatus?case=${testID}&agent=${agent}`, wsOptions);
-        socket.binaryType = "arraybuffer";
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(`${url}/getCaseStatus?case=${testID}&agent=${agent}`, wsOptions);
+      socket.binaryType = "arraybuffer";
 
-        socket.addEventListener("message", event => {
-          resolve(JSON.parse(event.data as string));
-        });
-        socket.addEventListener("error", event => {
-          reject(event);
-        });
+      socket.addEventListener("message", event => {
+        resolve(JSON.parse(event.data as string));
       });
-    }
-
-    function getTestCaseCount() {
-      return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${url}/getCaseCount`, wsOptions);
-        let count: number | null = null;
-        socket.addEventListener("message", event => {
-          count = parseInt(event.data as string, 10);
-        });
-        socket.addEventListener("close", () => {
-          if (!count) {
-            reject("No test count received");
-          }
-          resolve(count);
-        });
+      socket.addEventListener("error", event => {
+        reject(event);
       });
-    }
+    });
+  }
 
-    function getCaseInfo(testID: number) {
-      return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${url}/getCaseInfo?case=${testID}`, wsOptions);
-        socket.binaryType = "arraybuffer";
-
-        socket.addEventListener("message", event => {
-          resolve(JSON.parse(event.data as string));
-        });
-        socket.addEventListener("error", event => {
-          reject(event);
-        });
+  function getTestCaseCount() {
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(`${url}/getCaseCount`, wsOptions);
+      let count: number | null = null;
+      socket.addEventListener("message", event => {
+        count = parseInt(event.data as string, 10);
       });
-    }
-
-    function runTestCase(testID: number) {
-      return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${url}/runCase?case=${testID}&agent=${agent}`, wsOptions);
-        socket.binaryType = "arraybuffer";
-
-        socket.addEventListener("message", event => {
-          socket.send(event.data);
-        });
-        socket.addEventListener("close", () => {
-          resolve(undefined);
-        });
-        socket.addEventListener("error", event => {
-          reject(event);
-        });
-      });
-    }
-
-  it(
-    "should run Autobahn test cases",
-    async () => {
-      const count = (await getTestCaseCount()) as number;
-      expect(count).toBeGreaterThan(0);
-
-      // In CI, run a subset of tests to avoid timeout
-      // Run first 50 tests plus some from each category
-      const testCases = process.env.CI
-        ? [...Array(50).keys()].map(i => i + 1).concat([100, 200, 300, 400, 500, count])
-        : Array.from({ length: count }, (_, i) => i + 1);
-
-      console.log(`Running ${testCases.length} of ${count} test cases`);
-
-      for (const i of testCases) {
-        if (i > count) continue;
-
-        const info = (await getCaseInfo(i)) as { id: string; description: string };
-
-        // Run test case
-        await runTestCase(i);
-        const result = (await getCaseStatus(i)) as { behavior: string };
-
-        // Check result
-        try {
-          expect(result.behavior).toBeOneOf(["OK", "INFORMATIONAL", "NON-STRICT"]);
-        } catch (e) {
-          throw new Error(`Test case ${info.id} (${info.description}) failed: behavior was ${result.behavior}`);
+      socket.addEventListener("close", () => {
+        if (!count) {
+          reject("No test count received");
         }
+        resolve(count);
+      });
+    });
+  }
+
+  function getCaseInfo(testID: number) {
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(`${url}/getCaseInfo?case=${testID}`, wsOptions);
+      socket.binaryType = "arraybuffer";
+
+      socket.addEventListener("message", event => {
+        resolve(JSON.parse(event.data as string));
+      });
+      socket.addEventListener("error", event => {
+        reject(event);
+      });
+    });
+  }
+
+  function runTestCase(testID: number) {
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(`${url}/runCase?case=${testID}&agent=${agent}`, wsOptions);
+      socket.binaryType = "arraybuffer";
+
+      socket.addEventListener("message", event => {
+        socket.send(event.data);
+      });
+      socket.addEventListener("close", () => {
+        resolve(undefined);
+      });
+      socket.addEventListener("error", event => {
+        reject(event);
+      });
+    });
+  }
+
+  it("should run Autobahn test cases", async () => {
+    const count = (await getTestCaseCount()) as number;
+    expect(count).toBeGreaterThan(0);
+
+    // In CI, run a subset of tests to avoid timeout
+    // Run first 50 tests plus some from each category
+    const testCases = process.env.CI
+      ? [...Array(50).keys()].map(i => i + 1).concat([100, 200, 300, 400, 500, count])
+      : Array.from({ length: count }, (_, i) => i + 1);
+
+    console.log(`Running ${testCases.length} of ${count} test cases`);
+
+    for (const i of testCases) {
+      if (i > count) continue;
+
+      const info = (await getCaseInfo(i)) as { id: string; description: string };
+
+      // Run test case
+      await runTestCase(i);
+      const result = (await getCaseStatus(i)) as { behavior: string };
+
+      // Check result
+      try {
+        expect(result.behavior).toBeOneOf(["OK", "INFORMATIONAL", "NON-STRICT"]);
+      } catch (e) {
+        throw new Error(`Test case ${info.id} (${info.description}) failed: behavior was ${result.behavior}`);
       }
-    },
-    300000, // 5 minute timeout
-  );
+    }
+  }, 300000); // 5 minute timeout
 
   afterAll(() => {
     // Container managed by docker-compose, no need to kill

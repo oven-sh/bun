@@ -40,7 +40,7 @@ const tests: {
 ];
 
 for (const { label, client, database } of tests) {
-  describeWithContainer(label, database, (container) => {
+  describeWithContainer(label, database, container => {
     let sql: Connection;
 
     beforeEach(async () => {

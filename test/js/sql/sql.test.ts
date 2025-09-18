@@ -113,7 +113,6 @@ if (isDockerEnabled()) {
     // host replication all ::1/128 trust
     // --- Expected pg_hba.conf ---
 
-
     // Clean up the socket on exit
     afterAll(() => {
       if (socketProxy) {
@@ -11000,8 +10999,8 @@ CREATE TABLE ${table_name} (
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`SELECT datacl FROM pg_database ORDER BY datname;`;
         // Find the bun_sql_test database - it should be near the end
-        const bunDb = result.find((r: any) =>
-          r.datacl && r.datacl.some((acl: string) => acl.includes("bun_sql_test=CTc/bun_sql_test"))
+        const bunDb = result.find(
+          (r: any) => r.datacl && r.datacl.some((acl: string) => acl.includes("bun_sql_test=CTc/bun_sql_test")),
         );
         expect(bunDb).toBeDefined();
         // Check that it has the expected ACL entries (may have additional users in postgres_auth)

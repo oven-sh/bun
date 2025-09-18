@@ -40,12 +40,17 @@ const tests: {
 ];
 
 for (const { label, client, database } of tests) {
-  describeWithContainer(label, database, (port: number) => {
+  describeWithContainer(label, database, (container) => {
     let sql: Connection;
+
+    beforeEach(async () => {
+      await container.ready;
+    });
+
     test("can connect to database", async () => {
       sql = await createConnection({
         ...client,
-        port,
+        port: container.port,
       });
     });
     test("can query database", async () => {

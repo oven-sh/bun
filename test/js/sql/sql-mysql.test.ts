@@ -39,8 +39,12 @@ if (isDockerEnabled()) {
               ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))
               : undefined,
         });
-        test("should return lastInsertRowid and affectedRows", async () => {
+
+        beforeEach(async () => {
           await container.ready;
+        });
+
+        test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
           const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
@@ -57,8 +61,7 @@ if (isDockerEnabled()) {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {
               test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
-                await container.ready;
-          await using sql = new SQL(getOptions());
+                await using sql = new SQL(getOptions());
                 const longQuery = `select ${Array.from({ length: size }, (_, i) => {
                   if (duplicated) {
                     return i % 2 === 0 ? `${i + 1} as f${i}, ${i} as f${i}` : `${i} as f${i}`;
@@ -475,7 +478,6 @@ if (isDockerEnabled()) {
         });
 
         test("Prepared transaction", async () => {
-          await container.ready;
           await using sql = new SQL(getOptions());
           await sql`create table test (a int)`;
 
@@ -630,25 +632,21 @@ if (isDockerEnabled()) {
         });
 
         test("sql file", async () => {
-          await container.ready;
           await using sql = new SQL(getOptions());
           expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
         });
 
         test("sql file throws", async () => {
-          await container.ready;
           await using sql = new SQL(getOptions());
           expect(await sql.file(rel("selectomondo.sql")).catch(x => x.code)).toBe("ENOENT");
         });
         test("Parameters in file", async () => {
-          await container.ready;
           await using sql = new SQL(getOptions());
           const result = await sql.file(rel("select-param.sql"), ["hello"]);
           return expect(result[0].x).toBe("hello");
         });
 
         test("Connection ended promise", async () => {
-          await container.ready;
           const sql = new SQL(getOptions());
 
           await sql.end();
@@ -657,7 +655,6 @@ if (isDockerEnabled()) {
         });
 
         test("Connection ended timeout", async () => {
-          await container.ready;
           const sql = new SQL(getOptions());
 
           await sql.end({ timeout: 10 });
@@ -666,14 +663,12 @@ if (isDockerEnabled()) {
         });
 
         test("Connection ended error", async () => {
-          await container.ready;
           const sql = new SQL(getOptions());
           await sql.end();
           return expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
         });
 
         test("Connection end does not cancel query", async () => {
-          await container.ready;
           const sql = new SQL(getOptions());
 
           const promise = sql`select SLEEP(1) as x`.execute();
@@ -682,14 +677,12 @@ if (isDockerEnabled()) {
         });
 
         test("Connection destroyed", async () => {
-          await container.ready;
           const sql = new SQL(getOptions());
           process.nextTick(() => sql.end({ timeout: 0 }));
           expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
         });
 
         test("Connection destroyed with query before", async () => {
-          await container.ready;
           const sql = new SQL(getOptions());
           const error = sql`select SLEEP(0.2)`.catch(err => err.code);
 
@@ -851,7 +844,6 @@ if (isDockerEnabled()) {
         });
 
         test("bigint is returned as String", async () => {
-          await container.ready;
           await using sql = new SQL(getOptions());
           expect(typeof (await sql`select 9223372036854777 as x`)[0].x).toBe("string");
         });
@@ -865,13 +857,11 @@ if (isDockerEnabled()) {
         });
 
         test("int is returned as Number", async () => {
-          await container.ready;
           await using sql = new SQL(getOptions());
           expect((await sql`select CAST(123 AS SIGNED) as x`)[0].x).toBe(123);
         });
 
         test("flush should work", async () => {
-          await container.ready;
           await using sql = new SQL(getOptions());
           await sql`select 1`;
           sql.flush();
@@ -905,7 +895,6 @@ if (isDockerEnabled()) {
           );
         });
         test("Array returns rows as arrays of columns", async () => {
-          await container.ready;
           await using sql = new SQL(getOptions());
           return [(await sql`select CAST(1 AS SIGNED) as x`.values())[0][0], 1];
         });

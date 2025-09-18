@@ -17,8 +17,10 @@ describeWithContainer(
       bigint: true,
     });
 
+    beforeEach(async () => {
+    });
+
     test("insert helper", async () => {
-      await container.ready; // Ensure container is ready
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
@@ -29,7 +31,6 @@ describeWithContainer(
       expect(result[0].age).toBe(30);
     });
     test("update helper", async () => {
-      await container.ready; // Ensure container is ready
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
@@ -42,7 +43,6 @@ describeWithContainer(
     });
 
     test("update helper with IN", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
@@ -63,7 +63,6 @@ describeWithContainer(
     });
 
     test("update helper with IN and column name", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
@@ -84,7 +83,6 @@ describeWithContainer(
     });
 
     test("update multiple values no helper", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
@@ -97,7 +95,6 @@ describeWithContainer(
     });
 
     test("SELECT with IN and NOT IN", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
       await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
@@ -118,7 +115,6 @@ describeWithContainer(
     });
 
     test("syntax error", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
       const users = [

@@ -17,8 +17,10 @@ describeWithContainer(
       bigint: true,
     });
 
+    beforeEach(async () => {
+    });
+
     test("Transaction works", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
@@ -33,7 +35,6 @@ describeWithContainer(
     });
 
     test("Throws on illegal transactions", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 2 });
       try {
         await sql`BEGIN`;
@@ -44,14 +45,12 @@ describeWithContainer(
     });
 
     test(".catch suppresses uncaught promise rejection", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 2 });
       const error = await sql`BEGIN`.catch(e => e);
       return expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
     });
 
     test("Transaction throws", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
@@ -66,7 +65,6 @@ describeWithContainer(
     });
 
     test("Transaction rolls back", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
 
@@ -85,7 +83,6 @@ describeWithContainer(
     });
 
     test("Transaction throws on uncaught savepoint", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
@@ -103,7 +100,6 @@ describeWithContainer(
     });
 
     test("Transaction throws on uncaught named savepoint", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
@@ -121,7 +117,6 @@ describeWithContainer(
     });
 
     test("Transaction succeeds on caught savepoint", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
@@ -146,7 +141,6 @@ describeWithContainer(
 
     test("Savepoint returns Result", async () => {
       let result;
-      await container.ready;
       await using sql = new SQL(getOptions());
       await sql.begin(async t => {
         result = await t.savepoint(s => s`select 1 as x`);
@@ -155,7 +149,6 @@ describeWithContainer(
     });
 
     test("Uncaught transaction request errors bubbles to transaction", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       expect(await sql.begin(sql => [sql`select wat`, sql`select 1 as x, ${1} as a`]).catch(e => e.message)).toBe(
         "Unknown column 'wat' in 'field list'",
@@ -163,7 +156,6 @@ describeWithContainer(
     });
 
     test("Transaction rejects with rethrown error", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       expect(
         await sql
@@ -179,7 +171,6 @@ describeWithContainer(
     });
 
     test("Parallel transactions", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 2 });
 
       expect(
@@ -190,14 +181,12 @@ describeWithContainer(
     });
 
     test("Many transactions at beginning of connection", async () => {
-      await container.ready;
       await using sql = new SQL({ ...getOptions(), max: 2 });
       const xs = await Promise.all(Array.from({ length: 30 }, () => sql.begin(sql => sql`select 1`)));
       return expect(xs.length).toBe(30);
     });
 
     test("Transactions array", async () => {
-      await container.ready;
       await using sql = new SQL(getOptions());
       expect(
         (await sql.begin(sql => [sql`select 1 as count`, sql`select 1 as count`])).map(x => x[0].count).join(""),

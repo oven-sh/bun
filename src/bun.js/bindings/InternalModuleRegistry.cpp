@@ -104,10 +104,10 @@ JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
     VM& vm,
     const WTF::String& moduleName,
-    const WTF::String& fileBase,
+    WTF::String fileBase,
     const WTF::String& urlString)
 {
-    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, fileBase);
+    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTFMove(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
         return generateModule(globalObject, vm, string, moduleName, urlString);

@@ -197,6 +197,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
     clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
+    clap.parseParam("--coverage-ignore <STR>...       Exclude files matching glob patterns from coverage") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
@@ -449,6 +450,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.option("--coverage-dir")) |dir| {
             ctx.test_options.coverage.reports_directory = dir;
+        }
+
+        if (args.options("--coverage-ignore").len > 0) {
+            ctx.test_options.coverage.ignore_patterns = args.options("--coverage-ignore");
         }
 
         if (args.option("--bail")) |bail| {

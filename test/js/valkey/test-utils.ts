@@ -4,7 +4,7 @@ import { bunEnv, isCI, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
 import * as dockerCompose from "../../docker/index.ts";
-import * as net from "node:net";
+import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 
@@ -139,8 +139,7 @@ interface ContainerConfiguration {
 let containerConfig: ContainerConfiguration | null = null;
 let dockerStarted = false;
 let dockerComposeInfo: any = null;
-let unixSocketServer: any = null;
-let actualSocketPath: string | null = null;
+let unixSocketProxy: UnixDomainSocketProxy | null = null;
 
 /**
  * Start the Redis Docker container with TCP, TLS, and Unix socket support using docker-compose
@@ -154,72 +153,20 @@ async function startContainer(): Promise<ContainerConfiguration> {
     // First, try to use docker-compose
     console.log("Attempting to use docker-compose for Redis...");
     const redisInfo = await dockerCompose.ensure("redis_unified");
+    console.log("Redis info:", redisInfo);
 
     const port = redisInfo.ports[6379];
     const tlsPort = redisInfo.ports[6380];
     const containerName = "redis_unified"; // docker-compose service name
 
-    // Create Unix domain socket proxy (like we do for PostgreSQL)
-    actualSocketPath = path.join(os.tmpdir(), `redis_proxy_${Date.now()}.sock`);
-
-    // Clean up any existing socket file
-    try {
-      fs.unlinkSync(actualSocketPath);
-    } catch {}
-
-    // Create a unix domain socket server that proxies to the Redis container
-    unixSocketServer = net.createServer(clientSocket => {
-      console.log("Redis connection received on unix socket");
-
-      // Create connection to the actual Redis container
-      const containerSocket = net.createConnection({
-        host: redisInfo.host,
-        port: port,
-      });
-
-      // Handle container connection
-      containerSocket.on("connect", () => {
-        console.log("Connected to Redis container via proxy");
-      });
-
-      containerSocket.on("error", err => {
-        console.error("Container connection error:", err);
-        clientSocket.destroy();
-      });
-
-      containerSocket.on("close", () => {
-        clientSocket.end();
-      });
-
-      // Handle client socket
-      clientSocket.on("data", data => {
-        containerSocket.write(data);
-      });
-
-      clientSocket.on("error", err => {
-        console.error("Client socket error:", err);
-        containerSocket.destroy();
-      });
-
-      clientSocket.on("close", () => {
-        containerSocket.end();
-      });
-
-      // Forward container responses back to client
-      containerSocket.on("data", data => {
-        clientSocket.write(data);
-      });
-    });
-
-    unixSocketServer.listen(actualSocketPath, () => {
-      console.log(`Unix domain socket proxy for Redis listening on ${actualSocketPath}`);
-    });
+    // Create Unix domain socket proxy for Redis
+    unixSocketProxy = await UnixDomainSocketProxy.create("Redis", redisInfo.host, port);
 
     // Update Redis connection info
     REDIS_PORT = port;
     REDIS_TLS_PORT = tlsPort;
     REDIS_HOST = redisInfo.host;
-    REDIS_UNIX_SOCKET = actualSocketPath;  // Use the proxy socket
+    REDIS_UNIX_SOCKET = unixSocketProxy.path;  // Use the proxy socket
     DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
     TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
     UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
@@ -503,15 +450,8 @@ if (isEnabled)
       }
 
       // Clean up Unix socket proxy if it exists
-      if (unixSocketServer) {
-        unixSocketServer.close();
-        console.log("Closed Unix socket proxy server");
-      }
-      if (actualSocketPath) {
-        try {
-          fs.unlinkSync(actualSocketPath);
-          console.log("Removed Unix socket file");
-        } catch {}
+      if (unixSocketProxy) {
+        unixSocketProxy.stop();
       }
     } catch (err) {
       console.error("Error during test cleanup:", err);

@@ -14,12 +14,12 @@ function rel(filename: string) {
 }
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
+import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 
 if (isDockerEnabled()) {
   describe("PostgreSQL tests", () => {
     let container: { port: number; host: string };
-    let socketPath: string;
-    let socketServer: any;
+    let socketProxy: UnixDomainSocketProxy;
     let login: Bun.SQL.PostgresOrMySQLOptions;
     let login_domain_socket: Bun.SQL.PostgresOrMySQLOptions;
     let login_md5: Bun.SQL.PostgresOrMySQLOptions;
@@ -72,83 +72,22 @@ if (isDockerEnabled()) {
     // host replication all ::1/128 trust
     // --- Expected pg_hba.conf ---
 
-    const net = require("node:net");
-    const fs = require("node:fs");
-    const path = require("node:path");
-    const os = require("node:os");
-
-    beforeAll(() => {
-      // Create a temporary unix domain socket path
-      socketPath = path.join(os.tmpdir(), `postgres_echo_${Date.now()}.sock`);
-
-      // Clean up any existing socket file
-      try {
-        fs.unlinkSync(socketPath);
-      } catch {}
-
-      // Create a unix domain socket server that proxies to the PostgreSQL container
-      socketServer = net.createServer(clientSocket => {
-        console.log("PostgreSQL connection received on unix socket");
-
-        // Create connection to the actual PostgreSQL container
-        const containerSocket = net.createConnection({
-          host: container.host,
-          port: container.port,
-        });
-
-        // Handle container connection
-        containerSocket.on("connect", () => {
-          console.log("Connected to PostgreSQL container");
-        });
-
-        containerSocket.on("error", err => {
-          console.error("Container connection error:", err);
-          clientSocket.destroy();
-        });
-
-        containerSocket.on("close", () => {
-          console.log("Container connection closed");
-          clientSocket.end();
-        });
-
-        // Handle client socket
-        clientSocket.on("data", data => {
-          // Forward client data to container
-          containerSocket.write(data);
-        });
-
-        clientSocket.on("error", err => {
-          console.error("Client socket error:", err);
-          containerSocket.destroy();
-        });
-
-        clientSocket.on("close", () => {
-          console.log("Client connection closed");
-          containerSocket.end();
-        });
-
-        // Forward container responses back to client
-        containerSocket.on("data", data => {
-          clientSocket.write(data);
-        });
-      });
-
-      socketServer.listen(socketPath, () => {
-        console.log(`Unix domain socket server listening on ${socketPath}`);
-      });
+    beforeAll(async () => {
+      // Create Unix socket proxy for PostgreSQL
+      socketProxy = await UnixDomainSocketProxy.create("PostgreSQL", container.host, container.port);
 
       login = {
         username: "bun_sql_test",
         host: container.host,
         port: container.port,
-        path: socketPath,
+        path: socketProxy.path,
       };
 
       login_domain_socket = {
         username: "bun_sql_test",
         host: container.host,
         port: container.port,
-        path: socketPath,
+        path: socketProxy.path,
       };
 
       login_md5 = {
@@ -177,14 +116,9 @@ if (isDockerEnabled()) {
 
     // Clean up the socket on exit
     afterAll(() => {
-      if (socketServer) {
-        socketServer.close();
+      if (socketProxy) {
+        socketProxy.stop();
       }
-      try {
-        if (socketPath) {
-          fs.unlinkSync(socketPath);
-        }
-      } catch {}
     });
 
     describe("Time/TimeZ", () => {

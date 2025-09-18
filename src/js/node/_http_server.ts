@@ -923,7 +923,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _final(callback) {
-    console.log("final");
     const handle = this[kHandle];
     if (!handle) {
       callback();

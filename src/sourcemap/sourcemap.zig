@@ -203,7 +203,7 @@ pub fn parseJSON(
                     }
 
                     map_data.mappings.names = names_list.items;
-                    map_data.mappings.names_buffer = .fromList(names_buffer);
+                    map_data.mappings.names_buffer = .moveFromList(&names_buffer);
                 }
             }
         }
@@ -218,7 +218,7 @@ pub fn parseJSON(
     const mapping, const source_index = switch (hint) {
         .source_only => |index| .{ null, index },
         .all => |loc| brk: {
-            const mapping = map.?.mappings.find(loc.line, loc.column) orelse
+            const mapping = map.?.mappings.find(.fromZeroBased(loc.line), .fromZeroBased(loc.column)) orelse
                 break :brk .{ null, null };
             break :brk .{ mapping, std.math.cast(u32, mapping.source_index) };
         },
@@ -315,14 +315,14 @@ pub const Mapping = struct {
             this.impl = .{ .with_names = with_names };
         }
 
-        fn findIndexFromGenerated(line_column_offsets: []const LineColumnOffset, line: i32, column: i32) ?usize {
+        fn findIndexFromGenerated(line_column_offsets: []const LineColumnOffset, line: bun.Ordinal, column: bun.Ordinal) ?usize {
             var count = line_column_offsets.len;
             var index: usize = 0;
             while (count > 0) {
                 const step = count / 2;
                 const i: usize = index + step;
                 const mapping = line_column_offsets[i];
-                if (mapping.lines.zeroBased() < line or (mapping.lines.zeroBased() == line and mapping.columns.zeroBased() <= column)) {
+                if (mapping.lines.zeroBased() < line.zeroBased() or (mapping.lines.zeroBased() == line.zeroBased() and mapping.columns.zeroBased() <= column.zeroBased())) {
                     index = i + 1;
                     count -|= step + 1;
                 } else {
@@ -331,7 +331,7 @@ pub const Mapping = struct {
             }
 
             if (index > 0) {
-                if (line_column_offsets[index - 1].lines.zeroBased() == line) {
+                if (line_column_offsets[index - 1].lines.zeroBased() == line.zeroBased()) {
                     return index - 1;
                 }
             }
@@ -339,7 +339,7 @@ pub const Mapping = struct {
             return null;
         }
 
-        pub fn findIndex(this: *const List, line: i32, column: i32) ?usize {
+        pub fn findIndex(this: *const List, line: bun.Ordinal, column: bun.Ordinal) ?usize {
             switch (this.impl) {
                 inline else => |*list| {
                     if (findIndexFromGenerated(list.items(.generated), line, column)) |i| {
@@ -383,7 +383,7 @@ pub const Mapping = struct {
             }
         }
 
-        pub fn find(this: *const List, line: i32, column: i32) ?Mapping {
+        pub fn find(this: *const List, line: bun.Ordinal, column: bun.Ordinal) ?Mapping {
             switch (this.impl) {
                 inline else => |*list, tag| {
                     if (findIndexFromGenerated(list.items(.generated), line, column)) |i| {
@@ -427,7 +427,7 @@ pub const Mapping = struct {
                 inline else => |*list| list.deinit(allocator),
             }
 
-            self.names_buffer.deinitWithAllocator(allocator);
+            self.names_buffer.deinit(allocator);
             allocator.free(self.names);
         }
 
@@ -1356,8 +1356,8 @@ pub const SourceContent = struct {
 
 pub fn find(
     this: *const SourceMap,
-    line: i32,
-    column: i32,
+    line: bun.Ordinal,
+    column: bun.Ordinal,
 ) ?Mapping {
     return this.mapping.find(line, column);
 }

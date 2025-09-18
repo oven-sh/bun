@@ -142,8 +142,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 try endTag.before(slice, true);
         }
 
-        fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) std.BoundedArray([]const u8, 2) {
-            var array: std.BoundedArray([]const u8, 2) = .{};
+        fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) bun.BoundedArray([]const u8, 2) {
+            var array: bun.BoundedArray([]const u8, 2) = .{};
             // Put CSS before JS to reduce changes of flash of unstyled content
             if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
                 const link_tag = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}));

@@ -6,6 +6,50 @@ pub fn CreateBinaryExpressionVisitor(
     return struct {
         const P = js_parser.NewParser_(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
 
+        /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
+        /// Returns the optimized expression if successful, null otherwise
+        fn tryOptimizeTypeofUndefined(e_: *E.Binary, p: *P, replacement_op: js_ast.Op.Code) ?Expr {
+            // Check if this is a typeof comparison with "undefined"
+            const typeof_expr, const string_expr, const flip_comparison = exprs: {
+                // Try left side as typeof, right side as string
+                if (e_.left.data == .e_unary and e_.left.data.e_unary.op == .un_typeof) {
+                    if (e_.right.data == .e_string and
+                        e_.right.data.e_string.eqlComptime("undefined"))
+                    {
+                        break :exprs .{ e_.left, e_.right, false };
+                    }
+
+                    return null;
+                }
+
+                // Try right side as typeof, left side as string
+                if (e_.right.data == .e_unary and e_.right.data.e_unary.op == .un_typeof) {
+                    if (e_.left.data == .e_string and
+                        e_.left.data.e_string.eqlComptime("undefined"))
+                    {
+                        break :exprs .{ e_.right, e_.left, true };
+                    }
+
+                    return null;
+                }
+
+                return null;
+            };
+
+            // Create new string with "u"
+            const u_string = p.newExpr(E.String{ .data = "u" }, string_expr.loc);
+
+            // Create the optimized comparison
+            const left = if (flip_comparison) u_string else typeof_expr;
+            const right = if (flip_comparison) typeof_expr else u_string;
+
+            return p.newExpr(E.Binary{
+                .left = left,
+                .right = right,
+                .op = replacement_op,
+            }, e_.left.loc);
+        }
+
         pub const BinaryExpressionVisitor = struct {
             e: *E.Binary,
             loc: logger.Loc,
@@ -121,6 +165,11 @@ pub fn CreateBinaryExpressionVisitor(
                         }
 
                         if (p.options.features.minify_syntax) {
+                            // "typeof x == 'undefined'" => "typeof x > 'u'"
+                            if (tryOptimizeTypeofUndefined(e_, p, .bin_gt)) |optimized| {
+                                return optimized;
+                            }
+
                             // "x == void 0" => "x == null"
                             if (e_.left.data == .e_undefined) {
                                 e_.left.data = .{ .e_null = E.Null{} };
@@ -146,6 +195,13 @@ pub fn CreateBinaryExpressionVisitor(
                             return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
                         }
 
+                        if (p.options.features.minify_syntax) {
+                            // "typeof x === 'undefined'" => "typeof x > 'u'"
+                            if (tryOptimizeTypeofUndefined(e_, p, .bin_gt)) |optimized| {
+                                return optimized;
+                            }
+                        }
+
                         // const after_op_loc = locAfterOp(e_.);
                         // TODO: warn about equality check
                         // TODO: warn about typeof string
@@ -161,6 +217,13 @@ pub fn CreateBinaryExpressionVisitor(
 
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
+                        if (p.options.features.minify_syntax) {
+                            // "typeof x != 'undefined'" => "typeof x < 'u'"
+                            if (tryOptimizeTypeofUndefined(e_, p, .bin_lt)) |optimized| {
+                                return optimized;
+                            }
+                        }
+
                         // const after_op_loc = locAfterOp(e_.);
                         // TODO: warn about equality check
                         // TODO: warn about typeof string
@@ -180,6 +243,13 @@ pub fn CreateBinaryExpressionVisitor(
                             }
 
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
+                        }
+
+                        if (p.options.features.minify_syntax) {
+                            // "typeof x !== 'undefined'" => "typeof x < 'u'"
+                            if (tryOptimizeTypeofUndefined(e_, p, .bin_lt)) |optimized| {
+                                return optimized;
+                            }
                         }
                     },
                     .bin_nullish_coalescing => {
@@ -360,6 +430,70 @@ pub fn CreateBinaryExpressionVisitor(
                             }
                         }
                     },
+
+                    .bin_lt => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValuesInSafeRange(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0] < vals[1],
+                                }, v.loc);
+                            }
+                            if (Expr.extractStringValues(e_.left.data, e_.right.data, p.allocator)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0].order(vals[1]) == .lt,
+                                }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_gt => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValuesInSafeRange(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0] > vals[1],
+                                }, v.loc);
+                            }
+                            if (Expr.extractStringValues(e_.left.data, e_.right.data, p.allocator)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0].order(vals[1]) == .gt,
+                                }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_le => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValuesInSafeRange(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0] <= vals[1],
+                                }, v.loc);
+                            }
+                            if (Expr.extractStringValues(e_.left.data, e_.right.data, p.allocator)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = switch (vals[0].order(vals[1])) {
+                                        .eq, .lt => true,
+                                        .gt => false,
+                                    },
+                                }, v.loc);
+                            }
+                        }
+                    },
+                    .bin_ge => {
+                        if (p.should_fold_typescript_constant_expressions) {
+                            if (Expr.extractNumericValuesInSafeRange(e_.left.data, e_.right.data)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = vals[0] >= vals[1],
+                                }, v.loc);
+                            }
+                            if (Expr.extractStringValues(e_.left.data, e_.right.data, p.allocator)) |vals| {
+                                return p.newExpr(E.Boolean{
+                                    .value = switch (vals[0].order(vals[1])) {
+                                        .eq, .gt => true,
+                                        .lt => false,
+                                    },
+                                }, v.loc);
+                            }
+                        }
+                    },
+
                     // ---------------------------------------------------------------------------------------------------
                     .bin_assign => {
                         // Optionally preserve the name

@@ -130,18 +130,19 @@ static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* obje
 
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
-    const auto& prop = iter->properties->propertyNameVector()[i];
-    if (iter->isSpecialProxy) [[unlikely]] {
-        return getOwnProxyObject(iter, object, prop, propertyName);
-    }
-
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const auto& prop = iter->properties->propertyNameVector()[i];
+    if (iter->isSpecialProxy) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, getOwnProxyObject(iter, object, prop, propertyName));
+    }
+
     // This has to be get because we may need to call on prototypes
     // If we meant for this to only run for own keys, the property name would not be included in the array.
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     if (!object->getPropertySlot(globalObject, prop, slot)) {
-        return {};
+        RELEASE_AND_RETURN(scope, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -154,12 +155,13 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
 
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
-    const auto& prop = iter->properties->propertyNameVector()[i];
-    if (iter->isSpecialProxy) [[unlikely]] {
-        return getOwnProxyObject(iter, object, prop, propertyName);
-    }
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const auto& prop = iter->properties->propertyNameVector()[i];
+    if (iter->isSpecialProxy) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, getOwnProxyObject(iter, object, prop, propertyName));
+    }
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
     auto has = object->getNonIndexPropertySlot(globalObject, prop, slot);

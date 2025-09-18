@@ -8,10 +8,8 @@ on:
   workflow_dispatch:
   pull_request:
   merge_group:
-  push:
-    branches: ["main"]
 env:
-  BUN_VERSION: "1.2.11"
+  BUN_VERSION: "1.2.20"
   LLVM_VERSION: "19.1.7"
   LLVM_VERSION_MAJOR: "19"
 
@@ -37,13 +35,14 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
+          bun scripts/glob-sources.mjs
       - name: Format Code
         run: |
           # Start prettier in background with prefixed output
           echo "::group::Prettier"
           (bun run prettier 2>&1 | sed 's/^/[prettier] /' || echo "[prettier] Failed with exit code $?") &
           PRETTIER_PID=$!
-          
+
           # Start clang-format installation and formatting in background with prefixed output
           echo "::group::Clang-format"
           (
@@ -56,13 +55,13 @@ jobs:
             LLVM_VERSION_MAJOR=${{ env.LLVM_VERSION_MAJOR }} ./scripts/run-clang-format.sh format 2>&1 | sed 's/^/[clang-format] /'
           ) &
           CLANG_PID=$!
-          
+
           # Setup Zig in temp directory and run zig fmt in background with prefixed output
           echo "::group::Zig fmt"
           (
             ZIG_TEMP=$(mktemp -d)
             echo "[zig] Downloading Zig (musl build)..."
-            wget -q -O "$ZIG_TEMP/zig.zip" https://github.com/oven-sh/zig/releases/download/autobuild-d1a4e0b0ddc75f37c6a090b97eef0cbb6335556e/bootstrap-x86_64-linux-musl.zip
+            wget -q -O "$ZIG_TEMP/zig.zip" https://github.com/oven-sh/zig/releases/download/autobuild-e0b7c318f318196c5f81fdf3423816a7b5bb3112/bootstrap-x86_64-linux-musl.zip
             unzip -q -d "$ZIG_TEMP" "$ZIG_TEMP/zig.zip"
             export PATH="$ZIG_TEMP/bootstrap-x86_64-linux-musl:$PATH"
             echo "[zig] Running zig fmt..."
@@ -72,38 +71,39 @@ jobs:
             rm -rf "$ZIG_TEMP"
           ) &
           ZIG_PID=$!
-          
+
           # Wait for all formatting tasks to complete
           echo ""
           echo "Running formatters in parallel..."
           FAILED=0
-          
+
           if ! wait $PRETTIER_PID; then
             echo "::error::Prettier failed"
             FAILED=1
           fi
           echo "::endgroup::"
-          
+
           if ! wait $CLANG_PID; then
             echo "::error::Clang-format failed"
             FAILED=1
           fi
           echo "::endgroup::"
-          
+
           if ! wait $ZIG_PID; then
             echo "::error::Zig fmt failed"
             FAILED=1
           fi
           echo "::endgroup::"
-          
+
           # Exit with error if any formatter failed
           if [ $FAILED -eq 1 ]; then
             echo "::error::One or more formatters failed"
             exit 1
           fi
-          
+
           echo "✅ All formatters completed successfully"
       - name: Ban Words
         run: |
           bun ./test/internal/ban-words.test.ts
+          git rm -f cmake/sources/*.txt || true
       - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

@@ -216,6 +216,7 @@ describe("bundler", () => {
   });
 
   itBundled("regression/WindowsBackslashAssertion1#9974", {
+    backend: "cli",
     files: {
       "/test/entry.ts": `
         import { loadFonts } from "../base";

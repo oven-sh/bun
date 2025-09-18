@@ -116,12 +116,9 @@ const BufferedIoClosed = struct {
         } = .open,
         owned: bool = false,
 
-        /// BufferedInput/Output uses jsc vm allocator
-        pub fn deinit(this: *BufferedIoState, jsc_vm_allocator: Allocator) void {
+        pub fn deinit(this: *BufferedIoState) void {
             if (this.state == .closed and this.owned) {
-                var list = this.state.closed.listManaged(jsc_vm_allocator);
-                list.deinit();
-                this.state.closed = .{};
+                this.state.closed.clearAndFree(bun.default_allocator);
             }
         }
 
@@ -130,13 +127,13 @@ const BufferedIoClosed = struct {
         }
     };
 
-    fn deinit(this: *BufferedIoClosed, jsc_vm_allocator: Allocator) void {
+    fn deinit(this: *BufferedIoClosed) void {
         if (this.stdout) |*io| {
-            io.deinit(jsc_vm_allocator);
+            io.deinit();
         }
 
         if (this.stderr) |*io| {
-            io.deinit(jsc_vm_allocator);
+            io.deinit();
         }
     }
 
@@ -157,10 +154,11 @@ const BufferedIoClosed = struct {
                     // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
                     if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.redirectsElsewhere(.stdout)) {
                         const the_slice = readable.pipe.slice();
-                        bun.handleOom(cmd.base.shell.buffered_stdout().append(bun.default_allocator, the_slice));
+                        bun.handleOom(cmd.base.shell.buffered_stdout().appendSlice(bun.default_allocator, the_slice));
                     }
 
-                    stdout.state = .{ .closed = bun.ByteList.fromList(readable.pipe.takeBuffer()) };
+                    var buffer = readable.pipe.takeBuffer();
+                    stdout.state = .{ .closed = bun.ByteList.moveFromList(&buffer) };
                 }
             },
             .stderr => {
@@ -170,10 +168,11 @@ const BufferedIoClosed = struct {
                     // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
                     if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.redirectsElsewhere(.stderr)) {
                         const the_slice = readable.pipe.slice();
-                        bun.handleOom(cmd.base.shell.buffered_stderr().append(bun.default_allocator, the_slice));
+                        bun.handleOom(cmd.base.shell.buffered_stderr().appendSlice(bun.default_allocator, the_slice));
                     }
 
-                    stderr.state = .{ .closed = bun.ByteList.fromList(readable.pipe.takeBuffer()) };
+                    var buffer = readable.pipe.takeBuffer();
+                    stderr.state = .{ .closed = bun.ByteList.moveFromList(&buffer) };
                 }
             },
             .stdin => {
@@ -706,7 +705,7 @@ pub fn deinit(this: *Cmd) void {
                 cmd.deinit();
             }
 
-            this.exec.subproc.buffered_closed.deinit(this.base.eventLoop().allocator());
+            this.exec.subproc.buffered_closed.deinit();
         } else {
             this.exec.bltn.deinit();
         }
@@ -767,7 +766,7 @@ pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?jsc.SystemError) void {
     if (this.io.stdout == .fd and this.io.stdout.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stdout)) {
         var buf = this.io.stdout.fd.captured.?;
         const the_slice = this.exec.subproc.child.stdout.pipe.slice();
-        bun.handleOom(buf.append(bun.default_allocator, the_slice));
+        bun.handleOom(buf.appendSlice(bun.default_allocator, the_slice));
     }
     this.exec.subproc.buffered_closed.close(this, .{ .stdout = &this.exec.subproc.child.stdout });
     this.exec.subproc.child.closeIO(.stdout);
@@ -783,14 +782,13 @@ pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?jsc.SystemError) void {
     }
     if (this.io.stderr == .fd and this.io.stderr.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stderr)) {
         var buf = this.io.stderr.fd.captured.?;
-        bun.handleOom(buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.slice()));
+        bun.handleOom(buf.appendSlice(bun.default_allocator, this.exec.subproc.child.stderr.pipe.slice()));
     }
     this.exec.subproc.buffered_closed.close(this, .{ .stderr = &this.exec.subproc.child.stderr });
     this.exec.subproc.child.closeIO(.stderr);
 }
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const assert = bun.assert;

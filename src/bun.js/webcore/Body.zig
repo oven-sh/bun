@@ -1441,8 +1441,8 @@ pub const ValueBufferer = struct {
         defer {
             if (stream_needs_deinit) {
                 switch (stream_) {
-                    .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
-                    .owned => |*owned| owned.listManaged(allocator).deinit(),
+                    .owned_and_done => |*owned| owned.deinit(allocator),
+                    .owned => |*owned| owned.deinit(allocator),
                     else => unreachable,
                 }
             }
@@ -1503,7 +1503,7 @@ pub const ValueBufferer = struct {
         var globalThis = sink.global;
         buffer_stream.* = ArrayBufferSink.JSSink{
             .sink = ArrayBufferSink{
-                .bytes = bun.ByteList.init(&.{}),
+                .bytes = bun.ByteList.empty,
                 .allocator = allocator,
                 .next = null,
             },

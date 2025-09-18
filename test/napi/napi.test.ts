@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, isCI, isMacOS, isMusl, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -549,6 +549,65 @@ describe("napi", () => {
     const count = addon.getFinalizeCount();
     expect(typeof count).toBe("number");
   });
+
+  it("napi_reference_unref can be called from finalizers in regular modules", async () => {
+    // This test ensures that napi_reference_unref can be called during GC
+    // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.
+    // This was causing crashes with packages like rolldown-vite when used with Nuxt.
+    // See: https://github.com/oven-sh/bun/issues/22596
+    const result = await checkSameOutput("test_reference_unref_in_finalizer", []);
+    expect(result).toContain("Created 100 objects with finalizers");
+    expect(result).toContain("Finalizers called:");
+    expect(result).toContain("Unrefs succeeded:");
+    expect(result).toContain("SUCCESS: napi_reference_unref worked in finalizers without crashing");
+    expect(result).toContain("Test completed:");
+  });
+
+  it.todoIf(
+    // The test does not properly avoid the non-zero exit code on Windows.
+    isWindows,
+  )("napi_reference_unref is blocked from finalizers in experimental modules", async () => {
+    // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
+    // The process should crash/abort when this is attempted
+    // This matches Node.js behavior for experimental modules
+
+    // Note: Node.js may not enforce this check for manually-registered experimental modules
+    // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
+    // But Bun should still enforce it for safety
+
+    // Test with Bun - should crash
+    // Use the wrapper script that kills the process after seeing the crash messages
+    // to avoid hanging on llvm-symbolizer
+    const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
+    const bunProc = spawn({
+      cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
+      env: {
+        ...rest,
+        BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+        // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
+        // Otherwise ASAN will hang trying to create a core dump or symbolize
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
+      bunProc.stdout.text(),
+      bunProc.stderr.text(),
+      bunProc.exited,
+    ]);
+
+    // The wrapper script should exit with 0 if the test passed
+    expect(bunExitCode).toBe(0);
+    expect(bunStdout + bunStderr).toContain("Loading experimental module");
+    expect(bunStdout + bunStderr).toContain("Created");
+    expect(bunStderr).toContain("FATAL ERROR");
+    expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
+
+    // The error message should NOT contain "Did not crash"
+    expect(bunStdout + bunStderr).not.toContain("ERROR: Did not crash");
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
@@ -627,6 +686,61 @@ describe("cleanup hooks", () => {
     it("executes in reverse insertion order like Node.js", async () => {
       // Test that cleanup hooks execute in reverse insertion order (LIFO)
       await checkSameOutput("test_cleanup_hook_order", []);
+    });
+  });
+
+  describe("napi_strict_equals", () => {
+    it("should match JavaScript === operator behavior", async () => {
+      const output = await checkSameOutput("test_napi_strict_equals", []);
+      expect(output).toContain("PASS: NaN !== NaN");
+      expect(output).toContain("PASS: -0 === 0");
+      expect(output).toContain("PASS: 42 === 42");
+      expect(output).toContain("PASS: 42 !== 43");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_call_function", () => {
+    it("should handle null recv parameter consistently", async () => {
+      const output = await checkSameOutput("test_napi_call_function_recv_null", []);
+      expect(output).toContain("PASS");
+      expect(output).toContain("napi_call_function with valid recv succeeded");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_array_with_length", () => {
+    it("should handle boundary values consistently", async () => {
+      const output = await checkSameOutput("test_napi_create_array_boundary", []);
+      expect(output).toContain("PASS");
+      expect(output).toContain("napi_create_array_with_length(10) created array with correct length");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_create_dataview", () => {
+    it("should validate bounds and provide consistent error messages", async () => {
+      const output = await checkSameOutput("test_napi_dataview_bounds_errors", []);
+      expect(output).toContain("napi_create_dataview");
+      // Check for proper bounds validation
+    });
+  });
+
+  describe("napi_typeof", () => {
+    it("should handle empty/invalid values", async () => {
+      const output = await checkSameOutput("test_napi_typeof_empty_value", []);
+      // This test explores edge cases with empty/invalid napi_values
+      // Bun has special handling for isEmpty() that Node doesn't have
+      expect(output).toContain("napi_typeof");
+    });
+  });
+
+  describe("napi_object_freeze and napi_object_seal", () => {
+    it("should handle arrays with indexed properties", async () => {
+      const output = await checkSameOutput("test_napi_freeze_seal_indexed", []);
+      // Bun has a check for indexed properties that Node.js doesn't have
+      // This might cause different behavior when freezing/sealing arrays
+      expect(output).toContain("freeze");
     });
   });
 

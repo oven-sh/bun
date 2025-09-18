@@ -245,7 +245,7 @@ extern fn Bun__createNodeModuleSourceMapEntryObject(
 pub fn findOrigin(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     const line_number, const column_number = try getLineColumn(globalObject, callFrame);
 
-    const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
+    const mapping = this.sourcemap.mappings.find(.fromZeroBased(line_number), .fromZeroBased(column_number)) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
     const name = try mappingNameToJS(this, globalObject, &mapping);
     const source = try sourceNameToJS(this, globalObject, &mapping);
     return Bun__createNodeModuleSourceMapOriginObject(
@@ -260,7 +260,7 @@ pub fn findOrigin(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: 
 pub fn findEntry(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     const line_number, const column_number = try getLineColumn(globalObject, callFrame);
 
-    const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
+    const mapping = this.sourcemap.mappings.find(.fromZeroBased(line_number), .fromZeroBased(column_number)) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
 
     const name = try mappingNameToJS(this, globalObject, &mapping);
     const source = try sourceNameToJS(this, globalObject, &mapping);

@@ -574,8 +574,7 @@ function canCreateSymLink() {
 
 function getCallSite(top) {
   const originalStackFormatter = Error.prepareStackTrace;
-  Error.prepareStackTrace = (err, stack) =>
-    `${stack[0].getFileName()}:${stack[0].getLineNumber()}`;
+  Error.prepareStackTrace = (err, stack) => `${stack[0].getFileName()}:${stack[0].getLineNumber()}:${stack[0].getColumnNumber()}`;
   const err = new Error();
   Error.captureStackTrace(err, top);
   // With the V8 Error API, the stack is not formatted until it is accessed

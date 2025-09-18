@@ -408,7 +408,7 @@ pub const LoadResult = struct {
 var resolver_Mutex: Mutex = undefined;
 var resolver_Mutex_loaded: bool = false;
 
-const BinFolderArray = std.BoundedArray(string, 128);
+const BinFolderArray = bun.BoundedArray(string, 128);
 var bin_folders: BinFolderArray = undefined;
 var bin_folders_lock: Mutex = .{};
 var bin_folders_loaded: bool = false;
@@ -871,6 +871,30 @@ pub const Resolver = struct {
 
                 r.flushDebugLogs(.success) catch {};
                 result.import_kind = kind;
+                if (comptime Environment.enable_logs) {
+                    if (result.path_pair.secondary) |secondary| {
+                        debuglog(
+                            "resolve({}, from: {}, {s}) = {} (secondary: {})",
+                            .{
+                                bun.fmt.fmtPath(u8, import_path, .{}),
+                                bun.fmt.fmtPath(u8, source_dir, .{}),
+                                kind.label(),
+                                bun.fmt.fmtPath(u8, if (result.path()) |path| path.text else "<NULL>", .{}),
+                                bun.fmt.fmtPath(u8, secondary.text, .{}),
+                            },
+                        );
+                    } else {
+                        debuglog(
+                            "resolve({}, from: {}, {s}) = {}",
+                            .{
+                                bun.fmt.fmtPath(u8, import_path, .{}),
+                                bun.fmt.fmtPath(u8, source_dir, .{}),
+                                kind.label(),
+                                bun.fmt.fmtPath(u8, if (result.path()) |path| path.text else "<NULL>", .{}),
+                            },
+                        );
+                    }
+                }
                 return .{ .success = result.* };
             },
             .failure => |e| {
@@ -4165,7 +4189,7 @@ pub const Resolver = struct {
                     break :brk null;
                 };
                 if (info.tsconfig_json) |tsconfig_json| {
-                    var parent_configs = try std.BoundedArray(*TSConfigJSON, 64).init(0);
+                    var parent_configs = try bun.BoundedArray(*TSConfigJSON, 64).init(0);
                     try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {

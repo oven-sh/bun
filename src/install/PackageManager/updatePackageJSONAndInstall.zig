@@ -165,9 +165,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                 // If the dependencies list is now empty, remove it from the package.json
                                 // since we're swapRemove, we have to re-sort it
                                 if (query.expr.data.e_object.properties.len == 0) {
-                                    var arraylist = current_package_json.root.data.e_object.properties.list();
-                                    _ = arraylist.swapRemove(query.i);
-                                    current_package_json.root.data.e_object.properties.update(arraylist);
+                                    // TODO: Theoretically we could change these two lines to
+                                    // `.orderedRemove(query.i)`, but would that change user-facing
+                                    // behavior?
+                                    _ = current_package_json.root.data.e_object.properties.swapRemove(query.i);
                                     current_package_json.root.data.e_object.packageJSONSort();
                                 } else {
                                     var obj = query.expr.data.e_object;

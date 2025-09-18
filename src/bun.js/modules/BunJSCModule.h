@@ -343,7 +343,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
         auto* zoneSizesObject = constructEmptyObject(globalObject);
         for (auto& it : zoneSizes) {
-            zoneSizesObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+            zoneSizesObject->putDirect(vm, it.first, jsNumber(it.second));
         }
 
         object->putDirect(vm, Identifier::fromString(vm, "zones"_s),
@@ -882,7 +882,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     if (value.isCell()) {
         auto& vm = JSC::getVM(globalObject);
         EnsureStillAliveScope alive = value;
-        return JSValue::encode(jsDoubleNumber(alive.value().asCell()->estimatedSizeInBytes(vm)));
+        return JSValue::encode(jsNumber(alive.value().asCell()->estimatedSizeInBytes(vm)));
     }
 
     return JSValue::encode(jsNumber(0));

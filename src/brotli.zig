@@ -158,9 +158,11 @@ pub const BrotliReaderArrayList = struct {
                     }
                     this.state = .Inflating;
                     if (is_done) {
+                        // Stream is truncated - we're at EOF but decoder needs more data
                         this.state = .Error;
+                        return error.BrotliDecompressionError;
                     }
-
+                    // Not at EOF - we can retry with more data
                     return error.ShortRead;
                 },
                 .needs_more_output => {

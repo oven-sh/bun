@@ -95,7 +95,7 @@ fn setupCommands(this: *Pipeline) ?Yield {
         break :brk i;
     };
 
-    this.cmds = if (cmd_count >= 1) bun.handleOom(this.base.allocator().alloc(CmdOrResult, this.node.items.len)) else null;
+    this.cmds = if (cmd_count >= 1) bun.handleOom(this.base.allocator().alloc(CmdOrResult, cmd_count)) else null;
     if (this.cmds == null) return null;
     var pipes = bun.handleOom(this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1));
 

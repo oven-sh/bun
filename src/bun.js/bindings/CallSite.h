@@ -27,6 +27,7 @@ public:
         IsNative = 8,
         IsWasm = 16,
         IsFunction = 32,
+        IsAsync = 64,
     };
 
 private:
@@ -79,6 +80,7 @@ public:
     bool isConstructor() const { return m_flags & static_cast<unsigned int>(Flags::IsConstructor); }
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
     bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
+    bool isAsync() const { return m_flags & static_cast<unsigned int>(Flags::IsAsync); }
 
     void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
     void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }

@@ -865,7 +865,7 @@ pub fn resolve(
     lockfile: *Lockfile,
     log: *logger.Log,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .resolvable, {}, {}, {});
+    return lockfile.hoist(log, .resolvable, {}, {}, {}, {});
 }
 
 pub fn filter(
@@ -874,8 +874,9 @@ pub fn filter(
     manager: *PackageManager,
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
+    packages_to_install: ?[]const PackageID,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters);
+    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters, packages_to_install);
 }
 
 /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
@@ -886,6 +887,7 @@ pub fn hoist(
     manager: if (method == .filter) *PackageManager else void,
     install_root_dependencies: if (method == .filter) bool else void,
     workspace_filters: if (method == .filter) []const WorkspaceFilter else void,
+    packages_to_install: if (method == .filter) ?[]const PackageID else void,
 ) Tree.SubtreeError!void {
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
@@ -902,6 +904,7 @@ pub fn hoist(
         .manager = manager,
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
+        .packages_to_install = packages_to_install,
     };
 
     try (Tree{}).processSubtree(

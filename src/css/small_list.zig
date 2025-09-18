@@ -117,12 +117,13 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                     .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
                 };
             }
-            defer list.deinitWithAllocator(allocator);
+            var list_ = list;
+            defer list_.deinit(allocator);
             var this: @This() = .{
-                .capacity = list.len,
+                .capacity = list_.len,
                 .data = .{ .inlined = undefined },
             };
-            @memcpy(this.data.inlined[0..list.len], list.items[0..list.len]);
+            @memcpy(this.data.inlined[0..list_.len], list_.items[0..list_.len]);
             return this;
         }
 
@@ -237,7 +238,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                         break :images images;
                     };
                     if (!images.isEmpty()) {
-                        bun.handleOom(res.push(allocator, images));
+                        bun.handleOom(res.append(allocator, images));
                     }
                 }
 
@@ -250,7 +251,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                                 const image = in.getImage().getPrefixed(alloc, css.VendorPrefix.fromName(prefix));
                                 out.* = in.withImage(alloc, image);
                             }
-                            bun.handleOom(r.push(alloc, images));
+                            bun.handleOom(r.append(alloc, images));
                         }
                     }
                 }.helper;
@@ -261,7 +262,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
                 if (prefixes.none) {
                     if (rgb) |r| {
-                        bun.handleOom(res.push(allocator, r));
+                        bun.handleOom(res.append(allocator, r));
                     }
 
                     if (fallbacks.p3) {

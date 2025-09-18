@@ -604,6 +604,7 @@ pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER",
 
 pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value").call;
 pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value").call;
+pub const hget = compile.@"(key: RedisKey, value: RedisValue)"("hget", "HGET", "key", "field").call;
 pub const lpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH").call;
 pub const lpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpushx", "LPUSHX").call;
 pub const pfadd = compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD", "key", "value").call;

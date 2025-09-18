@@ -1127,16 +1127,11 @@ pub const StreamBuffer = struct {
     }
 
     pub fn writeAssumeCapacity(this: *StreamBuffer, buffer: []const u8) void {
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
-        byte_list.appendSliceAssumeCapacity(buffer);
+        this.list.appendSliceAssumeCapacity(buffer);
     }
 
     pub fn ensureUnusedCapacity(this: *StreamBuffer, capacity: usize) OOM!void {
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
-
-        _ = try byte_list.ensureUnusedCapacity(this.list.allocator, capacity);
+        return this.list.ensureUnusedCapacity(capacity);
     }
 
     pub fn writeTypeAsBytes(this: *StreamBuffer, comptime T: type, data: *const T) OOM!void {
@@ -1144,8 +1139,8 @@ pub const StreamBuffer = struct {
     }
 
     pub fn writeTypeAsBytesAssumeCapacity(this: *StreamBuffer, comptime T: type, data: T) void {
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
+        var byte_list = bun.ByteList.moveFromList(&this.list);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator);
         byte_list.writeTypeAsBytesAssumeCapacity(T, data);
     }
 
@@ -1156,16 +1151,16 @@ pub const StreamBuffer = struct {
             }
 
             {
-                var byte_list = bun.ByteList.fromList(this.list);
-                defer this.list = byte_list.listManaged(this.list.allocator);
+                var byte_list = bun.ByteList.moveFromList(&this.list);
+                defer this.list = byte_list.moveToListManaged(this.list.allocator);
                 _ = try byte_list.writeLatin1(this.list.allocator, buffer);
             }
 
             return this.list.items[this.cursor..];
         } else if (comptime @TypeOf(writeFn) == @TypeOf(&writeUTF16) and writeFn == &writeUTF16) {
             {
-                var byte_list = bun.ByteList.fromList(this.list);
-                defer this.list = byte_list.listManaged(this.list.allocator);
+                var byte_list = bun.ByteList.moveFromList(&this.list);
+                defer this.list = byte_list.moveToListManaged(this.list.allocator);
 
                 _ = try byte_list.writeUTF16(this.list.allocator, buffer);
             }
@@ -1185,15 +1180,15 @@ pub const StreamBuffer = struct {
             }
         }
 
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
+        var byte_list = bun.ByteList.moveFromList(&this.list);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator);
 
         _ = try byte_list.writeLatin1(this.list.allocator, buffer);
     }
 
     pub fn writeUTF16(this: *StreamBuffer, buffer: []const u16) OOM!void {
-        var byte_list = bun.ByteList.fromList(this.list);
-        defer this.list = byte_list.listManaged(this.list.allocator);
+        var byte_list = bun.ByteList.moveFromList(&this.list);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator);
 
         _ = try byte_list.writeUTF16(this.list.allocator, buffer);
     }

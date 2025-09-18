@@ -484,7 +484,7 @@ pub const FSEventsLoop = struct {
         defer this.mutex.unlock();
         if (this.watcher_count == this.watchers.len) {
             this.watcher_count += 1;
-            this.watchers.push(bun.default_allocator, watcher) catch unreachable;
+            bun.handleOom(this.watchers.append(bun.default_allocator, watcher));
         } else {
             var watchers = this.watchers.slice();
             for (watchers, 0..) |w, i| {
@@ -544,8 +544,7 @@ pub const FSEventsLoop = struct {
             }
         }
 
-        this.watchers.deinitWithAllocator(bun.default_allocator);
-
+        this.watchers.deinit(bun.default_allocator);
         bun.default_allocator.destroy(this);
     }
 };

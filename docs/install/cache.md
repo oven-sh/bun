@@ -48,12 +48,12 @@ This behavior is configurable with the `--backend` flag, which is respected by a
 - **`copyfile`**: The fallback used when any of the above fail. It is the slowest option. On macOS, it uses `fcopyfile()`; on Linux it uses `copy_file_range()`.
 - **`symlink`**: Currently used only `file:` (and eventually `link:`) dependencies. To prevent infinite loops, it skips symlinking the `node_modules` folder.
 
-If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own `node_modules` folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
+If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own `node_modules` folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
 ```bash
 $ bun install --backend symlink
 $ node --preserve-symlinks ./foo.js
+$ bun --preserve-symlinks ./foo.js
 ```
 
-Bun's runtime does not currently expose an equivalent of `--preserve-symlinks`.
 {% /details %}

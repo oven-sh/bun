@@ -454,49 +454,55 @@ import { tmpdir } from "os";
 /**
  * Create a new client with specific connection type
  */
-export function createClient(connectionType: ConnectionType = ConnectionType.TCP, customOptions = {}) {
+export function createClient(
+    connectionType: ConnectionType = ConnectionType.TCP,
+    customOptions = {},
+    dbId: number | undefined = undefined,
+) {
   let url: string;
+  const mkUrl = (baseUrl: string) => dbId ? `${baseUrl}/${dbId}`: baseUrl;
+
   let options: any = {};
   context.id++;
 
   switch (connectionType) {
     case ConnectionType.TCP:
-      url = DEFAULT_REDIS_URL;
+      url = mkUrl(DEFAULT_REDIS_URL);
       options = {
         ...DEFAULT_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.TLS:
-      url = TLS_REDIS_URL;
+      url = mkUrl(TLS_REDIS_URL);
       options = {
         ...TLS_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.UNIX:
-      url = UNIX_REDIS_URL;
+      url = mkUrl(UNIX_REDIS_URL);
       options = {
         ...UNIX_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.AUTH:
-      url = AUTH_REDIS_URL;
+      url = mkUrl(AUTH_REDIS_URL);
       options = {
         ...AUTH_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.READONLY:
-      url = READONLY_REDIS_URL;
+      url = mkUrl(READONLY_REDIS_URL);
       options = {
         ...READONLY_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.WRITEONLY:
-      url = WRITEONLY_REDIS_URL;
+      url = mkUrl(WRITEONLY_REDIS_URL);
       options = {
         ...WRITEONLY_REDIS_OPTIONS,
         ...customOptions,

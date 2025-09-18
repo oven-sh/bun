@@ -1111,7 +1111,7 @@ pub fn transpileSourceCode(
                     .allocator = null,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
+                    .jsvalue_for_export = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
                     .tag = .exports_object,
                 };
             }
@@ -1947,7 +1947,8 @@ export fn Bun__transpileVirtualModule(
 ) bool {
     jsc.markBinding(@src());
     const jsc_vm = globalObject.bunVM();
-    bun.assert(jsc_vm.plugin_runner != null);
+    // Plugin runner is not required for virtual modules created via build.module()
+    // bun.assert(jsc_vm.plugin_runner != null);
 
     var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
     const specifier = specifier_slice.slice();

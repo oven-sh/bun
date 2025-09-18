@@ -4,13 +4,14 @@ pub fn installHoistedPackages(
     workspace_filters: []const WorkspaceFilter,
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
+    packages_to_install: ?[]const PackageID,
 ) !PackageInstall.Summary {
     bun.analytics.Features.hoisted_bun_install += 1;
 
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
-    try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters);
+    try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters, packages_to_install);
 
     defer {
         this.lockfile.buffers.trees = original_trees;

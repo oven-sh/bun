@@ -219,44 +219,39 @@ declare module "bun:ffi" {
 
     /**
      * int64 is a 64-bit signed integer
-     *
-     * This is not implemented yet!
      */
     int64_t = 7,
     /**
      * i64 is a 64-bit signed integer
-     *
-     * This is not implemented yet!
      */
     i64 = 7,
 
     /**
      * 64-bit unsigned integer
-     *
-     * This is not implemented yet!
      */
     uint64_t = 8,
     /**
      * 64-bit unsigned integer
-     *
-     * This is not implemented yet!
      */
     u64 = 8,
 
     /**
-     * Doubles are not supported yet!
+     * IEEE-754 double precision float
      */
     double = 9,
+
     /**
-     * Doubles are not supported yet!
+     * Alias of {@link FFIType.double}
      */
     f64 = 9,
+
     /**
-     * Floats are not supported yet!
+     * IEEE-754 single precision float
      */
     float = 10,
+
     /**
-     * Floats are not supported yet!
+     * Alias of {@link FFIType.float}
      */
     f32 = 10,
 

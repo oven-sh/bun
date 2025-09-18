@@ -279,14 +279,31 @@ pub const PatchFile = struct {
 
         for (patch.hunks.items) |*hunk| {
             var line_cursor = hunk.header.patched.start - 1;
+
+            // Validate hunk start position is within bounds
+            if (line_cursor > lines.items.len) {
+                return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+            }
+
             for (hunk.parts.items) |*part_| {
                 const part: *PatchMutationPart = part_;
                 switch (part.type) {
                     .context => {
                         // TODO: check if the lines match in the original file?
+
+                        // Validate context lines exist
+                        if (line_cursor + part.lines.items.len > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
                         line_cursor += @intCast(part.lines.items.len);
                     },
                     .insertion => {
+                        // Validate insertion position is within bounds
+                        if (line_cursor > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
                         const lines_to_insert = bun.handleOom(lines.addManyAt(bun.default_allocator, line_cursor, part.lines.items.len));
                         @memcpy(lines_to_insert, part.lines.items);
                         line_cursor += @intCast(part.lines.items.len);
@@ -296,6 +313,12 @@ pub const PatchFile = struct {
                     },
                     .deletion => {
                         // TODO: check if the lines match in the original file?
+
+                        // Validate deletion range is within bounds
+                        if (line_cursor + part.lines.items.len > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
                         bun.handleOom(lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{}));
                         if (part.no_newline_at_end_of_file) {
                             bun.handleOom(lines.append(bun.default_allocator, ""));
@@ -394,15 +417,18 @@ pub const Hunk = struct {
 
     pub const Header = struct {
         original: struct {
-            start: u32,
+            start: u32 = 1,
             len: u32,
         },
         patched: struct {
-            start: u32,
+            start: u32 = 1,
             len: u32,
         },
 
-        pub const zeroes = std.mem.zeroes(Header);
+        pub const empty = Header{
+            .original = .{ .start = 1, .len = 0 },
+            .patched = .{ .start = 1, .len = 0 },
+        };
     };
 
     pub fn deinit(this: *Hunk, allocator: Allocator) void {
@@ -587,7 +613,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
-                                .header = Hunk.Header.zeroes,
+                                .header = Hunk.Header.empty,
                             };
                             break :brk bun.new(Hunk, value);
                         } else null,
@@ -608,7 +634,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
-                                .header = Hunk.Header.zeroes,
+                                .header = Hunk.Header.empty,
                             };
                             break :brk bun.new(Hunk, value);
                         } else null,

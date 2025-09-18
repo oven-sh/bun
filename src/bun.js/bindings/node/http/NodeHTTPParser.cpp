@@ -124,10 +124,8 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
 
     if (data == nullptr) {
         err = llhttp_finish(&m_parserData);
-        RETURN_IF_EXCEPTION(scope, {});
     } else {
         err = llhttp_execute(&m_parserData, data, len);
-        RETURN_IF_EXCEPTION(scope, {});
         save();
     }
 
@@ -222,10 +220,14 @@ void HTTPParser::save()
 
 JSValue HTTPParser::remove(JSGlobalObject* globalObject, JSCell* thisParser)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->pop(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
         connections->popActive(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return jsUndefined();
@@ -234,6 +236,7 @@ JSValue HTTPParser::remove(JSGlobalObject* globalObject, JSCell* thisParser)
 JSValue HTTPParser::initialize(JSGlobalObject* globalObject, JSCell* thisParser, llhttp_type_t type, uint64_t maxHttpHeaderSize, uint32_t lenientFlags, JSConnectionsList* connections)
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     init(type, maxHttpHeaderSize, lenientFlags);
 
@@ -248,7 +251,9 @@ JSValue HTTPParser::initialize(JSGlobalObject* globalObject, JSCell* thisParser,
         // Important: Push into the lists AFTER setting the last_message_start_
         // otherwise std::set.erase will fail later.
         connections->push(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
         connections->pushActive(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         m_connectionsList.clear();
     }
@@ -310,13 +315,15 @@ int HTTPParser::onMessageBegin()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSHTTPParser* thisParser = m_thisParser;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->pop(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
         connections->popActive(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     m_numFields = 0;
@@ -329,7 +336,9 @@ int HTTPParser::onMessageBegin()
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->push(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
         connections->pushActive(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSValue onMessageBeginCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageBegin));
@@ -368,6 +377,10 @@ int HTTPParser::onStatus(const char* at, size_t length)
 
 int HTTPParser::onHeaderField(const char* at, size_t length)
 {
+    JSGlobalObject* globalObject = m_globalObject;
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
     int rv = trackHeader(length);
     if (rv != 0) {
         return rv;
@@ -379,6 +392,7 @@ int HTTPParser::onHeaderField(const char* at, size_t length)
         if (m_numFields == kMaxHeaderFieldsCount) {
             // ran out of space - flush to javascript land
             flush();
+            RETURN_IF_EXCEPTION(scope, 0);
             m_numFields = 1;
             m_numValues = 0;
         }
@@ -438,7 +452,7 @@ int HTTPParser::onHeadersComplete()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     JSHTTPParser* thisParser = m_thisParser;
 
     m_headersCompleted = true;
@@ -526,7 +540,7 @@ int HTTPParser::onBody(const char* at, size_t length)
     JSGlobalObject* lexicalGlobalObject = m_globalObject;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
     RETURN_IF_EXCEPTION(scope, 0);
@@ -557,18 +571,21 @@ int HTTPParser::onMessageComplete()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     JSHTTPParser* thisParser = m_thisParser;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->pop(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
         connections->popActive(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     m_lastMessageStart = 0;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->push(globalObject, thisParser);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (m_numFields) {

@@ -698,6 +698,8 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
             setterRequireFunction),
         0);
 
+    prototype->putDirect(vm, Identifier::fromString(vm, "_compile"_s), globalObject->modulePrototypeUnderscoreCompileFunction());
+
     return prototype;
 }
 

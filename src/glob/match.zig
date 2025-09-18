@@ -31,7 +31,7 @@ const Brace = struct {
     open_brace_idx: u32,
     branch_idx: u32,
 };
-const BraceStack = std.BoundedArray(Brace, 10);
+const BraceStack = bun.BoundedArray(Brace, 10);
 
 pub const MatchResult = enum {
     no_match,

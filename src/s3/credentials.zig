@@ -785,7 +785,7 @@ pub const S3Credentials = struct {
                 const canonical = brk_canonical: {
                     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                     const allocator = stack_fallback.get();
-                    var query_parts: std.BoundedArray([]const u8, 10) = .{};
+                    var query_parts: bun.BoundedArray([]const u8, 10) = .{};
 
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class
 
@@ -836,7 +836,7 @@ pub const S3Credentials = struct {
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 var url_stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                 const url_allocator = url_stack_fallback.get();
-                var url_query_parts: std.BoundedArray([]const u8, 10) = .{};
+                var url_query_parts: bun.BoundedArray([]const u8, 10) = .{};
 
                 // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class, X-Amz-Signature
 

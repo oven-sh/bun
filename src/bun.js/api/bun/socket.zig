@@ -285,7 +285,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
 
             const needs_deref = !this.socket.isDetached();
             this.socket = Socket.detached;
@@ -368,7 +368,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn closeAndDetach(this: *This, code: uws.Socket.CloseCode) void {
             const socket = this.socket;
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
 
             this.socket.detach();
             this.detachNativeCallback();
@@ -883,7 +883,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn writeBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                 // TODO: should we separate unattached and detached? unattached shouldn't throw here
                 const err: jsc.SystemError = .{
                     .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
@@ -904,7 +904,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn endBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                 return .false;
             }
 
@@ -987,8 +987,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
-                            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                            this.buffered_data_for_node_net = .{};
+                            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                             break :brk rc;
                         }
 
@@ -1004,7 +1003,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                         }
 
                         if (remaining_in_input_data.len > 0) {
-                            bun.handleOom(this.buffered_data_for_node_net.append(bun.default_allocator, remaining_in_input_data));
+                            bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                                bun.default_allocator,
+                                remaining_in_input_data,
+                            ));
                         }
 
                         break :brk rc;
@@ -1012,15 +1014,17 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
 
                 // slower-path: clone the data, do one write.
-                bun.handleOom(this.buffered_data_for_node_net.append(bun.default_allocator, buffer.slice()));
+                bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                    bun.default_allocator,
+                    buffer.slice(),
+                ));
                 const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice());
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
                     // did we write everything?
                     // we can free this temporary buffer.
                     if (wrote == this.buffered_data_for_node_net.len) {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                        this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                     } else {
                         // Otherwise, let's move the temporary buffer back.
                         const len = @as(usize, @intCast(this.buffered_data_for_node_net.len)) - wrote;
@@ -1166,7 +1170,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
                 if (remaining.len > 0) {
-                    bun.handleOom(this.buffered_data_for_node_net.append(bun.default_allocator, remaining));
+                    bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                        bun.default_allocator,
+                        remaining,
+                    ));
                 }
             }
 
@@ -1203,8 +1210,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
                         this.buffered_data_for_node_net.len = @truncate(remaining.len);
                     } else {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                        this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                     }
                 }
             }
@@ -1293,7 +1299,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.markInactive();
             this.detachNativeCallback();
 
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.deinit(bun.default_allocator);
 
             this.poll_ref.unref(jsc.VirtualMachine.get());
             // need to deinit event without being attached

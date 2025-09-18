@@ -133,6 +133,14 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString("utf8")).toEqual("object object function string string\n123\n");
     expect(exitCode).toBe(0);
   });
+  test("module._compile is require('module').prototype._compile", async () => {
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-p", "module._compile === require('module').prototype._compile"],
+      env: bunEnv,
+    });
+    expect(stdout.toString()).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {

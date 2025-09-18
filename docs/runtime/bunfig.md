@@ -521,7 +521,7 @@ When a security scanner is configured:
 - Installation is cancelled if fatal issues are found
 - Security warnings are displayed during installation
 
-Learn more about [using and writing security scanners](/docs/install/security).
+Learn more about [using and writing security scanners](/docs/install/security-scanner-api).
 
 ### `install.linker`
 

@@ -437,6 +437,7 @@ pub fn stop(this: *Listener, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
 fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
+
     defer switch (listener) {
         .uws => |socket| socket.close(this.ssl),
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),

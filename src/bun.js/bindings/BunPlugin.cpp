@@ -150,9 +150,14 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
 
-    global->requireMap()->remove(globalObject, moduleIdValue);
+    auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
-    global->esmRegistryMap()->remove(globalObject, moduleIdValue);
+    requireMap->remove(globalObject, moduleIdValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* esmRegistry = global->esmRegistryMap();
+    RETURN_IF_EXCEPTION(scope, {});
+    esmRegistry->remove(globalObject, moduleIdValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
@@ -835,6 +840,11 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
                 break;
             }
             }
+        }
+
+        // Check again after promise resolution
+        if (result.isUndefinedOrNull()) {
+            continue;
         }
 
         if (!result.isObject()) {

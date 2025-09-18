@@ -1,5 +1,9 @@
 loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat -- ":!test" ":!*.ts" ":!*.js" ":!TODO.md"`
 
+# bun test
+
+Fixes #8768, Fixes #14624, Fixes #20100
+
 # New features:
 
 ## Concurrent tests
@@ -423,7 +427,7 @@ test 2
 - [ ] test/js/bun/net/tcp-server.test.ts
   - new flaky failure on windows
   - gc(true) was supposed to fix this. unclear.
-- [ ] test/js/node/test/parallel/test-runner-subtest-after-hook.js
+- [x] test/js/node/test/parallel/test-runner-subtest-after-hook.js
   - Instead of this vvvv, we will modify our node:test implementation to support this.
   - Execution: first: \*ConcurrentGroup, current: \*ConcurrentGroup
   - ConcurrentGroup: next: \*ConcurrentGroup, memory-pool
@@ -446,30 +450,12 @@ test 2
 
 ## Stacktrace
 
-```
-DoneCallbackTask -> RunTask
-use RunTask from promise resolve/reject
-we can `this.addResult(data);` immediately and then queue the task
-
-that might not be the cause. we'll want to find what specific case has the changed stacktraces
-
-that will *probably* fix it. here's the repro:
-
-test("have to wait first", async () => {
-    await Bun.sleep(100);
-  });
-
-test("the error", async () => {
-    const error = new Error("error from qux");
-    console.log(error.stack);
-  });
-```
-
 - [ ] test/js/bun/test/test-error-code-done-callback.test.ts
   - stacktrace is messed up. it's including an incorrect item in the stacktrace for some reason.
-- [ ] test/js/bun/util/inspect-error.test.js
+  - this one is still failing. it could be because we throw the uncaught exception as soon as done() is called? maybe we need to delay it to the nextTick also. and delay appending the result too.
+- [x] test/js/bun/util/inspect-error.test.js
   - same stacktrace issue
-- [ ] test/js/bun/test/stack.test.ts
+- [x] test/js/bun/test/stack.test.ts
   - we're adding an extra `at unknown` frame at the end of the stacktrace for some reason. likely same issue as the above stacktrace bugs.
 
 # Add features:

@@ -1,11 +1,15 @@
-#!/bin/bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 # Docker image prepull and build script for CI
 # This script ensures all required Docker images are available locally
 # to avoid network pulls during test execution
 
 echo "🐳 Docker image preparation starting..."
+
+# Get the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # Function to check if image exists
 image_exists() {
@@ -55,49 +59,39 @@ if ! docker compose version >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "📦 Pulling base images..."
+echo "📦 Using docker-compose to pull and build all images..."
 
-# Pull PostgreSQL
+# Pull all images defined in docker-compose.yml
+# This will fail for images that need to be built, which is expected
+echo "Pulling all images..."
+docker compose pull --quiet 2>/dev/null || docker compose pull || true
+
+echo "🔨 Building images that need building..."
+
+# Build services that require building (mysql_tls, redis_unified)
+docker compose build mysql_tls redis_unified
+
+# List of specific images to verify
+echo "✅ Verifying images..."
 pull_if_missing "postgres:15"
-
-# Pull MySQL
 pull_if_missing "mysql:8.4"
 pull_if_missing "mysql:8.0"
-
-# Pull Redis
 pull_if_missing "redis:7-alpine"
-
-# Pull MinIO
 pull_if_missing "minio/minio:latest"
-
-# Pull Autobahn WebSocket test suite
 pull_if_missing "crossbario/autobahn-testsuite"
-
-echo "🔨 Building local images..."
-
-# Build MySQL TLS image
-build_local_image "bun-mysql-tls:local" "test/js/sql/mysql-tls"
-
-# Build Redis unified image
-build_local_image "bun-redis-unified:local" "test/js/valkey/docker-unified"
 
 echo "✅ Validating docker-compose configuration..."
 
-# Validate compose file if it exists
-COMPOSE_FILE="${BUN_DOCKER_COMPOSE_FILE:-test/docker/docker-compose.yml}"
-if [[ -f "$COMPOSE_FILE" ]]; then
-    if docker compose -f "$COMPOSE_FILE" config >/dev/null 2>&1; then
-        echo "✓ Docker Compose configuration is valid"
-    else
-        echo "⚠️  Docker Compose configuration validation failed"
-        docker compose -f "$COMPOSE_FILE" config
-    fi
+# Validate compose file (we're already in the docker directory)
+if docker compose config >/dev/null 2>&1; then
+    echo "✓ Docker Compose configuration is valid"
 else
-    echo "⚠️  Compose file not found at $COMPOSE_FILE"
+    echo "⚠️  Docker Compose configuration validation failed"
+    docker compose config
 fi
 
 # Optional: Save images to cache (useful for ephemeral CI instances)
-if [[ "${BUN_DOCKER_SAVE_CACHE:-0}" == "1" ]]; then
+if [ "${BUN_DOCKER_SAVE_CACHE:-0}" = "1" ]; then
     CACHE_FILE="/var/cache/bun-docker-images.tar"
     echo "💾 Saving images to cache at $CACHE_FILE..."
 
@@ -108,17 +102,15 @@ if [[ "${BUN_DOCKER_SAVE_CACHE:-0}" == "1" ]]; then
         redis:7-alpine \
         minio/minio:latest \
         crossbario/autobahn-testsuite \
-        bun-mysql-tls:local \
-        bun-redis-unified:local \
         -o "$CACHE_FILE"
 
     echo "✓ Images saved to cache"
 fi
 
 # Optional: Load images from cache
-if [[ "${BUN_DOCKER_LOAD_CACHE:-0}" == "1" ]]; then
+if [ "${BUN_DOCKER_LOAD_CACHE:-0}" = "1" ]; then
     CACHE_FILE="/var/cache/bun-docker-images.tar"
-    if [[ -f "$CACHE_FILE" ]]; then
+    if [ -f "$CACHE_FILE" ]; then
         echo "💾 Loading images from cache at $CACHE_FILE..."
         docker load -i "$CACHE_FILE"
         echo "✓ Images loaded from cache"

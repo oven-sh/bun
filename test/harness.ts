@@ -921,6 +921,7 @@ export async function describeWithContainer(
       "mysql_plain": 3306,
       "mysql_native_password": 3306,
       "mysql_tls": 3306,
+      "mysql:8": 3306,  // Map mysql:8 to mysql_plain
       "redis_plain": 6379,
       "redis_unified": 6379,
       "minio": 9000,
@@ -929,6 +930,9 @@ export async function describeWithContainer(
 
     const servicePort = services[image];
     if (servicePort) {
+      // Map mysql:8 to mysql_plain service
+      const actualService = image === "mysql:8" ? "mysql_plain" : image;
+
       // Create a container descriptor with stable references and a ready promise
       let readyResolver: () => void;
       let readyRejecter: (error: any) => void;
@@ -952,7 +956,7 @@ export async function describeWithContainer(
       beforeAll(async () => {
         try {
           const dockerHelper = await import("./docker/index.ts");
-          const info = await dockerHelper.ensure(image as any);
+          const info = await dockerHelper.ensure(actualService as any);
           _host = info.host;
           _port = info.ports[servicePort];
           console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);

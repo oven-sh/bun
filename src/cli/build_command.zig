@@ -84,6 +84,8 @@ pub const BuildCommand = struct {
         this_transpiler.options.drop = ctx.args.drop;
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
+        this_transpiler.options.compression.gzip = ctx.bundler_options.compression.gzip;
+        this_transpiler.options.compression.zstd = ctx.bundler_options.compression.zstd;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
         this_transpiler.options.output_format = ctx.bundler_options.output_format;

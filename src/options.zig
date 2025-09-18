@@ -1793,6 +1793,11 @@ pub const BundleOptions = struct {
     dead_code_elimination: bool = true,
     css_chunking: bool,
 
+    compression: struct {
+        zstd: bool = false,
+        gzip: bool = false,
+    } = .{},
+
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
     bytecode: bool = false,

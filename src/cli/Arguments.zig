@@ -169,6 +169,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
     clap.parseParam("--keep-names                     Preserve original function and class names when minifying") catch unreachable,
     clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
+    clap.parseParam("--compress <STR>...              Compress output files. Valid formats: 'gzip', 'zstd'") catch unreachable,
     clap.parseParam("--dump-environment-variables") catch unreachable,
     clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
@@ -805,6 +806,20 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.bundler_options.keep_names = args.flag("--keep-names");
 
         ctx.bundler_options.css_chunking = args.flag("--css-chunking");
+
+        // Parse compression options
+        if (args.options("--compress").len > 0) {
+            for (args.options("--compress")) |compress_format| {
+                if (strings.eqlComptime(compress_format, "gzip")) {
+                    ctx.bundler_options.compression.gzip = true;
+                } else if (strings.eqlComptime(compress_format, "zstd")) {
+                    ctx.bundler_options.compression.zstd = true;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid compression format: \"{s}\". Valid formats: 'gzip', 'zstd'", .{compress_format});
+                    Global.crash();
+                }
+            }
+        }
 
         ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
             !ctx.bundler_options.minify_whitespace;

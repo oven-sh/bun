@@ -258,6 +258,7 @@ pub fn writeOutputFilesToDisk(
             break :brk null;
         };
 
+        // Write the uncompressed file
         switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
             &pathbuf,
             .{
@@ -289,6 +290,123 @@ pub fn writeOutputFilesToDisk(
                 return error.WriteFailed;
             },
             .result => {},
+        }
+
+        // Write compressed versions if requested
+        if (c.options.compression.gzip) {
+            const libdeflate = @import("../../deps/libdeflate.zig");
+            libdeflate.load();
+
+            const compressor = libdeflate.Compressor.alloc(6) orelse {
+                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to allocate gzip compressor for chunk {}", .{
+                    bun.fmt.quote(chunk.final_rel_path),
+                }) catch unreachable;
+                return error.CompressionFailed;
+            };
+            defer compressor.deinit();
+
+            const max_size = compressor.maxBytesNeeded(code_result.buffer, .gzip);
+            const gzip_buffer = bun.default_allocator.alloc(u8, max_size) catch {
+                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to allocate memory for gzip compression of chunk {}", .{
+                    bun.fmt.quote(chunk.final_rel_path),
+                }) catch unreachable;
+                return error.CompressionFailed;
+            };
+            defer bun.default_allocator.free(gzip_buffer);
+
+            const gzip_result = compressor.gzip(code_result.buffer, gzip_buffer);
+            const gzip_path = try std.fmt.allocPrint(bun.default_allocator, "{s}.gz", .{rel_path});
+            defer bun.default_allocator.free(gzip_path);
+
+            switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                &pathbuf,
+                .{
+                    .data = .{
+                        .buffer = .{
+                            .buffer = .{
+                                .ptr = @constCast(gzip_buffer.ptr),
+                                .len = @as(u32, @truncate(gzip_result.written)),
+                                .byte_len = @as(u32, @truncate(gzip_result.written)),
+                            },
+                        },
+                    },
+                    .encoding = .buffer,
+                    .mode = if (chunk.is_executable) 0o755 else 0o644,
+                    .dirfd = .fromStdDir(root_dir),
+                    .file = .{
+                        .path = jsc.Node.PathLike{
+                            .string = bun.PathString.init(gzip_path),
+                        },
+                    },
+                },
+            )) {
+                .err => |err| {
+                    try c.log.addSysError(bun.default_allocator, err, "writing gzip compressed chunk {}", .{
+                        bun.fmt.quote(gzip_path),
+                    });
+                    return error.WriteFailed;
+                },
+                .result => {},
+            }
+        }
+
+        if (c.options.compression.zstd) {
+            const zstd = @import("../../deps/zstd.zig");
+
+            const max_size = zstd.compressBound(code_result.buffer.len);
+            const zstd_buffer = bun.default_allocator.alloc(u8, max_size) catch {
+                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to allocate memory for zstd compression of chunk {}", .{
+                    bun.fmt.quote(chunk.final_rel_path),
+                }) catch unreachable;
+                return error.CompressionFailed;
+            };
+            defer bun.default_allocator.free(zstd_buffer);
+
+            const zstd_result = zstd.compress(zstd_buffer, code_result.buffer, 3);
+            const compressed_size = switch (zstd_result) {
+                .success => |size| size,
+                .err => |msg| {
+                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to zstd compress chunk {}: {s}", .{
+                        bun.fmt.quote(chunk.final_rel_path),
+                        msg,
+                    }) catch unreachable;
+                    return error.CompressionFailed;
+                },
+            };
+
+            const zstd_path = try std.fmt.allocPrint(bun.default_allocator, "{s}.zst", .{rel_path});
+            defer bun.default_allocator.free(zstd_path);
+
+            switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                &pathbuf,
+                .{
+                    .data = .{
+                        .buffer = .{
+                            .buffer = .{
+                                .ptr = @constCast(zstd_buffer.ptr),
+                                .len = @as(u32, @truncate(compressed_size)),
+                                .byte_len = @as(u32, @truncate(compressed_size)),
+                            },
+                        },
+                    },
+                    .encoding = .buffer,
+                    .mode = if (chunk.is_executable) 0o755 else 0o644,
+                    .dirfd = .fromStdDir(root_dir),
+                    .file = .{
+                        .path = jsc.Node.PathLike{
+                            .string = bun.PathString.init(zstd_path),
+                        },
+                    },
+                },
+            )) {
+                .err => |err| {
+                    try c.log.addSysError(bun.default_allocator, err, "writing zstd compressed chunk {}", .{
+                        bun.fmt.quote(zstd_path),
+                    });
+                    return error.WriteFailed;
+                },
+                .result => {},
+            }
         }
 
         const source_map_index: ?u32 = if (source_map_output_file != null)

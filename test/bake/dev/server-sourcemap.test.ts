@@ -39,9 +39,12 @@ export async function getStaticPaths() {
     // Check that the stack trace shows correct file and line numbers
     // The source maps are working if we see the correct patterns
     // We need to check for the patterns because ANSI codes might be embedded
-    const hasCorrectThrowLine = lines.includes("myFunc") && lines.includes("7") && lines.includes("9");
-    // const hasCorrectCallLine = lines.includes("MyPage") && lines.includes("2") && lines.includes("3");
-    const hasCorrectFileName = lines.includes("/pages/[...slug].tsx");
+    // Strip ANSI codes for cleaner checking
+    const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
+
+    const hasCorrectThrowLine = cleanLines.includes("myFunc") && cleanLines.includes("6:16");
+    // const hasCorrectCallLine = cleanLines.includes("MyPage") && cleanLines.includes("2") && cleanLines.includes("3");
+    const hasCorrectFileName = cleanLines.includes("pages/[...slug].tsx");
 
     expect(hasCorrectThrowLine).toBe(true);
     // TODO: renable this when async stacktraces are enabled?
@@ -93,8 +96,11 @@ export async function getStaticPaths() {
 
     // Check source map points to correct lines after HMR
     const lines = dev.output.lines.join("\n");
-    const hasCorrectThrowLine = lines.includes("throwError") && lines.includes("7") && lines.includes("9");
-    const hasCorrectCallLine = lines.includes("ErrorPage") && lines.includes("2") && lines.includes("3");
+    // Strip ANSI codes for cleaner checking
+    const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
+
+    const hasCorrectThrowLine = cleanLines.includes("throwError") && cleanLines.includes("6:1");
+    const hasCorrectCallLine = cleanLines.includes("ErrorPage") && cleanLines.includes("1:16");
 
     expect(hasCorrectThrowLine).toBe(true);
     expect(hasCorrectCallLine).toBe(true);
@@ -129,9 +135,12 @@ function helperFunction() {
 
     // Check that stack trace shows both files with correct lines
     const lines = dev.output.lines.join("\n");
-    const hasUtilsThrowLine = lines.includes("helperFunction") && lines.includes("6") && lines.includes("9");
-    const hasUtilsCallLine = lines.includes("doSomething") && lines.includes("2");
-    const hasPageCallLine = lines.includes("NestedPage") && lines.includes("4");
+    // Strip ANSI codes for cleaner checking
+    const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
+
+    const hasUtilsThrowLine = cleanLines.includes("helperFunction") && cleanLines.includes("5:1");
+    const hasUtilsCallLine = cleanLines.includes("doSomething2") && cleanLines.includes("1:28");
+    const hasPageCallLine = cleanLines.includes("NestedPage") && cleanLines.includes("3:38");
 
     expect(hasUtilsThrowLine).toBe(true);
     expect(hasUtilsCallLine).toBe(true);

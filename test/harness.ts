@@ -937,7 +937,7 @@ export async function describeWithContainer(
         const info = await dockerHelper.ensure(image as any);
         containerInfo.host = info.host;
         containerInfo.port = info.ports[servicePort];
-        console.log(`Container ready: ${image} at ${containerInfo.host}:${containerInfo.port}`);
+        console.log(`Container ready via docker-compose: ${image} at ${containerInfo.host}:${containerInfo.port}`);
       });
 
       fn(containerInfo);

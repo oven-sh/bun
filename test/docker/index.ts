@@ -48,11 +48,28 @@ class DockerComposeHelper {
     this.composeFile = options.composeFile ||
       process.env.BUN_DOCKER_COMPOSE_FILE ||
       join(__dirname, "docker-compose.yml");
+
+    // Verify the compose file exists
+    const fs = require("fs");
+    if (!fs.existsSync(this.composeFile)) {
+      console.error(`Docker Compose file not found at: ${this.composeFile}`);
+      console.error(`Current directory: ${process.cwd()}`);
+      console.error(`__dirname: ${__dirname}`);
+      throw new Error(`Docker Compose file not found: ${this.composeFile}`);
+    }
   }
 
   private async exec(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    // Try docker compose v2 first (docker compose)
+    let cmd = ["docker", "compose", "-p", this.projectName, "-f", this.composeFile, ...args];
+
+    // Check if we should use docker-compose v1 instead
+    if (process.env.USE_DOCKER_COMPOSE_V1 === "true") {
+      cmd = ["docker-compose", "-p", this.projectName, "-f", this.composeFile, ...args];
+    }
+
     const proc = spawn({
-      cmd: ["docker", "compose", "-p", this.projectName, "-f", this.composeFile, ...args],
+      cmd,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -80,16 +97,32 @@ class DockerComposeHelper {
       throw new Error("Docker is not available. Please ensure Docker is installed and running.");
     }
 
-    // Check docker compose v2 is available
-    const composeCheck = spawn({
+    // Check docker compose - try v2 first, then v1
+    const composeV2Check = spawn({
       cmd: ["docker", "compose", "version"],
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const composeExitCode = await composeCheck.exited;
-    if (composeExitCode !== 0) {
-      throw new Error("Docker Compose v2 is not available. Please ensure Docker Compose v2 is installed.");
+    const composeV2ExitCode = await composeV2Check.exited;
+    if (composeV2ExitCode !== 0) {
+      // Try docker-compose v1
+      const composeV1Check = spawn({
+        cmd: ["docker-compose", "version"],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const composeV1ExitCode = await composeV1Check.exited;
+      if (composeV1ExitCode !== 0) {
+        throw new Error("Neither Docker Compose v2 nor v1 is available. Please install Docker Compose.");
+      }
+
+      // Use v1 for all subsequent commands
+      process.env.USE_DOCKER_COMPOSE_V1 = "true";
+      console.log("Using docker-compose v1 (legacy)");
+    } else {
+      console.log("Using docker compose v2");
     }
   }
 
@@ -133,8 +166,19 @@ class DockerComposeHelper {
   }
 
   async ensure(service: ServiceName): Promise<ServiceInfo> {
-    await this.ensureDocker();
-    await this.up(service);
+    try {
+      await this.ensureDocker();
+    } catch (error) {
+      console.error(`Failed to ensure Docker is available: ${error}`);
+      throw error;
+    }
+
+    try {
+      await this.up(service);
+    } catch (error) {
+      console.error(`Failed to start service ${service}: ${error}`);
+      throw error;
+    }
 
     const info: ServiceInfo = {
       host: "127.0.0.1",

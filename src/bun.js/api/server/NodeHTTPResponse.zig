@@ -1175,7 +1175,7 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
     data: jsc.JSValue,
     encoding: jsc.JSValue,
 ) jsc.JSValue {
-    log("Bun__NodeHTTPResponse_rawWrite", .{});
+    log("Bun__NodeHTTPResponse_rawWrite is ending? {}", .{ended});
     const buffer_len = bufferLength.*;
     // convever it back to StreamBuffer
     var stream_buffer: bun.io.StreamBuffer = .{
@@ -1204,8 +1204,8 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), data, encoding, false, true) catch {
             return .zero;
         } orelse {
+            log("Bun__NodeHTTPResponse_rawWrite invalid argument type value", .{});
             if (!globalObject.hasException()) {
-                log("Bun__NodeHTTPResponse_rawWrite invalid argument type value", .{});
                 return globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data) catch .zero;
             }
             return .zero;
@@ -1218,14 +1218,16 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
     }
 
     const data_slice = node_buffer.slice();
+    log("Bun__NodeHTTPResponse_rawWrite data_slice {d} {} {}", .{ data_slice.len, data.isEmptyOrUndefinedOrNull(), encoding.isUndefinedOrNull() });
     if (stream_buffer.isNotEmpty()) {
         // need to flush
         const to_flush = stream_buffer.slice();
+        log("Bun__NodeHTTPResponse_rawWrite to_flush", .{});
         const written: u32 = @max(0, socket.write(is_ssl, to_flush));
         stream_buffer.wrote(written);
         total_written.* = total_written.* +| written;
         if (written < to_flush.len) {
-            log("Bun__NodeHTTPResponse_rawWrite backpressure (moreinside stream buffer)", .{});
+            log("Bun__NodeHTTPResponse_rawWrite backpressure (moreinside stream buffer) {d}", .{total_written.*});
             if (data_slice.len > 0) {
                 bun.handleOom(stream_buffer.write(data_slice));
             }
@@ -1238,17 +1240,17 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         const written: u32 = @max(0, socket.write(is_ssl, data_slice));
         total_written.* = total_written.* +| written;
         if (written < data_slice.len) {
-            log("Bun__NodeHTTPResponse_rawWrite backpressure", .{});
+            log("Bun__NodeHTTPResponse_rawWrite backpressure {d}", .{total_written.*});
             bun.handleOom(stream_buffer.write(data_slice[written..]));
             return JSValue.jsNumber(total_written.*);
         }
     }
     if (ended) {
-        log("Bun__NodeHTTPResponse_rawWrite ended", .{});
+        log("Bun__NodeHTTPResponse_rawWrite shutdown", .{});
         // last part so we shutdown the writable side of the socket aka send FIN
         socket.shutdown(is_ssl);
     }
-    log("Bun__NodeHTTPResponse_rawWrite success", .{});
+    log("Bun__NodeHTTPResponse_rawWrite success {d}", .{total_written.*});
     return JSValue.jsNumber(total_written.*);
 }
 

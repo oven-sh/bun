@@ -1039,7 +1039,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _write(_chunk, _encoding, _callback) {
-    console.log("write", _chunk, _encoding, _callback);
     const handle = this[kHandle];
     if (handle) {
       handle.write(_chunk, _encoding);

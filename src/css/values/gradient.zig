@@ -422,8 +422,8 @@ pub const LinearGradient = struct {
 
             serializeItems(LengthPercentage, &flipped_items, W, dest) catch return dest.addFmtError();
         } else {
-            if ((this.direction != .vertical or this.direction.vertical != .bottom) and
-                (this.direction != .angle or this.direction.angle.deg != 180.0))
+            if (!this.direction.eql(&LineDirection{ .vertical = .bottom }) and
+                !this.direction.eql(&LineDirection{ .angle = Angle{ .deg = 180.0 } }))
             {
                 try this.direction.toCss(W, dest, is_prefixed);
                 try dest.delim(',', false);

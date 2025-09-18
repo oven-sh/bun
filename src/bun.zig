@@ -414,13 +414,11 @@ pub const StringHashMapUnowned = struct {
 pub const collections = @import("./collections.zig");
 pub const MultiArrayList = bun.collections.MultiArrayList;
 pub const BabyList = collections.BabyList;
-pub const OffsetList = collections.OffsetList;
+pub const ByteList = collections.ByteList; // alias of BabyList(u8)
+pub const OffsetByteList = collections.OffsetByteList;
 pub const bit_set = collections.bit_set;
 pub const HiveArray = collections.HiveArray;
 pub const BoundedArray = collections.BoundedArray;
-
-pub const ByteList = BabyList(u8);
-pub const OffsetByteList = OffsetList(u8);
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.isDebug) {
@@ -3393,36 +3391,36 @@ pub fn OrdinalT(comptime Int: type) type {
         start = 0,
         _,
 
-        pub fn fromZeroBased(int: Int) @This() {
+        pub inline fn fromZeroBased(int: Int) @This() {
             assert(int >= 0);
             assert(int != std.math.maxInt(Int));
             return @enumFromInt(int);
         }
 
-        pub fn fromOneBased(int: Int) @This() {
+        pub inline fn fromOneBased(int: Int) @This() {
             assert(int > 0);
             return @enumFromInt(int - 1);
         }
 
-        pub fn zeroBased(ord: @This()) Int {
+        pub inline fn zeroBased(ord: @This()) Int {
             return @intFromEnum(ord);
         }
 
-        pub fn oneBased(ord: @This()) Int {
+        pub inline fn oneBased(ord: @This()) Int {
             return @intFromEnum(ord) + 1;
         }
 
         /// Add two ordinal numbers together. Both are converted to zero-based before addition.
-        pub fn add(ord: @This(), b: @This()) @This() {
+        pub inline fn add(ord: @This(), b: @This()) @This() {
             return fromZeroBased(ord.zeroBased() + b.zeroBased());
         }
 
         /// Add a scalar value to an ordinal number
-        pub fn addScalar(ord: @This(), inc: Int) @This() {
+        pub inline fn addScalar(ord: @This(), inc: Int) @This() {
             return fromZeroBased(ord.zeroBased() + inc);
         }
 
-        pub fn isValid(ord: @This()) bool {
+        pub inline fn isValid(ord: @This()) bool {
             return ord.zeroBased() >= 0;
         }
     };
@@ -3745,7 +3743,7 @@ pub const S3 = @import("./s3/client.zig");
 /// decommits it or the memory allocator reuses it for a new allocation.
 /// So if we're about to free something sensitive, we should zero it out first.
 pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
-    @memset(@constCast(slice), 0);
+    std.crypto.secureZero(std.meta.Child(@TypeOf(slice)), @constCast(slice));
     allocator.free(slice);
 }
 

@@ -860,13 +860,8 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 
-  // TODO: investigate why its not starting on Linux arm64
-  if ((isLinux && process.arch === "arm64") || isMacOS) {
-    return false;
-  }
-
   try {
-    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
+    const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
     return false;
@@ -922,7 +917,7 @@ export async function describeWithContainer(
       return;
     }
     const { arch, platform } = process;
-    if ((archs && !archs?.includes(arch)) || platform === "win32" || platform === "darwin") {
+    if (archs && !archs?.includes(arch)) {
       test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
       return false;
     }

@@ -1899,6 +1899,34 @@ declare module "bun" {
      */
     tsconfig?: string;
 
+    /**
+     * Compress output files after bundling.
+     *
+     * Can be one of:
+     * - `"gzip"` - Compress with gzip (creates .gz files)
+     * - `"zstd"` - Compress with zstandard (creates .zst files)
+     * - An object to enable/disable specific formats
+     *
+     * When enabled, creates compressed versions of output files alongside the originals.
+     * Source maps are also compressed when present.
+     *
+     * @example
+     * ```ts
+     * // Single format
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   compress: 'gzip'
+     * });
+     *
+     * // Multiple formats
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   compress: { gzip: true, zstd: true }
+     * });
+     * ```
+     */
+    compress?: "gzip" | "zstd" | { gzip?: boolean; zstd?: boolean };
+
     outdir?: string;
   }
 

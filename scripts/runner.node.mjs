@@ -1563,7 +1563,11 @@ function isNodeTest(path) {
     return false;
   }
   const unixPath = path.replaceAll(sep, "/");
-  return unixPath.includes("js/node/test/parallel/") || unixPath.includes("js/node/test/sequential/");
+  return (
+    unixPath.includes("js/node/test/parallel/") ||
+    unixPath.includes("js/node/test/sequential/") ||
+    unixPath.includes("js/bun/test/parallel/")
+  );
 }
 
 /**

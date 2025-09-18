@@ -862,9 +862,8 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 
-  // TODO: Re-enable Docker tests on non-Linux x64 after this PR is merged
-  // For now, only run on Linux x64 to avoid CI issues
-  if (!(isLinux && process.arch === "x64")) {
+  // TODO: investigate why Docker tests are not working on Linux arm64
+  if (isLinux && process.arch === "arm64") {
     return false;
   }
 
@@ -918,6 +917,12 @@ export async function describeWithContainer(
   },
   fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
+  // Skip if Docker is not available
+  if (!isDockerEnabled()) {
+    describe.todo(label);
+    return;
+  }
+
   describe(label, () => {
     // Check if this is one of our docker-compose services
     const services: Record<string, number> = {

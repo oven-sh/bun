@@ -1,27 +1,6 @@
-import { which } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import child_process from "child_process";
-import { isLinux } from "harness";
+import { isDockerEnabled } from "harness";
 import * as dockerCompose from "../../../docker/index.ts";
-
-const dockerCLI = which("docker") as string;
-function isDockerEnabled(): boolean {
-  if (!dockerCLI) {
-    return false;
-  }
-
-  // TODO: investigate why its not starting on Linux arm64
-  if (isLinux && process.arch === "arm64") {
-    return false;
-  }
-
-  try {
-    const info = child_process.execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
-    return info.toString().indexOf("Server Version:") !== -1;
-  } catch {
-    return false;
-  }
-}
 
 let url: string = "";
 const agent = encodeURIComponent("bun/1.0.0");

@@ -18,6 +18,7 @@ describeWithContainer(
     });
 
     beforeEach(async () => {
+      await container.ready;
     });
 
     test("Transaction works", async () => {

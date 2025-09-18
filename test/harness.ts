@@ -868,7 +868,7 @@ export function isDockerEnabled(): boolean {
   }
 
   try {
-    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
+    const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
     return false;
@@ -990,7 +990,6 @@ export async function describeWithContainer(
       fn(containerDescriptor);
       return;
     }
-
     // No fallback - if the image isn't in docker-compose, it should fail
     throw new Error(`Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`);
   });

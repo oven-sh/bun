@@ -20,6 +20,13 @@ if (isDockerEnabled()) {
       name: "MySQL",
       image: "mysql_plain",
     },
+    {
+      name: "MySQL 9",
+      image: "mysql:9",
+      env: {
+        MYSQL_ROOT_PASSWORD: "bun",
+      },
+    },
   ];
 
   for (const image of images) {

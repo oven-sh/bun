@@ -1866,6 +1866,8 @@ pub const BundleV2 = struct {
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             transpiler.options.css_chunking = config.css_chunking;
+            transpiler.options.compression.gzip = config.compression.gzip;
+            transpiler.options.compression.zstd = config.compression.zstd;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
 

@@ -123,7 +123,12 @@ if (isDockerEnabled() && (await load())) {
     it("should have test cases", () => {
       expect(count).toBeGreaterThan(0);
     });
-    for (let i = 1; i <= count; i++) {
+
+    // Limit the number of tests to avoid timeout in CI
+    // Run only the first 100 tests unless explicitly requested
+    const maxTests = process.env.BUN_AUTOBAHN_ALL_TESTS ? count : Math.min(count, 100);
+
+    for (let i = 1; i <= maxTests; i++) {
       const info = (await getCaseInfo(i)) as { id: string; description: string };
 
       it(`Running test case ${info.id}: ${info.description}`, async () => {

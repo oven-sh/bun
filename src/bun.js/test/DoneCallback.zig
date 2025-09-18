@@ -36,7 +36,6 @@ pub fn bind(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
 const bun = @import("bun");
 
 const jsc = bun.jsc;
-const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;

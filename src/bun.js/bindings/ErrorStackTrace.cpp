@@ -695,8 +695,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                                 auto str = asString(name)->tryGetValueWithoutGC();
                                 if (!str->isEmpty()) {
                                     setTypeFlagsIfNecessary();
-
-                                    return str.data;
+                                    return str;
                                 }
                             }
                         }
@@ -711,11 +710,8 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                             if (name && name.isString()) {
                                 auto str = asString(name)->tryGetValueWithoutGC();
                                 if (!str->isEmpty()) {
-                                    functionName = str.data;
-                                    if (!functionName.isEmpty()) {
-                                        setTypeFlagsIfNecessary();
-                                        return functionName;
-                                    }
+                                    setTypeFlagsIfNecessary();
+                                    return str;
                                 }
                             }
                         }
@@ -725,23 +721,24 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                     if (jstype == JSC::JSFunctionType) {
                         auto* function = jsCast<JSC::JSFunction*>(object);
                         if (function) {
-                            functionName = function->nameWithoutGC(vm);
-                            if (functionName.isEmpty() && !function->isHostFunction()) {
-                                functionName = function->jsExecutable()->ecmaName().string();
+                            auto str = function->nameWithoutGC(vm);
+                            if (str.isEmpty() && !function->isHostFunction()) {
+                                setTypeFlagsIfNecessary();
+                                return function->jsExecutable()->ecmaName().string();
                             }
                             setTypeFlagsIfNecessary();
-                            return functionName;
+                            return str;
                         }
                     } else if (jstype == JSC::InternalFunctionType) {
                         auto* function = jsCast<JSC::InternalFunction*>(object);
                         if (function) {
-                            functionName = function->name();
+                            auto str = function->name();
                             setTypeFlagsIfNecessary();
-                            return functionName;
+                            return str;
                         }
                     }
 
-                    return functionName;
+                    return emptyString();
                 };
 
                 functionName = getName();

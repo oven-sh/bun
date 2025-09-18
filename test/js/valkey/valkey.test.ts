@@ -1,14 +1,23 @@
 import { randomUUIDv7, RedisClient } from "bun";
-import { beforeEach, describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, DEFAULT_REDIS_URL, expectType, isEnabled } from "./test-utils";
+import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { ConnectionType, createClient, ctx, DEFAULT_REDIS_URL, expectType, isEnabled, setupDockerContainer } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
-  beforeEach(async () => {
-    if (ctx.redis?.connected) {
-      ctx.redis.close?.();
+  beforeAll(async () => {
+    // Ensure container is ready before tests run
+    await setupDockerContainer();
+    if (!ctx.redis) {
+      ctx.redis = createClient(ConnectionType.TCP);
     }
-    ctx.redis = createClient(ConnectionType.TCP);
+  });
 
+  beforeEach(async () => {
+    // Don't create a new client, just ensure we have one
+    if (!ctx.redis) {
+      ctx.redis = createClient(ConnectionType.TCP);
+    }
+
+    // Flush all data for clean test state
     await ctx.redis.send("FLUSHALL", ["SYNC"]);
   });
 

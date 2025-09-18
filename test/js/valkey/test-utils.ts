@@ -153,7 +153,6 @@ async function startContainer(): Promise<ContainerConfiguration> {
     // First, try to use docker-compose
     console.log("Attempting to use docker-compose for Redis...");
     const redisInfo = await dockerCompose.ensure("redis_unified");
-    console.log("Redis info:", redisInfo);
 
     const port = redisInfo.ports[6379];
     const tlsPort = redisInfo.ports[6380];

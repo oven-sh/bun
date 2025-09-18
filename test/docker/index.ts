@@ -253,9 +253,7 @@ class DockerComposeHelper {
 
       case "autobahn":
         info.ports[9002] = await this.port(service, 9002);
-        // Autobahn takes a bit to fully initialize after container starts
-        // Use a simple TCP wait since WebSocket endpoints may not be immediately available
-        await this.waitForPort(info.ports[9002], 10000);
+        // Docker compose --wait should handle readiness
         break;
     }
 

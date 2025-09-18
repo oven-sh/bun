@@ -1,5 +1,5 @@
 import { which } from "bun";
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { isLinux } from "harness";
 import * as dockerCompose from "../../../docker/index.ts";
@@ -31,8 +31,10 @@ async function load() {
     return true;
   }
 
+  console.log("Loading Autobahn via docker-compose...");
   // Use docker-compose to start Autobahn
   const autobahnInfo = await dockerCompose.ensure("autobahn");
+  console.log("Autobahn info:", autobahnInfo);
 
   // Autobahn expects port 9002 in the Host header, but we might be on a different port
   const actualPort = autobahnInfo.ports[9002];
@@ -47,14 +49,23 @@ async function load() {
   return true;
 }
 
-if (isDockerEnabled() && (await load())) {
-  // Prepare WebSocket options with Host header if needed
-  const wsOptions = process.env.BUN_AUTOBAHN_HOST_HEADER
-    ? { headers: { Host: process.env.BUN_AUTOBAHN_HOST_HEADER } }
-    : undefined;
+describe.skipIf(!isDockerEnabled())("autobahn", () => {
+  let wsOptions: any;
 
-  describe("autobahn", async () => {
-    function getCaseStatus(testID: number) {
+  beforeAll(async () => {
+    if (!(await load())) {
+      throw new Error("Failed to load Autobahn");
+    }
+
+    console.log("URL after load:", url);
+
+    // Prepare WebSocket options with Host header if needed
+    wsOptions = process.env.BUN_AUTOBAHN_HOST_HEADER
+      ? { headers: { Host: process.env.BUN_AUTOBAHN_HOST_HEADER } }
+      : undefined;
+  });
+
+  function getCaseStatus(testID: number) {
       return new Promise((resolve, reject) => {
         const socket = new WebSocket(`${url}/getCaseStatus?case=${testID}&agent=${agent}`, wsOptions);
         socket.binaryType = "arraybuffer";
@@ -115,24 +126,31 @@ if (isDockerEnabled() && (await load())) {
       });
     }
 
-    const count = (await getTestCaseCount()) as number;
-    it("should have test cases", () => {
+  it(
+    "should run all Autobahn test cases",
+    async () => {
+      const count = (await getTestCaseCount()) as number;
       expect(count).toBeGreaterThan(0);
-    });
-    for (let i = 1; i <= count; i++) {
-      const info = (await getCaseInfo(i)) as { id: string; description: string };
 
-      it(`Running test case ${info.id}: ${info.description}`, async () => {
+      for (let i = 1; i <= count; i++) {
+        const info = (await getCaseInfo(i)) as { id: string; description: string };
+
+        // Run test case
         await runTestCase(i);
         const result = (await getCaseStatus(i)) as { behavior: string };
-        expect(result.behavior).toBeOneOf(["OK", "INFORMATIONAL", "NON-STRICT"]);
-      });
-    }
 
-    afterAll(() => {
-      // Container managed by docker-compose, no need to kill
-    });
+        // Check result
+        try {
+          expect(result.behavior).toBeOneOf(["OK", "INFORMATIONAL", "NON-STRICT"]);
+        } catch (e) {
+          throw new Error(`Test case ${info.id} (${info.description}) failed: behavior was ${result.behavior}`);
+        }
+      }
+    },
+    300000, // 5 minute timeout
+  );
+
+  afterAll(() => {
+    // Container managed by docker-compose, no need to kill
   });
-} else {
-  it.todo("Autobahn WebSocket not detected");
-}
+});

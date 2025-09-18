@@ -967,70 +967,8 @@ export async function describeWithContainer(
       return;
     }
 
-    // Fall back to original implementation for unknown images
-    const docker = dockerExe();
-    if (!docker) {
-      test.skip(`docker is not installed, skipped: ${image}`, () => {});
-      return;
-    }
-    const { arch, platform } = process;
-    if ((archs && !archs?.includes(arch)) || platform === "win32") {
-      test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
-      return false;
-    }
-    let containerId: string;
-    {
-      const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);
-      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
-        cmd: [docker, "run", "--rm", "-dPit", ...envs, image, ...args],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (exitCode !== 0) {
-        process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to start (exit: ${exitCode})`, () => {});
-        return false;
-      }
-      if (signalCode) {
-        test.skip(`docker container for ${image} failed to start (signal: ${signalCode})`, () => {});
-        return false;
-      }
-      containerId = stdout.toString("utf-8").trim();
-    }
-    let port: number;
-    {
-      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
-        cmd: [docker, "port", containerId],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (exitCode !== 0) {
-        process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to find a port (exit: ${exitCode})`, () => {});
-        return false;
-      }
-      if (signalCode) {
-        test.skip(`docker container for ${image} failed to find a port (signal: ${signalCode})`, () => {});
-        return false;
-      }
-      const [firstPort] = stdout
-        .toString("utf-8")
-        .trim()
-        .split("\n")
-        .map(line => parseInt(line.split(":").pop()!));
-      port = firstPort;
-    }
-    beforeAll(async () => {
-      await waitForPort(port);
-    });
-    afterAll(() => {
-      Bun.spawnSync({
-        cmd: [docker, "rm", "-f", containerId],
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-    });
-    fn({ port, host: "127.0.0.1", ready: Promise.resolve() });
+    // No fallback - if the image isn't in docker-compose, it should fail
+    throw new Error(`Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`);
   });
 }
 

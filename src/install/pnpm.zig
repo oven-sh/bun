@@ -3073,10 +3073,10 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const JSON = bun.json;
 const JSPrinter = bun.js_printer;
+const OOM = bun.OOM;
 const logger = bun.logger;
 const strings = bun.strings;
 const YAML = bun.interchange.yaml.YAML;
-const OOM = bun.OOM;
 
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;

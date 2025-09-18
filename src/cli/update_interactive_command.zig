@@ -2005,6 +2005,7 @@ const glob = bun.glob;
 const logger = bun.logger;
 const path = bun.path;
 const strings = bun.strings;
+const Command = bun.cli.Command;
 const FileSystem = bun.fs.FileSystem;
 
 const Semver = bun.Semver;
@@ -2014,9 +2015,6 @@ const String = Semver.String;
 const JSAst = bun.ast;
 const E = JSAst.E;
 const Expr = JSAst.Expr;
-
-const Command = bun.cli.Command;
-const OutdatedCommand = bun.cli.OutdatedCommand;
 
 const Install = bun.install;
 const DependencyID = Install.DependencyID;

@@ -661,7 +661,6 @@ const Table = bun.fmt.Table;
 const Install = bun.install;
 const DependencyID = Install.DependencyID;
 const PackageID = Install.PackageID;
-const Resolution = Install.Resolution;
 const invalid_package_id = Install.invalid_package_id;
 const Behavior = Install.Dependency.Behavior;
 

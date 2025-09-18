@@ -182,14 +182,12 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
     }
 }
 
-const std = @import("std");
 const bun = @import("bun");
-
 const Output = bun.Output;
 
-const PackageManager = bun.install.PackageManager;
-const PackageID = bun.install.PackageID;
-const invalid_package_id = bun.install.invalid_package_id;
-const Resolution = bun.install.Resolution;
 const Dependency = bun.install.Dependency;
+const PackageID = bun.install.PackageID;
+const PackageManager = bun.install.PackageManager;
+const Resolution = bun.install.Resolution;
 const Task = bun.install.Task;
+const invalid_package_id = bun.install.invalid_package_id;

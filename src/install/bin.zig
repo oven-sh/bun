@@ -1012,7 +1012,6 @@ const std = @import("std");
 
 const Install = @import("./install.zig");
 const ExternalStringList = @import("./install.zig").ExternalStringList;
-const Lockfile = Install.Lockfile;
 
 const bun = @import("bun");
 const JSON = bun.json;

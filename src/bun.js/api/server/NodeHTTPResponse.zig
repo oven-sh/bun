@@ -1160,6 +1160,80 @@ extern "c" fn Bun__setNodeHTTPServerSocketUsSocketValue(jsc.JSValue, ?*anyopaque
 extern "c" fn Bun__callNodeHTTPServerSocketOnClose(jsc.JSValue) void;
 extern "c" fn Bun__callNodeHTTPServerSocketOnDrain(jsc.JSValue) void;
 
+pub export fn Bun__NodeHTTPResponse_freeBuffer(buffer: [*]u8, bufferLength: usize) void {
+    bun.default_allocator.free(buffer[0..bufferLength]);
+}
+pub export fn Bun__NodeHTTPResponse_rawWrite(
+    socket: *uws.us_socket_t,
+    is_ssl: bool,
+    buffer: *?[*]u8,
+    bufferLength: *usize,
+    bufferPosition: *usize,
+    globalObject: *jsc.JSGlobalObject,
+    data: jsc.JSValue,
+    encoding: jsc.JSValue,
+) jsc.JSValue {
+    const buffer_len = bufferLength.*;
+    // convever it back to StreamBuffer
+    var stream_buffer: bun.io.StreamBuffer = .{
+        .list = if (buffer.*) |buffer_ptr| .{
+            .allocator = bun.default_allocator,
+            .items = buffer_ptr[0..buffer_len],
+            .capacity = buffer_len,
+        } else .{
+            .allocator = bun.default_allocator,
+            .items = &.{},
+            .capacity = 0,
+        },
+        .cursor = bufferPosition.*,
+    };
+    // update the buffer pointer to the new buffer
+    defer {
+        buffer.* = stream_buffer.list.items.ptr;
+        bufferLength.* = stream_buffer.list.items.len;
+        bufferPosition.* = stream_buffer.cursor;
+    }
+
+    var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+    const node_buffer: jsc.Node.BlobOrStringOrBuffer = if (data.isUndefined())
+        jsc.Node.BlobOrStringOrBuffer{ .string_or_buffer = jsc.Node.StringOrBuffer.empty }
+    else
+        jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), data, encoding, false, true) catch {
+            return .zero;
+        } orelse {
+            if (!globalObject.hasException()) {
+                return globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data) catch .zero;
+            }
+            return .zero;
+        };
+
+    defer node_buffer.deinit();
+    if (node_buffer == .blob and node_buffer.blob.needsToReadFile()) {
+        return globalObject.throw("File blob not supported yet in this function.", .{}) catch .zero;
+    }
+
+    const data_slice = node_buffer.slice();
+    var total_written: usize = 0;
+    if (stream_buffer.isNotEmpty()) {
+        // need to flush
+        const to_flush = stream_buffer.slice();
+        const written: u32 = @max(0, socket.write(is_ssl, to_flush));
+        stream_buffer.wrote(written);
+        total_written +|= written;
+        if (written < to_flush.len) {
+            return JSValue.jsNumber(written);
+        }
+        // stream buffer is empty now
+    }
+
+    const written: u32 = @max(0, socket.write(is_ssl, data_slice));
+    total_written +|= written;
+    if (written < data_slice.len) {
+        bun.handleOom(stream_buffer.write(data_slice[written..]));
+    }
+    return JSValue.jsNumber(total_written);
+}
+
 pub export fn Bun__NodeHTTPResponse_onClose(response: *NodeHTTPResponse, js_value: jsc.JSValue) void {
     response.onAbort(js_value);
 }

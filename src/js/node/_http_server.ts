@@ -485,22 +485,22 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       // Bindings to be used for WS Server
       websocket: {
         open(ws) {
-          ws.data.open(ws);
+          ws.data?.open(ws);
         },
         message(ws, message) {
-          ws.data.message(ws, message);
+          ws.data?.message(ws, message);
         },
         close(ws, code, reason) {
-          ws.data.close(ws, code, reason);
+          ws.data?.close(ws, code, reason);
         },
         drain(ws) {
-          ws.data.drain(ws);
+          ws.data?.drain(ws);
         },
         ping(ws, data) {
-          ws.data.ping(ws, data);
+          ws.data?.ping(ws, data);
         },
         pong(ws, data) {
-          ws.data.pong(ws, data);
+          ws.data?.pong(ws, data);
         },
       },
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
@@ -802,31 +802,49 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     nodeSocket.emit("error", err);
   }
 }
-const kRaw = Symbol("kRaw");
+
+const kBytesWritten = Symbol("kBytesWritten");
 const NodeHTTPServerSocket = class Socket extends Duplex {
   bytesRead = 0;
   connecting = false;
   timeout = 0;
+  [kBytesWritten] = 0;
   [kHandle];
   server: Server;
   _httpMessage;
   _secureEstablished = false;
+  #pendingCallback = null;
   constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
     this[kHandle] = handle;
     this._secureEstablished = !!handle?.secureEstablished;
     handle.onclose = this.#onClose.bind(this);
+    handle.ondrain = this.#onDrain.bind(this);
     handle.duplex = this;
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
 
   get bytesWritten() {
-    return this[kHandle]?.response?.getBytesWritten?.() ?? 0;
+    const handle = this[kHandle];
+    return handle
+      ? (handle.bytesWritten ?? handle.response?.getBytesWritten?.() ?? this[kBytesWritten] ?? 0)
+      : (this[kBytesWritten] ?? 0);
   }
-  set bytesWritten(value) {}
+  set bytesWritten(value) {
+    this[kBytesWritten] = value;
+  }
 
+  #onDrain() {
+    const handle = this[kHandle];
+    this[kBytesWritten] = handle ? (handle.bytesWritten ?? handle.response?.getBytesWritten?.() ?? 0) : 0;
+    if (this.#pendingCallback) {
+      this.#pendingCallback();
+      this.#pendingCallback = null;
+    }
+    this.emit("drain");
+  }
   #closeHandle(handle, callback) {
     this[kHandle] = undefined;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback);
@@ -1018,7 +1036,19 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk, _encoding, _callback) {}
+  _write(_chunk, _encoding, _callback) {
+    const handle = this[kHandle];
+    if (handle) {
+      handle.write(_chunk, _encoding);
+      if (handle.bufferLength > 0) {
+        this.#pendingCallback = _callback;
+        return false;
+      }
+      _callback?.();
+      return true;
+    }
+    _callback?.();
+  }
 
   pause() {
     const handle = this[kHandle];

@@ -57,6 +57,7 @@ server_exports = {
 
     const exports = await loadExports<ServerEntryPoint>(routerTypeMain);
 
+    console.log("exports", exports);
     const serverRenderer = exports.render;
 
     if (!serverRenderer) {

@@ -930,8 +930,17 @@ export async function describeWithContainer(
 
     const servicePort = services[image];
     if (servicePort) {
-      // Map mysql:8 to mysql_plain service
-      const actualService = image === "mysql:8" ? "mysql_plain" : image;
+      // Map mysql:8 based on environment variables
+      let actualService = image;
+      if (image === "mysql:8") {
+        if (env.MYSQL_ROOT_PASSWORD === "bun") {
+          actualService = "mysql_native_password"; // Has password "bun"
+        } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
+          actualService = "mysql_plain"; // No password
+        } else {
+          actualService = "mysql_plain"; // Default to no password
+        }
+      }
 
       // Create a container descriptor with stable references and a ready promise
       let readyResolver: () => void;

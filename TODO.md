@@ -415,10 +415,6 @@ test 2
     "error: Cannot call describe() inside a test. Call it inside describe() instead."
     improved? error:
     "error: describe() was called while test "(test_name)" is running. Call it inside describe() instead."
-- [ ] test/cli/install/bun-install-registry.test.ts
-  - not sure if this is real or flaky
-- [ ] test/js/web/fetch/fetch.stream.test.ts
-  - this is usually a flaky failure but was a failure. this is maybe related to missing retry/rerun options.
 
 ## Stacktrace
 
@@ -431,7 +427,13 @@ test 2
 
 ## Flaky on main
 
-- [ ] test/js/bun/shell/leak.test.ts : probably flaky
+- [ ] test/cli/install/bun-install-registry.test.ts
+  - not sure if this is real or flaky
+- [ ] test/js/web/fetch/fetch.stream.test.ts
+  - this is usually a flaky failure but was a failure. this is maybe related to missing retry/rerun options.
+  - maybe it just ran the test 5 times and had a failure each time
+- [ ] test/js/bun/shell/leak.test.ts
+  - probably flaky
 - [ ] test/bundler/compile-windows-metadata.test.ts
 - [ ] test/js/sql/sql-mysql.test.ts
 - [ ] test/js/bun/http/bun-serve-file.test.ts

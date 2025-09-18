@@ -4,6 +4,8 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 
 Fixes #8768, Fixes #14624, Fixes #20100, Fixes #19875, Fixes #14135, Fixes #20980
 
+Might fix 5996
+
 # New features:
 
 ## Concurrent tests

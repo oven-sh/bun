@@ -419,8 +419,6 @@ test 2
   - not sure if this is real or flaky
 - [ ] test/js/web/fetch/fetch.stream.test.ts
   - this is usually a flaky failure but was a failure. this is maybe related to missing retry/rerun options.
-- [ ] test/js/bun/shell/leak.test.ts
-  - likely real leak beacuse of DoneCallback & ScopeFunctions
 
 ## Stacktrace
 
@@ -433,6 +431,7 @@ test 2
 
 ## Flaky on main
 
+- [ ] test/js/bun/shell/leak.test.ts : probably flaky
 - [ ] test/bundler/compile-windows-metadata.test.ts
 - [ ] test/js/sql/sql-mysql.test.ts
 - [ ] test/js/bun/http/bun-serve-file.test.ts
@@ -592,6 +591,7 @@ test 2
     11.04 ± 0.14 times faster than bun test
     12.42 ± 0.14 times faster than /Users/pfg/Dev/Node/bun/build/release/bun test
     ```
+
 - [x] remove done_promise, unused.
 - [x] remove runErrorHandlerWithDedupe, last_reported_error_for_dedupe
 - [ ] eliminate fn bunTest() in Execution.zig

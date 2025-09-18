@@ -519,6 +519,79 @@ test 2
     - 1,000,000 tests () on branch vs merge-base (describe.each(1,000) > test.each(1,000))
     - 1,000,000 test.skip() calls (one describe.each over a 1,000,000 item array)
     - test also with the `--concurrent` flag
+
+    ```
+    Benchmark 1: /Users/pfg/Dev/Node/bun/build/release/bun test ./1m_regular.test.ts
+      Time (mean ± σ):      1.452 s ±  0.013 s    [User: 1.269 s, System: 0.322 s]
+      Range (min … max):    1.430 s …  1.474 s    10 runs
+
+    Benchmark 2: /Users/pfg/Dev/Node/bun/build/release/bun test ./1m_done.test.ts
+      Time (mean ± σ):      1.870 s ±  0.013 s    [User: 1.798 s, System: 0.356 s]
+      Range (min … max):    1.853 s …  1.896 s    10 runs
+
+    Benchmark 3: /Users/pfg/Dev/Node/bun/build/release/bun test ./1m_async.test.ts
+      Time (mean ± σ):      1.773 s ±  0.011 s    [User: 1.705 s, System: 0.341 s]
+      Range (min … max):    1.757 s …  1.794 s    10 runs
+
+    Benchmark 4: /Users/pfg/Dev/Node/bun/build/release/bun test ./1k_by_1k_regular.test.ts
+      Time (mean ± σ):     673.2 ms ±   4.5 ms    [User: 411.1 ms, System: 265.6 ms]
+      Range (min … max):   666.4 ms … 679.3 ms    10 runs
+
+    Benchmark 5: /Users/pfg/Dev/Node/bun/build/release/bun test ./1k_by_1k_done.test.ts
+      Time (mean ± σ):     895.0 ms ±   8.9 ms    [User: 624.3 ms, System: 274.7 ms]
+      Range (min … max):   882.8 ms … 910.8 ms    10 runs
+
+    Benchmark 6: /Users/pfg/Dev/Node/bun/build/release/bun test ./1k_by_1k_async.test.ts
+      Time (mean ± σ):     803.1 ms ±   6.5 ms    [User: 541.4 ms, System: 275.0 ms]
+      Range (min … max):   793.7 ms … 813.0 ms    10 runs
+
+    Benchmark 7: /Users/pfg/Dev/Node/bun/build/release/bun test
+      Time (mean ± σ):      8.362 s ±  0.077 s    [User: 7.422 s, System: 1.775 s]
+      Range (min … max):    8.258 s …  8.503 s    10 runs
+
+    Benchmark 8: bun test ./1m_regular.test.ts
+      Time (mean ± σ):      1.488 s ±  0.017 s    [User: 1.088 s, System: 0.481 s]
+      Range (min … max):    1.462 s …  1.518 s    10 runs
+
+    Benchmark 9: bun test ./1m_done.test.ts
+      Time (mean ± σ):      1.731 s ±  0.016 s    [User: 1.369 s, System: 0.505 s]
+      Range (min … max):    1.704 s …  1.752 s    10 runs
+
+    Benchmark 10: bun test ./1m_async.test.ts
+      Time (mean ± σ):      1.627 s ±  0.023 s    [User: 1.387 s, System: 0.498 s]
+      Range (min … max):    1.598 s …  1.676 s    10 runs
+
+    Benchmark 11: bun test ./1k_by_1k_regular.test.ts
+      Time (mean ± σ):     885.2 ms ±   6.2 ms    [User: 453.6 ms, System: 436.3 ms]
+      Range (min … max):   874.9 ms … 894.0 ms    10 runs
+
+    Benchmark 12: bun test ./1k_by_1k_done.test.ts
+      Time (mean ± σ):      1.008 s ±  0.010 s    [User: 0.571 s, System: 0.445 s]
+      Range (min … max):    0.998 s …  1.030 s    10 runs
+
+    Benchmark 13: bun test ./1k_by_1k_async.test.ts
+      Time (mean ± σ):     915.4 ms ±   5.1 ms    [User: 489.7 ms, System: 439.3 ms]
+      Range (min … max):   907.4 ms … 921.8 ms    10 runs
+
+    Benchmark 14: bun test
+      Time (mean ± σ):      7.431 s ±  0.080 s    [User: 4.965 s, System: 2.740 s]
+      Range (min … max):    7.355 s …  7.593 s    10 runs
+
+    /Users/pfg/Dev/Node/bun/build/release/bun test ./1k_by_1k_regular.test.ts ran
+    1.19 ± 0.01 times faster than /Users/pfg/Dev/Node/bun/build/release/bun test ./1k_by_1k_async.test.ts
+    1.31 ± 0.01 times faster than bun test ./1k_by_1k_regular.test.ts
+    1.33 ± 0.02 times faster than /Users/pfg/Dev/Node/bun/build/release/bun test ./1k_by_1k_done.test.ts
+    1.36 ± 0.01 times faster than bun test ./1k_by_1k_async.test.ts
+    1.50 ± 0.02 times faster than bun test ./1k_by_1k_done.test.ts
+    2.16 ± 0.02 times faster than /Users/pfg/Dev/Node/bun/build/release/bun test ./1m_regular.test.ts
+    2.21 ± 0.03 times faster than bun test ./1m_regular.test.ts
+    2.42 ± 0.04 times faster than bun test ./1m_async.test.ts
+    2.57 ± 0.03 times faster than bun test ./1m_done.test.ts
+    2.63 ± 0.02 times faster than /Users/pfg/Dev/Node/bun/build/release/bun test ./1m_async.test.ts
+    2.78 ± 0.03 times faster than /Users/pfg/Dev/Node/bun/build/release/bun test ./1m_done.test.ts
+    11.04 ± 0.14 times faster than bun test
+    12.42 ± 0.14 times faster than /Users/pfg/Dev/Node/bun/build/release/bun test
+    ```
 - [x] remove done_promise, unused.
 - [x] remove runErrorHandlerWithDedupe, last_reported_error_for_dedupe
 - [ ] eliminate fn bunTest() in Execution.zig

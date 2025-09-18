@@ -488,19 +488,19 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           ws.data?.open(ws);
         },
         message(ws, message) {
-          ws.data?.message(ws, message);
+          ws.data?.message?.(ws, message);
         },
         close(ws, code, reason) {
-          ws.data?.close(ws, code, reason);
+          ws.data?.close?.(ws, code, reason);
         },
         drain(ws) {
-          ws.data?.drain(ws);
+          ws.data?.drain?.(ws);
         },
         ping(ws, data) {
-          ws.data?.ping(ws, data);
+          ws.data?.ping?.(ws, data);
         },
         pong(ws, data) {
-          ws.data?.pong(ws, data);
+          ws.data?.pong?.(ws, data);
         },
       },
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
@@ -829,7 +829,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   get bytesWritten() {
     const handle = this[kHandle];
     return handle
-      ? (handle.bytesWritten ?? handle.response?.getBytesWritten?.() ?? this[kBytesWritten] ?? 0)
+      ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? this[kBytesWritten] ?? 0)
       : (this[kBytesWritten] ?? 0);
   }
   set bytesWritten(value) {
@@ -838,7 +838,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   #onDrain() {
     const handle = this[kHandle];
-    this[kBytesWritten] = handle ? (handle.bytesWritten ?? handle.response?.getBytesWritten?.() ?? 0) : 0;
+    this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
     if (this.#pendingCallback) {
       this.#pendingCallback();
       this.#pendingCallback = null;

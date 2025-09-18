@@ -123,16 +123,6 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
     }
 }
 
-// pub fn getThisValue(this: *ServerWebSocket) JSValue {
-//     var this_value = this.this_value;
-//     if (this_value == .zero) {
-//         this_value = this.toJS(this.#handler.globalObject);
-//         this_value.protect();
-//         this.this_value = this_value;
-//     }
-//     return this_value;
-// }
-
 pub fn onMessage(
     this: *ServerWebSocket,
     ws: uws.AnyWebSocket,
@@ -319,16 +309,17 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
     const signal = this.#signal;
     this.#signal = null;
 
-    if (this.#this_value.tryGet()) |this_value| {
-        if (js.socketGetCached(this_value)) |socket| {
-            Bun__callNodeHTTPServerSocketOnClose(socket);
-        }
-    }
-
     defer {
         if (signal) |sig| {
             sig.pendingActivityUnref();
             sig.unref();
+        }
+
+        if (this.#this_value.tryGet()) |this_value| {
+            if (js.socketGetCached(this_value)) |socket| {
+                Bun__callNodeHTTPServerSocketOnClose(socket);
+            }
+            this.#this_value.downgrade();
         }
     }
 
@@ -352,14 +343,14 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
 
         const message_js = bun.String.createUTF8ForJS(globalObject, message) catch |e| {
             const err = globalObject.takeException(e);
-            log("onClose error", .{});
+            log("onClose error (message) {}", .{this.#this_value.isNotEmpty()});
             handler.runErrorCallback(vm, globalObject, err);
             return;
         };
 
         _ = handler.onClose.call(globalObject, .js_undefined, &[_]jsc.JSValue{ this.#this_value.tryGet() orelse .js_undefined, JSValue.jsNumber(code), message_js }) catch |e| {
             const err = globalObject.takeException(e);
-            log("onClose error", .{});
+            log("onClose error {}", .{this.#this_value.isNotEmpty()});
             handler.runErrorCallback(vm, globalObject, err);
             return;
         };
@@ -372,10 +363,6 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
         if (!sig.aborted()) {
             sig.signal(handler.globalObject, .ConnectionClosed);
         }
-    }
-
-    if (this.#this_value.isNotEmpty()) {
-        this.#this_value.downgrade();
     }
 }
 
@@ -1146,9 +1133,6 @@ pub fn terminate(
     }
 
     this.#flags.closed = true;
-    if (this.#this_value.isNotEmpty()) {
-        this.#this_value.finalize();
-    }
     this.websocket().close();
 
     return .js_undefined;

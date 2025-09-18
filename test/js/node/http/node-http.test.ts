@@ -2757,10 +2757,10 @@ test("chunked encoding must be valid after flushHeaders", async () => {
     res.end();
   });
 
-  server.listen(3000);
+  server.listen(0);
   await once(server, "listening");
 
-  const socket = connect(3000, () => {
+  const socket = connect(server.address().port, () => {
     socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
   });
 
@@ -2840,10 +2840,10 @@ test("chunked encoding must be valid using minimal code", async () => {
     res.end("chunk 2");
   });
 
-  server.listen(3000);
+  server.listen(0);
   await once(server, "listening");
 
-  const socket = connect(3000, () => {
+  const socket = connect(server.address().port, () => {
     socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
   });
 
@@ -2929,10 +2929,10 @@ test("chunked encoding must be valid after without flushHeaders", async () => {
     res.end();
   });
 
-  server.listen(3000);
+  server.listen(0);
   await once(server, "listening");
 
-  const socket = connect(3000, () => {
+  const socket = connect(server.address().port, () => {
     socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
   });
 

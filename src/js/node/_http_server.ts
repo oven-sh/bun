@@ -352,8 +352,9 @@ Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ..
 Server.prototype[Symbol.asyncDispose] = function () {
   const { resolve, reject, promise } = Promise.withResolvers();
   this.close(function (err, ...args) {
-    if (err) reject(err);
-    else resolve(...args);
+    if (err) {
+      reject(err);
+    } else resolve(...args);
   });
   return promise;
 };
@@ -474,7 +475,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
@@ -488,19 +488,19 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           ws.data?.open(ws);
         },
         message(ws, message) {
-          ws.data?.message?.(ws, message);
+          ws.data.message(ws, message);
         },
         close(ws, code, reason) {
-          ws.data?.close?.(ws, code, reason);
+          ws.data.close(ws, code, reason);
         },
         drain(ws) {
-          ws.data?.drain?.(ws);
+          ws.data.drain(ws);
         },
         ping(ws, data) {
-          ws.data?.ping?.(ws, data);
+          ws.data.ping(ws, data);
         },
         pong(ws, data) {
-          ws.data?.pong?.(ws, data);
+          ws.data.pong(ws, data);
         },
       },
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
@@ -696,6 +696,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       //   return promise;
       // },
     });
+
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
     // always set strict method validation to true for node.js compatibility

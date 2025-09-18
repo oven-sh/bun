@@ -22,7 +22,7 @@ describe("SQLite URL Parsing Matrix", () => {
     { input: "test@symbol.db", expected: "test@symbol.db", name: "@ in filename" },
     { input: "test&amp.db", expected: "test&amp.db", name: "ampersand in filename" },
     { input: "test%20encoded.db", expected: "test%20encoded.db", name: "percent encoding" },
-    { input: "", expected: "", name: "empty path" },
+    { input: "", expected: ":memory:", name: "empty path" },
   ] as const;
 
   const testMatrix = protocols
@@ -66,6 +66,10 @@ describe("SQLite URL Parsing Matrix", () => {
           } catch {
             // Not a valid file:// URL, so implementation just strips the prefix
             expected = testCase.url.slice(7); // "file://".length
+          }
+          // Empty filename should default to :memory:
+          if (expected === "") {
+            expected = ":memory:";
           }
           expect(filename).toBe(expected);
         } else {
@@ -307,6 +311,11 @@ describe("SQLite URL Parsing Matrix", () => {
       "http://example.com/test.db",
       "https://example.com/test.db",
       "ftp://example.com/test.db",
+      "localhost/test.db",
+      "localhost:5432/test.db",
+      "example.com:3306/db",
+      "example.com/test",
+      "localhost",
       "postgres://user:pass@localhost/db",
       "postgresql://user:pass@localhost/db",
     ];
@@ -315,14 +324,6 @@ describe("SQLite URL Parsing Matrix", () => {
       const sql = new SQL(url);
       expect(sql.options.adapter).toBe("postgres");
       sql.close();
-    });
-  });
-
-  describe("Plain filenames without adapter should throw", () => {
-    test("plain filename without adapter throws", () => {
-      expect(() => new SQL("myapp.db")).toThrowErrorMatchingInlineSnapshot(
-        `"Invalid URL 'myapp.db' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
-      );
     });
   });
 });

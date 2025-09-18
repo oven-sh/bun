@@ -6,7 +6,7 @@ on:
 
 jobs:
   auto-label:
-    if: github.event.pull_request.user.login == 'robobun'
+    if: github.event.pull_request.user.login == 'robobun' || contains(github.event.pull_request.body, '🤖 Generated with')
     runs-on: ubuntu-latest
     permissions:
       contents: read

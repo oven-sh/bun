@@ -225,7 +225,7 @@ pub fn initJS(global: *jsc.JSGlobalObject, options: Options) bun.JSError!SocketA
             };
             if (options.address) |address_str| {
                 presentation = address_str;
-                const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
+                const slice = bun.handleOom(address_str.toOwnedSliceZ(alloc));
                 defer alloc.free(slice);
                 try pton(global, inet.AF_INET, slice, &sin.addr);
             } else {
@@ -243,7 +243,7 @@ pub fn initJS(global: *jsc.JSGlobalObject, options: Options) bun.JSError!SocketA
             };
             if (options.address) |address_str| {
                 presentation = address_str;
-                const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
+                const slice = bun.handleOom(address_str.toOwnedSliceZ(alloc));
                 defer alloc.free(slice);
                 try pton(global, inet.AF_INET6, slice, &sin6.addr);
             } else {

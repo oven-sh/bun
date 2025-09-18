@@ -1,10 +1,10 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isLinux, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
-import { exec, execSync } from "child_process";
+import { exec } from "child_process";
 import net from "net";
 import { promisify } from "util";
 
@@ -88,23 +88,6 @@ async function startContainer(): Promise<{ port: number; containerName: string }
   }
 }
 
-function isDockerEnabled(): boolean {
-  if (!dockerCLI) {
-    return false;
-  }
-
-  // TODO: investigate why its not starting on Linux arm64
-  if (isLinux && process.arch === "arm64") {
-    return false;
-  }
-
-  try {
-    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
-    return info.toString().indexOf("Server Version:") !== -1;
-  } catch {
-    return false;
-  }
-}
 if (isDockerEnabled()) {
   const container: { port: number; containerName: string } = await startContainer();
   afterAll(async () => {
@@ -147,24 +130,103 @@ if (isDockerEnabled()) {
   // --- Expected pg_hba.conf ---
   process.env.DATABASE_URL = `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test`;
 
-  const login: Bun.SQL.PostgresOptions = {
+  const net = require("node:net");
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const os = require("node:os");
+
+  // Create a temporary unix domain socket path
+  const socketPath = path.join(os.tmpdir(), `postgres_echo_${Date.now()}.sock`);
+
+  // Clean up any existing socket file
+  try {
+    fs.unlinkSync(socketPath);
+  } catch {}
+
+  // Create a unix domain socket server that proxies to the PostgreSQL container
+  const socketServer = net.createServer(clientSocket => {
+    console.log("PostgreSQL connection received on unix socket");
+
+    // Create connection to the actual PostgreSQL container
+    const containerSocket = net.createConnection({
+      host: login.host,
+      port: login.port,
+    });
+
+    // Handle container connection
+    containerSocket.on("connect", () => {
+      console.log("Connected to PostgreSQL container");
+    });
+
+    containerSocket.on("error", err => {
+      console.error("Container connection error:", err);
+      clientSocket.destroy();
+    });
+
+    containerSocket.on("close", () => {
+      console.log("Container connection closed");
+      clientSocket.end();
+    });
+
+    // Handle client socket
+    clientSocket.on("data", data => {
+      // Forward client data to container
+      containerSocket.write(data);
+    });
+
+    clientSocket.on("error", err => {
+      console.error("Client socket error:", err);
+      containerSocket.destroy();
+    });
+
+    clientSocket.on("close", () => {
+      console.log("Client connection closed");
+      containerSocket.end();
+    });
+
+    // Forward container responses back to client
+    containerSocket.on("data", data => {
+      clientSocket.write(data);
+    });
+  });
+
+  socketServer.listen(socketPath, () => {
+    console.log(`Unix domain socket server listening on ${socketPath}`);
+  });
+
+  // Clean up the socket on exit
+  afterAll(() => {
+    socketServer.close();
+    try {
+      fs.unlinkSync(socketPath);
+    } catch {}
+  });
+
+  const login: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test",
     port: container.port,
+    path: socketPath,
   };
 
-  const login_md5: Bun.SQL.PostgresOptions = {
+  const login_domain_socket: Bun.SQL.PostgresOrMySQLOptions = {
+    username: "bun_sql_test",
+    port: container.port,
+    path: socketPath,
+  };
+
+  const login_md5: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_md5",
     password: "bun_sql_test_md5",
     port: container.port,
   };
 
-  const login_scram: Bun.SQL.PostgresOptions = {
+  const login_scram: Bun.SQL.PostgresOrMySQLOptions = {
     username: "bun_sql_test_scram",
     password: "bun_sql_test_scram",
     port: container.port,
   };
 
-  const options: Bun.SQL.PostgresOptions = {
+  const options: Bun.SQL.PostgresOrMySQLOptions = {
     db: "bun_sql_test",
     username: login.username,
     password: login.password,
@@ -172,11 +234,249 @@ if (isDockerEnabled()) {
     max: 1,
   };
 
+  describe("Time/TimeZ", () => {
+    test("PostgreSQL TIME and TIMETZ types are handled correctly", async () => {
+      const db = postgres(options);
+
+      try {
+        // Create test table with time and timetz columns
+        await db`DROP TABLE IF EXISTS bun_time_test`;
+        await db`
+      CREATE TABLE bun_time_test (
+        id SERIAL PRIMARY KEY,
+        regular_time TIME,
+        time_with_tz TIMETZ
+      )
+    `;
+
+        // Insert test data with various time values
+        await db`
+      INSERT INTO bun_time_test (regular_time, time_with_tz) VALUES 
+        ('09:00:00', '09:00:00+00'),
+        ('10:30:45.123456', '10:30:45.123456-05'),
+        ('23:59:59.999999', '23:59:59.999999+08:30'),
+        ('00:00:00', '00:00:00-12:00'),
+        (NULL, NULL)
+    `;
+
+        // Query the data
+        const result = await db`
+      SELECT 
+        id,
+        regular_time,
+        time_with_tz
+      FROM bun_time_test
+      ORDER BY id
+    `;
+
+        // Verify that time values are returned as strings, not binary data
+        expect(result[0].regular_time).toBe("09:00:00");
+        expect(result[0].time_with_tz).toBe("09:00:00+00");
+
+        expect(result[1].regular_time).toBe("10:30:45.123456");
+        expect(result[1].time_with_tz).toBe("10:30:45.123456-05");
+
+        expect(result[2].regular_time).toBe("23:59:59.999999");
+        expect(result[2].time_with_tz).toBe("23:59:59.999999+08:30");
+
+        expect(result[3].regular_time).toBe("00:00:00");
+        expect(result[3].time_with_tz).toBe("00:00:00-12");
+
+        // NULL values
+        expect(result[4].regular_time).toBeNull();
+        expect(result[4].time_with_tz).toBeNull();
+
+        // None of the values should contain null bytes
+        for (const row of result) {
+          if (row.regular_time) {
+            expect(row.regular_time).not.toContain("\u0000");
+            expect(typeof row.regular_time).toBe("string");
+          }
+          if (row.time_with_tz) {
+            expect(row.time_with_tz).not.toContain("\u0000");
+            expect(typeof row.time_with_tz).toBe("string");
+          }
+        }
+
+        // Clean up
+        await db`DROP TABLE bun_time_test`;
+      } finally {
+        await db.end();
+      }
+    });
+
+    test("PostgreSQL TIME array types are handled correctly", async () => {
+      const db = postgres(options);
+
+      try {
+        // Create test table with time array
+        await db`DROP TABLE IF EXISTS bun_time_array_test`;
+        await db`
+      CREATE TABLE bun_time_array_test (
+        id SERIAL PRIMARY KEY,
+        time_values TIME[],
+        timetz_values TIMETZ[]
+      )
+    `;
+
+        // Insert test data
+        await db`
+      INSERT INTO bun_time_array_test (time_values, timetz_values) VALUES 
+        (ARRAY['09:00:00'::time, '17:00:00'::time], ARRAY['09:00:00+00'::timetz, '17:00:00-05'::timetz]),
+        (ARRAY['10:30:00'::time, '18:30:00'::time, '20:00:00'::time], ARRAY['10:30:00+02'::timetz]),
+        (NULL, NULL),
+        (ARRAY[]::time[], ARRAY[]::timetz[])
+    `;
+
+        const result = await db`
+      SELECT 
+        id,
+        time_values,
+        timetz_values
+      FROM bun_time_array_test
+      ORDER BY id
+    `;
+
+        // Verify array values
+        expect(result[0].time_values).toEqual(["09:00:00", "17:00:00"]);
+        expect(result[0].timetz_values).toEqual(["09:00:00+00", "17:00:00-05"]);
+
+        expect(result[1].time_values).toEqual(["10:30:00", "18:30:00", "20:00:00"]);
+        expect(result[1].timetz_values).toEqual(["10:30:00+02"]);
+
+        expect(result[2].time_values).toBeNull();
+        expect(result[2].timetz_values).toBeNull();
+
+        expect(result[3].time_values).toEqual([]);
+        expect(result[3].timetz_values).toEqual([]);
+
+        // Ensure no binary data in arrays
+        for (const row of result) {
+          if (row.time_values && Array.isArray(row.time_values)) {
+            for (const time of row.time_values) {
+              expect(typeof time).toBe("string");
+              expect(time).not.toContain("\u0000");
+            }
+          }
+          if (row.timetz_values && Array.isArray(row.timetz_values)) {
+            for (const time of row.timetz_values) {
+              expect(typeof time).toBe("string");
+              expect(time).not.toContain("\u0000");
+            }
+          }
+        }
+
+        // Clean up
+        await db`DROP TABLE bun_time_array_test`;
+      } finally {
+        await db.end();
+      }
+    });
+
+    test("PostgreSQL TIME in nested structures (JSONB) works correctly", async () => {
+      const db = postgres(options);
+
+      try {
+        await db`DROP TABLE IF EXISTS bun_time_json_test`;
+        await db`
+      CREATE TABLE bun_time_json_test (
+        id SERIAL PRIMARY KEY,
+        schedule JSONB
+      )
+    `;
+
+        // Insert test data with times in JSONB
+        await db`
+      INSERT INTO bun_time_json_test (schedule) VALUES 
+        ('{"dayOfWeek": 1, "timeBlocks": [{"startTime": "09:00:00", "endTime": "17:00:00"}]}'::jsonb),
+        ('{"dayOfWeek": 2, "timeBlocks": [{"startTime": "10:30:00", "endTime": "18:30:00"}]}'::jsonb)
+    `;
+
+        const result = await db`
+      SELECT 
+        id,
+        schedule
+      FROM bun_time_json_test
+      ORDER BY id
+    `;
+
+        // Verify JSONB with time strings
+        expect(result[0].schedule.dayOfWeek).toBe(1);
+        expect(result[0].schedule.timeBlocks[0].startTime).toBe("09:00:00");
+        expect(result[0].schedule.timeBlocks[0].endTime).toBe("17:00:00");
+
+        expect(result[1].schedule.dayOfWeek).toBe(2);
+        expect(result[1].schedule.timeBlocks[0].startTime).toBe("10:30:00");
+        expect(result[1].schedule.timeBlocks[0].endTime).toBe("18:30:00");
+
+        // Clean up
+        await db`DROP TABLE bun_time_json_test`;
+      } finally {
+        await db.end();
+      }
+    });
+  });
+
   test("should handle encoded chars in password and username when using url #17155", () => {
     const sql = new Bun.SQL("postgres://bun%40bunbun:bunbun%40bun@127.0.0.1:5432/bun%40bun");
     expect(sql.options.username).toBe("bun@bunbun");
     expect(sql.options.password).toBe("bunbun@bun");
     expect(sql.options.database).toBe("bun@bun");
+  });
+
+  test("Minimal reproduction of Bun.SQL PostgreSQL hang bug (#22395)", async () => {
+    for (let i = 0; i < 10; i++) {
+      await using sql = new SQL({
+        ...options,
+        idleTimeout: 10,
+        connectionTimeout: 10,
+        maxLifetime: 10,
+      });
+
+      const random_id = randomUUIDv7() + "test_hang";
+      // Setup: Create table with exclusion constraint
+      await sql`DROP TABLE IF EXISTS ${sql(random_id)} CASCADE`;
+      await sql`CREATE EXTENSION IF NOT EXISTS btree_gist`;
+      await sql`
+      CREATE TABLE ${sql(random_id)} (
+        id SERIAL PRIMARY KEY,
+        start_time TIMESTAMPTZ NOT NULL,
+        end_time TIMESTAMPTZ NOT NULL,
+        resource_id INT NOT NULL,
+        EXCLUDE USING gist (
+          resource_id WITH =,
+          tstzrange(start_time, end_time) WITH &&
+        )
+      )
+    `;
+
+      // Step 1: Insert a row (succeeds)
+      await sql`
+      INSERT INTO ${sql(random_id)} (start_time, end_time, resource_id)
+      VALUES ('2024-01-01 10:00:00', '2024-01-01 12:00:00', 1)
+    `;
+
+      // Step 2: Try to insert conflicting row (throws expected error)
+      try {
+        await sql`
+        INSERT INTO ${sql(random_id)} (start_time, end_time, resource_id)
+        VALUES (${"2024-01-01 11:00:00"}, ${"2024-01-01 13:00:00"}, ${1})
+      `;
+        expect.unreachable();
+      } catch {}
+
+      // Step 3: Try another query - THIS WILL HANG
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("TIMEOUT")), 200);
+      });
+
+      try {
+        const result = await Promise.race([sql`SELECT COUNT(*) FROM ${sql(random_id)}`, timeoutPromise]);
+        expect(result[0].count).toBe("1");
+      } catch (err: any) {
+        expect(err.message).not.toBe("TIMEOUT");
+      }
+    }
   });
 
   test("Connects with no options", async () => {
@@ -1033,6 +1333,11 @@ if (isDockerEnabled()) {
 
   test("Login without password", async () => {
     await using sql = postgres({ ...options, ...login });
+    expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+
+  test("unix domain socket can send query", async () => {
+    await using sql = postgres({ ...options, ...login_domain_socket });
     expect((await sql`select true as x`)[0].x).toBe(true);
   });
 
@@ -2380,7 +2685,7 @@ if (isDockerEnabled()) {
         expect(e).toBeInstanceOf(SQL.SQLError);
         expect(e).toBeInstanceOf(SQL.PostgresError);
         expect(e.code).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT");
-        expect(e.message).toMatch(/Connection timed out after 200ms/);
+        expect(e.message).toMatch(/Connection timeout after 200ms/);
       } finally {
         sql.close();
         server.close();
@@ -11066,6 +11371,27 @@ CREATE TABLE ${table_name} (
       expect(result[1].id).toBe(2);
       expect(result[1].name).toBe("Mary");
       expect(result[1].age).toBe(18);
+    });
+
+    test("update helper with IN for strings", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+      const users = [
+        { id: 1, name: "John", age: 30 },
+        { id: 2, name: "Jane", age: 25 },
+        { id: 3, name: "Bob", age: 35 },
+      ];
+      await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+      const result =
+        await sql`UPDATE ${sql(random_name)} SET ${sql({ age: 40 })} WHERE name IN ${sql(["John", "Jane"])} RETURNING *`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(40);
+      expect(result[1].id).toBe(2);
+      expect(result[1].name).toBe("Jane");
+      expect(result[1].age).toBe(40);
     });
 
     test("update helper with IN and column name", async () => {

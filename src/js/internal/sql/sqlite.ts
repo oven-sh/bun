@@ -8,7 +8,6 @@ const {
   SQLQueryResultMode,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
-const { escapeIdentifier, connectionClosedError } = require("internal/sql/utils");
 const { SQLiteError } = require("internal/sql/errors");
 
 let lazySQLiteModule: typeof BunSQLiteModule;
@@ -294,7 +293,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
   return { command, firstKeyword, hasReturning };
 }
 
-export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
+class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   private mode = SQLQueryResultMode.objects;
 
   private readonly sql: string;
@@ -381,9 +380,7 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
   }
 }
 
-export class SQLiteAdapter
-  implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle>
-{
+class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
@@ -447,7 +444,33 @@ export class SQLiteAdapter
   createQueryHandle(sql: string, values: unknown[] | undefined | null = []): SQLiteQueryHandle {
     return new SQLiteQueryHandle(sql, values ?? []);
   }
-
+  escapeIdentifier(str: string) {
+    return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
+  }
+  connectionClosedError() {
+    return new SQLiteError("Connection closed", {
+      code: "ERR_SQLITE_CONNECTION_CLOSED",
+      errno: 0,
+    });
+  }
+  notTaggedCallError() {
+    return new SQLiteError("Query not called as a tagged template literal", {
+      code: "ERR_SQLITE_NOT_TAGGED_CALL",
+      errno: 0,
+    });
+  }
+  queryCancelledError() {
+    return new SQLiteError("Query cancelled", {
+      code: "ERR_SQLITE_QUERY_CANCELLED",
+      errno: 0,
+    });
+  }
+  invalidTransactionStateError(message: string) {
+    return new SQLiteError(message, {
+      code: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+      errno: 0,
+    });
+  }
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
     if (typeof strings === "string") {
       // identifier or unsafe query
@@ -511,7 +534,7 @@ export class SQLiteAdapter
 
               query += "(";
               for (let j = 0; j < columnCount; j++) {
-                query += escapeIdentifier(columns[j]);
+                query += this.escapeIdentifier(columns[j]);
                 if (j < lastColumnIndex) {
                   query += ", ";
                 }
@@ -615,7 +638,7 @@ export class SQLiteAdapter
                 const column = columns[i];
                 const columnValue = item[column];
                 // SQLite uses ? for placeholders
-                query += `${escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
+                query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
                 if (typeof columnValue === "undefined") {
                   binding_values.push(null);
                 } else {
@@ -644,7 +667,7 @@ export class SQLiteAdapter
 
   connect(onConnected: OnConnected<BunSQLiteModule.Database>, reserved?: boolean) {
     if (this._closed) {
-      return onConnected(connectionClosedError(), null);
+      return onConnected(this.connectionClosedError(), null);
     }
 
     // SQLite doesn't support reserved connections since it doesn't have a connection pool
@@ -659,7 +682,7 @@ export class SQLiteAdapter
     } else if (this.db) {
       onConnected(null, this.db);
     } else {
-      onConnected(connectionClosedError(), null);
+      onConnected(this.connectionClosedError(), null);
     }
   }
 
@@ -782,4 +805,5 @@ export default {
   SQLCommand,
   commandToString,
   parseSQLQuery,
+  SQLiteQueryHandle,
 };

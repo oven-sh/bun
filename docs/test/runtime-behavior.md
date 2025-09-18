@@ -12,6 +12,8 @@ test("NODE_ENV is set to test", () => {
 });
 ```
 
+When `NODE_ENV` is set to `"test"`, Bun will not load `.env.local` files. This ensures consistent test environments across different executions by preventing local overrides during testing. Instead, use `.env.test` for test-specific environment variables, which should be committed to your repository for consistency across all developers and CI environments.
+
 #### `$TZ` environment variable
 
 By default, all `bun test` runs use UTC (`Etc/UTC`) as the time zone unless overridden by the `TZ` environment variable. This ensures consistent date and time behavior across different development environments.

@@ -1,10 +1,8 @@
 import type { DatabaseAdapter } from "./shared.ts";
-const { escapeIdentifier, notTaggedCallError } = require("internal/sql/utils");
 
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
 const _handle = Symbol("handle");
-const _run = Symbol("run");
 const _queryStatus = Symbol("status");
 const _handler = Symbol("handler");
 const _strings = Symbol("strings");
@@ -47,7 +45,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return `Query { ${query.trimEnd()} }`;
   }
 
-  private getQueryHandle() {
+  #getQueryHandle() {
     let handle = this[_handle];
 
     if (!handle) {
@@ -83,7 +81,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       if (!(flags & SQLQueryFlags.unsafe)) {
         // identifier (cannot be executed in safe mode)
         flags |= SQLQueryFlags.notTagged;
-        strings = escapeIdentifier(strings);
+        strings = adapter.escapeIdentifier(strings);
       }
     }
 
@@ -99,7 +97,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_results] = null;
   }
 
-  async [_run](async: boolean) {
+  #run() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
     if (
@@ -110,21 +108,48 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      this.reject(notTaggedCallError());
+      this.reject(this[_adapter].notTaggedCallError());
       return;
     }
 
     this[_queryStatus] |= SQLQueryStatus.executed;
-    const handle = this.getQueryHandle();
+    const handle = this.#getQueryHandle();
 
     if (!handle) {
       return this;
     }
 
-    if (async) {
-      // Ensure it's actually async. This sort of forces a tick which prevents an infinite loop.
-      await (1 as never as Promise<void>);
+    try {
+      return handler(this, handle);
+    } catch (err) {
+      this[_queryStatus] |= SQLQueryStatus.error;
+      this.reject(err as Error);
     }
+  }
+
+  async #runAsync() {
+    const { [_handler]: handler, [_queryStatus]: status } = this;
+
+    if (
+      status &
+      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
+    ) {
+      return;
+    }
+
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      this.reject(this[_adapter].notTaggedCallError());
+      return;
+    }
+
+    this[_queryStatus] |= SQLQueryStatus.executed;
+    const handle = this.#getQueryHandle();
+
+    if (!handle) {
+      return this;
+    }
+
+    await Promise.$resolve();
 
     try {
       return handler(this, handle);
@@ -157,7 +182,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   resolve(x: T) {
     this[_queryStatus] &= ~SQLQueryStatus.active;
-    const handle = this.getQueryHandle();
+    const handle = this.#getQueryHandle();
 
     if (!handle) {
       return this;
@@ -173,7 +198,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_queryStatus] |= SQLQueryStatus.error;
 
     if (!(this[_queryStatus] & SQLQueryStatus.invalidHandle)) {
-      const handle = this.getQueryHandle();
+      const handle = this.#getQueryHandle();
 
       if (!handle) {
         return this[_reject](x);
@@ -194,7 +219,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_queryStatus] |= SQLQueryStatus.cancelled;
 
     if (status & SQLQueryStatus.executed) {
-      const handle = this.getQueryHandle();
+      const handle = this.#getQueryHandle();
 
       if (handle) {
         handle.cancel?.();
@@ -205,21 +230,21 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   execute() {
-    this[_run](false);
+    this.#run();
     return this;
   }
 
   async run() {
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
+      throw this[_adapter].notTaggedCallError();
     }
 
-    await this[_run](true);
+    await this.#runAsync();
     return this;
   }
 
   raw() {
-    const handle = this.getQueryHandle();
+    const handle = this.#getQueryHandle();
 
     if (!handle) {
       return this;
@@ -235,7 +260,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   values() {
-    const handle = this.getQueryHandle();
+    const handle = this.#getQueryHandle();
 
     if (!handle) {
       return this;
@@ -245,25 +270,37 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this;
   }
 
-  then() {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
-    }
+  #runAsyncAndCatch() {
+    const runPromise = this.#runAsync();
 
-    this[_run](true);
+    if ($isPromise(runPromise) && runPromise !== this) {
+      runPromise.catch(() => {
+        // Error is already handled via this.reject() in #runAsync
+        // This catch is just to prevent unhandled rejection warnings
+      });
+    }
+  }
+
+  then() {
+    this.#runAsyncAndCatch();
 
     const result = super.$then.$apply(this, arguments);
-    $markPromiseAsHandled(result);
+
+    // Only mark as handled if there's a rejection handler
+    const hasRejectionHandler = arguments.length >= 2 && arguments[1] != null;
+    if (hasRejectionHandler) {
+      $markPromiseAsHandled(result);
+    }
 
     return result;
   }
 
   catch() {
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
+      throw this[_adapter].notTaggedCallError();
     }
 
-    this[_run](true);
+    this.#runAsyncAndCatch();
 
     const result = super.catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
@@ -273,10 +310,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   finally(_onfinally?: (() => void) | undefined | null) {
     if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw notTaggedCallError();
+      throw this[_adapter].notTaggedCallError();
     }
 
-    this[_run](true);
+    this.#runAsyncAndCatch();
 
     return super.finally.$apply(this, arguments);
   }
@@ -319,7 +356,6 @@ export default {
     _resolve,
     _reject,
     _handle,
-    _run,
     _queryStatus,
     _handler,
     _strings,

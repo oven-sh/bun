@@ -454,8 +454,8 @@ pub fn doPatchCommit(
         Global.crash();
     }
 
-    const patch_key = std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}) catch bun.outOfMemory();
-    const patchfile_path = manager.allocator.dupe(u8, path_in_patches_dir) catch bun.outOfMemory();
+    const patch_key = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}));
+    const patchfile_path = bun.handleOom(manager.allocator.dupe(u8, path_in_patches_dir));
     _ = bun.sys.unlink(bun.path.joinZ(&[_][]const u8{ changes_dir, ".bun-patch-tag" }, .auto));
 
     return .{
@@ -527,7 +527,7 @@ fn escapePatchFilename(allocator: std.mem.Allocator, name: []const u8) ?[]const 
     var count: usize = 0;
     for (name) |c| count += if (ESCAPE_TABLE[c].escaped()) |e| e.len else 1;
     if (count == name.len) return null;
-    var buf = allocator.alloc(u8, count) catch bun.outOfMemory();
+    var buf = bun.handleOom(allocator.alloc(u8, count));
     var i: usize = 0;
     for (name) |c| {
         const e = ESCAPE_TABLE[c].escaped() orelse &[_]u8{c};
@@ -839,7 +839,7 @@ fn overwritePackageInNodeModulesFolder(
 
     var pkg_in_cache_dir = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
     defer pkg_in_cache_dir.close();
-    var walker = Walker.walk(.fromStdDir(pkg_in_cache_dir), manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
+    var walker = bun.handleOom(Walker.walk(.fromStdDir(pkg_in_cache_dir), manager.allocator, &.{}, IGNORED_PATHS));
     defer walker.deinit();
 
     var buf1: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;
@@ -924,7 +924,7 @@ fn pkgInfoForNameAndVersion(
     version: ?[]const u8,
 ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
     var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
-    var pairs = std.ArrayList(IdPair).initCapacity(sfb.get(), 8) catch bun.outOfMemory();
+    var pairs = bun.handleOom(std.ArrayList(IdPair).initCapacity(sfb.get(), 8));
     defer pairs.deinit();
 
     const name_hash = String.Builder.stringHash(name);
@@ -942,10 +942,10 @@ fn pkgInfoForNameAndVersion(
         if (version) |v| {
             const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
             if (std.mem.eql(u8, label, v)) {
-                pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+                bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
             }
         } else {
-            pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+            bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
         }
     }
 
@@ -1069,7 +1069,7 @@ fn pathArgumentRelativeToRootWorkspacePackage(manager: *PackageManager, lockfile
     if (workspace_package_id == 0) return null;
     const workspace_res = lockfile.packages.items(.resolution)[workspace_package_id];
     const rel_path: []const u8 = workspace_res.value.workspace.slice(lockfile.buffers.string_bytes.items);
-    return bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)) catch bun.outOfMemory();
+    return bun.handleOom(bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)));
 }
 
 const PatchArgKind = enum {

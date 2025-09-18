@@ -206,7 +206,7 @@ pub const S3HttpDownloadStreamingTask = struct {
             if (result.body) |body| {
                 this.response_buffer = body.*;
                 if (body.list.items.len > 0) {
-                    _ = this.reported_response_buffer.write(body.list.items) catch bun.outOfMemory();
+                    _ = bun.handleOom(this.reported_response_buffer.write(body.list.items));
                 }
                 this.response_buffer.reset();
                 if (this.reported_response_buffer.list.items.len == 0 and !is_done) {

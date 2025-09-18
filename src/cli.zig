@@ -217,6 +217,21 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => {
+                if (comptime Environment.isDebug) {
+                    if (bun.argv.len == 1) {
+                        if (bun.Output.isAIAgent()) {
+                            if (bun.getenvZ("npm_lifecycle_event")) |event| {
+                                if (bun.strings.hasPrefixComptime(event, "bd")) {
+                                    // claude gets very confused by the help menu
+                                    // let's give claude some self confidence.
+                                    Output.println("BUN COMPILED SUCCESSFULLY! 🎉", .{});
+                                    Global.exit(0);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Output.pretty(
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
                         Global.package_json_version_with_revision ++
@@ -380,6 +395,8 @@ pub const Command = struct {
         runtime_options: RuntimeOptions = .{},
 
         filters: []const []const u8 = &.{},
+        workspaces: bool = false,
+        if_present: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
@@ -400,6 +417,7 @@ pub const Command = struct {
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            keep_names: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
@@ -421,8 +439,7 @@ pub const Command = struct {
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},
             compile_exec_argv: ?[]const u8 = null,
-            windows_hide_console: bool = false,
-            windows_icon: ?[]const u8 = null,
+            windows: options.WindowsOptions = .{},
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -584,7 +601,7 @@ pub const Command = struct {
             RootCommandMatcher.case("auth") => .ReservedCommand,
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
-            RootCommandMatcher.case("whoami") => .ReservedCommand,
+            RootCommandMatcher.case("whoami") => .PackageManagerCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
@@ -636,14 +653,17 @@ pub const Command = struct {
         // bun build --compile entry point
         if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-                var offset_for_passthrough: usize = if (bun.argv.len > 1) 1 else 0;
+                var offset_for_passthrough: usize = 0;
 
                 const ctx: *ContextData = brk: {
                     if (graph.compile_exec_argv.len > 0) {
+                        const original_argv_len = bun.argv.len;
                         var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
                         try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
-                        offset_for_passthrough += (argv_list.items.len -| bun.argv.len);
                         bun.argv = argv_list.items;
+
+                        // Calculate offset: skip executable name + all exec argv options
+                        offset_for_passthrough = if (bun.argv.len > 1) 1 + (bun.argv.len -| original_argv_len) else 0;
 
                         // Handle actual options to parse.
                         break :brk try Command.init(allocator, log, .AutoCommand);
@@ -656,6 +676,10 @@ pub const Command = struct {
                         .allocator = bun.default_allocator,
                     };
                     global_cli_ctx = &context_data;
+
+                    // If no compile_exec_argv, skip executable name if present
+                    offset_for_passthrough = @min(1, bun.argv.len);
+
                     break :brk global_cli_ctx;
                 };
 
@@ -809,7 +833,7 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -848,7 +872,7 @@ pub const Command = struct {
                 };
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -1476,7 +1500,7 @@ pub const Command = struct {
                         'z' => FirstLetter.z,
                         else => break :outer,
                     };
-                    AddCompletions.init(bun.default_allocator) catch bun.outOfMemory();
+                    bun.handleOom(AddCompletions.init(bun.default_allocator));
                     const results = AddCompletions.getPackages(first_letter);
 
                     var prefilled_i: usize = 0;

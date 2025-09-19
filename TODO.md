@@ -68,7 +68,10 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 
 # Add features:
 
-- ```js
+- [ ] todo/skip tests used to print dim but now print white bold. fix.
+- [ ] fix
+
+  ```js
   test.concurrent("abc", () => {
     throw new Error("abc");
   });

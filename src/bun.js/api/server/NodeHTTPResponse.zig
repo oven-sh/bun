@@ -725,9 +725,15 @@ fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, la
 }
 
 fn getBytes(this: *NodeHTTPResponse, globalThis: *jsc.JSGlobalObject, chunk: []const u8) jsc.JSValue {
+    // TODO: we should have a error event for this but is better than ignoring it
+    // right now the socket instead of emitting an error event it will reportUncaughtException
+    // this makes the behavior aligned with current implementation, but not ideal
     const bytes: jsc.JSValue = brk: {
         if (chunk.len > 0 and this.buffered_request_body_data_during_pause.len > 0) {
-            const buffer = jsc.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch return .js_undefined; // TODO: properly propagate exception upwards
+            const buffer = try jsc.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch |err| {
+                globalThis.reportUncaughtExceptionFromError(err);
+                return .js_undefined;
+            };
             this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
             if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
                 var input = array_buffer.slice();
@@ -742,7 +748,10 @@ fn getBytes(this: *NodeHTTPResponse, globalThis: *jsc.JSGlobalObject, chunk: []c
         }
 
         if (chunk.len > 0) {
-            break :brk jsc.ArrayBuffer.createBuffer(globalThis, chunk) catch return .js_undefined; // TODO: properly propagate exception upwards
+            break :brk jsc.ArrayBuffer.createBuffer(globalThis, chunk) catch |err| {
+                globalThis.reportUncaughtExceptionFromError(err);
+                return .js_undefined;
+            };
         }
         break :brk .js_undefined;
     };
@@ -778,7 +787,6 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
         const event_loop = globalThis.bunVM().eventLoop();
 
         const bytes = this.getBytes(globalThis, chunk);
-
         if (socketValue != .zero) {
             log("Bun__callNodeHTTPServerSocketOnData", .{});
             Bun__callNodeHTTPServerSocketOnData(socketValue, bytes, last);

@@ -273,3 +273,151 @@ console.log(message);`,
     expect(decompressed).toEqual(original);
   });
 });
+
+describe("in-memory builds with compression", () => {
+  test("should create compressed outputs for in-memory builds with gzip", async () => {
+    const tmpdir = tmpdirSync();
+    const entryPath = path.join(tmpdir, "index.ts");
+
+    fs.writeFileSync(entryPath, `
+      export const message = "Hello from in-memory build!";
+      console.log(message);
+    `);
+
+    const result = await Bun.build({
+      entrypoints: [entryPath],
+      compress: "gzip",
+      // No outdir or outfile - in-memory build
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs).toHaveLength(2); // Original + gzip
+
+    const jsOutput = result.outputs.find((o: any) => o.path?.endsWith(".js"));
+    const gzipOutput = result.outputs.find((o: any) => o.path?.endsWith(".js.gz"));
+
+    expect(jsOutput).toBeDefined();
+    expect(gzipOutput).toBeDefined();
+
+    // Check that gzip output is actually compressed
+    const jsText = await jsOutput!.text();
+    const gzipArrayBuffer = await gzipOutput!.arrayBuffer();
+    const gzipBytes = new Uint8Array(gzipArrayBuffer);
+
+    // Check gzip magic bytes (1f 8b)
+    expect(gzipBytes[0]).toBe(0x1f);
+    expect(gzipBytes[1]).toBe(0x8b);
+
+    // Gzipped data exists (may not be smaller for very small files due to compression overhead)
+    expect(gzipBytes.length).toBeGreaterThan(0);
+  });
+
+  test("should create compressed outputs for in-memory builds with zstd", async () => {
+    const tmpdir = tmpdirSync();
+    const entryPath = path.join(tmpdir, "index.ts");
+
+    fs.writeFileSync(entryPath, `
+      export const data = Array.from({length: 100}, (_, i) => \`Item \${i}\`);
+      console.log(data);
+    `);
+
+    const result = await Bun.build({
+      entrypoints: [entryPath],
+      compress: "zstd",
+      // No outdir or outfile - in-memory build
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs).toHaveLength(2); // Original + zstd
+
+    const jsOutput = result.outputs.find((o: any) => o.path.endsWith(".js"));
+    const zstdOutput = result.outputs.find((o: any) => o.path.endsWith(".js.zst"));
+
+    expect(jsOutput).toBeDefined();
+    expect(zstdOutput).toBeDefined();
+
+    // Check that zstd output is actually compressed
+    const jsText = await jsOutput!.text();
+    const zstdArrayBuffer = await zstdOutput!.arrayBuffer();
+    const zstdBytes = new Uint8Array(zstdArrayBuffer);
+
+    // Check zstd magic bytes (28 b5 2f fd)
+    expect(zstdBytes[0]).toBe(0x28);
+    expect(zstdBytes[1]).toBe(0xb5);
+    expect(zstdBytes[2]).toBe(0x2f);
+    expect(zstdBytes[3]).toBe(0xfd);
+
+    // Zstd data exists (may not be smaller for very small files due to compression overhead)
+    expect(zstdBytes.length).toBeGreaterThan(0);
+  });
+
+  test("should create both gzip and zstd outputs for in-memory builds", async () => {
+    const tmpdir = tmpdirSync();
+    const entryPath = path.join(tmpdir, "index.ts");
+    const versionPath = path.join(tmpdir, "version.ts");
+
+    fs.writeFileSync(entryPath, `
+      import { version } from "./version.ts";
+      export { version };
+      console.log("Version:", version);
+    `);
+    fs.writeFileSync(versionPath, `export const version = "1.0.0";`);
+
+    const result = await Bun.build({
+      entrypoints: [entryPath],
+      compress: { gzip: true, zstd: true },
+      // No outdir or outfile - in-memory build
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs).toHaveLength(3); // Original + gzip + zstd
+
+    const jsOutput = result.outputs.find((o: any) => o.path === "./index.js");
+    const gzipOutput = result.outputs.find((o: any) => o.path === "./index.js.gz");
+    const zstdOutput = result.outputs.find((o: any) => o.path === "./index.js.zst");
+
+    expect(jsOutput).toBeDefined();
+    expect(gzipOutput).toBeDefined();
+    expect(zstdOutput).toBeDefined();
+
+    // Check magic bytes
+    const gzipBytes = new Uint8Array(await gzipOutput!.arrayBuffer());
+    const zstdBytes = new Uint8Array(await zstdOutput!.arrayBuffer());
+
+    expect(gzipBytes[0]).toBe(0x1f);
+    expect(gzipBytes[1]).toBe(0x8b);
+    expect(zstdBytes[0]).toBe(0x28);
+    expect(zstdBytes[1]).toBe(0xb5);
+  });
+
+  test("should compress source maps for in-memory builds", async () => {
+    const tmpdir = tmpdirSync();
+    const entryPath = path.join(tmpdir, "index.ts");
+
+    fs.writeFileSync(entryPath, `
+      const a = 1;
+      const b = 2;
+      export const sum = a + b;
+    `);
+
+    const result = await Bun.build({
+      entrypoints: [entryPath],
+      compress: "gzip",
+      sourcemap: "external",
+      // No outdir or outfile - in-memory build
+    });
+
+    expect(result.success).toBe(true);
+    // Original JS + gzip JS + original map + gzip map
+    expect(result.outputs).toHaveLength(4);
+
+    const outputs = result.outputs.map((o: any) => o.path).sort();
+    expect(outputs).toEqual(["./index.js", "./index.js.gz", "./index.js.map", "./index.js.map.gz"]);
+
+    // Verify the compressed source map
+    const mapGzipOutput = result.outputs.find((o: any) => o.path === "./index.js.map.gz");
+    const mapGzipBytes = new Uint8Array(await mapGzipOutput!.arrayBuffer());
+    expect(mapGzipBytes[0]).toBe(0x1f);
+    expect(mapGzipBytes[1]).toBe(0x8b);
+  });
+});

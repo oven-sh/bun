@@ -489,6 +489,7 @@ pub const Framework = struct {
                 .import_source = refs.track(str.toUTF8(arena)),
             };
         };
+
         const server_components: ?ServerComponents = sc: {
             const sc: JSValue = try opts.get(global, "serverComponents") orelse
                 break :sc null;
@@ -523,6 +524,7 @@ pub const Framework = struct {
                     "registerClientReference",
             };
         };
+
         // const built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = built_in_modules: {
         //     const array = try opts.getArray(global, "builtInModules") orelse
         //         break :built_in_modules .{};
@@ -554,6 +556,7 @@ pub const Framework = struct {
 
         //     break :built_in_modules files;
         // };
+
         const file_system_router_types: []FileSystemRouterType = brk: {
             const array: JSValue = try opts.getArray(global, "fileSystemRouterTypes") orelse {
                 return global.throwInvalidArguments("Missing 'framework.fileSystemRouterTypes'", .{});

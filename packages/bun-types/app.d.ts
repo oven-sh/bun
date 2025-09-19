@@ -15,11 +15,10 @@ declare module "bun:app" {
      *
      * @example
      * ```ts
-     * import react from 'bun-framework-react';
-     * export default {app: {framework: react}};
+     * export default {app: {framework: "bun-framework-react"}};
      * ```
      */
-    framework: Framework;
+    framework: Framework | `bun-framework-${string}` | (string & {});
 
     // Note: To contribute to 'bun-framework-react', it can be run from this file:
     // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
@@ -88,17 +87,17 @@ declare module "bun:app" {
      */
     fileSystemRouterTypes?: FrameworkFileSystemRouterType[];
 
-    /**
-     * A list of directories that should be served statically. If the directory
-     * does not exist in the user's project, it is ignored.
-     *
-     * Example: 'public' or 'static'
-     *
-     * Different frameworks have different opinions, some use 'static', some use
-     * 'public'.
-     * @default []
-     */
-    staticRouters?: Array<StaticRouter> | undefined;
+    // /**
+    //  * A list of directories that should be served statically. If the directory
+    //  * does not exist in the user's project, it is ignored.
+    //  *
+    //  * Example: 'public' or 'static'
+    //  *
+    //  * Different frameworks have different opinions, some use 'static', some use
+    //  * 'public'.
+    //  * @default []
+    //  */
+    // staticRouters?: Array<StaticRouter> | undefined;
 
     // /**
     //  * Add extra modules. This can be used to, for example, replace `react` with

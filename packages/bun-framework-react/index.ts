@@ -13,8 +13,6 @@ const framework: Framework = {
     },
   ],
 
-  staticRouters: ["public"],
-
   serverComponents: {
     separateSSRGraph: true,
     serverRegisterClientReferenceExport: "registerClientReference",

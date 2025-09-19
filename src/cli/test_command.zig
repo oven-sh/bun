@@ -835,7 +835,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestCompleted(buntest: *describe2.BunTest, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
-        var output_buf: std.ArrayListUnmanaged(u8) = .empty; // TODO: save skips and fails in skips_to_repeat_buf and fails_to_repeat_buf
+        var output_buf: std.ArrayListUnmanaged(u8) = .empty;
         defer output_buf.deinit(buntest.gpa);
 
         const initial_length = output_buf.items.len;
@@ -868,7 +868,7 @@ pub const CommandLineReporter = struct {
             .pass => this.summary().pass += 1,
             .skip => this.summary().skip += 1,
             .todo => this.summary().todo += 1,
-            .skipped_because_label => this.summary().skipped_because_label += 1, // TODO: when a file_reporter is set, it's supposed to log these maybe? ??
+            .skipped_because_label => this.summary().skipped_because_label += 1,
 
             .fail,
             .fail_because_failing_test_passed,
@@ -1764,9 +1764,6 @@ pub const TestCommand = struct {
         _: std.mem.Allocator,
         is_last: bool,
     ) !void {
-        bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this
-        defer bun.jsc.Jest.describe2.debug.group.end();
-
         defer {
             js_ast.Expr.Data.Store.reset();
             js_ast.Stmt.Data.Store.reset();
@@ -1803,9 +1800,6 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.on_unhandled_rejection.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this
-            defer bun.jsc.Jest.describe2.debug.group.end();
-
             var describe2Root = &jest.Jest.runner.?.describe2Root;
             describe2Root.enterFile(file_id, reporter);
             defer describe2Root.exitFile();
@@ -1850,8 +1844,6 @@ pub const TestCommand = struct {
                 _ = file_start;
                 _ = file_end;
                 _ = is_last;
-                bun.jsc.Jest.describe2.debug.group.begin(@src()); // TODO: remove this
-                defer bun.jsc.Jest.describe2.debug.group.end();
 
                 // Check if describe2 is available and has tests to run
                 var buntest_strong = describe2Root.cloneActiveFile() orelse {

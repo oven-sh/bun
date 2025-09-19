@@ -29,7 +29,7 @@ pub fn createUnbound(globalThis: *JSGlobalObject) JSValue {
 }
 
 pub fn bind(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
-    const callFn = jsc.host_fn.NewFunction(globalThis, bun.ZigString.static("done"), 1, BunTest.bunTestDoneCallback, false); // TODO: cache this value
+    const callFn = jsc.host_fn.NewFunction(globalThis, bun.ZigString.static("done"), 1, BunTest.bunTestDoneCallback, false);
     return try callFn.bind(globalThis, value, &bun.String.static("done"), 1);
 }
 

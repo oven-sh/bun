@@ -145,9 +145,6 @@ pub const BunTestRoot = struct {
 };
 
 pub const BunTest = struct {
-    // const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-    // ref_count: RefCount, // TODO: add ref count & hide the deinit function (deinit->deinitFromUnref())
-
     buntest: *BunTestRoot,
     in_run_loop: bool,
     allocation_scope: bun.AllocationScope,
@@ -209,7 +206,7 @@ pub const BunTest = struct {
     }
 
     pub const RefDataValue = union(enum) {
-        start, // TODO: rename to 'none'
+        start,
         collection: struct {
             active_scope: *DescribeScope,
         },
@@ -312,7 +309,6 @@ pub const BunTest = struct {
         };
     }
     pub fn ref(this_strong: BunTestPtr, phase: RefDataValue) *RefData {
-        // TODO: this function may be possible to remove? RefData doesn't need to be a pointer unless it is for the ref-counted version
         group.begin(@src());
         defer group.end();
         group.log("ref: {}", .{phase});

@@ -247,9 +247,9 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 - [ ] validate uses of sequence.entry_index (entry_index can be >= entries_end)
 - [ ] replace asserts with runtime throws or debug-only asserts (waitForPromise breaks many expectations)
 - [ ] replace debug-only assert with `Bun.Environment.ci_assert` guarded asserts
-- [ ] search for TODOs in the diff and fix them all
-- [ ] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
-- [ ] look in file:///Users/pfg/Dev/Node/bun-coverage/coverage-html/src/bun.js/test/jest.zig.gcov.html and find things to remove
+- [x] search for TODOs in the diff and fix them all
+- [x] check the todo list in https://linear.app/oven/issue/ENG-20152/new-buntest, confirm it fixes all those issues (or doesn't make them worse). add reproductions
+- [x] look in file:///Users/pfg/Dev/Node/bun-coverage/coverage-html/src/bun.js/test/jest.zig.gcov.html and find things to remove
 - [ ] disable the logs by default
 - [ ] audit and remove unneeded/outdated comments
 - [ ] remove TODO.md
@@ -328,6 +328,7 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 
 # Code quality:
 
+- [ ] Do the structure cache thing for better performance for ScopeFunctions
 - [ ] consider migrating CallbackWithArgs to be a bound function. the length of the bound function can exclude the specified args.
 - [ ] consider changing done so instead of the complex ref-counted thing, it is instead made by wrapping the return value of the function with a promise that resolves when the done callback is called
   - in this case, the done function is instead a binding to a function with `[promise] (error) => error != null ? promise.$reject(error) : promise.$resolve()`

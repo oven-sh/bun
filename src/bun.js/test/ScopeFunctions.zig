@@ -273,8 +273,8 @@ const ParseArgumentsResult = struct {
     callback: ?jsc.JSValue,
     options: struct {
         timeout: u32 = 0,
-        retry: ?f64 = null, // TODO: use this value
-        repeats: ?f64 = null, // TODO: use this value
+        retry: ?f64 = null,
+        repeats: ?f64 = null,
     },
     pub fn deinit(this: *ParseArgumentsResult, gpa: std.mem.Allocator) void {
         if (this.description) |str| gpa.free(str);
@@ -423,7 +423,7 @@ pub fn createUnbound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue,
 }
 
 pub fn bind(value: JSValue, globalThis: *JSGlobalObject, name: *const bun.String) bun.JSError!JSValue {
-    const callFn = jsc.host_fn.NewFunction(globalThis, &name.toZigString(), 1, callAsFunction, false); // TODO: cache this value
+    const callFn = jsc.host_fn.NewFunction(globalThis, &name.toZigString(), 1, callAsFunction, false);
     const bound = try callFn.bind(globalThis, value, name, 1);
     try bound.setPrototypeDirect(value.getPrototype(globalThis), globalThis);
     return bound;

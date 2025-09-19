@@ -6775,7 +6775,6 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::E
     JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
     JSC::JSValue prototype = JSC::JSValue::decode(prototypeEncoded);
     JSC::JSObject* valueObject = value.getObject();
-    // TODO: structure cache thing
     valueObject->setPrototypeDirect(globalObject->vm(), prototype);
     RELEASE_AND_RETURN(scope, );
     return;

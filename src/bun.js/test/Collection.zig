@@ -1,7 +1,7 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 locked: bool = false, // set to true after collection phase ends
-describe_callback_queue: std.ArrayList(QueuedDescribe), // TODO: don't use orderedRemove(0) on this, instead keep an index or use a fifo?
+describe_callback_queue: std.ArrayList(QueuedDescribe),
 current_scope_callback_queue: std.ArrayList(QueuedDescribe),
 
 root_scope: *DescribeScope,

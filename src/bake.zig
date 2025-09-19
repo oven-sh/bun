@@ -507,38 +507,6 @@ pub const Framework = struct {
             };
         };
 
-        // const built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = built_in_modules: {
-        //     const array = try opts.getArray(global, "builtInModules") orelse
-        //         break :built_in_modules .{};
-
-        //     const len = try array.getLength(global);
-        //     var files: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{};
-        //     try files.ensureTotalCapacity(arena, len);
-
-        //     var it = try array.arrayIterator(global);
-        //     var i: usize = 0;
-        //     while (try it.next()) |file| : (i += 1) {
-        //         if (!file.isObject()) {
-        //             return global.throwInvalidArguments("'builtInModules[{d}]' is not an object", .{i});
-        //         }
-
-        //         const path = try getOptionalString(file, global, "import", refs, arena) orelse {
-        //             return global.throwInvalidArguments("'builtInModules[{d}]' is missing 'import'", .{i});
-        //         };
-
-        //         const value: BuiltInModule = if (try getOptionalString(file, global, "path", refs, arena)) |str|
-        //             .{ .import = str }
-        //         else if (try getOptionalString(file, global, "code", refs, arena)) |str|
-        //             .{ .code = str }
-        //         else
-        //             return global.throwInvalidArguments("'builtInModules[{d}]' needs either 'path' or 'code'", .{i});
-
-        //         files.putAssumeCapacity(path, value);
-        //     }
-
-        //     break :built_in_modules files;
-        // };
-
         const file_system_router_types: []FileSystemRouterType = brk: {
             const array: JSValue = try opts.getArray(global, "fileSystemRouterTypes") orelse {
                 return global.throwInvalidArguments("Missing 'framework.fileSystemRouterTypes'", .{});
@@ -635,7 +603,6 @@ pub const Framework = struct {
             .file_system_router_types = file_system_router_types,
             .react_fast_refresh = react_fast_refresh,
             .server_components = server_components,
-            // .built_in_modules = built_in_modules,
         };
 
         if (try opts.getOptional(global, "plugins", JSValue)) |plugin_array| {

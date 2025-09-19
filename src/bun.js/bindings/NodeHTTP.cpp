@@ -29,11 +29,6 @@ struct StreamBuffer {
     size_t bufferPosition = 0;
     size_t bytesWritten = 0;
 
-    bool hasValue() const
-    {
-        return buffer != nullptr;
-    }
-
     size_t bufferedSize() const
     {
         return bufferLength - bufferPosition;

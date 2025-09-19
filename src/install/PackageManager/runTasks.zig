@@ -297,7 +297,7 @@ pub fn runTasks(
                             Npm.PackageManifest.Serializer.saveAsync(
                                 &entry.value_ptr.manifest,
                                 manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory(),
+                                manager.getTemporaryDirectory().handle,
                                 manager.getCacheDirectory(),
                             );
                         }
@@ -1066,7 +1066,7 @@ pub fn generateNetworkTaskForTarball(
             ) catch |err| bun.handleOom(err),
             .resolution = package.resolution,
             .cache_dir = this.getCacheDirectory(),
-            .temp_dir = this.getTemporaryDirectory(),
+            .temp_dir = this.getTemporaryDirectory().handle,
             .dependency_id = dependency_id,
             .integrity = package.meta.integrity,
             .url = strings.StringOrTinyString.initAppendIfNeeded(

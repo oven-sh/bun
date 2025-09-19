@@ -340,14 +340,13 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     // JS internal modules
     ${moduleList
       .map((id, n) => {
+        const moduleName = idToPublicSpecifierOrEnumName(id);
+        const fileBase = JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js"));
+        const urlString = "builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/");
         const inner =
           n >= nativeStartIndex
             ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
-            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-                id.replace(/\.[mc]?[tj]s$/, ".js"),
-              )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-                .replace(/\.[mc]?[tj]s$/, "")
-                .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);`;
+            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "${urlString}"_s);`;
         return `case Field::${idToEnumName(id)}: {
       ${inner}
     }`;

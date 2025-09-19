@@ -270,8 +270,8 @@ export async function onRuntimeError(err: any, fatal = false, async = false) {
     writer.stringWithLength(browserUrl);
     writer.u32(parsed.length);
     for (const frame of parsed) {
-      writer.u32(frame.line ?? 0);
-      writer.u32(frame.col ?? 0);
+      writer.i32(frame.line ?? 0);
+      writer.i32(frame.col ?? 0);
       writer.stringWithLength(frame.fn ?? "");
       const fileName = frame.file;
       if (fileName) {

@@ -2614,8 +2614,8 @@ pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.ZigStackFr
 
         if (this.resolveSourceMapping(
             sourceURL.slice(),
-            @max(frame.position.line.zeroBased(), 0),
-            @max(frame.position.column.zeroBased(), 0),
+            frame.position.line,
+            frame.position.column,
             .no_source_contents,
         )) |lookup| {
             const source_map = lookup.source_map;
@@ -2753,8 +2753,8 @@ pub fn remapZigException(
     else
         this.resolveSourceMapping(
             top_source_url.slice(),
-            @max(top.position.line.zeroBased(), 0),
-            @max(top.position.column.zeroBased(), 0),
+            top.position.line,
+            top.position.column,
             .source_contents,
         );
 
@@ -2842,8 +2842,8 @@ pub fn remapZigException(
             defer source_url.deinit();
             if (this.resolveSourceMapping(
                 source_url.slice(),
-                @max(frame.position.line.zeroBased(), 0),
-                @max(frame.position.column.zeroBased(), 0),
+                frame.position.line,
+                frame.position.column,
                 .no_source_contents,
             )) |lookup| {
                 defer if (lookup.source_map) |map| map.deref();
@@ -3448,8 +3448,8 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
 pub fn resolveSourceMapping(
     this: *VirtualMachine,
     path: []const u8,
-    line: i32,
-    column: i32,
+    line: Ordinal,
+    column: Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
     return this.source_mappings.resolveMapping(path, line, column, source_handling) orelse {

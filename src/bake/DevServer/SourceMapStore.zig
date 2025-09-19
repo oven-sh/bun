@@ -237,7 +237,13 @@ pub const Entry = struct {
     }
 
     fn joinVLQ(map: *const Entry, kind: ChunkKind, j: *StringJoiner, arena: Allocator, side: bake.Side) !void {
+        _ = side;
         const map_files = map.files.slice();
+
+        const runtime: bake.HmrRuntime = switch (kind) {
+            .initial_response => bun.bake.getHmrRuntime(.client),
+            .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
+        };
 
         var prev_end_state: SourceMap.SourceMapState = .{
             .generated_line = 0,
@@ -247,20 +253,9 @@ pub const Entry = struct {
             .original_column = 0,
         };
 
-        var lines_between: u32 = lines_between: {
-            if (side == .client) {
-                const runtime: bake.HmrRuntime = switch (kind) {
-                    .initial_response => bun.bake.getHmrRuntime(.client),
-                    .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
-                };
-                // +2 because the magic fairy in my dreams said it would align the source maps.
-                // TODO: why the fuck is this 2?
-                const lines_between: u32 = runtime.line_count + 2;
-                break :lines_between lines_between;
-            }
-
-            break :lines_between 0;
-        };
+        // The runtime.line_count counts newlines (e.g., 2941 for a 2942-line file).
+        // The runtime ends at line 2942 with })({ so modules start after that.
+        var lines_between: u32 = runtime.line_count;
 
         // Join all of the mappings together.
         for (0..map_files.len) |i| switch (map_files.get(i)) {

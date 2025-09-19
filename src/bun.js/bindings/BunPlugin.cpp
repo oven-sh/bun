@@ -842,6 +842,11 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
             }
         }
 
+        // Check again after promise resolution
+        if (result.isUndefinedOrNull()) {
+            continue;
+        }
+
         if (!result.isObject()) {
             JSC::throwTypeError(globalObject, scope, "onResolve() expects an object returned"_s);
             return {};

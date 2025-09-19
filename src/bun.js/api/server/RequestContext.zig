@@ -599,6 +599,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // mark request as aborted
             this.flags.aborted = true;
             if (this.additional_on_abort) |abort| {
+                this.additional_on_abort = null;
                 abort.cb(abort.data);
             }
 

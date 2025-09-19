@@ -169,6 +169,11 @@ plugin_state: enum {
 /// There is only ever one bundle executing at the same time, since all bundles
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
+///
+/// The current bundle may include *multiple* routes, this is done by adding the
+/// routes to `next_bundle.route_queue`. Inside of
+/// `startNextBundleIfPresent(...)` we add all the entrypoints for all the
+/// routes.
 current_bundle: ?struct {
     bv2: *BundleV2,
     /// Information BundleV2 needs to finalize the bundle
@@ -988,11 +993,11 @@ fn ensureRouteIsBundled(
 ) bun.JSError!void {
     assert(dev.magic == .valid);
     assert(dev.server != null);
-    sw: switch (dev.routeBundlePtr(route_bundle_index).server_state) {
+    const state = dev.routeBundlePtr(route_bundle_index).server_state;
+    sw: switch (state) {
         .unqueued => {
             if (dev.current_bundle != null) {
                 try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
-                dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
                 try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
             } else {
                 // If plugins are not yet loaded, prepare them.
@@ -1027,7 +1032,6 @@ fn ensureRouteIsBundled(
                     },
                     .pending => {
                         try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
-                        dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
                         try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
                         return;
                     },
@@ -1060,6 +1064,7 @@ fn ensureRouteIsBundled(
                     }
                 }
 
+                try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
                 try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
 
                 dev.startAsyncBundle(
@@ -1068,8 +1073,6 @@ fn ensureRouteIsBundled(
                     std.time.Timer.start() catch @panic("timers unsupported"),
                 ) catch |err| bun.handleOom(err);
             }
-
-            dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
         },
         .bundling => {
             bun.assert(dev.current_bundle != null);
@@ -1112,6 +1115,13 @@ const ReqOrSaved = union(enum) {
         return switch (this.*) {
             .req => |req| bun.http.Method.which(req.method()) orelse .POST,
             .saved => |saved| saved.request.method,
+        };
+    }
+
+    pub fn url(this: *const @This(), alloc: Allocator) []const u8 {
+        return switch (this.*) {
+            .req => |req| req.url(),
+            .saved => |saved| saved.request.url.toUTF8(alloc).slice(),
         };
     }
 };

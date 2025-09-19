@@ -69,8 +69,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
             .function_name = .init(function_name),
             .source_url = .init(file_name),
             .position = if (line > 0) .{
-                .line = .fromOneBased(line + 1),
-                .column = .fromOneBased(@max(1, column)),
+                .line = .fromOneBased(line),
+                .column = if (column < 1) .invalid else .fromOneBased(column),
                 .line_start_byte = 0,
             } else .{
                 .line = .invalid,
@@ -147,10 +147,10 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
         // Remap the frame
         const remapped = result.mappings.find(
-            frame.position.line.oneBased(),
-            frame.position.column.zeroBased(),
+            frame.position.line,
+            frame.position.column,
         );
-        if (remapped) |remapped_position| {
+        if (remapped) |*remapped_position| {
             frame.position = .{
                 .line = .fromZeroBased(remapped_position.originalLine()),
                 .column = .fromZeroBased(remapped_position.originalColumn()),

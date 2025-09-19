@@ -190,7 +190,6 @@ test/regression/issue/02499/02499.test.ts
 test/js/node/test/parallel/test-http-server-stale-close.js
 
 
-# double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # Bun::JSNodeHTTPServerSocket::clearSocketData
 test/js/node/test/parallel/test-http-server-keep-alive-max-requests-null.js
 test/js/node/test/parallel/test-http-keep-alive-pipeline-max-requests.js
@@ -210,7 +209,6 @@ test/js/node/test/parallel/test-http-double-content-length.js
 test/js/node/test/parallel/test-http-blank-header.js
 test/js/node/test/parallel/test-http-server-keepalive-req-gc.js
 
-# double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});
 test/js/node/test/parallel/test-set-http-max-http-headers.js
@@ -258,7 +256,6 @@ test/js/web/websocket/websocket-custom-headers.test.ts
 test/js/third_party/body-parser/express-memory-leak.test.ts
 test/js/bun/http/serve-body-leak.test.ts
 
-# double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # Zig::SourceProvider::~SourceProvider()
 test/bundler/bundler_bun.test.ts
 test/bundler/bundler_cjs2esm.test.ts
@@ -353,7 +350,6 @@ vendor/elysia/test/validator/validator.test.ts
 vendor/elysia/test/ws/destructuring.test.ts
 vendor/elysia/test/ws/message.test.ts
 
-# double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # JSC::HandleSet::~HandleSet
 # bun.js.rare_data.deinit
 test/js/bun/resolve/resolve.test.ts
@@ -365,7 +361,6 @@ test/js/bun/util/inspect.test.js
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
 test/js/node/vm/vm.test.ts
 
-# double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # JSC::BuiltinNames::~BuiltinNames
 test/js/bun/shell/shell-hang.test.ts
 test/js/bun/util/reportError.test.ts
@@ -375,17 +370,14 @@ test/js/web/websocket/websocket.test.js
 test/js/web/workers/worker.test.ts
 test/regression/issue/11664.test.ts
 
-# double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # ASSERTION FAILED: m_cellState == CellState::DefinitelyWhite
 test/js/node/tls/node-tls-upgrade.test.ts
 
-# double-free/use-after-free during Zig__GlobalObject__destructOnExit
 # Bun::NapiExternal::~NapiExternal
 test/v8/v8.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 
-# double-free/use-after-free during Zig__GlobalObject__destructOnExit
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 

@@ -383,6 +383,7 @@ test/js/node/tls/node-tls-upgrade.test.ts
 # Bun::NapiExternal::~NapiExternal
 test/v8/v8.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 
 # double-free/use-after-free during Zig__GlobalObject__destructOnExit
 test/bake/dev/production.test.ts

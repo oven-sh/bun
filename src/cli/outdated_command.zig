@@ -705,7 +705,7 @@ pub const OutdatedCommand = struct {
                 if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution: Install.Resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
-                
+
                 const needs_extended_manifest = manager.options.minimum_release_age != null;
                 const package_name = pkg_names[package_id].slice(string_buf);
                 _ = manager.manifests.byName(
@@ -831,4 +831,3 @@ const Behavior = Install.Dependency.Behavior;
 
 const PackageManager = Install.PackageManager;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const FindVersionResult = @import("../install/npm.zig").PackageManifest.FindVersionResult;

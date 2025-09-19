@@ -6371,9 +6371,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__parseISODate(const char* dateStr,
 {
     bool isLocalTime;
     return WTF::parseES5Date(std::span<const LChar>(
-        reinterpret_cast<const LChar*>(dateStr),
-        length
-    ), isLocalTime);
+                                 reinterpret_cast<const LChar*>(dateStr),
+                                 length),
+        isLocalTime);
 }
 
 // this is largely copied from dateProtoFuncToISOString

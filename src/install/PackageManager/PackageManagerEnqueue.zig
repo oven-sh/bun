@@ -1905,13 +1905,11 @@ const FolderResolution = bun.install.FolderResolution;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageNameHash = bun.install.PackageNameHash;
-const PackageManifestMap = bun.install.PackageManifestMap;
 const PatchTask = bun.install.PatchTask;
 const Repository = bun.install.Repository;
 const Resolution = bun.install.Resolution;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;
-const TruncatedPackageNameHash = bun.install.TruncatedPackageNameHash;
 const invalid_package_id = bun.install.invalid_package_id;
 
 const Lockfile = bun.install.Lockfile;

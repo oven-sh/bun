@@ -1,6 +1,6 @@
-import { beforeAll, describe, expect, test, afterAll } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import type { Server } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 /**
  * Comprehensive test suite for the minimum-release-age security feature.

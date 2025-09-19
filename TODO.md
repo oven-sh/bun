@@ -89,6 +89,8 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
   the reason it is outputting like this currently is because in the inner loop it spawns all the callbacks but it doesn't use the results until the outer loop.
   fixing this would mean spawning one concurrent test at a time? not really sure
 
+  fixing this would mean going back to allowing immediate advancements. or alternatively we can go back to a callback queue but always prefer to advance over running the next callback if there are queued advancement.s
+
 - [x] nvm ~~revert how scopefunctions works to how it was before. add all the props to everything. `.skip.only` is the same as `.only.skip`. 32 possible combinations so it's fine.~~
 - [ ] test/js/node/http2/node-http2.test.js
   - this spams output with 'killed 1 dangling process' now - consider only showing that for timeout failures

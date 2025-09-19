@@ -24,6 +24,12 @@ const framework: Framework = {
   reactFastRefresh: {
     importSource: "react-refresh/runtime",
   },
+
+  bundlerOptions: {
+    ssr: {
+      conditions: ["react-server"],
+    },
+  },
 };
 
 export default framework;

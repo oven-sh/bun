@@ -578,7 +578,9 @@ describe("minimum-release-age", () => {
 
       // Should fail because 3.0.0 is too recent
       expect(exitCode).toBe(1);
-      expect(stderr.toLowerCase()).toMatch(/blocked.*npm.*minimal.*age.*gate|blocked.*minimum.*release.*age|too.*recent/);
+      expect(stderr.toLowerCase()).toMatch(
+        /blocked.*npm.*minimal.*age.*gate|blocked.*minimum.*release.*age|too.*recent/,
+      );
     });
   });
 

@@ -173,11 +173,12 @@ npmMinimalAgeGateExcludes = ["@types/node", "typescript"]
 ```
 
 When the minimum age filter is active:
+
 - Only affects new package resolution - existing packages in `bun.lock` remain unchanged
 - All dependencies (direct and transitive) are filtered to meet the age requirement when being resolved
 - When versions are blocked by the age gate, a stability check detects rapid bugfix patterns
-  - If multiple versions were published close together just outside your age gate, it extends the filter to skip those potentially unstable versions and selects an older, more mature version 
-  - Searches up to 7 days after the age gate, however if still finding rapid releases it ignores stability check 
+  - If multiple versions were published close together just outside your age gate, it extends the filter to skip those potentially unstable versions and selects an older, more mature version
+  - Searches up to 7 days after the age gate, however if still finding rapid releases it ignores stability check
   - Exact version requests (like `package@1.1.1`) still respect the age gate but bypass the stability check
 
 For more advanced security scanning, including integration with services & custom filtering, see [Package manager > Security Scanner API](https://bun.com/docs/install/security-scanner-api).

@@ -821,10 +821,27 @@ pub const LinkerContext = struct {
     }
 
     pub fn generateIsolatedHash(c: *LinkerContext, chunk: *const Chunk) u64 {
+        return c.generateIsolatedHashWithChunks(chunk, &[_]Chunk{});
+    }
+
+    pub fn generateIsolatedHashWithChunks(c: *LinkerContext, chunk: *const Chunk, chunks: []Chunk) u64 {
         const trace = bun.perf.trace("Bundler.generateIsolatedHash");
         defer trace.end();
 
         var hasher = ContentHasher{};
+
+        // For HTML chunks, include the isolated hashes of the JS and CSS chunks they depend on
+        // This ensures the HTML chunk hash changes when its dependencies change
+        if (chunk.content == .html and chunks.len > 0) {
+            if (chunk.getJSChunkForHTML(chunks)) |js_chunk| {
+                const hash_bytes = std.mem.asBytes(&js_chunk.isolated_hash);
+                hasher.write(hash_bytes);
+            }
+            if (chunk.getCSSChunkForHTML(chunks)) |css_chunk| {
+                const hash_bytes = std.mem.asBytes(&css_chunk.isolated_hash);
+                hasher.write(hash_bytes);
+            }
+        }
 
         // Mix the file names and part ranges of all of the files in this chunk into
         // the hash. Objects that appear identical but that live in separate files or

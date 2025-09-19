@@ -181,15 +181,22 @@ pub fn generateChunksInParallel(
         const chunks_to_do = if (is_dev_server) chunks[1..] else chunks;
         if (!is_dev_server or chunks_to_do.len > 0) {
             bun.assert(chunks_to_do.len > 0);
-            debug(" START {d} postprocess chunks", .{chunks_to_do.len});
-            defer debug("  DONE {d} postprocess chunks", .{chunks_to_do.len});
 
-            try c.parse_graph.pool.worker_pool.eachPtr(
-                c.allocator(),
-                chunk_contexts[0],
-                generateChunk,
-                chunks_to_do,
-            );
+            // Process JS and CSS chunks first (so their isolated_hash is computed)
+            // before processing HTML chunks (which depend on those hashes)
+            // First, process all non-HTML chunks
+            for (chunks_to_do, 0..) |*chunk, i| {
+                if (chunk.content != .html) {
+                    generateChunk(chunk_contexts[0], chunk, i);
+                }
+            }
+
+            // Then process HTML chunks (which can now use the computed hashes)
+            for (chunks_to_do, 0..) |*chunk, i| {
+                if (chunk.content == .html) {
+                    generateChunk(chunk_contexts[0], chunk, i);
+                }
+            }
         }
     }
 

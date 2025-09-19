@@ -730,7 +730,7 @@ fn getBytes(this: *NodeHTTPResponse, globalThis: *jsc.JSGlobalObject, chunk: []c
     // this makes the behavior aligned with current implementation, but not ideal
     const bytes: jsc.JSValue = brk: {
         if (chunk.len > 0 and this.buffered_request_body_data_during_pause.len > 0) {
-            const buffer = try jsc.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch |err| {
+            const buffer = jsc.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch |err| {
                 globalThis.reportUncaughtExceptionFromError(err);
                 return .js_undefined;
             };

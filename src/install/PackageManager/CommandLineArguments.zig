@@ -50,7 +50,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
-    clap.parseParam("--minimum-release-age <NUM>           Only install packages published at least N days ago (security feature)") catch unreachable,
+    clap.parseParam("--npm-minimal-age-gate <NUM>          Only install packages published at least N days ago (security feature)") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -228,7 +228,7 @@ lockfile_only: bool = false,
 
 node_linker: ?Options.NodeLinker = null,
 
-minimum_release_age: ?f32 = null,
+minimal_age_gate: ?f32 = null,
 
 // `bun pm version` options
 git_tag_version: bool = true,
@@ -821,9 +821,9 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.save_text_lockfile = true;
     }
 
-    if (args.option("--minimum-release-age")) |min_age| {
-        cli.minimum_release_age = std.fmt.parseFloat(f32, min_age) catch {
-            Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age});
+    if (args.option("--npm-minimal-age-gate")) |min_age| {
+        cli.minimal_age_gate = std.fmt.parseFloat(f32, min_age) catch {
+            Output.errGeneric("Expected --npm-minimal-age-gate to be a positive number: {s}", .{min_age});
             Global.crash();
         };
     }

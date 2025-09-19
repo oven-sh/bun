@@ -1473,7 +1473,7 @@ pub const PackageManifest = struct {
         this: *const PackageManifest,
         package_version: *const PackageVersion,
         current_timestamp: u32,
-        minimum_release_age_seconds: u32,
+        minimal_age_gate_seconds: u32,
         exclusions: ?[]const []const u8,
     ) bool {
         if (exclusions) |excl| {
@@ -1485,7 +1485,7 @@ pub const PackageManifest = struct {
             }
         }
 
-        return package_version.publish_timestamp > current_timestamp -| minimum_release_age_seconds;
+        return package_version.publish_timestamp > current_timestamp -| minimal_age_gate_seconds;
     }
 
     pub fn searchVersionList(
@@ -1494,7 +1494,7 @@ pub const PackageManifest = struct {
         packages: []const PackageVersion,
         group: Semver.Query.Group,
         group_buf: string,
-        minimum_release_age_days: ?f32,
+        minimal_age_gate_days: ?f32,
         exclusions: ?[]const []const u8,
         newest_filtered: *?*const Semver.Version,
     ) ?FindVersionResult {
@@ -1503,13 +1503,13 @@ pub const PackageManifest = struct {
         var i = versions.len;
 
         const current_timestamp: u32 = @intCast(std.time.timestamp());
-        const minimum_release_age_seconds: ?u32 = if (minimum_release_age_days) |days|
+        const minimal_age_gate_seconds: ?u32 = if (minimal_age_gate_days) |days|
             @intFromFloat(days * @as(f32, @floatFromInt(std.time.s_per_day)))
         else
             null;
 
         const seven_days_seconds: u32 = 7 * std.time.s_per_day;
-        const stability_window_seconds: u32 = if (minimum_release_age_seconds) |min_age_seconds|
+        const stability_window_seconds: u32 = if (minimal_age_gate_seconds) |min_age_seconds|
             @min(min_age_seconds, seven_days_seconds)
         else
             0;
@@ -1518,7 +1518,7 @@ pub const PackageManifest = struct {
             const version = versions[i - 1];
             if (group.satisfies(version, group_buf, this.string_buf)) {
                 const package = &packages[i - 1];
-                if (minimum_release_age_seconds) |min_age_seconds| {
+                if (minimal_age_gate_seconds) |min_age_seconds| {
                     if (this.isPackageVersionTooRecent(package, current_timestamp, min_age_seconds, exclusions)) {
                         if (newest_filtered.* == null) newest_filtered.* = &version;
                         prev_package_blocked_from_age = package;
@@ -1611,11 +1611,11 @@ pub const PackageManifest = struct {
     pub fn findByDistTagWithFilter(
         this: *const PackageManifest,
         tag: string,
-        minimum_release_age_days: ?f32,
+        minimal_age_gate_days: ?f32,
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
         const dist_result = this.findByDistTag(tag) orelse return .{ .err = .not_found };
-        const min_age = minimum_release_age_days orelse {
+        const min_age = minimal_age_gate_days orelse {
             return .{ .found = dist_result };
         };
         const current_timestamp: u32 = @intCast(std.time.timestamp());
@@ -1711,10 +1711,10 @@ pub const PackageManifest = struct {
         this: *const PackageManifest,
         group: Semver.Query.Group,
         group_buf: string,
-        minimum_release_age_days: ?f32,
+        minimal_age_gate_days: ?f32,
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
-        if (minimum_release_age_days != null) {
+        if (minimal_age_gate_days != null) {
             bun.debugAssert(this.pkg.has_extended_manifest);
         }
 
@@ -1725,7 +1725,7 @@ pub const PackageManifest = struct {
         if (left.op == .eql) {
             const result = this.findByVersion(left.version);
             if (result) |r| {
-                if (minimum_release_age_days) |min_age| {
+                if (minimal_age_gate_days) |min_age| {
                     const min_age_seconds: u32 = @intFromFloat(min_age * @as(f32, @floatFromInt(std.time.s_per_day)));
                     if (this.isPackageVersionTooRecent(r.package, current_timestamp, min_age_seconds, exclusions)) {
                         return .{ .err = .too_recent };
@@ -1738,7 +1738,7 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (minimum_release_age_days) |min_age| {
+                if (minimal_age_gate_days) |min_age| {
                     const min_age_secs: u32 = @intFromFloat(min_age * @as(f32, @floatFromInt(std.time.s_per_day)));
                     if (this.isPackageVersionTooRecent(result.package, current_timestamp, min_age_secs, exclusions)) {
                         newest_filtered = &result.version;
@@ -1761,7 +1761,7 @@ pub const PackageManifest = struct {
             this.pkg.releases.values.get(this.package_versions),
             group,
             group_buf,
-            minimum_release_age_days,
+            minimal_age_gate_days,
             exclusions,
             &newest_filtered,
         )) |result| {
@@ -1774,7 +1774,7 @@ pub const PackageManifest = struct {
                 this.pkg.prereleases.values.get(this.package_versions),
                 group,
                 group_buf,
-                minimum_release_age_days,
+                minimal_age_gate_days,
                 exclusions,
                 &newest_filtered,
             )) |result| {
@@ -1792,12 +1792,12 @@ pub const PackageManifest = struct {
     pub fn findByVersionWithFilter(
         this: *const PackageManifest,
         target_version: Semver.Version,
-        minimum_release_age_days: ?f32,
+        minimal_age_gate_days: ?f32,
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
         const result = this.findByVersion(target_version) orelse return .{ .err = .not_found };
 
-        if (minimum_release_age_days) |min_age| {
+        if (minimal_age_gate_days) |min_age| {
             const current_timestamp: f32 = @floatFromInt(@divTrunc(std.time.timestamp(), std.time.ms_per_s));
 
             if (this.isPackageVersionTooRecent(result.package, current_timestamp, min_age, exclusions)) {

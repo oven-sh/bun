@@ -437,18 +437,18 @@ pub const OutdatedCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimum_release_age != null,
+                    manager.options.minimal_age_gate != null,
                 ) orelse continue;
 
                 const actual_latest = manifest.findByDistTag("latest") orelse continue;
 
-                const _latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions);
+                const _latest = manifest.findByDistTagWithFilter("latest", manager.options.minimal_age_gate, manager.options.minimal_age_gate_excludes);
                 const latest = _latest.unwrap() orelse continue;
 
                 const _update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions)
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimal_age_gate, manager.options.minimal_age_gate_excludes)
                 else
-                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions);
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimal_age_gate, manager.options.minimal_age_gate_excludes);
                 const update_version = _update_version.unwrap() orelse continue;
 
                 if (resolution.value.npm.version.order(actual_latest.version, string_buf, manifest.string_buf) != .lt) continue;
@@ -581,16 +581,16 @@ pub const OutdatedCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimum_release_age != null,
+                    manager.options.minimal_age_gate != null,
                 ) orelse continue;
 
-                const _latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions);
+                const _latest = manifest.findByDistTagWithFilter("latest", manager.options.minimal_age_gate, manager.options.minimal_age_gate_excludes);
                 const latest = _latest.unwrap() orelse continue;
                 const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
                 const _update = if (resolved_version.tag == .npm)
-                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions)
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimal_age_gate, manager.options.minimal_age_gate_excludes)
                 else
-                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions);
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimal_age_gate, manager.options.minimal_age_gate_excludes);
                 const update = _update.unwrap() orelse continue;
 
                 table.printLineSeparator();
@@ -706,7 +706,7 @@ pub const OutdatedCommand = struct {
                 const resolution: Install.Resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
 
-                const needs_extended_manifest = manager.options.minimum_release_age != null;
+                const needs_extended_manifest = manager.options.minimal_age_gate != null;
                 const package_name = pkg_names[package_id].slice(string_buf);
                 _ = manager.manifests.byName(
                     manager,

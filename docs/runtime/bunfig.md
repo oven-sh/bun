@@ -553,6 +553,20 @@ Valid values are:
 
 {% /table %}
 
+### `install.npmMinimalAgeGate`
+
+Configure a minimum age (in days) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+npmMinimalAgeGate = 3
+# These packages will bypass the 3-day minimum age requirement
+npmMinimalAgeGateExcludes = ["@types/bun", "typescript"]
+```
+
+For more details see [Minimum release age](https://bun.com/docs/cli/install#minimum-release-age) in the install documentation.
+
 <!-- ## Debugging -->
 
 <!--

@@ -591,13 +591,13 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                             err,
                                         );
                                     } else {
-                                        const days = this.options.minimum_release_age orelse 0;
+                                        const days = this.options.minimal_age_gate orelse 0;
                                         if (version.tag == .dist_tag) {
                                             this.log.addErrorFmt(
                                                 null,
                                                 logger.Loc.Empty,
                                                 this.allocator,
-                                                "Package \"{s}\" with tag \"{s}\" not found<r> <d>(all versions blocked by minimum-release-age: {d} days)<r>",
+                                                "Package \"{s}\" with tag \"{s}\" not found<r> <d>(all versions blocked by npm-minimal-age-gate: {d} days)<r>",
                                                 .{
                                                     this.lockfile.str(&name),
                                                     this.lockfile.str(&version.value.dist_tag.tag),
@@ -609,7 +609,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                 null,
                                                 logger.Loc.Empty,
                                                 this.allocator,
-                                                "No version matching \"{s}\" found for specifier \"{s}\"<r> <d>(blocked by minimum-release-age: {d} days)<r>",
+                                                "No version matching \"{s}\" found for specifier \"{s}\"<r> <d>(blocked by npm-minimal-age-gate: {d} days)<r>",
                                                 .{
                                                     this.lockfile.str(&name),
                                                     this.lockfile.str(&version.literal),
@@ -707,7 +707,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
                         if (!dependency.behavior.isPeer() or install_peer) {
                             if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
-                                const needs_extended_manifest = this.options.minimum_release_age != null;
+                                const needs_extended_manifest = this.options.minimal_age_gate != null;
                                 if (this.options.enable.manifest_cache) {
                                     var expired = false;
                                     if (this.manifests.byNameHashAllowExpired(
@@ -724,7 +724,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         // We can skip the network request, even if it's beyond the caching period
                                         if (version.tag == .npm and version.value.npm.version.isExact()) {
                                             if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
-                                                if (this.options.minimum_release_age) |min_age| {
+                                                if (this.options.minimal_age_gate) |min_age| {
                                                     const current_timestamp: u32 = @intCast(std.time.timestamp());
                                                     const min_age_seconds: u32 = @intFromFloat(min_age * @as(f32, @floatFromInt(std.time.s_per_day)));
 
@@ -1625,12 +1625,12 @@ fn getOrPutResolvedPackage(
                 this.scopeForPackageName(name_str),
                 name_hash,
                 .load_from_memory_fallback_to_disk,
-                this.options.minimum_release_age != null,
+                this.options.minimal_age_gate != null,
             ) orelse return null; // manifest might still be downloading. This feels unreliable.
 
             const version_result: Npm.PackageManifest.FindVersionResult = switch (version.tag) {
-                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.minimum_release_age, this.options.minimum_release_age_exclusions),
-                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.minimum_release_age, this.options.minimum_release_age_exclusions),
+                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.minimal_age_gate, this.options.minimal_age_gate_excludes),
+                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.minimal_age_gate, this.options.minimal_age_gate_excludes),
                 else => unreachable,
             };
 
@@ -1643,22 +1643,22 @@ fn getOrPutResolvedPackage(
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
-                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-day filter", .{
+                                    Output.prettyErrorln("<d>[npm-minimal-age-gate]<r> <b>{s}@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-day filter", .{
                                         package_name,
                                         tag_str,
                                         filtered.result.version.fmt(manifest.string_buf),
                                         newest.fmt(manifest.string_buf),
-                                        this.options.minimum_release_age orelse 0,
+                                        this.options.minimal_age_gate orelse 0,
                                     });
                                 },
                                 .npm => {
                                     const version_str = version.value.npm.version.fmt(manifest.string_buf);
-                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-day filter", .{
+                                    Output.prettyErrorln("<d>[npm-minimal-age-gate]<r> <b>{s}<r>@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-day filter", .{
                                         package_name,
                                         version_str,
                                         filtered.result.version.fmt(manifest.string_buf),
                                         newest.fmt(manifest.string_buf),
-                                        this.options.minimum_release_age orelse 0,
+                                        this.options.minimal_age_gate orelse 0,
                                     });
                                 },
                                 else => unreachable,
@@ -1671,10 +1671,10 @@ fn getOrPutResolvedPackage(
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
-                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}@{s}\" was downgraded from {s} to {s} due to minimum-release-age filter ({d} days)", .{ package_name, tag_str, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), this.options.minimum_release_age orelse 0 }) catch {};
+                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}@{s}\" was downgraded from {s} to {s} due to npm-minimal-age-gate filter ({d} days)", .{ package_name, tag_str, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), this.options.minimal_age_gate orelse 0 }) catch {};
                                 },
                                 .npm => {
-                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}\" was downgraded from {s} to {s} due to minimum-release-age filter ({d} days)", .{ package_name, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), this.options.minimum_release_age orelse 0 }) catch {};
+                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}\" was downgraded from {s} to {s} due to npm-minimal-age-gate filter ({d} days)", .{ package_name, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), this.options.minimal_age_gate orelse 0 }) catch {};
                                 },
                                 else => unreachable,
                             }

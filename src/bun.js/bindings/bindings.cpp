@@ -6370,10 +6370,7 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC
 extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__parseISODate(const char* dateStr, size_t length)
 {
     bool isLocalTime;
-    return WTF::parseES5Date(std::span<const LChar>(
-                                 reinterpret_cast<const LChar*>(dateStr),
-                                 length),
-        isLocalTime);
+    return WTF::parseES5Date(std::span<const LChar>(reinterpret_cast<const LChar*>(dateStr), length), isLocalTime);
 }
 
 // this is largely copied from dateProtoFuncToISOString

@@ -4,7 +4,7 @@ import { tempDir } from "harness";
 import { join } from "path";
 
 test("minifying new Array(if (0) 1 else 2) works", async () => {
-  const testDir = tempDir("minify-new-array-with-if", {
+  using testDir = tempDir("minify-new-array-with-if", {
     "entry.js": "console.log(new Array(Math.random() > -1 ? 1 : 2));",
   });
 

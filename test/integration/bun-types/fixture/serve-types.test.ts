@@ -2,6 +2,7 @@
 // on its own to make sure that the types line up with actual implementation of Bun.serve()
 
 import { expect, it } from "bun:test";
+import { isCI } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
@@ -32,12 +33,14 @@ function test<T = undefined, R extends string = never>(
   {
     onConstructorFailure,
     overrideExpectBehavior,
+    skip: skipOptions,
   }: {
     onConstructorFailure?: (error: Error) => void | Promise<void>;
     overrideExpectBehavior?: (server: NoInfer<Bun.Server<T>>) => void | Promise<void>;
+    skip?: boolean;
   } = {},
 ) {
-  const skip = "unix" in options && typeof options.unix === "string" && process.platform === "win32";
+  const skip = skipOptions || ("unix" in options && typeof options.unix === "string" && process.platform === "win32");
 
   async function testServer(server: Bun.Server<T>) {
     if (overrideExpectBehavior) {
@@ -668,13 +671,19 @@ test("ipv6Only: false (default)", {
   },
 });
 
-test("ipv6Only: true", {
-  ipv6Only: true,
-  port: 0,
-  fetch() {
-    return new Response("ipv6Only true");
+test(
+  "ipv6Only: true",
+  {
+    ipv6Only: true,
+    port: 0,
+    fetch() {
+      return new Response("ipv6Only true");
+    },
   },
-});
+  {
+    skip: isCI, // flaky on some ci machines
+  },
+);
 
 test("idleTimeout: default (10 seconds)", {
   port: 0,

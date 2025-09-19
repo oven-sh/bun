@@ -648,7 +648,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       if (!mod) break;
 
       // Stop propagation if the module is self-accepting
-      let hadSelfAccept = true;
+      let hadSelfAccept = !!mod.selfAccept;
       if (mod.selfAccept) {
         toReload.add(mod);
         visited.add(mod);

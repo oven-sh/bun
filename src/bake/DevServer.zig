@@ -395,25 +395,11 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     assert(dev.server_transpiler.resolver.opts.target != .browser);
     assert(dev.client_transpiler.resolver.opts.target == .browser);
 
-    const resolved_framework = dev.framework.resolve(&dev.server_transpiler.resolver, &dev.client_transpiler.resolver, options.arena) catch {
+    dev.framework = dev.framework.resolve(&dev.server_transpiler.resolver, &dev.client_transpiler.resolver, options.arena) catch {
         if (dev.framework.is_built_in_react)
             try bake.Framework.addReactInstallCommandNote(&dev.log);
         return global.throwValue(try dev.log.toJSAggregateError(global, bun.String.static("Framework is missing required files!")));
     };
-
-    dev.framework = resolved_framework;
-
-    // Log framework configuration details
-    bakeDebug("Framework initialized successfully", .{});
-    if (dev.framework.server_components) |sc| {
-        bakeDebug("Server Components: enabled (separate_ssr_graph: {})", .{sc.separate_ssr_graph});
-    }
-    if (dev.framework.react_fast_refresh) |_| {
-        bakeDebug("React Fast Refresh: enabled", .{});
-    }
-    if (dev.framework.file_system_router_types.len > 0) {
-        bakeDebug("File system router: {d} type(s) configured", .{dev.framework.file_system_router_types.len});
-    }
 
     errdefer dev.route_lookup.clearAndFree(alloc);
     errdefer dev.client_graph.deinit();

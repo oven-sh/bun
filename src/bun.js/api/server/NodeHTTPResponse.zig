@@ -734,8 +734,9 @@ fn getBytes(this: *NodeHTTPResponse, globalThis: *jsc.JSGlobalObject, chunk: []c
                 globalThis.reportUncaughtExceptionFromError(err);
                 return .js_undefined;
             };
-            defer this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
+
             if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
+                defer this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
                 var input = array_buffer.slice();
                 @memcpy(input[0..this.buffered_request_body_data_during_pause.len], this.buffered_request_body_data_during_pause.slice());
                 @memcpy(input[this.buffered_request_body_data_during_pause.len..], chunk);

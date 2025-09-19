@@ -851,6 +851,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       this.push(chunk);
     }
     if (last) {
+      const handle = this[kHandle];
+      if (handle) {
+        handle.ondata = undefined;
+      }
       this.push(null);
     }
   }

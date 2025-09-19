@@ -32,6 +32,8 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 
 ## Real
 
+- [ ] test/js/web/fetch/client-fetch.test.ts
+  - re-entry issue? it's with .resolves.toPass
 - [ ] test/js/bun/net/tcp-server.test.ts
   - new flaky failure on windows
   - gc(true) was supposed to fix this. unclear.

@@ -39,7 +39,7 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 
 ## Real
 
-- [ ] test/js/bun/test/concurrent.test.ts
+- [x] test/js/bun/test/concurrent.test.ts
   - this test is relying on timings. we should fix it to be guaranteed order.
 - [x] test/js/web/fetch/client-fetch.test.ts
   - re-entry issue? it's with .resolves.toPass

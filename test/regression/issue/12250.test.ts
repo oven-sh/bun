@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test.failing("issue #12250: afterAll hook should run even with --bail flag", async () => {

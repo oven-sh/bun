@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 // tests that beforeAll runs in order instead of immediately
 test("19758", async () => {

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("issue #8768: describe.todo() doesn't fail when todo test passes", async () => {

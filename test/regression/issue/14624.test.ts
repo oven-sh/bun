@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("uncaught promise rejection in async test should not hang", async () => {

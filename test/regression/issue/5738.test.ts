@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 // tests that test(1), describe(test(2)), test(3) run in order 1,2,3 instead of 2,1,3
 test("5738", async () => {

@@ -918,6 +918,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       $isCallable(callback) && callback(err);
       return;
     }
+    handle.ondata = undefined;
     if (handle.closed) {
       const onclose = handle.onclose;
       handle.onclose = null;

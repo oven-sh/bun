@@ -457,7 +457,7 @@ private:
         us_socket_context_on_writable(SSL, getSocketContext(), [](us_socket_t *s) {
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
-
+            
             /* Attempt to drain the socket buffer before triggering onWritable callback */
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {

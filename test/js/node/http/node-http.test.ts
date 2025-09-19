@@ -2932,7 +2932,7 @@ test("chunked encoding must be valid after without flushHeaders", async () => {
   server.listen(0);
   await once(server, "listening");
 
-  const socket = connect(server.address().port, () => {
+  const socket = connect(3000, () => {
     socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
   });
 

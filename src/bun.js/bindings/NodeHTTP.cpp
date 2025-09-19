@@ -27,7 +27,7 @@ extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest,
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
-extern "C" EncodedJSValue Bun__NodeHTTPResponse_rawWrite(void* socket, bool is_ssl, bool ended, char** buffer, size_t* bufferLength, size_t* bufferPosition, size_t* total_written, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" EncodedJSValue Bun__NodeHTTPResponse_rawWrite(void* socket, bool is_ssl, void* response_ctx, bool ended, char** buffer, size_t* bufferLength, size_t* bufferPosition, size_t* total_written, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" void Bun__NodeHTTPResponse_freeBuffer(char* buffer, size_t bufferLength);
 namespace Bun {
 
@@ -300,12 +300,18 @@ public:
         auto bufferedSize = this->bufferLength - this->bufferPosition;
         if (bufferedSize > 0) {
 
-            auto* globalObject = defaultGlobalObject(this->globalObject());
-            auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-            Bun__NodeHTTPResponse_rawWrite(this->socket, this->is_ssl, this->ended, &this->buffer, &this->bufferLength, &this->bufferPosition, &this->bytesWritten, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-            if (scope.exception()) {
-                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
-                return;
+            void* response_ctx = nullptr;
+            if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+                response_ctx = res->m_ctx;
+            }
+            if (response_ctx != nullptr) {
+                auto* globalObject = defaultGlobalObject(this->globalObject());
+                auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+                Bun__NodeHTTPResponse_rawWrite(this->socket, this->is_ssl, response_ctx, this->ended, &this->buffer, &this->bufferLength, &this->bufferPosition, &this->bytesWritten, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+                if (scope.exception()) {
+                    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+                    return;
+                }
             }
 
             if (bufferedSize > 0) {
@@ -417,8 +423,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
     if (thisObject->isClosed() || thisObject->ended) {
         return JSValue::encode(JSC::jsNumber(0));
     }
-
-    return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->buffer, &thisObject->bufferLength, &thisObject->bufferPosition, &thisObject->bytesWritten, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    void* response_ctx = nullptr;
+    if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+        response_ctx = res->m_ctx;
+    }
+    if (response_ctx == nullptr) {
+        return JSValue::encode(JSC::jsNumber(0));
+    }
+    return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, response_ctx, thisObject->ended, &thisObject->buffer, &thisObject->bufferLength, &thisObject->bufferPosition, &thisObject->bytesWritten, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -434,7 +446,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     thisObject->ended = true;
     auto bufferedSize = thisObject->bufferLength - thisObject->bufferPosition;
     if (bufferedSize == 0) {
-        return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->buffer, &thisObject->bufferLength, &thisObject->bufferPosition, &thisObject->bytesWritten, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        void* response_ctx = nullptr;
+        if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+            response_ctx = res->m_ctx;
+        }
+        if (response_ctx == nullptr) {
+            return JSValue::encode(JSC::jsNumber(0));
+        }
+        return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, response_ctx, thisObject->ended, &thisObject->buffer, &thisObject->bufferLength, &thisObject->bufferPosition, &thisObject->bytesWritten, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
     }
     return JSValue::encode(JSC::jsUndefined());
 }

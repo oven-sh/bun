@@ -133,6 +133,7 @@ pub fn resumeSocket(this: *NodeHTTPResponse) void {
     if (this.flags.socket_closed or this.flags.upgraded) {
         return;
     }
+
     this.raw_response.@"resume"();
 }
 
@@ -609,12 +610,10 @@ pub fn doResume(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *
     if (this.flags.request_has_completed or this.flags.socket_closed or this.flags.ended or this.flags.upgraded) {
         return .false;
     }
-
+    this.setOnAbortedHandler();
+    this.raw_response.onData(*NodeHTTPResponse, onData, this);
+    this.flags.is_data_buffered_during_pause = false;
     var result: jsc.JSValue = .true;
-    if (this.flags.is_data_buffered_during_pause) {
-        this.raw_response.onData(*NodeHTTPResponse, onData, this);
-        this.flags.is_data_buffered_during_pause = false;
-    }
 
     if (this.drainBufferedRequestBodyFromPause(globalObject)) |buffered_data| {
         result = buffered_data;
@@ -804,23 +803,33 @@ pub fn onData(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
     onDataOrAborted(this, chunk, last, .none, this.getThisValue());
 }
 
-fn onDrain(this: *NodeHTTPResponse, offset: u64, response: uws.AnyResponse) bool {
-    log("onDrain({d})", .{offset});
+fn onDrainCorked(this: *NodeHTTPResponse, offset: u64) void {
+    log("onDrainCorked({d})", .{offset});
     this.ref();
     defer this.deref();
-    response.clearOnWritable();
+    const socketValue = this.getServerSocketValue();
+    if (socketValue != .zero) {
+        Bun__callNodeHTTPServerSocketOnDrain(socketValue);
+    }
+
+    const thisValue = this.getThisValue();
+    const on_writable = js.onWritableGetCached(thisValue) orelse return;
+    const globalThis = jsc.VirtualMachine.get().global;
+    js.onWritableSetCached(thisValue, globalThis, .js_undefined); // TODO(@heimskr): is this necessary?
+    const vm = globalThis.bunVM();
+
+    vm.eventLoop().runCallback(on_writable, globalThis, .js_undefined, &.{jsc.JSValue.jsNumberFromUint64(offset)});
+}
+
+fn onDrain(this: *NodeHTTPResponse, offset: u64, response: uws.AnyResponse) bool {
+    log("onDrain({d})", .{offset});
+
     if (this.flags.socket_closed or this.flags.request_has_completed or this.flags.upgraded) {
         // return false means we don't have anything to drain
         return false;
     }
 
-    const thisValue = this.getThisValue();
-    const on_writable = js.onWritableGetCached(thisValue) orelse return false;
-    const globalThis = jsc.VirtualMachine.get().global;
-    js.onWritableSetCached(thisValue, globalThis, .js_undefined); // TODO(@heimskr): is this necessary?
-    const vm = globalThis.bunVM();
-
-    response.corked(jsc.EventLoop.runCallback, .{ vm.eventLoop(), on_writable, globalThis, .js_undefined, &.{jsc.JSValue.jsNumberFromUint64(offset)} });
+    response.corked(onDrainCorked, .{ this, offset });
     // return true means we may have something to drain
     return true;
 }
@@ -978,10 +987,6 @@ pub fn setOnWritable(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalObje
     } else {
         js.onWritableSetCached(thisValue, globalObject, value.withAsyncContextIfNeeded(globalObject));
     }
-    const socketValue = this.getServerSocketValue();
-    if (socketValue != .zero) {
-        Bun__callNodeHTTPServerSocketOnDrain(socketValue);
-    }
 }
 
 pub fn getOnWritable(_: *NodeHTTPResponse, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
@@ -1024,12 +1029,15 @@ pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, value
 }
 
 fn clearOnDataCallback(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject) void {
+    log("clearOnDataCallback", .{});
     if (this.body_read_state != .none) {
         if (thisValue != .zero) {
             js.onDataSetCached(thisValue, globalObject, .js_undefined);
         }
-        if (!this.flags.socket_closed and !this.flags.upgraded)
+        if (!this.flags.socket_closed and !this.flags.upgraded) {
+            log("clearOnData", .{});
             this.raw_response.clearOnData();
+        }
         if (this.body_read_state != .done) {
             this.body_read_state = .done;
         }
@@ -1189,6 +1197,7 @@ pub export fn Bun__NodeHTTPResponse_freeBuffer(buffer: [*]u8, bufferLength: usiz
 pub export fn Bun__NodeHTTPResponse_rawWrite(
     socket: *uws.us_socket_t,
     is_ssl: bool,
+    response_ctx: *NodeHTTPResponse,
     ended: bool,
     buffer: *?[*]u8,
     bufferLength: *usize,
@@ -1219,6 +1228,7 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         bufferLength.* = stream_buffer.list.items.len;
         bufferPosition.* = stream_buffer.cursor;
     }
+    response_ctx.setOnAbortedHandler();
 
     var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
     const node_buffer: jsc.Node.BlobOrStringOrBuffer = if (data.isUndefined())
@@ -1252,6 +1262,7 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         if (written < to_flush.len) {
             log("Bun__NodeHTTPResponse_rawWrite backpressure (moreinside stream buffer) {d}", .{total_written.*});
             if (data_slice.len > 0) {
+                response_ctx.raw_response.onWritable(*NodeHTTPResponse, onDrain, response_ctx);
                 bun.handleOom(stream_buffer.write(data_slice));
             }
             return JSValue.jsNumber(written);
@@ -1264,6 +1275,8 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         total_written.* = total_written.* +| written;
         if (written < data_slice.len) {
             log("Bun__NodeHTTPResponse_rawWrite backpressure {d}", .{total_written.*});
+            response_ctx.raw_response.onWritable(*NodeHTTPResponse, onDrain, response_ctx);
+
             bun.handleOom(stream_buffer.write(data_slice[written..]));
             return JSValue.jsNumber(total_written.*);
         }

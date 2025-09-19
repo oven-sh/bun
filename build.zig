@@ -599,7 +599,9 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     // Object options
     obj.use_llvm = !opts.no_llvm;
-    obj.use_lld = if (opts.os == .mac) false else !opts.no_llvm;
+    // Disable lld for objects to avoid the slow ld.lld -r step
+    // This produces a broken stub, but we'll fix it with a copy step
+    obj.use_lld = false;
     if (opts.enable_asan) {
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;
@@ -657,11 +659,65 @@ pub fn addInstallObjectFile(
 ) *Step {
     // bin always needed to be computed or else the compilation will do nothing. zig build system bug?
     const bin = compile.getEmittedBin();
+    const dest_name = b.fmt("{s}.o", .{name});
+
+    // When lld is disabled, Zig creates a broken stub .o file and the real object as .o.o
+    // We need to copy the .o.o file to the destination instead
+    if (out_mode == .obj and !(compile.use_lld orelse true)) {
+        // First, install the stub to ensure the compilation happens
+        const install_stub = b.addInstallFile(bin, dest_name);
+
+        // Then create a custom step to copy the .o.o file over the stub
+        const fix_step = FixObjectStep.create(b, compile, dest_name);
+        fix_step.step.dependOn(&install_stub.step);
+
+        return &fix_step.step;
+    }
+
     return &b.addInstallFile(switch (out_mode) {
         .obj => bin,
         .bc => compile.getEmittedLlvmBc(),
-    }, b.fmt("{s}.o", .{name})).step;
+    }, dest_name).step;
 }
+
+/// Custom step to copy the .o.o file over the stub .o file
+const FixObjectStep = struct {
+    step: Step,
+    compile: *Compile,
+    dest_name: []const u8,
+
+    pub fn create(b: *Build, compile: *Compile, dest_name: []const u8) *FixObjectStep {
+        const fix_step = b.allocator.create(FixObjectStep) catch @panic("OOM");
+        fix_step.* = .{
+            .step = Step.init(.{
+                .id = .custom,
+                .name = b.fmt("fix object {s}", .{dest_name}),
+                .owner = b,
+                .makeFn = make,
+            }),
+            .compile = compile,
+            .dest_name = b.dupe(dest_name),
+        };
+        return fix_step;
+    }
+
+    fn make(step: *Step, options: Step.MakeOptions) !void {
+        _ = options;
+        const fix_step: *FixObjectStep = @fieldParentPtr("step", step);
+        const b = step.owner;
+
+        // Get the path to the installed stub file
+        const dest_path = b.getInstallPath(.prefix, fix_step.dest_name);
+
+        // Find the .o.o file in the cache
+        // The .o.o file is in the same directory as the .o file but with .o.o extension
+        const cache_o_path = fix_step.compile.getEmittedBin().getPath2(b, step);
+        const cache_oo_path = b.fmt("{s}.o", .{cache_o_path});
+
+        // Copy the .o.o file over the stub
+        try std.fs.copyFileAbsolute(cache_oo_path, dest_path, .{});
+    }
+};
 
 var checked_file_exists: std.AutoHashMap(u64, void) = undefined;
 fn exists(path: []const u8) bool {

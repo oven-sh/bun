@@ -382,7 +382,9 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
-static termios termios_to_restore_later[3];
+termios termios_to_restore_later[3];
+// Track which terminal settings were actually saved
+bool termios_was_saved[3] = { false, false, false };
 #endif
 
 extern "C" void bun_restore_stdio()
@@ -392,7 +394,7 @@ extern "C" void bun_restore_stdio()
 
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {
-        if (!bun_stdio_tty[fd])
+        if (!bun_stdio_tty[fd] || !termios_was_saved[fd])
             continue;
 
         sigset_t sa;
@@ -459,7 +461,7 @@ extern "C" void bun_initialize_process()
 #if OS(LINUX) || OS(DARWIN)
 
     int devNullFd_ = -1;
-    bool anyTTYs = false;
+    // bool anyTTYs = false;  // No longer needed since we don't set up signal handlers here
 
     const auto setDevNullFd = [&](int target_fd) -> void {
         bun_is_stdio_null[target_fd] = 1;
@@ -494,15 +496,10 @@ extern "C" void bun_initialize_process()
             }
         } else {
             bun_stdio_tty[fd] = 1;
-            int err = 0;
 
-            do {
-                err = tcgetattr(fd, &termios_to_restore_later[fd]);
-            } while (err == -1 && errno == EINTR);
-
-            if (err == 0) [[likely]] {
-                anyTTYs = true;
-            }
+            // Following libuv's approach: DO NOT save any terminal settings at initialization
+            // Only save them when/if we actually modify them via Bun__ttySetMode
+            // This prevents interfering with programs like 'less' that need terminal control
         }
     }
 
@@ -511,18 +508,21 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sigemptyset(&sa.sa_mask);
+    // Only restore TTY state on exit if we're actually modifying terminal settings
+    // Don't set up signal handlers just because stdout/stderr are TTYs, as this
+    // can interfere with programs like 'less' that control stdin when our output is piped
+    // Signal handlers will be set up by Bun__ttySetMode if/when terminal modes are actually changed
+    // if (anyTTYs) {
+    //     struct sigaction sa;
+    //     memset(&sa, 0, sizeof(sa));
+    //     sigemptyset(&sa.sa_mask);
 
-        sa.sa_flags = SA_RESETHAND;
-        sa.sa_handler = onExitSignal;
+    //     sa.sa_flags = SA_RESETHAND;
+    //     sa.sa_handler = onExitSignal;
 
-        sigaction(SIGTERM, &sa, nullptr);
-        sigaction(SIGINT, &sa, nullptr);
-    }
+    //     sigaction(SIGTERM, &sa, nullptr);
+    //     sigaction(SIGINT, &sa, nullptr);
+    // }
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
         auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));

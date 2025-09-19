@@ -23,6 +23,15 @@ static std::once_flag reset_once_flag;
 static int current_tty_mode = 0;
 static struct termios orig_tty_termios;
 
+// External declarations for terminal restoration
+extern "C" int32_t bun_stdio_tty[3];
+extern struct termios termios_to_restore_later[3];
+extern bool termios_was_saved[3];
+
+#include <signal.h>
+extern "C" void onExitSignal(int sig);
+static std::once_flag signal_handler_once_flag;
+
 int uv__tcsetattr(int fd, int how, const struct termios* term)
 {
     int rc;
@@ -124,6 +133,13 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
         if (orig_termios_fd == -1) {
             orig_termios = orig_tty_termios;
             orig_termios_fd = fd;
+
+            // Save the terminal settings for restoration later
+            // This follows libuv's approach - only save when we actually modify
+            if (fd >= 0 && fd <= 2 && bun_stdio_tty[fd]) {
+                termios_to_restore_later[fd] = orig_tty_termios;
+                termios_was_saved[fd] = true;
+            }
         }
 
         atomic_store(&orig_termios_spinlock, 0);
@@ -146,6 +162,17 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
                 uv_tty_reset_mode();
             });
         });
+
+        // Set up signal handlers when we actually modify terminal settings
+        std::call_once(signal_handler_once_flag, [] {
+            struct sigaction sa;
+            memset(&sa, 0, sizeof(sa));
+            sigemptyset(&sa.sa_mask);
+            sa.sa_flags = SA_RESETHAND;
+            sa.sa_handler = onExitSignal;
+            sigaction(SIGTERM, &sa, nullptr);
+            sigaction(SIGINT, &sa, nullptr);
+        });
         break;
     case 2: // io
         uv__tty_make_raw(&tmp);
@@ -154,6 +181,17 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
             Bun__atexit([] {
                 uv_tty_reset_mode();
             });
+        });
+
+        // Set up signal handlers when we actually modify terminal settings
+        std::call_once(signal_handler_once_flag, [] {
+            struct sigaction sa;
+            memset(&sa, 0, sizeof(sa));
+            sigemptyset(&sa.sa_mask);
+            sa.sa_flags = SA_RESETHAND;
+            sa.sa_handler = onExitSignal;
+            sigaction(SIGTERM, &sa, nullptr);
+            sigaction(SIGINT, &sa, nullptr);
         });
         break;
     }

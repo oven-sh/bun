@@ -337,12 +337,24 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const stmt = db.prepare(sql);
         let result: unknown[] | undefined;
 
-        if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
-        } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
+        // If values is an object (not array), call the method directly
+        // Otherwise use $apply to spread the array
+        if (values && typeof values === "object" && !$isArray(values)) {
+          if (mode === SQLQueryResultMode.values) {
+            result = stmt.values(values);
+          } else if (mode === SQLQueryResultMode.raw) {
+            result = stmt.raw(values);
+          } else {
+            result = stmt.all(values);
+          }
         } else {
-          result = stmt.all.$apply(stmt, values);
+          if (mode === SQLQueryResultMode.values) {
+            result = stmt.values.$apply(stmt, values);
+          } else if (mode === SQLQueryResultMode.raw) {
+            result = stmt.raw.$apply(stmt, values);
+          } else {
+            result = stmt.all.$apply(stmt, values);
+          }
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -354,7 +366,14 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run.$apply(db, [sql].concat(values));
+        let changes;
+        if (values && typeof values === "object" && !$isArray(values)) {
+          // If values is an object, pass it directly
+          changes = db.run(sql, values);
+        } else {
+          // Otherwise use $apply to spread array parameters
+          changes = db.run.$apply(db, [sql].concat(values));
+        }
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = command;
@@ -473,8 +492,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
     if (typeof strings === "string") {
-      // identifier or unsafe query
-      // SQLite natively supports both array and object parameters
       return [strings, values || []];
     }
 

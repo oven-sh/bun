@@ -717,6 +717,33 @@ if (docker) {
           }
         });
 
+        test("unsafe with object parameters", async () => {
+          await sql`create table obj_test (id int, name varchar(100), age int)`;
+          try {
+            // MySQL uses :name syntax for named parameters
+            await sql.unsafe(
+              "insert into obj_test (id, name, age) values (:id, :name, :age)",
+              { id: 1, name: "Alice", age: 25 }
+            );
+
+            await sql.unsafe(
+              "insert into obj_test (id, name, age) values (:id, :name, :age)",
+              { id: 2, name: "Bob", age: 30 }
+            );
+
+            const results = await sql.unsafe(
+              "select * from obj_test where age > :minAge order by id",
+              { minAge: 20 }
+            );
+
+            expect(results).toHaveLength(2);
+            expect(results[0].name).toBe("Alice");
+            expect(results[1].name).toBe("Bob");
+          } finally {
+            await sql`drop table obj_test`;
+          }
+        });
+
         test("unsafe simple", async () => {
           await using sql = new SQL({ ...options, max: 1 });
           expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);

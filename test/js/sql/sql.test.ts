@@ -1689,6 +1689,17 @@ if (isDockerEnabled()) {
     }
   });
 
+  test("unsafe rejects object parameters for PostgreSQL", async () => {
+    // PostgreSQL only supports positional parameters, not named parameters
+    try {
+      await sql.unsafe("select * from test where id = $1", { id: 1 });
+      throw new Error("Should have thrown");
+    } catch (error: any) {
+      expect(error.code).toBe("ERR_POSTGRES_OBJECT_PARAMS_NOT_SUPPORTED");
+      expect(error.message).toContain("PostgreSQL adapter only supports array parameters");
+    }
+  });
+
   test("unsafe simple", async () => {
     expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
   });

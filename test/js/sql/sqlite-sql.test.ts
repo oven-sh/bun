@@ -1311,6 +1311,64 @@ describe("SQL helpers", () => {
     expect(results[0].value).toBe("test");
   });
 
+  test("unsafe with object parameters", async () => {
+    await sql`CREATE TABLE obj_test (id INTEGER, name TEXT, age INTEGER)`;
+
+    // SQLite supports $name, :name, and @name syntax for named parameters
+    // The object keys MUST include the prefix character (unless strict mode is enabled)
+    await sql.unsafe(
+      "INSERT INTO obj_test (id, name, age) VALUES ($id, $name, $age)",
+      { $id: 1, $name: "Alice", $age: 25 }
+    );
+
+    await sql.unsafe(
+      "INSERT INTO obj_test (id, name, age) VALUES (:id, :name, :age)",
+      { ":id": 2, ":name": "Bob", ":age": 30 }
+    );
+
+    await sql.unsafe(
+      "INSERT INTO obj_test (id, name, age) VALUES (@id, @name, @age)",
+      { "@id": 3, "@name": "Charlie", "@age": 35 }
+    );
+
+    const results = await sql.unsafe(
+      "SELECT * FROM obj_test WHERE age > $minAge ORDER BY id",
+      { $minAge: 20 }
+    );
+
+    expect(results).toHaveLength(3);
+    expect(results[0].name).toBe("Alice");
+    expect(results[1].name).toBe("Bob");
+    expect(results[2].name).toBe("Charlie");
+
+    // Test with multiple same parameter usage
+    const filtered = await sql.unsafe(
+      "SELECT * FROM obj_test WHERE name = $name OR age = $age",
+      { $name: "Alice", $age: 30 }
+    );
+    expect(filtered).toHaveLength(2);
+  });
+
+  test("unsafe with object parameters in transactions", async () => {
+    await sql`CREATE TABLE accounts (id INTEGER, balance REAL)`;
+    await sql`INSERT INTO accounts VALUES (1, 100.0), (2, 200.0)`;
+
+    await sql.begin(async (tx) => {
+      await tx.unsafe(
+        "UPDATE accounts SET balance = balance - $amount WHERE id = $id",
+        { $amount: 50.0, $id: 1 }
+      );
+      await tx.unsafe(
+        "UPDATE accounts SET balance = balance + $amount WHERE id = $id",
+        { $amount: 50.0, $id: 2 }
+      );
+    });
+
+    const results = await sql`SELECT * FROM accounts ORDER BY id`;
+    expect(results[0].balance).toBe(50.0);
+    expect(results[1].balance).toBe(250.0);
+  });
+
   test("file execution", async () => {
     const dir = tempDirWithFiles("sql-files", {
       "schema.sql": `
@@ -1335,6 +1393,16 @@ describe("SQL helpers", () => {
     });
 
     const result = await sql.file(path.join(dir, "query.sql"), ["value1", "value2"]);
+    expect(result[0].param1).toBe("value1");
+    expect(result[0].param2).toBe("value2");
+  });
+
+  test("file with object parameters", async () => {
+    const dir = tempDirWithFiles("sql-obj-params", {
+      "query.sql": `SELECT $param1 as param1, $param2 as param2`,
+    });
+
+    const result = await sql.file(path.join(dir, "query.sql"), { $param1: "value1", $param2: "value2" });
     expect(result[0].param1).toBe("value1");
     expect(result[0].param2).toBe("value2");
   });

@@ -993,8 +993,6 @@ class MySQLAdapter
 
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
     if (typeof strings === "string") {
-      // identifier or unsafe query
-      // MySQL natively supports both array and object parameters
       return [strings, values || []];
     }
 

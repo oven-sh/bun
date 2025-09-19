@@ -99,15 +99,6 @@ pub fn detectAndLoadOtherLockfile(
                     , .{});
                     Global.exit(1);
                 },
-                error.PnpmLockfileTooNew => {
-                    Output.prettyErrorln(
-                        \\<red><b>error<r><d>:<r> pnpm-lock.yaml version is too new
-                        \\
-                        \\This version of Bun supports pnpm lockfile versions 7, 8, and 9.
-                        \\Please open an issue at https://github.com/oven-sh/bun/issues
-                    , .{});
-                    Global.exit(1);
-                },
                 else => {},
             }
             if (Environment.isDebug) {

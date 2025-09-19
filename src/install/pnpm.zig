@@ -73,7 +73,6 @@ const CatalogEntry = struct {
 
 /// Represents the parsed pnpm lockfile structure
 const PnpmLockfile = struct {
-    lockfile_version: string,
     settings: ?*E.Object = null,
     importers: ?*E.Object = null,
     packages: ?*E.Object = null,
@@ -276,7 +275,6 @@ const MigratePnpmLockfileError = OOM || error{
     PnpmLockfileVersionMissing,
     PnpmLockfileVersionInvalid,
     PnpmLockfileTooOld,
-    PnpmLockfileTooNew,
     DependencyLoop,
 };
 
@@ -288,7 +286,7 @@ pub fn migratePnpmLockfile(
     log: *logger.Log,
     data: string,
     dir: bun.FD,
-) MigratePnpmLockfileError!LoadResult {
+) !LoadResult {
     this.initEmpty(allocator);
     Install.initializeStore();
 
@@ -308,25 +306,35 @@ pub fn migratePnpmLockfile(
 
     const root = json.data.e_object;
 
-    var lockfile_version = if (root.get("lockfileVersion")) |version_obj| version_obj.asString(arena.allocator()) orelse "" else "";
-    if (lockfile_version.len == 0) {
+    const lockfile_version_expr = root.get("lockfileVersion") orelse {
         return error.PnpmLockfileVersionMissing;
-    }
+    };
 
-    // Parse version number (handle both "9.0" and "9" formats)
-    const major_version = std.fmt.parseInt(u32, if (strings.indexOfChar(lockfile_version, '.')) |dot_idx|
-        lockfile_version[0..dot_idx]
-    else
-        lockfile_version, 10) catch {
+    const lockfile_version_num: u32 = lockfile_version: {
+        err: {
+            switch (lockfile_version_expr.data) {
+                .e_number => |num| {
+                    if (num.value < 0 or num.value > std.math.maxInt(u32)) {
+                        break :err;
+                    }
+
+                    break :lockfile_version @intFromFloat(std.math.divExact(f64, num.value, 1) catch break :err);
+                },
+                .e_string => |version_str| {
+                    const str = version_str.slice(allocator);
+
+                    const end = strings.indexOfChar(str, '.') orelse str.len;
+                    break :lockfile_version std.fmt.parseUnsigned(u32, str[0..end], 10) catch break :err;
+                },
+                else => {},
+            }
+        }
+
         return error.PnpmLockfileVersionInvalid;
     };
 
-    if (major_version != 7 and major_version != 8 and major_version != 9) {
-        if (major_version < 7) {
-            return error.PnpmLockfileTooOld;
-        } else {
-            return error.PnpmLockfileTooNew;
-        }
+    if (lockfile_version_num < 6) {
+        return error.PnpmLockfileTooOld;
     }
 
     var string_buf = this.stringBuf();
@@ -341,7 +349,6 @@ pub fn migratePnpmLockfile(
     const packages_obj = root.get("packages");
 
     var pnpm = PnpmLockfile{
-        .lockfile_version = lockfile_version,
         .settings = if (root.get("settings")) |s| (if (s.data == .e_object) s.data.e_object else null) else null,
         .importers = if (root.get("importers")) |i| (if (i.data == .e_object) i.data.e_object else null) else null,
         .packages = if (packages_obj) |p| (if (p.data == .e_object) p.data.e_object else null) else null,
@@ -472,15 +479,6 @@ pub fn migratePnpmLockfile(
 
     var workspace_actual_names = bun.StringHashMap([]const u8).init(allocator);
     defer workspace_actual_names.deinit();
-
-    //// todo: these are most important to resync from registry api
-    var packages_with_bins = std.ArrayList([]const u8).init(allocator);
-    defer {
-        for (packages_with_bins.items) |pkg_name| {
-            allocator.free(pkg_name);
-        }
-        packages_with_bins.deinit();
-    }
 
     var package_peer_deps = bun.StringHashMap(bun.StringHashMap(bool)).init(allocator);
     defer {
@@ -1470,15 +1468,6 @@ pub fn migratePnpmLockfile(
                 if (ver_obj_meta.data == .e_string) {
                     canonical_version = ver_obj_meta.data.e_string.data;
                 }
-            }
-
-            const has_bin = if (pkg_metadata.get("hasBin")) |bin_field| blk: {
-                break :blk bin_field.data == .e_boolean and bin_field.data.e_boolean.value;
-            } else false;
-
-            if (has_bin) {
-                const pkg_with_bin = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ permanent_name_str, canonical_version });
-                try packages_with_bins.append(pkg_with_bin);
             }
 
             if (pkg_metadata.get("peerDependencies")) |peer_field| {
@@ -2680,21 +2669,13 @@ pub fn migratePnpmLockfile(
 
     try this.resolve(log);
 
+    // try this.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager);
+
     if (Environment.allow_assert) {
         try this.verifyData();
     }
 
     this.meta_hash = try this.generateMetaHash(false, this.packages.len);
-
-    if (packages_with_bins.items.len > 0) {
-        var bins_list = std.ArrayList(u8).init(allocator);
-        defer bins_list.deinit();
-
-        for (packages_with_bins.items, 0..) |pkg_name, i| {
-            if (i > 0) try bins_list.appendSlice(", ");
-            try bins_list.appendSlice(pkg_name);
-        }
-    }
 
     updatePackageJsonAfterMigration(allocator, log, dir) catch {};
 
@@ -2741,16 +2722,16 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: 
 
     if (json.asProperty("pnpm")) |pnpm_prop| {
         if (pnpm_prop.expr.data == .e_object) {
-            const pnpm_obj = &pnpm_prop.expr.data.e_object;
+            const pnpm_obj = pnpm_prop.expr.data.e_object;
 
-            if (pnpm_obj.*.get("overrides")) |overrides_field| {
+            if (pnpm_obj.get("overrides")) |overrides_field| {
                 if (overrides_field.data == .e_object) {
                     if (json.asProperty("overrides")) |existing_prop| {
                         if (existing_prop.expr.data == .e_object) {
-                            const existing_overrides = &existing_prop.expr.data.e_object;
+                            const existing_overrides = existing_prop.expr.data.e_object;
                             for (overrides_field.data.e_object.properties.slice()) |prop| {
                                 const key = prop.key.?.asString(allocator) orelse continue;
-                                try existing_overrides.*.put(allocator, key, prop.value.?);
+                                try existing_overrides.put(allocator, key, prop.value.?);
                             }
                         }
                     } else {
@@ -2761,14 +2742,14 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: 
                 }
             }
 
-            if (pnpm_obj.*.get("patchedDependencies")) |patched_field| {
+            if (pnpm_obj.get("patchedDependencies")) |patched_field| {
                 if (patched_field.data == .e_object) {
                     if (json.asProperty("patchedDependencies")) |existing_prop| {
                         if (existing_prop.expr.data == .e_object) {
-                            const existing_patches = &existing_prop.expr.data.e_object;
+                            const existing_patches = existing_prop.expr.data.e_object;
                             for (patched_field.data.e_object.properties.slice()) |prop| {
                                 const key = prop.key.?.asString(allocator) orelse continue;
-                                try existing_patches.*.put(allocator, key, prop.value.?);
+                                try existing_patches.put(allocator, key, prop.value.?);
                             }
                         }
                     } else {
@@ -2781,7 +2762,7 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: 
 
             if (moved_overrides or moved_patched_deps) {
                 var remaining_count: usize = 0;
-                for (pnpm_obj.*.properties.slice()) |prop| {
+                for (pnpm_obj.properties.slice()) |prop| {
                     const key = prop.key.?.asString(allocator) orelse {
                         remaining_count += 1;
                         continue;
@@ -2803,89 +2784,71 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: 
                         }
                     }
 
-                    var new_root_props = try allocator.alloc(@TypeOf(json.data.e_object.properties.slice()[0]), new_root_count);
-                    var idx: usize = 0;
+                    var new_root_props: JSAst.G.Property.List = try .initCapacity(allocator, new_root_count);
                     for (json.data.e_object.properties.slice()) |prop| {
                         const key = prop.key.?.asString(allocator) orelse {
-                            new_root_props[idx] = prop;
-                            idx += 1;
+                            new_root_props.appendAssumeCapacity(prop);
                             continue;
                         };
                         if (!strings.eqlComptime(key, "pnpm")) {
-                            new_root_props[idx] = prop;
-                            idx += 1;
+                            new_root_props.appendAssumeCapacity(prop);
                         }
                     }
 
-                    const G = JSAst.G;
-                    json.data.e_object.properties = G.Property.List.init(new_root_props);
+                    json.data.e_object.properties = new_root_props;
                 } else {
-                    var new_pnpm_props = try allocator.alloc(@TypeOf(pnpm_obj.*.properties.slice()[0]), remaining_count);
-                    var idx: usize = 0;
-                    for (pnpm_obj.*.properties.slice()) |prop| {
+                    var new_pnpm_props: JSAst.G.Property.List = try .initCapacity(allocator, remaining_count);
+                    for (pnpm_obj.properties.slice()) |prop| {
                         const key = prop.key.?.asString(allocator) orelse {
-                            new_pnpm_props[idx] = prop;
-                            idx += 1;
+                            new_pnpm_props.appendAssumeCapacity(prop);
                             continue;
                         };
                         if (moved_overrides and strings.eqlComptime(key, "overrides")) continue;
                         if (moved_patched_deps and strings.eqlComptime(key, "patchedDependencies")) continue;
-                        new_pnpm_props[idx] = prop;
-                        idx += 1;
+                        new_pnpm_props.appendAssumeCapacity(prop);
                     }
 
-                    const G = JSAst.G;
-                    pnpm_obj.*.properties = G.Property.List.init(new_pnpm_props);
+                    pnpm_obj.properties = new_pnpm_props;
                 }
                 needs_update = true;
             }
         }
     }
 
-    var workspace_paths: ?[]const []const u8 = null;
-    var catalog_obj: ?JSAst.Expr = null;
-    var catalogs_obj: ?JSAst.Expr = null;
+    var workspace_paths: ?std.ArrayList([]const u8) = null;
+    var catalog_obj: ?Expr = null;
+    var catalogs_obj: ?Expr = null;
 
-    const has_workspace_yaml = blk: {
-        std.fs.cwd().access("pnpm-workspace.yaml", .{}) catch break :blk false;
-        break :blk true;
-    };
+    switch (bun.sys.File.readFrom(bun.FD.cwd(), "pnpm-workspace.yaml", allocator)) {
+        .result => |contents| read_pnpm_workspace_yaml: {
+            const yaml_source = logger.Source.initPathString("pnpm-workspace.yaml", contents);
+            const root = YAML.parse(&yaml_source, log, allocator) catch {
+                break :read_pnpm_workspace_yaml;
+            };
 
-    if (has_workspace_yaml) {
-        if (std.fs.cwd().readFileAlloc(allocator, "pnpm-workspace.yaml", 1024 * 1024)) |yaml_content| {
-            const yaml_source = logger.Source.initPathString("pnpm-workspace.yaml", yaml_content);
-            if (YAML.parse(&yaml_source, log, allocator)) |parsed| {
-                if (parsed.data == .e_object) {
-                    const root = parsed.data.e_object;
-
-                    if (root.get("packages")) |packages_field| {
-                        if (packages_field.data == .e_array) {
-                            var paths = std.ArrayList([]const u8).init(allocator);
-                            defer paths.deinit();
-
-                            for (packages_field.data.e_array.items.slice()) |item| {
-                                const path = item.asString(allocator) orelse continue;
-                                paths.append(try allocator.dupe(u8, path)) catch continue;
-                            }
-
-                            workspace_paths = try allocator.dupe([]const u8, paths.items);
+            if (root.get("packages")) |packages_expr| {
+                if (packages_expr.asArray()) |_packages| {
+                    var packages = _packages;
+                    var paths: std.ArrayList([]const u8) = .init(allocator);
+                    while (packages.next()) |package_path| {
+                        if (package_path.asString(allocator)) |package_path_str| {
+                            try paths.append(package_path_str);
                         }
                     }
 
-                    if (root.get("catalog")) |catalog_field| {
-                        if (catalog_field.data == .e_object) {
-                            catalog_obj = catalog_field;
-                        }
-                    }
-
-                    if (root.get("catalogs")) |catalogs_field| {
-                        if (catalogs_field.data == .e_object) {
-                            catalogs_obj = catalogs_field;
-                        }
-                    }
+                    workspace_paths = paths;
                 }
-            } else |_| {}
-        } else |_| {}
+            }
+
+            if (root.getObject("catalog")) |catalog_expr| {
+                catalog_obj = catalog_expr;
+            }
+
+            if (root.getObject("catalogs")) |catalogs_expr| {
+                catalogs_obj = catalogs_expr;
+            }
+        },
+        .err => {},
     }
 
     const has_workspace_data = workspace_paths != null or catalog_obj != null or catalogs_obj != null;
@@ -2898,139 +2861,69 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: 
 
         if (use_array_format) {
             const paths = workspace_paths.?;
-            var workspace_exprs = try allocator.alloc(JSAst.Expr, paths.len);
-            for (paths, 0..) |path, i| {
-                const str = try allocator.create(JSAst.E.String);
-                str.* = JSAst.E.String{ .data = path };
-                workspace_exprs[i] = JSAst.Expr{
-                    .data = .{ .e_string = str },
-                    .loc = logger.Loc.Empty,
-                };
+            var items: JSAst.ExprNodeList = try .initCapacity(allocator, paths.items.len);
+            for (paths.items) |path| {
+                items.appendAssumeCapacity(Expr.init(E.String, .{ .data = path }, .Empty));
             }
-            const array = try allocator.create(JSAst.E.Array);
-            array.* = JSAst.E.Array{
-                .items = JSAst.ExprNodeList.init(workspace_exprs),
-                .was_originally_macro = false,
-            };
-
-            try json.data.e_object.put(allocator, "workspaces", JSAst.Expr{
-                .data = .{ .e_array = array },
-                .loc = logger.Loc.Empty,
-            });
+            const array = Expr.init(E.Array, .{ .items = items }, .Empty);
+            try json.data.e_object.put(allocator, "workspaces", array);
             needs_update = true;
         } else if (is_object_workspaces) {
-            const ws_obj = &existing_workspaces.?.data.e_object;
+            const ws_obj = existing_workspaces.?.data.e_object;
 
             if (workspace_paths) |paths| {
-                if (paths.len > 0) {
-                    var workspace_exprs = try allocator.alloc(JSAst.Expr, paths.len);
-                    for (paths, 0..) |path, i| {
-                        const str = try allocator.create(JSAst.E.String);
-                        str.* = JSAst.E.String{ .data = path };
-                        workspace_exprs[i] = JSAst.Expr{
-                            .data = .{ .e_string = str },
-                            .loc = logger.Loc.Empty,
-                        };
+                if (paths.items.len > 0) {
+                    var items: JSAst.ExprNodeList = try .initCapacity(allocator, paths.items.len);
+                    for (paths.items) |path| {
+                        items.appendAssumeCapacity(Expr.init(E.String, .{ .data = path }, .Empty));
                     }
-                    const array = try allocator.create(JSAst.E.Array);
-                    array.* = JSAst.E.Array{
-                        .items = JSAst.ExprNodeList.init(workspace_exprs),
-                        .was_originally_macro = false,
-                    };
-                    try ws_obj.*.put(allocator, "packages", JSAst.Expr{
-                        .data = .{ .e_array = array },
-                        .loc = logger.Loc.Empty,
-                    });
+                    const array = Expr.init(E.Array, .{ .items = items }, .Empty);
+                    try ws_obj.put(allocator, "packages", array);
+
                     needs_update = true;
                 }
             }
 
             if (catalog_obj) |catalog| {
-                try ws_obj.*.put(allocator, "catalog", catalog);
+                try ws_obj.put(allocator, "catalog", catalog);
                 needs_update = true;
             }
 
             if (catalogs_obj) |catalogs| {
-                try ws_obj.*.put(allocator, "catalogs", catalogs);
+                try ws_obj.put(allocator, "catalogs", catalogs);
                 needs_update = true;
             }
         } else if (!use_array_format) {
-            var ws_props = std.ArrayList(JSAst.G.Property).init(allocator);
+            var ws_props: JSAst.G.Property.List = .empty;
 
             if (workspace_paths) |paths| {
-                if (paths.len > 0) {
-                    var workspace_exprs = try allocator.alloc(JSAst.Expr, paths.len);
-                    for (paths, 0..) |path, i| {
-                        const str = try allocator.create(JSAst.E.String);
-                        str.* = JSAst.E.String{ .data = path };
-                        workspace_exprs[i] = JSAst.Expr{
-                            .data = .{ .e_string = str },
-                            .loc = logger.Loc.Empty,
-                        };
+                if (paths.items.len > 0) {
+                    var items: JSAst.ExprNodeList = try .initCapacity(allocator, paths.items.len);
+                    for (paths.items) |path| {
+                        items.appendAssumeCapacity(Expr.init(E.String, .{ .data = path }, .Empty));
                     }
-                    const array = try allocator.create(JSAst.E.Array);
-                    array.* = JSAst.E.Array{
-                        .items = JSAst.ExprNodeList.init(workspace_exprs),
-                        .was_originally_macro = false,
-                    };
+                    const value = Expr.init(E.Array, .{ .items = items }, .Empty);
+                    const key = Expr.init(E.String, .{ .data = "packages" }, .Empty);
 
-                    const key_str = try allocator.create(JSAst.E.String);
-                    key_str.* = JSAst.E.String{ .data = "packages" };
-                    try ws_props.append(.{
-                        .key = JSAst.Expr{
-                            .data = .{ .e_string = key_str },
-                            .loc = logger.Loc.Empty,
-                        },
-                        .value = JSAst.Expr{
-                            .data = .{ .e_array = array },
-                            .loc = logger.Loc.Empty,
-                        },
-                    });
+                    try ws_props.append(allocator, .{ .key = key, .value = value });
                 }
             }
 
             if (catalog_obj) |catalog| {
-                const key_str = try allocator.create(JSAst.E.String);
-                key_str.* = JSAst.E.String{ .data = "catalog" };
-                try ws_props.append(.{
-                    .key = JSAst.Expr{
-                        .data = .{ .e_string = key_str },
-                        .loc = logger.Loc.Empty,
-                    },
-                    .value = catalog,
-                });
+                const key = Expr.init(E.String, .{ .data = "catalog" }, .Empty);
+                try ws_props.append(allocator, .{ .key = key, .value = catalog });
             }
 
             if (catalogs_obj) |catalogs| {
-                const key_str = try allocator.create(JSAst.E.String);
-                key_str.* = JSAst.E.String{ .data = "catalogs" };
-                try ws_props.append(.{
-                    .key = JSAst.Expr{
-                        .data = .{ .e_string = key_str },
-                        .loc = logger.Loc.Empty,
-                    },
-                    .value = catalogs,
-                });
+                const key = Expr.init(E.String, .{ .data = "catalogs" }, .Empty);
+                try ws_props.append(allocator, .{ .key = key, .value = catalogs });
             }
 
-            if (ws_props.items.len > 0) {
-                const props_slice = try allocator.alloc(JSAst.G.Property, ws_props.items.len);
-                @memcpy(props_slice, ws_props.items);
-
-                const ws_obj = try allocator.create(JSAst.E.Object);
-                ws_obj.* = JSAst.E.Object{
-                    .properties = JSAst.G.Property.List.init(props_slice),
-                };
-                const workspace_obj = JSAst.Expr{
-                    .data = .{ .e_object = ws_obj },
-                    .loc = logger.Loc.Empty,
-                };
-
+            if (ws_props.len > 0) {
+                const workspace_obj = Expr.init(E.Object, .{ .properties = ws_props }, .Empty);
                 try json.data.e_object.put(allocator, "workspaces", workspace_obj);
                 needs_update = true;
             }
-
-            ws_props.deinit();
         }
     }
 

@@ -132,14 +132,14 @@ pub fn isEmpty(expr: Expr) bool {
 pub const Query = struct { expr: Expr, loc: logger.Loc, i: u32 = 0 };
 
 pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
-    if (std.meta.activeTag(expr.data) != .e_object) return false;
+    if (expr.data != .e_object) return false;
     const obj = expr.data.e_object;
     if (obj.properties.len == 0) return false;
 
     for (obj.properties.slice()) |prop| {
         if (prop.value == null) continue;
         const key = prop.key orelse continue;
-        if (std.meta.activeTag(key.data) != .e_string) continue;
+        if (key.data != .e_string) continue;
         const key_str = key.data.e_string;
         if (strings.eqlAnyComptime(key_str.data, names)) return true;
     }
@@ -266,7 +266,7 @@ pub fn set(expr: *Expr, allocator: std.mem.Allocator, name: string, value: Expr)
     for (0..expr.data.e_object.properties.len) |i| {
         const prop = &expr.data.e_object.properties.ptr[i];
         const key = prop.key orelse continue;
-        if (std.meta.activeTag(key.data) != .e_string) continue;
+        if (key.data != .e_string) continue;
         if (key.data.e_string.eql(string, name)) {
             prop.value = value;
             return;
@@ -288,7 +288,7 @@ pub fn setString(expr: *Expr, allocator: std.mem.Allocator, name: string, value:
     for (0..expr.data.e_object.properties.len) |i| {
         const prop = &expr.data.e_object.properties.ptr[i];
         const key = prop.key orelse continue;
-        if (std.meta.activeTag(key.data) != .e_string) continue;
+        if (key.data != .e_string) continue;
         if (key.data.e_string.eql(string, name)) {
             prop.value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty);
             return;
@@ -385,7 +385,7 @@ pub fn getRope(self: *const Expr, rope: *const E.Object.Rope) ?E.Object.RopeQuer
 
 // Making this comptime bloats the binary and doesn't seem to impact runtime performance.
 pub fn asProperty(expr: *const Expr, name: string) ?Query {
-    if (std.meta.activeTag(expr.data) != .e_object) return null;
+    if (expr.data != .e_object) return null;
     const obj = expr.data.e_object;
     if (obj.properties.len == 0) return null;
 
@@ -393,7 +393,7 @@ pub fn asProperty(expr: *const Expr, name: string) ?Query {
 }
 
 pub fn asPropertyStringMap(expr: *const Expr, name: string, allocator: std.mem.Allocator) ?*bun.StringArrayHashMap(string) {
-    if (std.meta.activeTag(expr.data) != .e_object) return null;
+    if (expr.data != .e_object) return null;
     const obj_ = expr.data.e_object;
     if (obj_.properties.len == 0) return null;
     const query = obj_.asProperty(name) orelse return null;
@@ -439,7 +439,7 @@ pub const ArrayIterator = struct {
 };
 
 pub fn asArray(expr: *const Expr) ?ArrayIterator {
-    if (std.meta.activeTag(expr.data) != .e_array) return null;
+    if (expr.data != .e_array) return null;
     const array = expr.data.e_array;
     if (array.items.len == 0) return null;
 
@@ -455,7 +455,7 @@ pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {
 }
 
 pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {
-    if (std.meta.activeTag(expr.data) != .e_string) return null;
+    if (expr.data != .e_string) return null;
     return expr.data.e_string.string(allocator) catch null;
 }
 
@@ -501,7 +501,7 @@ pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) OOM!?st
 pub fn asBool(
     expr: *const Expr,
 ) ?bool {
-    if (std.meta.activeTag(expr.data) != .e_boolean) return null;
+    if (expr.data != .e_boolean) return null;
 
     return expr.data.e_boolean.value;
 }
@@ -522,7 +522,7 @@ const Serializable = struct {
 };
 
 pub fn isMissing(a: *const Expr) bool {
-    return std.meta.activeTag(a.data) == Expr.Tag.e_missing;
+    return a.data == Expr.Tag.e_missing;
 }
 
 // The goal of this function is to "rotate" the AST if it's possible to use the

@@ -37,57 +37,39 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
 
     switch (packages) {
         .all => {
-            for (0..pkgs.len) |_pkg_id| {
-                const pkg_id: PackageID = @intCast(_pkg_id);
+            var seen_pkg_ids: std.AutoHashMap(PackageID, void) = .init(manager.allocator);
+            defer seen_pkg_ids.deinit();
 
-                const dep_id = resolutions[pkg_id];
-                if (dep_id >= dependencies.len) {
+            for (dependencies, 0..) |*dep, _dep_id| {
+                const dep_id: DependencyID = @intCast(_dep_id);
+
+                const pkg_id = resolutions[dep_id];
+                if (pkg_id == invalid_package_id) {
                     continue;
                 }
 
-                const dep = &dependencies[dep_id];
-                const resolved_version = lockfile.resolveCatalogDependency(dep) orelse {
-                    // catalog doesn't exist in the map, skip because nothing to resolve
-                    continue;
-                };
-                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) {
+                if ((try seen_pkg_ids.getOrPut(pkg_id)).found_existing) {
                     continue;
                 }
+
                 const res = pkg_resolutions[pkg_id];
                 if (res.tag != .npm) {
                     continue;
                 }
 
-                const pkg_name = pkg_names[pkg_id].slice(string_buf);
+                const pkg_name = pkg_names[pkg_id];
 
                 _ = manager.manifests.byName(
                     manager,
-                    manager.scopeForPackageName(pkg_name),
-                    pkg_name,
+                    manager.scopeForPackageName(pkg_name.slice(string_buf)),
+                    pkg_name.slice(string_buf),
                     .load_from_memory_fallback_to_disk,
                 ) orelse {
-                    try startManifestTask(manager, pkg_name, dep);
+                    try startManifestTask(manager, pkg_name.slice(string_buf), dep);
                 };
 
                 manager.flushNetworkQueue();
                 _ = manager.scheduleTasks();
-
-                if (manager.pendingTaskCount() > 0) {
-                    try manager.runTasks(
-                        *PackageManager,
-                        manager,
-                        .{
-                            .onExtract = {},
-                            .onResolve = {},
-                            .onPackageManifestError = {},
-                            .onPackageDownloadError = {},
-                            .progress_bar = true,
-                            .manifests_only = true,
-                        },
-                        true,
-                        log_level,
-                    );
-                }
             }
         },
         .ids => |ids| {
@@ -99,8 +81,6 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                     if (pkg_id == invalid_package_id) continue;
                     const dep = &dependencies[dep_id];
 
-                    const resolved_version = lockfile.resolveCatalogDependency(dep) orelse continue;
-                    if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                     const resolution: Resolution = pkg_resolutions[pkg_id];
                     if (resolution.tag != .npm) continue;
 
@@ -112,27 +92,10 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                         .load_from_memory_fallback_to_disk,
                     ) orelse {
                         try startManifestTask(manager, package_name, dep);
+
+                        manager.flushNetworkQueue();
+                        _ = manager.scheduleTasks();
                     };
-                }
-
-                manager.flushNetworkQueue();
-                _ = manager.scheduleTasks();
-
-                if (manager.pendingTaskCount() > 1) {
-                    try manager.runTasks(
-                        *PackageManager,
-                        manager,
-                        .{
-                            .onExtract = {},
-                            .onResolve = {},
-                            .onPackageManifestError = {},
-                            .onPackageDownloadError = {},
-                            .progress_bar = true,
-                            .manifests_only = true,
-                        },
-                        true,
-                        log_level,
-                    );
                 }
             }
         },
@@ -141,11 +104,11 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
     manager.flushNetworkQueue();
     _ = manager.scheduleTasks();
 
-    const RunClosure = struct {
-        manager: *PackageManager,
-        err: ?anyerror = null,
-        pub fn isDone(closure: *@This()) bool {
-            if (closure.manager.pendingTaskCount() > 0) {
+    if (manager.pendingTaskCount() > 0) {
+        const RunClosure = struct {
+            manager: *PackageManager,
+            err: ?anyerror = null,
+            pub fn isDone(closure: *@This()) bool {
                 closure.manager.runTasks(
                     *PackageManager,
                     closure.manager,
@@ -163,25 +126,26 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                     closure.err = err;
                     return true;
                 };
+
+                return closure.manager.pendingTaskCount() == 0;
             }
+        };
 
-            return closure.manager.pendingTaskCount() == 0;
+        var run_closure: RunClosure = .{ .manager = manager };
+        manager.sleepUntil(&run_closure, &RunClosure.isDone);
+
+        if (log_level.showProgress()) {
+            manager.endProgressBar();
+            Output.flush();
         }
-    };
 
-    var run_closure: RunClosure = .{ .manager = manager };
-    manager.sleepUntil(&run_closure, &RunClosure.isDone);
-
-    if (log_level.showProgress()) {
-        manager.endProgressBar();
-        Output.flush();
-    }
-
-    if (run_closure.err) |err| {
-        return err;
+        if (run_closure.err) |err| {
+            return err;
+        }
     }
 }
 
+const std = @import("std");
 const bun = @import("bun");
 const Output = bun.Output;
 
@@ -191,3 +155,4 @@ const PackageManager = bun.install.PackageManager;
 const Resolution = bun.install.Resolution;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
+const DependencyID = bun.install.DependencyID;

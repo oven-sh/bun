@@ -7,18 +7,13 @@ import type { Readable } from "node:stream";
 import * as React from "react";
 import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server.node";
-import { createFromNodeStream, type Manifest } from "react-server-dom-bun/client.node.unbundled.js";
+import { createFromNodeStream } from "react-server-dom-bun/client.node.unbundled.js";
 import type { MiniAbortSignal } from "./server.tsx";
 
 // Verify that React 19 is being used.
 if (!React.use) {
   throw new Error("Bun's React integration requires React 19");
 }
-
-const createFromNodeStreamOptions: Manifest = {
-  moduleMap: ssrManifest,
-  moduleLoading: { prefix: "/" },
-};
 
 // The `renderToHtml` function not only implements converting the RSC payload
 // into HTML via react-dom, but also streaming the RSC payload via injected
@@ -51,7 +46,6 @@ export function renderToHtml(
         // React takes in a manifest mapping client-side assets
         // to the imports needed for server-side rendering.
         moduleMap: ssrManifest,
-        moduleLoading: { prefix: "/" },
       });
 
       // The root is this "Root" component that unwraps the streamed promise
@@ -104,7 +98,11 @@ export function renderToStaticHtml(
   bootstrapModules: NonNullable<RenderToPipeableStreamOptions["bootstrapModules"]>,
 ): Promise<Blob> {
   const stream = new StaticRscInjectionStream(rscPayload);
-  const promise: Promise<React.ReactNode> = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
+  const promise = createFromNodeStream<React.ReactNode>(rscPayload, {
+    moduleMap: ssrManifest,
+    moduleLoading: { prefix: "/" },
+  });
+
   const Root: React.JSXElementConstructor<{}> = () => React.use(promise);
 
   const { pipe } = renderToPipeableStream(<Root />, {

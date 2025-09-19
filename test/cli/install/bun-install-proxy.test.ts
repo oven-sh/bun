@@ -1,5 +1,5 @@
 import { beforeAll, it } from "bun:test";
-import { exec, execSync } from "child_process";
+import { exec } from "child_process";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import { join } from "path";

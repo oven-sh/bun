@@ -1,4 +1,3 @@
-import { which } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";

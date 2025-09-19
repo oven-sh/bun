@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
-import { exec, execSync } from "child_process";
+import { exec } from "child_process";
 import net from "net";
 import { promisify } from "util";
 

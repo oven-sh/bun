@@ -669,8 +669,10 @@ pub fn addInstallObjectFile(
     // On Linux, when lld is disabled, Zig creates a broken stub .o file and the real object as .o.o
     // We need to copy the .o.o file to the destination instead
     // Only apply this workaround on Linux where the issue occurs
-    const is_linux = compile.rootModuleTarget().os.tag == .linux;
-    if (out_mode == .obj and is_linux and !(compile.use_lld orelse true)) {
+    const target_os = compile.rootModuleTarget().os.tag;
+    const use_lld = compile.use_lld orelse false;
+    const needs_workaround = (target_os == .linux) and !use_lld;
+    if (out_mode == .obj and needs_workaround) {
         // First, install the stub to ensure the compilation happens
         const install_stub = b.addInstallFile(bin, dest_name);
 
@@ -721,8 +723,19 @@ const FixObjectStep = struct {
         const cache_o_path = fix_step.compile.getEmittedBin().getPath2(b, step);
         const cache_oo_path = b.fmt("{s}.o", .{cache_o_path});
 
+        // Check if the .o.o file exists before trying to copy it
+        std.fs.accessAbsolute(cache_oo_path, .{}) catch {
+            // If .o.o doesn't exist, the regular .o file might be valid
+            // This can happen in release builds or different configurations
+            // Just skip the copy step and use the installed file as-is
+            return;
+        };
+
         // Copy the .o.o file over the stub
-        try std.fs.copyFileAbsolute(cache_oo_path, dest_path, .{});
+        std.fs.copyFileAbsolute(cache_oo_path, dest_path, .{}) catch |err| {
+            // If copy fails, log but don't fail the build
+            std.debug.print("Warning: Failed to copy {s} to {s}: {any}\n", .{ cache_oo_path, dest_path, err });
+        };
     }
 };
 

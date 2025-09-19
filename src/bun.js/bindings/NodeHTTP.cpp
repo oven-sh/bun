@@ -22,13 +22,32 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
 
+extern "C" {
+struct StreamBuffer {
+    char* buffer = nullptr;
+    size_t bufferLength = 0;
+    size_t bufferPosition = 0;
+    size_t bytesWritten = 0;
+
+    bool hasValue() const
+    {
+        return buffer != nullptr;
+    }
+
+    size_t bufferedSize() const
+    {
+        return bufferLength - bufferPosition;
+    }
+};
+}
+
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
-extern "C" EncodedJSValue Bun__NodeHTTPResponse_rawWrite(void* socket, bool is_ssl, void* response_ctx, bool ended, char** buffer, size_t* bufferLength, size_t* bufferPosition, size_t* total_written, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
-extern "C" void Bun__NodeHTTPResponse_freeBuffer(char* buffer, size_t bufferLength);
+extern "C" EncodedJSValue Bun__NodeHTTPResponse_rawWrite(void* socket, bool is_ssl, void* response_ctx, bool ended, StreamBuffer* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" void Bun__NodeHTTPResponse_freeBuffer(StreamBuffer* streamBuffer);
 namespace Bun {
 
 using namespace JSC;
@@ -118,10 +137,7 @@ private:
 class JSNodeHTTPServerSocket : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    char* buffer = nullptr;
-    size_t bufferLength = 0;
-    size_t bufferPosition = 0;
-    size_t bytesWritten = 0;
+    StreamBuffer streamBuffer = {};
     us_socket_t* socket = nullptr;
     unsigned is_ssl : 1 = 0;
     unsigned ended : 1 = 0;
@@ -186,13 +202,7 @@ public:
                 clearSocketData<false>(socket);
             }
         }
-        if (buffer) {
-            Bun__NodeHTTPResponse_freeBuffer(buffer, bufferLength);
-            buffer = nullptr;
-            bufferLength = 0;
-            bufferPosition = 0;
-            ended = false;
-        }
+        Bun__NodeHTTPResponse_freeBuffer(&streamBuffer);
     }
 
     JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
@@ -297,7 +307,7 @@ public:
             return;
         }
 
-        auto bufferedSize = this->bufferLength - this->bufferPosition;
+        auto bufferedSize = this->streamBuffer.bufferedSize();
         if (bufferedSize > 0) {
 
             void* response_ctx = nullptr;
@@ -307,11 +317,12 @@ public:
             if (response_ctx != nullptr) {
                 auto* globalObject = defaultGlobalObject(this->globalObject());
                 auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-                Bun__NodeHTTPResponse_rawWrite(this->socket, this->is_ssl, response_ctx, this->ended, &this->buffer, &this->bufferLength, &this->bufferPosition, &this->bytesWritten, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+                Bun__NodeHTTPResponse_rawWrite(this->socket, this->is_ssl, response_ctx, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
                 if (scope.exception()) {
                     globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
                     return;
                 }
+                bufferedSize = this->streamBuffer.bufferedSize();
             }
 
             if (bufferedSize > 0) {
@@ -430,7 +441,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
     if (response_ctx == nullptr) {
         return JSValue::encode(JSC::jsNumber(0));
     }
-    return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, response_ctx, thisObject->ended, &thisObject->buffer, &thisObject->bufferLength, &thisObject->bufferPosition, &thisObject->bytesWritten, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, response_ctx, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -444,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
 
     thisObject->ended = true;
-    auto bufferedSize = thisObject->bufferLength - thisObject->bufferPosition;
+    auto bufferedSize = thisObject->streamBuffer.bufferedSize();
     if (bufferedSize == 0) {
         void* response_ctx = nullptr;
         if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
@@ -453,7 +464,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
         if (response_ctx == nullptr) {
             return JSValue::encode(JSC::jsNumber(0));
         }
-        return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, response_ctx, thisObject->ended, &thisObject->buffer, &thisObject->bufferLength, &thisObject->bufferPosition, &thisObject->bytesWritten, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, response_ctx, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
     }
     return JSValue::encode(JSC::jsUndefined());
 }
@@ -654,13 +665,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBufferLength, (JSGlobalObje
 {
     auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
     // We only care about the buffered size in js land
-    return JSValue::encode(JSC::jsNumber(thisObject->bufferLength - thisObject->bufferPosition));
+    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.bufferedSize()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
-    return JSValue::encode(JSC::jsNumber(thisObject->bytesWritten));
+    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.bytesWritten));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))

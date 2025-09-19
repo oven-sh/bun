@@ -1199,42 +1199,69 @@ extern "c" fn Bun__callNodeHTTPServerSocketOnClose(jsc.JSValue) void;
 extern "c" fn Bun__callNodeHTTPServerSocketOnDrain(jsc.JSValue) void;
 extern "c" fn Bun__callNodeHTTPServerSocketOnData(jsc.JSValue, jsc.JSValue, bool) void;
 
-pub export fn Bun__NodeHTTPResponse_freeBuffer(buffer: [*]u8, bufferLength: usize) void {
-    bun.default_allocator.free(buffer[0..bufferLength]);
+const StreamBuffer = extern struct {
+    buffer: ?[*]u8 = null,
+    bufferLength: usize = 0,
+    bufferPosition: usize = 0,
+    bytesWritten: usize = 0,
+
+    pub fn update(this: *StreamBuffer, stream_buffer: bun.io.StreamBuffer) void {
+        this.buffer = stream_buffer.list.items.ptr;
+        this.bufferLength = stream_buffer.list.items.len;
+        this.bufferPosition = stream_buffer.cursor;
+    }
+    pub fn wrote(this: *StreamBuffer, written: usize) void {
+        this.bytesWritten +|= written;
+    }
+
+    pub fn toBunIOStreamBuffer(this: *StreamBuffer) bun.io.StreamBuffer {
+        return .{
+            .list = if (this.buffer) |buffer_ptr| .{
+                .allocator = bun.default_allocator,
+                .items = buffer_ptr[0..this.bufferLength],
+                .capacity = this.bufferLength,
+            } else .{
+                .allocator = bun.default_allocator,
+                .items = &.{},
+                .capacity = 0,
+            },
+            .cursor = this.bufferPosition,
+        };
+    }
+
+    pub fn deinit(this: *StreamBuffer) void {
+        if (this.buffer) |buffer| {
+            bun.default_allocator.free(buffer[0..this.bufferLength]);
+            this.buffer = null;
+            this.bufferLength = 0;
+            this.bufferPosition = 0;
+            this.bytesWritten = 0;
+        }
+    }
+};
+
+pub export fn Bun__NodeHTTPResponse_freeBuffer(buffer: *StreamBuffer) void {
+    buffer.deinit();
 }
+
 pub export fn Bun__NodeHTTPResponse_rawWrite(
     socket: *uws.us_socket_t,
     is_ssl: bool,
     response_ctx: *NodeHTTPResponse,
     ended: bool,
-    buffer: *?[*]u8,
-    bufferLength: *usize,
-    bufferPosition: *usize,
-    total_written: *usize,
+    buffer: *StreamBuffer,
     globalObject: *jsc.JSGlobalObject,
     data: jsc.JSValue,
     encoding: jsc.JSValue,
 ) jsc.JSValue {
     log("Bun__NodeHTTPResponse_rawWrite is ending? {}", .{ended});
-    const buffer_len = bufferLength.*;
     // convever it back to StreamBuffer
-    var stream_buffer: bun.io.StreamBuffer = .{
-        .list = if (buffer.*) |buffer_ptr| .{
-            .allocator = bun.default_allocator,
-            .items = buffer_ptr[0..buffer_len],
-            .capacity = buffer_len,
-        } else .{
-            .allocator = bun.default_allocator,
-            .items = &.{},
-            .capacity = 0,
-        },
-        .cursor = bufferPosition.*,
-    };
+    var stream_buffer = buffer.toBunIOStreamBuffer();
+    var total_written: usize = 0;
     // update the buffer pointer to the new buffer
     defer {
-        buffer.* = stream_buffer.list.items.ptr;
-        bufferLength.* = stream_buffer.list.items.len;
-        bufferPosition.* = stream_buffer.cursor;
+        buffer.update(stream_buffer);
+        buffer.wrote(total_written);
     }
     response_ctx.setOnAbortedHandler();
 
@@ -1245,7 +1272,6 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), data, encoding, false, true) catch {
             return .zero;
         } orelse {
-            log("Bun__NodeHTTPResponse_rawWrite invalid argument type value", .{});
             if (!globalObject.hasException()) {
                 return globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data) catch .zero;
             }
@@ -1254,21 +1280,17 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
 
     defer node_buffer.deinit();
     if (node_buffer == .blob and node_buffer.blob.needsToReadFile()) {
-        log("Bun__NodeHTTPResponse_rawWrite file blob not supported yet in this function.", .{});
         return globalObject.throw("File blob not supported yet in this function.", .{}) catch .zero;
     }
 
     const data_slice = node_buffer.slice();
-    log("Bun__NodeHTTPResponse_rawWrite data_slice {d} {} {}", .{ data_slice.len, data.isEmptyOrUndefinedOrNull(), encoding.isUndefinedOrNull() });
     if (stream_buffer.isNotEmpty()) {
         // need to flush
         const to_flush = stream_buffer.slice();
-        log("Bun__NodeHTTPResponse_rawWrite to_flush", .{});
         const written: u32 = @max(0, socket.write(is_ssl, to_flush));
         stream_buffer.wrote(written);
-        total_written.* = total_written.* +| written;
+        total_written +|= written;
         if (written < to_flush.len) {
-            log("Bun__NodeHTTPResponse_rawWrite backpressure (moreinside stream buffer) {d}", .{total_written.*});
             if (data_slice.len > 0) {
                 response_ctx.raw_response.onWritable(*NodeHTTPResponse, onDrain, response_ctx);
                 bun.handleOom(stream_buffer.write(data_slice));
@@ -1280,22 +1302,19 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
 
     if (data_slice.len > 0) {
         const written: u32 = @max(0, socket.write(is_ssl, data_slice));
-        total_written.* = total_written.* +| written;
+        total_written +|= written;
         if (written < data_slice.len) {
-            log("Bun__NodeHTTPResponse_rawWrite backpressure {d}", .{total_written.*});
             response_ctx.raw_response.onWritable(*NodeHTTPResponse, onDrain, response_ctx);
 
             bun.handleOom(stream_buffer.write(data_slice[written..]));
-            return JSValue.jsNumber(total_written.*);
+            return JSValue.jsNumber(total_written);
         }
     }
     if (ended) {
-        log("Bun__NodeHTTPResponse_rawWrite shutdown", .{});
         // last part so we shutdown the writable side of the socket aka send FIN
         socket.shutdown(is_ssl);
     }
-    log("Bun__NodeHTTPResponse_rawWrite success {d}", .{total_written.*});
-    return JSValue.jsNumber(total_written.*);
+    return JSValue.jsNumber(total_written);
 }
 
 pub export fn Bun__NodeHTTPResponse_onClose(response: *NodeHTTPResponse, js_value: jsc.JSValue) void {

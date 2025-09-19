@@ -113,7 +113,7 @@ describe("HTTP server CONNECT", () => {
   });
 
   test("should handle backpressure", async () => {
-    const data = Buffer.alloc(1024 * 64, "bun").toString();
+    const data = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });

@@ -378,6 +378,7 @@ pub const OutdatedCommand = struct {
         var max_update: usize = 0;
         var max_latest: usize = 0;
         var max_workspace: usize = 0;
+        var has_filtered_versions: bool = false;
 
         const lockfile = manager.lockfile;
         const string_buf = lockfile.buffers.string_bytes.items;
@@ -436,16 +437,25 @@ pub const OutdatedCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
+                    manager.options.minimum_release_age != null,
                 ) orelse continue;
 
-                const latest = manifest.findByDistTag("latest") orelse continue;
+                const actual_latest = manifest.findByDistTag("latest") orelse continue;
 
-                const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                const _latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions);
+                const latest = _latest.unwrap() orelse continue;
+
+                const _update_version = if (resolved_version.tag == .npm)
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions)
                 else
-                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions);
+                const update_version = _update_version.unwrap() orelse continue;
 
-                if (resolution.value.npm.version.order(latest.version, string_buf, manifest.string_buf) != .lt) continue;
+                if (resolution.value.npm.version.order(actual_latest.version, string_buf, manifest.string_buf) != .lt) continue;
+
+                const has_filtered_update = _update_version.getNewestFiltered() != null;
+                const has_filtered_latest = _latest.getNewestFiltered() != null;
+                if (has_filtered_update or has_filtered_latest) has_filtered_versions = true;
 
                 const package_name_len = package_name.len +
                     if (dep.behavior.dev)
@@ -464,11 +474,13 @@ pub const OutdatedCommand = struct {
                 version_buf.clearRetainingCapacity();
 
                 bun.handleOom(version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}));
-                if (version_buf.items.len > max_update) max_update = version_buf.items.len;
+                const update_version_len = version_buf.items.len + (if (has_filtered_update) " *".len else 0);
+                if (update_version_len > max_update) max_update = update_version_len;
                 version_buf.clearRetainingCapacity();
 
                 bun.handleOom(version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}));
-                if (version_buf.items.len > max_latest) max_latest = version_buf.items.len;
+                const latest_version_len = version_buf.items.len + (if (has_filtered_latest) " *".len else 0);
+                if (latest_version_len > max_latest) max_latest = latest_version_len;
                 version_buf.clearRetainingCapacity();
 
                 const workspace_name = pkg_names[workspace_pkg_id].slice(string_buf);
@@ -569,14 +581,17 @@ pub const OutdatedCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
+                    manager.options.minimum_release_age != null,
                 ) orelse continue;
 
-                const latest = manifest.findByDistTag("latest") orelse continue;
+                const _latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions);
+                const latest = _latest.unwrap() orelse continue;
                 const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
-                const update = if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
+                const _update = if (resolved_version.tag == .npm)
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions)
                 else
-                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse continue;
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age, manager.options.minimum_release_age_exclusions);
+                const update = _update.unwrap() orelse continue;
 
                 table.printLineSeparator();
 
@@ -616,7 +631,12 @@ pub const OutdatedCommand = struct {
 
                     bun.handleOom(version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}));
                     Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                    for (version_buf.items.len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    var update_version_len = version_buf.items.len;
+                    if (_update.getNewestFiltered() != null) {
+                        Output.pretty(" <blue>*<r>", .{});
+                        update_version_len += " *".len;
+                    }
+                    for (update_version_len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     version_buf.clearRetainingCapacity();
                 }
 
@@ -627,7 +647,12 @@ pub const OutdatedCommand = struct {
 
                     bun.handleOom(version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}));
                     Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                    for (version_buf.items.len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                    var latest_version_len = version_buf.items.len;
+                    if (_latest.getNewestFiltered() != null) {
+                        Output.pretty(" <blue>*<r>", .{});
+                        latest_version_len += " *".len;
+                    }
+                    for (latest_version_len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     version_buf.clearRetainingCapacity();
                 }
 
@@ -649,6 +674,10 @@ pub const OutdatedCommand = struct {
         }
 
         table.printBottomLineSeparator();
+
+        if (has_filtered_versions) {
+            Output.prettyln("<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>", .{});
+        }
     }
 
     pub fn updateManifestsIfNecessary(
@@ -676,13 +705,15 @@ pub const OutdatedCommand = struct {
                 if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution: Install.Resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
-
+                
+                const needs_extended_manifest = manager.options.minimum_release_age != null;
                 const package_name = pkg_names[package_id].slice(string_buf);
                 _ = manager.manifests.byName(
                     manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
                     .load_from_memory_fallback_to_disk,
+                    needs_extended_manifest,
                 ) orelse {
                     const task_id = Install.Task.Id.forManifest(package_name);
                     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
@@ -702,6 +733,7 @@ pub const OutdatedCommand = struct {
                         manager.scopeForPackageName(package_name),
                         null,
                         dep.behavior.optional,
+                        needs_extended_manifest,
                     );
 
                     manager.enqueueNetworkTask(task);
@@ -799,3 +831,4 @@ const Behavior = Install.Dependency.Behavior;
 
 const PackageManager = Install.PackageManager;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const FindVersionResult = @import("../install/npm.zig").PackageManifest.FindVersionResult;

@@ -74,6 +74,13 @@ node_linker: NodeLinker = .auto,
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
 
+// Minimum release age in days (security feature)
+// Only install packages published at least N days ago
+minimum_release_age: ?f32 = null,
+
+// Packages to exclude from minimum release age checking
+minimum_release_age_exclusions: ?[]const []const u8 = null,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -366,6 +373,14 @@ pub fn load(
             }
         }
 
+        if (config.minimum_release_age) |min_age| {
+            this.minimum_release_age = min_age;
+        }
+
+        if (config.minimum_release_age_exclusions) |exclusions| {
+            this.minimum_release_age_exclusions = exclusions;
+        }
+
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
     }
 
@@ -541,6 +556,19 @@ pub fn load(
             this.save_text_lockfile = save_text_lockfile;
         }
 
+        if (cli.minimum_release_age) |min_age| {
+            this.minimum_release_age = min_age;
+        } else if (bun_install_) |config| {
+            if (config.minimum_release_age) |min_age| {
+                this.minimum_release_age = min_age;
+            }
+        }
+        if (bun_install_) |config| {
+            if (config.minimum_release_age_exclusions) |exclusions| {
+                this.minimum_release_age_exclusions = exclusions;
+            }
+        }
+
         this.lockfile_only = cli.lockfile_only;
 
         if (cli.lockfile_only) {
@@ -654,6 +682,10 @@ pub fn load(
         // `bun pm why` command options
         this.top_only = cli.top_only;
         this.depth = cli.depth;
+
+        if (cli.minimum_release_age) |min_age| {
+            this.minimum_release_age = min_age;
+        }
     } else {
         this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
         PackageManager.verbose_install = false;

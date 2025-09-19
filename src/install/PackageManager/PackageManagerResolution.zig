@@ -15,9 +15,10 @@ pub fn formatLaterVersionInCache(
                 this.scopeForPackageName(package_name),
                 name_hash,
                 .load_from_memory,
+                this.options.minimum_release_age != null,
             ) orelse return null;
 
-            if (manifest.findByDistTag("latest")) |*latest_version| {
+            if (manifest.findByDistTagWithFilter("latest", this.options.minimum_release_age, this.options.minimum_release_age_exclusions).unwrap()) |*latest_version| {
                 if (latest_version.version.order(
                     resolution.value.npm.version,
                     manifest.string_buf,

@@ -43,8 +43,10 @@ pub const Authorization = enum {
 // https://github.com/oven-sh/bun/issues/341
 // https://www.jfrog.com/jira/browse/RTFACT-18398
 const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+const accept_header_value_extended = "application/json";
 
 const default_headers_buf: string = "Accept" ++ accept_header_value;
+const extended_headers_buf: string = "Accept" ++ accept_header_value_extended;
 
 fn appendAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
     if (scope.token.len > 0) {
@@ -77,6 +79,7 @@ pub fn forManifest(
     scope: *const Npm.Registry.Scope,
     loaded_manifest: ?*const Npm.PackageManifest,
     is_optional: bool,
+    needs_extended: bool,
 ) !void {
     this.url_buf = blk: {
 
@@ -147,8 +150,10 @@ pub fn forManifest(
     var last_modified: string = "";
     var etag: string = "";
     if (loaded_manifest) |manifest| {
-        last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
-        etag = manifest.pkg.etag.slice(manifest.string_buf);
+        if ((needs_extended and manifest.pkg.has_extended_manifest) or !needs_extended) {
+            last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
+            etag = manifest.pkg.etag.slice(manifest.string_buf);
+        }
     }
 
     var header_builder = HeaderBuilder{};
@@ -164,7 +169,8 @@ pub fn forManifest(
     }
 
     if (header_builder.header_count > 0) {
-        header_builder.count("Accept", accept_header_value);
+        const accept_header = if (needs_extended) accept_header_value_extended else accept_header_value;
+        header_builder.count("Accept", accept_header);
         if (last_modified.len > 0 and etag.len > 0) {
             header_builder.content.count(last_modified);
         }
@@ -178,21 +184,22 @@ pub fn forManifest(
             header_builder.append("If-Modified-Since", last_modified);
         }
 
-        header_builder.append("Accept", accept_header_value);
+        header_builder.append("Accept", accept_header);
 
         if (last_modified.len > 0 and etag.len > 0) {
             last_modified = header_builder.content.append(last_modified);
         }
     } else {
+        const header_buf = if (needs_extended) &extended_headers_buf else &default_headers_buf;
         try header_builder.entries.append(
             allocator,
             .{
                 .name = .{ .offset = 0, .length = @as(u32, @truncate("Accept".len)) },
-                .value = .{ .offset = "Accept".len, .length = @as(u32, @truncate(default_headers_buf.len - "Accept".len)) },
+                .value = .{ .offset = "Accept".len, .length = @as(u32, @truncate(header_buf.len - "Accept".len)) },
             },
         );
         header_builder.header_count = 1;
-        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrFromInt(@intFromPtr(bun.span(default_headers_buf).ptr))), .len = default_headers_buf.len, .cap = default_headers_buf.len };
+        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @constCast(@ptrCast(header_buf.ptr))), .len = header_buf.len, .cap = header_buf.len };
     }
 
     this.response_buffer = try MutableString.init(allocator, 0);

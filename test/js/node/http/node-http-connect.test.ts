@@ -52,8 +52,8 @@ describe("HTTP server CONNECT", () => {
       proxyHeaders = req.headers;
       return true;
     };
-    await once(proxyServer.listen(0), "listening");
-    await once(targetServer.listen(0), "listening");
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    await once(targetServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
     const targetAddress = targetServer.address() as AddressInfo;
 

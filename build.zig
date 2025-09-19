@@ -599,9 +599,14 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     // Object options
     obj.use_llvm = !opts.no_llvm;
-    // Disable lld for objects to avoid the slow ld.lld -r step
+    // On Linux, disable lld for objects to avoid the slow ld.lld -r step
     // This produces a broken stub, but we'll fix it with a copy step
-    obj.use_lld = false;
+    // On Windows, keep lld enabled as it works correctly there
+    obj.use_lld = switch (opts.os) {
+        .mac => false,
+        .windows => !opts.no_llvm,
+        .linux, .wasm => false,
+    };
     if (opts.enable_asan) {
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;
@@ -661,9 +666,11 @@ pub fn addInstallObjectFile(
     const bin = compile.getEmittedBin();
     const dest_name = b.fmt("{s}.o", .{name});
 
-    // When lld is disabled, Zig creates a broken stub .o file and the real object as .o.o
+    // On Linux, when lld is disabled, Zig creates a broken stub .o file and the real object as .o.o
     // We need to copy the .o.o file to the destination instead
-    if (out_mode == .obj and !(compile.use_lld orelse true)) {
+    // Only apply this workaround on Linux where the issue occurs
+    const is_linux = compile.rootModuleTarget().os.tag == .linux;
+    if (out_mode == .obj and is_linux and !(compile.use_lld orelse true)) {
         // First, install the stub to ensure the compilation happens
         const install_stub = b.addInstallFile(bin, dest_name);
 

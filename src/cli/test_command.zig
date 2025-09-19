@@ -607,6 +607,7 @@ pub const CommandLineReporter = struct {
         test_entry: *describe2.ExecutionEntry,
         elapsed_ns: u64,
         writer: anytype,
+        comptime dim: bool,
     ) void {
         var scopes_stack = bun.BoundedArray(*describe2.DescribeScope, 64).init(0) catch unreachable;
         var parent_: ?*describe2.DescribeScope = test_entry.base.parent;
@@ -625,7 +626,10 @@ pub const CommandLineReporter = struct {
 
         // Quieter output when claude code is in use.
         if (!Output.isAIAgent() or !status.isPass(.pending_is_fail)) {
-            const color_code = comptime if (status == .skip) "<d>" else "";
+            const color_code, const line_color_code = switch (dim) {
+                true => .{ "<d>", "<r><d>" },
+                false => .{ "", "<r><b>" },
+            };
 
             switch (Output.enable_ansi_colors_stderr) {
                 inline else => |_| switch (status) {
@@ -676,8 +680,6 @@ pub const CommandLineReporter = struct {
                     writer.writeAll(" >") catch unreachable;
                 }
             }
-
-            const line_color_code = if (status == .skip) "<r><d>" else "<r><b>";
 
             if (Output.enable_ansi_colors_stderr)
                 writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
@@ -846,7 +848,14 @@ pub const CommandLineReporter = struct {
             inline else => |result| {
                 if (result != .skipped_because_label or buntest.reporter != null and buntest.reporter.?.file_reporter != null) {
                     writeTestStatusLine(result, &writer);
-                    printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer);
+                    const dim = switch (comptime result.basicResult()) {
+                        .todo => if (bun.jsc.Jest.Jest.runner) |runner| !runner.run_todo else true,
+                        .skip, .pending => true,
+                        .pass, .fail => false,
+                    };
+                    switch (dim) {
+                        inline else => |dim_comptime| printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer, dim_comptime),
+                    }
                 }
             },
         }

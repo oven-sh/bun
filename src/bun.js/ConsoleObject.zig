@@ -1585,7 +1585,7 @@ pub const Formatter = struct {
                                 var buf: [124]u8 = undefined;
                                 const formatted = bun.fmt.FormatDouble.dtoa(&buf, converted);
                                 this.addForNewLine(formatted.len);
-                                writer.print("{s}", .{formatted});
+                                writer.writeAll(formatted);
                             }
                         },
 

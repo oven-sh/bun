@@ -284,7 +284,7 @@ pub const Editor = enum(u8) {
                         args_buf[i] = "--line";
                         i += 1;
 
-                        try file_path_buf_writer.print("{s}", .{line_});
+                        try file_path_buf_writer.writeAll(line_);
 
                         if (column) |col| {
                             if (col.len > 0)

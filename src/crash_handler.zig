@@ -89,7 +89,7 @@ pub const CrashReason = union(enum) {
 
     pub fn format(reason: CrashReason, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (reason) {
-            .panic => |message| try writer.print("{s}", .{message}),
+            .panic => |message| try writer.writeAll(message),
             .@"unreachable" => try writer.writeAll("reached unreachable code"),
             .segmentation_fault => |addr| try writer.print("Segmentation fault at address 0x{X}", .{addr}),
             .illegal_instruction => |addr| try writer.print("Illegal instruction at address 0x{X}", .{addr}),

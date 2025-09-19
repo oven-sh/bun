@@ -1918,7 +1918,7 @@ pub fn GenericComponent(comptime Impl: type) type {
                 .class => return try writer.print("class={}", .{this.class}),
                 else => {},
             }
-            return writer.print("{s}", .{@tagName(this.*)});
+            return writer.writeAll(@tagName(this.*));
         }
 
         pub fn asCombinator(this: *const This) ?Combinator {
@@ -2259,7 +2259,7 @@ pub const Combinator = enum {
             .descendant => writer.print("`descendant` (space)", .{}),
             .next_sibling => writer.print("+", .{}),
             .later_sibling => writer.print("~", .{}),
-            else => writer.print("{s}", .{@tagName(this.*)}),
+            else => writer.writeAll(@tagName(this.*)),
         };
     }
 };
@@ -2478,7 +2478,7 @@ pub const PseudoElement = union(enum) {
     }
 
     pub fn format(this: *const PseudoElement, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("{s}", .{@tagName(this.*)});
+        try writer.writeAll(@tagName(this.*));
     }
 
     pub fn validAfterSlotted(this: *const PseudoElement) bool {

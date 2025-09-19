@@ -1045,7 +1045,7 @@ fn ensureRouteIsBundled(
             }
         },
         .bundling => {
-            bun.assert(dev.current_bundle != null);
+            bun.assertf(dev.current_bundle != null, "dev.current_bundle is null", .{});
             try dev.deferRequest(&dev.current_bundle.?.requests, route_bundle_index, kind, req, resp);
         },
         .possible_bundling_failures => {

@@ -47,7 +47,7 @@ pub fn convertStmtsForChunkForDevServer(
             continue;
         }
         // Make sure the printer gets the resolved path
-        if (record.source_index.isValid() and record.tag != .runtime) {
+        if (record.source_index.isValid()) {
             record.path = c.parse_graph.input_files.items(.source)[record.source_index.get()].path;
         }
     }

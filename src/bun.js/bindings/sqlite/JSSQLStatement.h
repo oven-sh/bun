@@ -35,27 +35,12 @@
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
 
-#ifndef LAZY_LOAD_SQLITE_DEFAULT_SETTING
-#if defined(__APPLE__)
-#define LAZY_LOAD_SQLITE_DEFAULT_SETTING 1
-#endif
-#endif
+// CMake controls whether we use lazy loading
+// On macOS: LAZY_LOAD_SQLITE=1 (dynamic by default)
+// On Linux: LAZY_LOAD_SQLITE=0 (static by default, but can switch to dynamic)
 
-#ifndef LAZY_LOAD_SQLITE
-#ifdef LAZY_LOAD_SQLITE_DEFAULT_SETTING
-#define LAZY_LOAD_SQLITE LAZY_LOAD_SQLITE_DEFAULT_SETTING
-#endif
-#endif
-
-#ifndef LAZY_LOAD_SQLITE
-#define LAZY_LOAD_SQLITE 0
-#endif
-
-#if LAZY_LOAD_SQLITE
-#include "sqlite3.h"
-#else
+// Always use local sqlite3 header for definitions
 #include "sqlite3_local.h"
-#endif
 
 namespace WebCore {
 

@@ -2761,7 +2761,7 @@ test("chunked encoding must be valid after flushHeaders", async () => {
   await once(server, "listening");
 
   const socket = connect(server.address().port, () => {
-    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
+    socket.write(`GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\n\r\n`);
   });
 
   const chunks = [];
@@ -2844,7 +2844,7 @@ test("chunked encoding must be valid using minimal code", async () => {
   await once(server, "listening");
 
   const socket = connect(server.address().port, () => {
-    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
+    socket.write(`GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\n\r\n`);
   });
 
   const chunks = [];
@@ -2932,8 +2932,8 @@ test("chunked encoding must be valid after without flushHeaders", async () => {
   server.listen(0);
   await once(server, "listening");
 
-  const socket = connect(3000, () => {
-    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
+  const socket = connect(server.address().port, () => {
+    socket.write(`GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\n\r\n`);
   });
 
   const chunks = [];
@@ -3011,7 +3011,9 @@ test("should accept received and send blank headers", async () => {
   await once(server, "listening");
 
   const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
-    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nEmpty-Header:\r\n\r\n");
+    socket.write(
+      `GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\nEmpty-Header:\r\n\r\n`,
+    );
   });
 
   socket.on("data", data => {
@@ -3044,7 +3046,7 @@ test("should handle header overflow", async () => {
 
   const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
     socket.write(
-      "GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nBig-Header: " +
+      `GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\nBig-Header: ` +
         "a".repeat(http.maxHeaderSize) + // will overflow because of host and connection headers
         "\r\n\r\n",
     );
@@ -3069,7 +3071,7 @@ test("should handle invalid method", async () => {
 
   const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
     socket.write(
-      "BUN / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nBig-Header: " +
+      `BUN / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\nBig-Header: ` +
         "a".repeat(http.maxHeaderSize) + // will overflow because of host and connection headers
         "\r\n\r\n",
     );

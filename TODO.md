@@ -53,7 +53,7 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 ## Real
 
 - [ ] test/js/bun/net/socket.test.ts
-  - new failure on windows. same issue as below
+  - new failure on windows. same issue as below. it already waits 1000ms to check the heapstats.
 - [ ] test/js/bun/net/tcp-server.test.ts
   - new flaky failure on windows. same issue as above.
 - [ ] (maybe flaky) test/js/web/fetch/abort-signal-leak.test.ts

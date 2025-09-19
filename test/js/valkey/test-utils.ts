@@ -165,7 +165,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
     REDIS_PORT = port;
     REDIS_TLS_PORT = tlsPort;
     REDIS_HOST = redisInfo.host;
-    REDIS_UNIX_SOCKET = unixSocketProxy.path;  // Use the proxy socket
+    REDIS_UNIX_SOCKET = unixSocketProxy.path; // Use the proxy socket
     DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
     TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
     UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
@@ -352,7 +352,7 @@ export const context: TestContext = {
       } catch {}
 
       if (client.connected) {
-        await client.close();
+        client.close();
       }
     }
 
@@ -449,26 +449,26 @@ if (isEnabled) {
       }
 
       // Disconnect all clients
-      await context.redis.close();
+      context.redis.close();
 
       if (context.redisTLS) {
-        await context.redisTLS.close();
+        context.redisTLS.close();
       }
 
       if (context.redisUnix) {
-        await context.redisUnix.close();
+        context.redisUnix.close();
       }
 
       if (context.redisAuth) {
-        await context.redisAuth.close();
+        context.redisAuth.close();
       }
 
       if (context.redisReadOnly) {
-        await context.redisReadOnly.close();
+        context.redisReadOnly.close();
       }
 
       if (context.redisWriteOnly) {
-        await context.redisWriteOnly.close();
+        context.redisWriteOnly.close();
       }
 
       // Clean up Unix socket proxy if it exists

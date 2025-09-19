@@ -928,8 +928,8 @@ export async function describeWithContainer(
       "mysql_plain": 3306,
       "mysql_native_password": 3306,
       "mysql_tls": 3306,
-      "mysql:8": 3306,  // Map mysql:8 to mysql_plain
-      "mysql:9": 3306,  // Map mysql:9 to mysql_native_password
+      "mysql:8": 3306, // Map mysql:8 to mysql_plain
+      "mysql:9": 3306, // Map mysql:9 to mysql_native_password
       "redis_plain": 6379,
       "redis_unified": 6379,
       "minio": 9000,
@@ -964,8 +964,12 @@ export async function describeWithContainer(
 
       // Container descriptor with live getters and ready promise
       const containerDescriptor = {
-        get host() { return _host; },
-        get port() { return _port; },
+        get host() {
+          return _host;
+        },
+        get port() {
+          return _port;
+        },
         ready: readyPromise,
       };
 
@@ -988,7 +992,9 @@ export async function describeWithContainer(
       return;
     }
     // No fallback - if the image isn't in docker-compose, it should fail
-    throw new Error(`Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`);
+    throw new Error(
+      `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
+    );
   });
 }
 
@@ -1848,6 +1854,9 @@ export namespace numeric {
   /**
    * Generate an array of evenly-spaced numbers in a range.
    *
+   * The name iota comes from https://aplwiki.com/wiki/Index_Generator. It is
+   * commonly used across programming languages and libraries.
+   *
    * @param count The total number of points to generate.
    * @param step The step size between each value.
    * @returns An array of evenly-spaced numbers.
@@ -1871,7 +1880,7 @@ export namespace numeric {
     if (numPoints === 2) return [start, end];
     const step = (end - start) / (numPoints - 1);
 
-    return iota(numPoints, step).map(i => start + i * step);
+    return iota(numPoints).map(i => start + i * step);
   }
 
   /**

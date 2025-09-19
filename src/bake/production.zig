@@ -256,8 +256,6 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     bun.assert(server_transpiler.env == client_transpiler.env);
 
     framework.* = framework.resolve(&server_transpiler.resolver, &client_transpiler.resolver, allocator) catch {
-        if (framework.is_built_in_react)
-            try bake.Framework.addReactInstallCommandNote(server_transpiler.log);
         Output.errGeneric("Failed to resolve all imports required by the framework", .{});
         Output.flush();
         server_transpiler.log.print(Output.errorWriter()) catch {};

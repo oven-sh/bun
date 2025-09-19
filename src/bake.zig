@@ -285,7 +285,6 @@ const BuildConfigSubset = struct {
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
 pub const Framework = struct {
-    is_built_in_react: bool,
     file_system_router_types: []FileSystemRouterType,
     // static_routers: [][]const u8,
     server_components: ?ServerComponents = null,
@@ -310,7 +309,6 @@ pub const Framework = struct {
             // For auto mode with file system routing, we need React-like setup
             // but without the embedded modules
             fw = .{
-                .is_built_in_react = false,
                 .file_system_router_types = file_system_router_types,
                 .server_components = null,
                 .react_fast_refresh = null,
@@ -337,7 +335,6 @@ pub const Framework = struct {
 
     /// Unopiniated default.
     pub const none: Framework = .{
-        .is_built_in_react = false,
         .file_system_router_types = &.{},
         .server_components = null,
         .react_fast_refresh = null,
@@ -373,16 +370,6 @@ pub const Framework = struct {
     const ReactFastRefresh = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
-
-    pub const react_install_command = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
-
-    pub fn addReactInstallCommandNote(log: *bun.logger.Log) !void {
-        try log.addMsg(.{
-            .kind = .note,
-            .data = try bun.logger.rangeData(null, bun.logger.Range.none, "Install the built in react integration with \"" ++ react_install_command ++ "\"")
-                .cloneLineText(log.clone_line_text, log.msgs.allocator),
-        });
-    }
 
     /// Given a Framework configuration, this returns another one with all paths resolved.
     /// New memory allocated into provided arena.
@@ -650,7 +637,6 @@ pub const Framework = struct {
         errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
 
         const framework: Framework = .{
-            .is_built_in_react = false,
             .file_system_router_types = file_system_router_types,
             .react_fast_refresh = react_fast_refresh,
             .server_components = server_components,

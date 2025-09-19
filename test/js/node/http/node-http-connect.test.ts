@@ -14,7 +14,6 @@ import { createProxy } from "proxy";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
-import { C } from "node_modules/@electric-sql/pglite/dist/pglite-Csk75SCB";
 
 function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, add_http_prefix: boolean) {
   const client = net.connect({ port: proxyAddress.port, host: proxyAddress.address }, () => {

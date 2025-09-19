@@ -945,130 +945,25 @@ void populateESMExports(
     JSC::JSGlobalObject* globalObject,
     JSValue result,
     Vector<JSC::Identifier, 4>& exportNames,
-    JSC::MarkedArgumentBuffer& exportValues,
-    bool ignoreESModuleAnnotation)
+    JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(globalObject);
-    const Identifier& esModuleMarker = vm.propertyNames->__esModule;
-
-    // Bun's interpretation of the "__esModule" annotation:
-    //
-    //   - If a "default" export does not exist OR the __esModule annotation is not present, then we
-    //   set the default export to the exports object
-    //
-    //   - If a "default" export also exists, then we set the default export
-    //   to the value of it (matching Babel behavior)
-    //
-    // https://stackoverflow.com/questions/50943704/whats-the-purpose-of-object-definepropertyexports-esmodule-value-0
-    // https://github.com/nodejs/node/issues/40891
-    // https://github.com/evanw/bundler-esm-cjs-tests
-    // https://github.com/evanw/esbuild/issues/1591
-    // https://github.com/oven-sh/bun/issues/3383
-    //
-    // Note that this interpretation is slightly different
-    //
-    //    -  We do not ignore when "type": "module" or when the file
-    //       extension is ".mjs". Build tools determine that based on the
-    //       caller's behavior, but in a JS runtime, there is only one ModuleNamespaceObject.
-    //
-    //       It would be possible to match the behavior at runtime, but
-    //       it would need further engine changes which do not match the ES Module spec
-    //
-    //   -   We ignore the value of the annotation. We only look for the
-    //       existence of the value being set. This is for performance reasons, but also
-    //       this annotation is meant for tooling and the only usages of setting
-    //       it to something that does NOT evaluate to "true" I could find were in
-    //       unit tests of build tools. Happy to revisit this if users file an issue.
-    bool needsToAssignDefault = true;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* exports = result.getObject()) {
-        bool hasESModuleMarker = false;
-        if (!ignoreESModuleAnnotation) {
-            PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
-            scope.assertNoException();
-            if (has) {
-                JSValue value = slot.getValue(globalObject, esModuleMarker);
-                CLEAR_IF_EXCEPTION(scope);
-                if (!value.isUndefinedOrNull()) {
-                    if (value.pureToBoolean() == TriState::True) {
-                        hasESModuleMarker = true;
-                    }
-                }
-            }
-        }
+    // After removing the __esModule workaround, CommonJS modules always
+    // export the entire exports object as the default export.
+    // Named exports are still extracted from the exports object.
 
+    if (auto* exports = result.getObject()) {
         auto* structure = exports->structure();
 
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
-        exportNames.reserveCapacity(size + 2);
-        exportValues.ensureCapacity(size + 2);
+        exportNames.reserveCapacity(size + 1);
+        exportValues.ensureCapacity(size + 1);
 
         CLEAR_IF_EXCEPTION(scope);
 
-        if (hasESModuleMarker) {
-            if (canPerformFastEnumeration(structure)) {
-                exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                    auto key = entry.key();
-                    if (key->isSymbol() || key == esModuleMarker)
-                        return true;
-
-                    needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
-
-                    JSValue value = exports->getDirect(entry.offset());
-
-                    exportNames.append(Identifier::fromUid(vm, key));
-                    exportValues.append(value);
-                    return true;
-                });
-            } else {
-                JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
-                if (scope.exception()) [[unlikely]] {
-                    if (!vm.hasPendingTerminationException()) scope.clearException();
-                    return;
-                }
-
-                for (auto property : properties) {
-                    if (property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()) [[unlikely]]
-                        continue;
-
-                    // ignore constructor
-                    if (property == vm.propertyNames->constructor)
-                        continue;
-
-                    JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
-                    auto has = exports->getPropertySlot(globalObject, property, slot);
-                    RETURN_IF_EXCEPTION(scope, );
-                    if (!has) continue;
-
-                    // Allow DontEnum properties which are not getter/setters
-                    // https://github.com/oven-sh/bun/issues/4432
-                    if (slot.attributes() & PropertyAttribute::DontEnum) {
-                        if (!(slot.isValue() || slot.isCustom())) {
-                            continue;
-                        }
-                    }
-
-                    exportNames.append(property);
-
-                    JSValue getterResult = slot.getValue(globalObject, property);
-
-                    // If it throws, we keep them in the exports list, but mark it as undefined
-                    // This is consistent with what Node.js does.
-                    if (scope.exception()) [[unlikely]] {
-                        scope.clearException();
-                        getterResult = jsUndefined();
-                    }
-
-                    exportValues.append(getterResult);
-
-                    needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
-                }
-            }
-
-        } else if (canPerformFastEnumeration(structure)) {
+        if (canPerformFastEnumeration(structure)) {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
                 if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
@@ -1125,10 +1020,9 @@ void populateESMExports(
         }
     }
 
-    if (needsToAssignDefault) {
-        exportNames.append(vm.propertyNames->defaultKeyword);
-        exportValues.append(result);
-    }
+    // Always assign the entire exports object as the default export
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(result);
 }
 
 void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
@@ -1140,7 +1034,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     auto result = this->exportsObject();
     RETURN_IF_EXCEPTION(scope, );
 
-    RELEASE_AND_RETURN(scope, populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation));
+    RELEASE_AND_RETURN(scope, populateESMExports(globalObject, result, exportNames, exportValues));
 }
 
 void JSCommonJSModule::setExportsObject(JSC::JSValue exportsObject)
@@ -1364,7 +1258,6 @@ void JSCommonJSModule::evaluate(
     }
 
     auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
-    this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (this->hasEvaluated)
         return;
 
@@ -1433,7 +1326,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
-    bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin;
 
     if (entry) {
@@ -1480,8 +1372,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     } else {
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
     }
-
-    moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(

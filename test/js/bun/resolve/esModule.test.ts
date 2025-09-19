@@ -16,12 +16,14 @@ test("__esModule is settable", () => {
   Self.__esModule = undefined;
 });
 
-test("require of self sets __esModule", () => {
+test("require of self does NOT automatically set __esModule", () => {
   expect(Self.__esModule).toBeUndefined();
   {
     const Self = require("./esModule.test.ts");
-    expect(Self.__esModule).toBe(true);
+    // With new behavior, __esModule is not automatically added
+    expect(Self.__esModule).toBeUndefined();
   }
-  expect(Self.__esModule).toBe(true);
+  // __esModule remains undefined since it's not automatically added
+  expect(Self.__esModule).toBeUndefined();
   expect(Object.getOwnPropertyNames(Self)).toBeEmpty();
 });

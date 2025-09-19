@@ -29,8 +29,7 @@ void populateESMExports(
     JSC::JSGlobalObject* globalObject,
     JSC::JSValue result,
     WTF::Vector<JSC::Identifier, 4>& exportNames,
-    JSC::MarkedArgumentBuffer& exportValues,
-    bool ignoreESModuleAnnotation);
+    JSC::MarkedArgumentBuffer& exportValues);
 
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
@@ -71,7 +70,6 @@ public:
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
 
-    bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);

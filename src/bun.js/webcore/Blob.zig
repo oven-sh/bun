@@ -4433,7 +4433,7 @@ pub const Internal = struct {
             return out.toJS(globalThis);
         } else {
             var str = ZigString.init(this.toOwnedSlice());
-            str.mark();
+            str.markGlobal();
             return str.toExternalValue(globalThis);
         }
     }

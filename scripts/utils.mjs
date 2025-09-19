@@ -2808,6 +2808,7 @@ export function endGroup() {
   } else {
     console.groupEnd();
   }
+  console.log();
 }
 
 export function printEnvironment() {

@@ -623,7 +623,7 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
         const message = output_buf[0..written];
         zig_str = ZigString.init(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message})));
         var encoded_str = zig_str.withEncoding();
-        encoded_str.mark();
+        encoded_str.markGlobal();
 
         // We shouldn't *need* to do this but it's not entirely clear.
         BoringSSL.ERR_clear_error();

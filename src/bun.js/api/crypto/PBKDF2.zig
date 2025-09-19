@@ -77,7 +77,7 @@ pub const Job = struct {
 
         const output_slice = this.output;
         assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
-        const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+        const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice);
         this.output = &[_]u8{};
         promise.resolve(globalThis, buffer_value);
     }

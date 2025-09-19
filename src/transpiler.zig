@@ -437,6 +437,13 @@ pub const Transpiler = struct {
         };
     }
 
+    pub fn deinit(this: *Transpiler) void {
+        this.options.deinit();
+        this.log.deinit();
+        this.resolver.deinit();
+        this.fs.deinit();
+    }
+
     pub fn configureLinkerWithAutoJSX(transpiler: *Transpiler, auto_jsx: bool) void {
         transpiler.linker = Linker.init(
             transpiler.allocator,
@@ -1026,7 +1033,7 @@ pub const Transpiler = struct {
             }
 
             const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
-                if (use_shared_buffer) bun.fs_allocator else this_parse.allocator,
+                if (use_shared_buffer) bun.default_allocator else this_parse.allocator,
                 transpiler.fs,
                 path.text,
                 dirname_fd,

@@ -1,6 +1,6 @@
 const vm_size_t = usize;
 
-pub const enabled = Environment.allow_assert and Environment.isMac;
+pub const enabled = Environment.allow_assert and Environment.isMac and !Environment.enable_asan;
 
 fn heapLabel(comptime T: type) [:0]const u8 {
     const base_name = if (comptime bun.meta.hasDecl(T, "heap_label"))

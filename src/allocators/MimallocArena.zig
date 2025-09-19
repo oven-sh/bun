@@ -124,6 +124,7 @@ pub fn borrow(self: Self) Borrowed {
 /// It uses pthread_getspecific to do that.
 /// We can save those extra calls if we just do it once in here
 pub fn getThreadLocalDefault() std.mem.Allocator {
+    if (bun.Environment.enable_asan) return bun.default_allocator;
     return Borrowed.getDefault().allocator();
 }
 

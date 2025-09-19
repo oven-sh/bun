@@ -47,7 +47,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
@@ -185,7 +185,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);

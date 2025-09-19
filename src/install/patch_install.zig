@@ -522,7 +522,7 @@ pub const PatchTask = struct {
         const patchfile_path = bun.handleOom(manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)));
 
         const pt = bun.new(PatchTask, .{
-            .tempdir = manager.getTemporaryDirectory(),
+            .tempdir = manager.getTemporaryDirectory().handle,
             .callback = .{
                 .calc_hash = .{
                     .state = state,
@@ -559,7 +559,7 @@ pub const PatchTask = struct {
         const patchfilepath = bun.handleOom(pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)));
 
         const pt = bun.new(PatchTask, .{
-            .tempdir = pkg_manager.getTemporaryDirectory(),
+            .tempdir = pkg_manager.getTemporaryDirectory().handle,
             .callback = .{
                 .apply = .{
                     .pkg_id = pkg_id,

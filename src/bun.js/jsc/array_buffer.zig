@@ -590,7 +590,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: *jsc.JSGlobalObject) jsc.JSValue {
-        return jsc.JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
+        return jsc.JSValue.createBuffer(ctx, this.buffer.byteSlice());
     }
 
     pub fn toJS(this: *const MarkedArrayBuffer, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {

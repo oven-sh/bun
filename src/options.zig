@@ -1899,6 +1899,10 @@ pub const BundleOptions = struct {
         this.defines_loaded = true;
     }
 
+    pub fn deinit(this: *const BundleOptions) void {
+        this.define.deinit();
+    }
+
     pub fn loader(this: *const BundleOptions, ext: string) Loader {
         return this.loaders.get(ext) orelse .file;
     }

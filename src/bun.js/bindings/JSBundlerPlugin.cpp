@@ -1,3 +1,4 @@
+#include "root.h"
 #include "JSBundlerPlugin.h"
 
 #include "BunProcess.h"
@@ -57,6 +58,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise);
+JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addVirtualModule);
 
 void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index)
 {
@@ -101,12 +103,60 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
 }
 bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespaceStr, const BunString* path, bool isOnLoad)
 {
+    auto pathString = path->toWTFString(BunString::ZeroCopy);
+
+    // Check virtual modules for both onLoad and onResolve (only in "file" namespace)
+    if (!this->virtualModules.isEmpty()) {
+        // Virtual modules only work in the "file" namespace or empty namespace (defaults to "file")
+        bool isFileNamespace = !namespaceStr || namespaceStr->isEmpty() || namespaceStr->toWTFString(BunString::ZeroCopy) == "file"_s;
+        if (isFileNamespace && this->virtualModules.contains(pathString)) {
+            return true;
+        }
+    }
+
     if (isOnLoad) {
         return anyMatchesForNamespace(vm, this->onLoad, namespaceStr, path);
     } else {
         return anyMatchesForNamespace(vm, this->onResolve, namespaceStr, path);
     }
 }
+
+bool BundlerPlugin::hasVirtualModule(const String& path) const
+{
+    return !virtualModules.isEmpty() && virtualModules.contains(path);
+}
+
+JSC::JSObject* BundlerPlugin::getVirtualModule(const String& path)
+{
+    if (virtualModules.isEmpty()) {
+        return nullptr;
+    }
+
+    auto it = virtualModules.find(path);
+    if (it != virtualModules.end()) {
+        unsigned index = it->value;
+        if (index < virtualModulesList.list().size()) {
+            return virtualModulesList.list()[index].get();
+        }
+    }
+    return nullptr;
+}
+
+void BundlerPlugin::addVirtualModule(JSC::VM& vm, JSC::JSCell* owner, const String& path, JSC::JSObject* moduleFunction)
+{
+    unsigned index = virtualModulesList.list().size();
+    virtualModulesList.append(vm, owner, moduleFunction);
+    virtualModules.set(path, index);
+}
+
+void BundlerPlugin::tombstone()
+{
+    tombstoned = true;
+    virtualModules.clear();
+    // virtualModulesList will be cleaned up by destructor
+}
+
+// Template implementation moved to header file
 
 static const HashTableValue JSBundlerPluginHashTable[] = {
     { "addFilter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_addFilter, 3 } },
@@ -115,6 +165,7 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "onResolveAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onResolveAsync, 4 } },
     { "onBeforeParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onBeforeParse, 4 } },
     { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
+    { "addVirtualModule"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_addVirtualModule, 2 } },
 };
 
 class JSBundlerPlugin final : public JSC::JSDestructibleObject {
@@ -193,7 +244,7 @@ void JSBundlerPlugin::visitAdditionalChildren(Visitor& visitor)
     this->onLoadFunction.visit(visitor);
     this->onResolveFunction.visit(visitor);
     this->setupFunction.visit(visitor);
-    this->plugin.deferredPromises.visit(this, visitor);
+    this->plugin.visitAdditionalChildren(this, visitor);
 }
 
 template<typename Visitor>
@@ -467,6 +518,37 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise, (JSC::JSG
     return encoded_defer_promise;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addVirtualModule, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    if (thisObject->plugin.tombstoned) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue pathValue = callFrame->argument(0);
+    JSC::JSValue moduleValue = callFrame->argument(1);
+
+    if (!pathValue.isString()) {
+        throwTypeError(globalObject, scope, "Expected first argument to be a string"_s);
+        return JSC::JSValue::encode({});
+    }
+
+    if (!moduleValue.isObject() || !moduleValue.isCallable()) {
+        throwTypeError(globalObject, scope, "Expected second argument to be a function"_s);
+        return JSC::JSValue::encode({});
+    }
+
+    WTF::String path = pathValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    thisObject->plugin.addVirtualModule(vm, thisObject, path, JSC::asObject(moduleValue));
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 void JSBundlerPlugin::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -736,6 +818,31 @@ extern "C" int JSBundlerPlugin__hasOnBeforeParsePlugins(Bun::JSBundlerPlugin* pl
 extern "C" JSC::JSGlobalObject* JSBundlerPlugin__globalObject(Bun::JSBundlerPlugin* plugin)
 {
     return plugin->m_globalObject;
+}
+
+extern "C" bool JSBundlerPlugin__hasVirtualModule(Bun::JSBundlerPlugin* plugin, const BunString* path)
+{
+    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
+    return plugin->plugin.hasVirtualModule(pathStr);
+}
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__getVirtualModule(Bun::JSBundlerPlugin* plugin, const BunString* path)
+{
+    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
+    auto* virtualModule = plugin->plugin.getVirtualModule(pathStr);
+    if (virtualModule) {
+        return JSC::JSValue::encode(virtualModule);
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+extern "C" void JSBundlerPlugin__addVirtualModule(Bun::JSBundlerPlugin* plugin, const BunString* path, JSC::EncodedJSValue encodedModuleFunction)
+{
+    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
+    JSC::JSValue moduleFunction = JSC::JSValue::decode(encodedModuleFunction);
+    if (moduleFunction.isObject()) {
+        plugin->plugin.addVirtualModule(plugin->vm(), plugin, pathStr, JSC::asObject(moduleFunction));
+    }
 }
 
 } // namespace Bun

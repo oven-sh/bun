@@ -119,6 +119,15 @@ pub fn unregisterAbortTracker(
     }
 }
 
+pub fn isAsyncHTTPAborted(async_http_id: u32) bool {
+    // Check if this async_http_id has been marked for abort
+    return socket_async_http_abort_tracker.get(async_http_id) != null;
+}
+
+export fn Bun__http_isAsyncHTTPAborted(async_http_id: u32) bool {
+    return isAsyncHTTPAborted(async_http_id);
+}
+
 pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,

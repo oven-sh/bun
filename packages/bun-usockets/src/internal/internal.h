@@ -202,6 +202,8 @@ struct us_connecting_socket_t {
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
     struct us_connecting_socket_t* prev_pending;
+    // Track async_http_id for abort signal handling during connection
+    uint32_t async_http_id;
 };
 
 struct us_wrapped_socket_context_t {

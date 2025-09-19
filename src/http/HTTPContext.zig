@@ -476,6 +476,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
+            // Check for abort before starting connection
+            if (client.signals.get(.aborted)) {
+                return error.AbortedBeforeConnecting;
+            }
+
             const socket = try HTTPSocket.connectAnon(
                 hostname,
                 port,
@@ -483,6 +488,15 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 ActiveSocket.init(client).ptr(),
                 false,
             );
+
+            // Check for abort after DNS resolution/connection attempt
+            if (client.signals.get(.aborted)) {
+                if (socket.isClosed() == false) {
+                    socket.close(.failure);
+                }
+                return error.AbortedDuringConnect;
+            }
+
             client.allow_retry = false;
             return socket;
         }

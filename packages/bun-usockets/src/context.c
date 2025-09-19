@@ -548,6 +548,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
     c->port = port;
+    c->async_http_id = 0; // Will be set later if needed
     us_internal_socket_context_link_connecting_socket(ssl, context, c);
 
 #ifdef _WIN32
@@ -604,6 +605,9 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
     return opened;
 }
 
+// External function to check if an async_http_id has been aborted
+extern int Bun__http_isAsyncHTTPAborted(uint32_t async_http_id);
+
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     // make sure to decrement the active_handles counter, no matter what
 #ifdef _WIN32
@@ -613,6 +617,14 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 #endif
 
     c->pending_resolve_callback = 0;
+
+    // Check if this connection was aborted during DNS resolution
+    if (c->async_http_id != 0 && Bun__http_isAsyncHTTPAborted(c->async_http_id)) {
+        c->closed = 1;
+        us_connecting_socket_free(c->ssl, c);
+        return;
+    }
+
     // if the socket was closed while we were resolving the address, free it
     if (c->closed) {
         us_connecting_socket_free(c->ssl, c);

@@ -485,7 +485,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       // Bindings to be used for WS Server
       websocket: {
         open(ws) {
-          ws.data?.open(ws);
+          ws.data.open(ws);
         },
         message(ws, message) {
           ws.data.message(ws, message);
@@ -1054,15 +1054,18 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _write(_chunk, _encoding, _callback) {
     const handle = this[kHandle];
     if (handle) {
-      handle.write(_chunk, _encoding);
-      if (handle.bufferLength > 0) {
-        this.#pendingCallback = _callback;
-        return false;
+      try {
+        handle.write(_chunk, _encoding);
+        if (handle.bufferLength > 0) {
+          this.#pendingCallback = _callback;
+        }
+        _callback();
+      } catch (err) {
+        _callback(err);
       }
-      _callback?.();
-      return true;
+      return;
     }
-    _callback?.();
+    _callback();
   }
 
   pause() {

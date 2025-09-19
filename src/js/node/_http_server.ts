@@ -1058,7 +1058,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         handle.write(_chunk, _encoding);
         if (handle.bufferLength > 0) {
           this.#pendingCallback = _callback;
-          return;
+          return false;
         }
         _callback();
       } catch (err) {

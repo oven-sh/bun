@@ -39,6 +39,8 @@ function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, ad
   return promise;
 }
 
+const BIG_DATA = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
+
 describe("HTTP server CONNECT", () => {
   test("should work with proxy package", async () => {
     await using targetServer = http.createServer((req, res) => {
@@ -113,13 +115,12 @@ describe("HTTP server CONNECT", () => {
   });
 
   test("should handle backpressure", async () => {
-    const data = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });
     await using targetServer = net.createServer(socket => {
       socket.write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
-      socket.end(data);
+      socket.end(BIG_DATA);
     });
     let proxyHeaders = {};
     proxyServer.on("connect", (req, socket, head) => {
@@ -151,7 +152,58 @@ describe("HTTP server CONNECT", () => {
       const response = await connectClient(proxyAddress, targetAddress, false);
       expect(proxyHeaders["proxy-authorization"]).toBe("Basic dXNlcjpwYXNzd29yZA==");
       expect(response).toContain("HTTP/1.1 200 OK");
-      expect(response).toContain(data);
+      expect(response).toContain(BIG_DATA);
     }
+  });
+
+  test("should handle data, drain and end events", async () => {
+    await using proxyServer = http.createServer((req, res) => {
+      res.end("Hello World from proxy server");
+    });
+
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const proxyAddress = proxyServer.address() as AddressInfo;
+    let data_received: string[] = [];
+    let client_data_received: string[] = [];
+    let proxy_drain_received = false;
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+
+    const { promise: clientPromise, resolve: clientResolve, reject: clientReject } = Promise.withResolvers<string>();
+    const clientSocket = net.connect(proxyAddress.port, proxyAddress.address, () => {
+      clientSocket.on("error", clientReject);
+      clientSocket.on("data", chunk => {
+        client_data_received.push(chunk?.toString());
+      });
+      clientSocket.on("end", () => {
+        clientSocket.end();
+        clientResolve(client_data_received.join(""));
+      });
+
+      clientSocket.write("CONNECT localhost:80 HTTP/1.1\r\nHost: localhost:80\r\nConnection: close\r\n\r\n");
+    });
+
+    proxyServer.on("connect", (req, socket, head) => {
+      expect(head).toBeInstanceOf(Buffer);
+      socket.on("data", chunk => {
+        data_received.push(chunk?.toString());
+      });
+      socket.on("end", () => {
+        resolve(data_received.join(""));
+      });
+      socket.on("drain", () => {
+        proxy_drain_received = true;
+        socket.end();
+      });
+      socket.on("error", reject);
+      proxy_drain_received = false;
+      // should not able to flush the data to the client immediately
+      expect(socket.write(BIG_DATA)).toBe(false);
+      clientSocket.write("Hello World");
+    });
+
+    expect(await promise).toContain("Hello World");
+    expect(await clientPromise).toContain(BIG_DATA);
+    expect(proxy_drain_received).toBe(true);
   });
 });

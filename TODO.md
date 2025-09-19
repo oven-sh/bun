@@ -31,12 +31,17 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 - [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
 - [ ] test/js/sql/sql-mysql.helpers.test.ts
 - [ ] test/js/bun/glob/scan.test.ts
+- [ ] test/js/web/fetch/fetch.tls.test.ts
+- [ ] test/js/web/fetch/chunked-trailing.test.js
+- [ ] test/js/node/test/parallel/test-worker-heap-snapshot.js
+- [ ] test/js/bun/s3/s3.leak.test.ts
+- [ ] test/regression/issue/11297/11297.test.ts
 
 ## Real
 
 - [ ] test/js/bun/test/concurrent.test.ts
   - this test is relying on timings. we should fix it to be guaranteed order.
-- [ ] test/js/web/fetch/client-fetch.test.ts
+- [x] test/js/web/fetch/client-fetch.test.ts
   - re-entry issue? it's with .resolves.toPass
 - [ ] test/js/bun/net/tcp-server.test.ts
   - new flaky failure on windows

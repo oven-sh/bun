@@ -6476,7 +6476,7 @@ CPP_DECL WebCore::DOMFormData* WebCore__DOMFormData__fromJS(JSC::EncodedJSValue 
 
 #pragma mark - JSC::JSMap
 
-CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSMap__create(JSC::JSGlobalObject* arg0)
+CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSMap__create(JSC::JSGlobalObject* arg0)
 {
     return JSC::JSValue::encode(JSC::JSMap::create(arg0->vm(), arg0->mapStructure()));
 }

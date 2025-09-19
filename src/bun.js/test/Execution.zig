@@ -48,17 +48,14 @@ pub const ConcurrentGroup = struct {
     remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
     failure_skip_to: usize,
-    /// if the auto killer should be enabled for this group
-    auto_killer: bool,
 
-    pub fn init(sequence_start: usize, sequence_end: usize, next_index: usize, auto_killer: bool) ConcurrentGroup {
+    pub fn init(sequence_start: usize, sequence_end: usize, next_index: usize) ConcurrentGroup {
         return .{
             .sequence_start = sequence_start,
             .sequence_end = sequence_end,
             .executing = false,
             .remaining_incomplete_entries = sequence_end - sequence_start,
             .failure_skip_to = next_index,
-            .auto_killer = auto_killer,
         };
     }
     pub fn tryExtend(this: *ConcurrentGroup, next_sequence_start: usize, next_sequence_end: usize) bool {
@@ -481,15 +478,12 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
         }
     }
 }
-fn onGroupStarted(_: *Execution, group: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
+fn onGroupStarted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
     const vm = globalThis.bunVM();
-    if (group.auto_killer) vm.auto_killer.enable();
+    vm.auto_killer.enable();
 }
-fn onGroupCompleted(_: *Execution, group: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
+fn onGroupCompleted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
     const vm = globalThis.bunVM();
-    if (group.auto_killer) {
-        _ = vm.auto_killer.kill();
-    }
     vm.auto_killer.disable();
 }
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {

@@ -123,7 +123,7 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
   fixing this would mean going back to allowing immediate advancements. or alternatively we can go back to a callback queue but always prefer to advance over running the next callback if there are queued advancement.s
 
 - [x] nvm ~~revert how scopefunctions works to how it was before. add all the props to everything. `.skip.only` is the same as `.only.skip`. 32 possible combinations so it's fine.~~
-- [ ] test/js/node/http2/node-http2.test.js
+- [x] test/js/node/http2/node-http2.test.js
   - this spams output with 'killed 1 dangling process' now - consider only showing that for timeout failures
 - [x] change DoneCallback and ScopeFunctions to both use bound functions
   - DoneCallback will hold a jsvalue with the data
@@ -154,12 +154,12 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 - [x] make sure DoneCallback class can finalize, same as above
 - [x] weak pointers to BunTest
 - [x] bug to fix for later ~~fix `test("rerun me", () => { console.log("run one time!"); });` `--rerun-each=3`. works 1, no message 2, works 3. note that existing behaviour is similar?~~
-- [ ] bun test > support for Github Actions > should annotate a test timeout
-- [ ] a failure in beforeAll should prevent tests from running "unhandled errors between tests are reported"
+- [x] bun test > support for Github Actions > should annotate a test timeout
+- [x] a failure in beforeAll should prevent tests from running "unhandled errors between tests are reported"
 
 # Add tests:
 
-- [ ] regression test that this doesn't hang forever:
+- [x] regression test that this doesn't hang forever:
   ```js
   test("uncaught error", async () => {
     setTimeout(() => {

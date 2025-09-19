@@ -40,14 +40,14 @@ pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHo
                 error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
             };
             if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(globalThis, value, @typeName(Function));
+                debugExceptionAssertion(globalThis, value, Function);
             }
             return value;
         }
     }.function;
 }
 
-fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, function_name: []const u8) void {
+fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime func: anytype) void {
     if (comptime Environment.isDebug) {
         if (value != .zero) {
             if (globalThis.hasException()) {
@@ -60,7 +60,7 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, function
                     \\ value: {}
                     \\
                 , .{
-                    function_name,
+                    &func, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
                     value.toFmt(&formatter),
                 });
                 bun.Output.flush();

@@ -369,7 +369,7 @@ pub fn doPatchCommit(
                         const truncate_stderr = this.stderr.items.len > 256;
                         if (truncate_stderr) {
                             try writer.print("{s}... ({d} more bytes)", .{ this.stderr.items[0..256], this.stderr.items.len - 256 });
-                        } else try writer.writeAll(this.stderr.items[0..]);
+                        } else try writer.print("{s}", .{this.stderr.items[0..]});
                     }
                 };
                 Output.prettyError(

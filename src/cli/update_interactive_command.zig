@@ -11,16 +11,15 @@ pub const TerminalHyperlink = struct {
         };
     }
 
-    const ESC = "\x1b";
-    const OSC8 = ESC ++ "]8;;";
-    const ST = ESC ++ "\\";
-    const link_fmt_string = OSC8 ++ "{s}" ++ ST ++ "{s}" ++ OSC8 ++ ST;
-
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (this.enabled) {
+            const ESC = "\x1b";
+            const OSC8 = ESC ++ "]8;;";
+            const ST = ESC ++ "\\";
+            const link_fmt_string = OSC8 ++ "{s}" ++ ST ++ "{s}" ++ OSC8 ++ ST;
             try writer.print(link_fmt_string, .{ this.link, this.text });
         } else {
-            try writer.writeAll(this.text);
+            try writer.print("{s}", .{this.text});
         }
     }
 };

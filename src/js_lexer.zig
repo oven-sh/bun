@@ -882,7 +882,7 @@ fn NewLexer_(
                     lexer.step();
 
                     if (lexer.code_point != 'u') {
-                        try lexer.syntaxError();
+                        try lexer.addSyntaxError(lexer.loc(), "{s}", .{InvalidEscapeSequenceFormatter{ .code_point = lexer.code_point }});
                     }
                     lexer.step();
                     if (lexer.code_point == '{') {
@@ -3366,6 +3366,20 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }
+
+const InvalidEscapeSequenceFormatter = struct {
+    code_point: i32,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self.code_point) {
+            '"' => try writer.writeAll("Syntax error: unexpected escaped double quote '\"'"),
+            '\'' => try writer.writeAll("Syntax error: unexpected escaped single quote \"'\""),
+            '`' => try writer.writeAll("Syntax error: unexpected escaped backtick '`'"),
+            '\\' => try writer.writeAll("Syntax error: unexpected escaped backslash '\\'"),
+            else => try writer.writeAll("Syntax error: unexpected escape sequence"),
+        }
+    }
+};
 
 const string = []const u8;
 

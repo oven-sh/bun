@@ -87,8 +87,6 @@ test("describe/test", async () => {
                                            ^
     error: completion is not 2
         at <anonymous> (file:NN:NN)
-        at promiseReactionJobWithoutPromiseUnwrapAsyncContext (file:NN:NN)
-        at promiseReactionJob (file:NN:NN)
     (fail) done parameter > done combined with promise > fails when completion is not incremented
     error: test error
     test error

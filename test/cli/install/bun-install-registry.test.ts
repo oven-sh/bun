@@ -43,12 +43,10 @@ var packageJson: string;
 
 let users: Record<string, string> = {};
 
-beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 5);
-  registry = new VerdaccioRegistry();
-  port = registry.port;
-  await registry.start();
-});
+setDefaultTimeout(1000 * 60 * 5);
+registry = new VerdaccioRegistry();
+port = registry.port;
+await registry.start();
 
 afterAll(async () => {
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);

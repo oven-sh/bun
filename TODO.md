@@ -4,8 +4,6 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 
 ## Flaky on main
 
-- [ ] test/cli/install/bun-install-registry.test.ts
-  - not sure if this is real or flaky
 - [ ] test/js/web/fetch/fetch.stream.test.ts
   - this is usually a flaky failure but was a failure. this is maybe related to missing retry/rerun options.
   - maybe it just ran the test 5 times and had a failure each time
@@ -54,6 +52,8 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 
 - [ ] test/js/bun/net/socket.test.ts
   - new failure on windows. same issue as below. it already waits 1000ms to check the heapstats.
+- [x] test/cli/install/bun-install-registry.test.ts
+  - not sure if this is real or flaky
 - [ ] test/js/bun/net/tcp-server.test.ts
   - new flaky failure on windows. same issue as above.
 - [ ] (maybe flaky) test/js/web/fetch/abort-signal-leak.test.ts

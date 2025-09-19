@@ -316,6 +316,7 @@ export interface TestContext {
   restartServer: () => Promise<void>;
   __subscriberClientPool: RedisClient[];
   newSubscriberClient: (connectionType: ConnectionType) => Promise<RedisClient>;
+  cleanupSubscribers: () => Promise<void>;
 }
 
 // Create a singleton promise for Docker initialization

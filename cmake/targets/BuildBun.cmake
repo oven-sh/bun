@@ -893,11 +893,6 @@ if(NOT WIN32)
       target_link_libraries(${bun} PUBLIC -fsanitize=address)
     endif()
 
-    if (ENABLE_VALGRIND)
-      target_compile_options(${bun} PUBLIC -fvalgrind)
-      target_link_libraries(${bun} PUBLIC -fvalgrind)
-    endif()
-
     target_compile_options(${bun} PUBLIC
       -Werror=return-type
       -Werror=return-stack-address
@@ -936,11 +931,6 @@ if(NOT WIN32)
     if(ENABLE_ASAN)
       target_compile_options(${bun} PUBLIC -fsanitize=address)
       target_link_libraries(${bun} PUBLIC -fsanitize=address)
-    endif()
-
-    if (ENABLE_VALGRIND)
-      target_compile_options(${bun} PUBLIC -fvalgrind)
-      target_link_libraries(${bun} PUBLIC -fvalgrind)
     endif()
   endif()
 else()
@@ -1374,6 +1364,7 @@ if(NOT BUN_CPP_ONLY)
       set(bunPath ${bunTriplet})
     elseif (ENABLE_VALGRIND)
       set(bunTriplet ${bunTriplet}-valgrind)
+      set(bunPath ${bunTriplet})
     elseif(ENABLE_ASAN)
       set(bunTriplet ${bunTriplet}-asan)
       set(bunPath ${bunTriplet})

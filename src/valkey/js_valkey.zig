@@ -206,11 +206,15 @@ pub const SubscriptionCtx = struct {
         return this._parent.client.flags.finalized or !(try this.hasSubscriptions(global_object));
     }
 
-    pub fn deinit(this: *Self) void {
+    pub fn deinit(this: *Self, global_object: *jsc.JSGlobalObject) void {
         // This check is necessary because crossing between Zig and C++ is necessary because Zig doesn't know that C++
         // is side-effect-free.
         if (comptime bun.Environment.isDebug) {
             bun.debugAssert(this.isDeletable(this._parent.globalObject) catch unreachable);
+        }
+
+        if (this._parent.this_value.tryGet()) |parent_this| {
+            ParentJS.gc.set(.subscriptionCallbackMap, parent_this, global_object, .js_undefined);
         }
     }
 };
@@ -486,7 +490,7 @@ pub const JSValkeyClient = struct {
             this.client.flags.enable_offline_queue = ctx.original_enable_offline_queue;
             this.client.flags.auto_pipelining = ctx.original_enable_auto_pipelining;
 
-            ctx.deinit();
+            ctx.deinit(this.globalObject);
             this._subscription_ctx = null;
         }
 
@@ -677,9 +681,6 @@ pub const JSValkeyClient = struct {
         defer this.deref();
 
         if (this.client.getTimeoutInterval() == 0) {
-            // Balances the reference count due to the .ref() in addTimer.
-            defer this.deref();
-
             this.resetConnectionTimeout();
             return .disarm;
         }

@@ -3372,11 +3372,11 @@ const InvalidEscapeSequenceFormatter = struct {
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self.code_point) {
-            '"' => try writer.writeAll("Syntax error: unexpected escaped double quote '\"'"),
-            '\'' => try writer.writeAll("Syntax error: unexpected escaped single quote \"'\""),
-            '`' => try writer.writeAll("Syntax error: unexpected escaped backtick '`'"),
-            '\\' => try writer.writeAll("Syntax error: unexpected escaped backslash '\\'"),
-            else => try writer.writeAll("Syntax error: unexpected escape sequence"),
+            '"' => try writer.writeAll("Unexpected escaped double quote '\"'"),
+            '\'' => try writer.writeAll("Unexpected escaped single quote \"'\""),
+            '`' => try writer.writeAll("Unexpected escaped backtick '`'"),
+            '\\' => try writer.writeAll("Unexpected escaped backslash '\\'"),
+            else => try writer.writeAll("Unexpected escape sequence"),
         }
     }
 };

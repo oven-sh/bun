@@ -17,7 +17,7 @@ pub const SubscriptionCtx = struct {
     const ParentJS = JSValkeyClient.js;
 
     pub fn init(parent: *JSValkeyClient, enable_offline_queue: bool, enable_auto_pipelining: bool) bun.JSError!Self {
-        const callback_map = try jsc.JSMap.create(parent.globalObject);
+        const callback_map = jsc.JSMap.create(parent.globalObject);
         const parent_this = parent.this_value.tryGet() orelse unreachable;
 
         ParentJS.gc.set(.subscriptionCallbackMap, parent_this, parent.globalObject, callback_map);
@@ -965,7 +965,7 @@ pub const JSValkeyClient = struct {
         defer this.deref();
 
         this.stopTimers();
-        this.this_value.deinit();
+        this.this_value.finalize();
         this.client.flags.finalized = true;
         this.client.close();
 
@@ -1085,7 +1085,7 @@ pub const JSValkeyClient = struct {
         this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();
-        this.this_value.deinit();
+        this.this_value.finalize();
         this.ref_count.assertNoRefs();
         bun.destroy(this);
     }
@@ -1126,11 +1126,10 @@ pub const JSValkeyClient = struct {
 
         // Orthogonal to this, we need to manage the strong reference to the JS
         // object.
-        const current_this = this.this_value.tryGet() orelse unreachable;
         switch (this.client.status) {
             .connecting, .connected => {
                 // Whenever we're connected, we need to keep the object alive.
-                this.this_value.setStrong(current_this, this.globalObject);
+                this.this_value.upgrade(this.globalObject);
             },
             .disconnected, .failed => {
                 // If we're disconnected or failed, we need to check if we have
@@ -1138,11 +1137,11 @@ pub const JSValkeyClient = struct {
                 if (has_activity) {
                     // If we have pending activity, we need to keep the object
                     // alive.
-                    this.this_value.setStrong(current_this, this.globalObject);
+                    this.this_value.upgrade(this.globalObject);
                 } else {
                     // If we don't have any pending activity, we can drop the
                     // strong reference.
-                    this.this_value.setWeak(current_this);
+                    this.this_value.downgrade();
                 }
             },
         }

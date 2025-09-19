@@ -1897,6 +1897,10 @@ export namespace numeric {
     if (numPoints <= 0) return [];
     if (numPoints === 1) return [start];
 
+    if (!Number.isFinite(base) || base <= 0 || base === 1) {
+      throw new Error('expSpace: "base" must be > 0 and !== 1');
+    }
+
     // Generate exponentially spaced values from 0 to 1
     const exponentialValues = Array.from(
       { length: numPoints },
@@ -1998,15 +2002,25 @@ export namespace numeric {
    * @todo Perhaps this does not belong in the numeric namespace.
    */
   export namespace random {
+    /**
+     * Generate a random number between the specified range.
+     *
+     * @param min The minimum value (inclusive for integrals).
+     * @param max The maximum value (inclusive for integrals).
+     * @param format The format specifier for the random number.
+     * @returns A random number between min and max, formatted according to the specifier.
+     */
     export function between(min: number, max: number, format: FormatSpecifier = DefaultFormatSpecifier): number {
-      const asFloating = Math.random() * (max - min) + min;
+      if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error("min/max must be finite");
+      if (max < min) throw new Error("max must be >= min");
 
-      switch (format.domain) {
-        case "floating":
-          return asFloating;
-        case "integral":
-          return Math.floor(asFloating);
+      if (format.domain === "floating") {
+        return Math.random() * (max - min) + min;
       }
+
+      const lo = Math.ceil(min);
+      const hi = Math.floor(max);
+      return Math.floor(Math.random() * (hi - lo + 1)) + lo;
     }
   }
 }

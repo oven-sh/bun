@@ -204,6 +204,8 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       // Ensure the value is not in the database.
       const testValue = await redis.get(testKeyUniquePerDb);
       expect(testValue).toBeNull();
+
+      redis.close();
     });
   });
 

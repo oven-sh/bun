@@ -79,7 +79,7 @@ async function lintScope(ruleName: string, location: Srcloc, callback: () => voi
   const lines = fileContent.split("\n");
   const line = lines[lineNumber - 1];
 
-  function parseNolints(nolintKeyword: string, line: string): string[] | "total" {
+  function parseNolints(nolintKeyword: string, line: string): string[] {
     // First check if line ends with NOLINT pattern(s)
     const escKw = nolintKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const endsWithPattern = new RegExp(`${escKw}(\\([^)]*\\))?\\s*$`);
@@ -100,13 +100,13 @@ async function lintScope(ruleName: string, location: Srcloc, callback: () => voi
 
   // First, test if the current line has a NOLINT(...)
   const nolintCurrent = parseNolints("NOLINT", line);
-  if (nolintCurrent === "total" || nolintCurrent.includes(ruleName)) {
+  if (nolintCurrent.includes(ruleName)) {
     // This isn't a line we lint. Bail.
     return;
   }
 
   const nolintPrev = parseNolints("NOLINTNEXTLINE", lines[lineNumber - 2] ?? "");
-  if (nolintPrev === "total" || nolintPrev.includes(ruleName)) {
+  if (nolintPrev.includes(ruleName)) {
     // This isn't a line we lint. Bail.
     return;
   }

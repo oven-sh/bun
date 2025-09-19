@@ -720,7 +720,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
       structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->${className(typeName)}Structure());
       RETURN_IF_EXCEPTION(scope, {});
     }
-    
+
 ` +
     (!obj.constructNeedsThis
       ? `

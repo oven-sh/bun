@@ -1705,12 +1705,11 @@ pub const TestCommand = struct {
         const summary = reporter.summary();
 
         if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
-            Global.exit(1);
+            vm.exit_handler.exit_code = 1;
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
-            Global.exit(reporter.jest.unhandled_errors_between_tests);
-        } else {
-            vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
+            vm.exit_handler.exit_code = 1;
         }
+        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
     }
 
     fn runEventLoopForWatch(vm: *jsc.VirtualMachine) void {

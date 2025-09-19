@@ -23,6 +23,7 @@ pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Enviro
     debug_allocator_data.allocator
 else
     default_allocator;
+
 pub const debug_allocator_data = struct {
     comptime {
         if (!Environment.isDebug) @compileError("only available in debug");
@@ -133,10 +134,6 @@ pub fn intFromFloat(comptime Int: type, value: anytype) Int {
     // Safe to convert - truncate toward zero
     return @as(Int, @intFromFloat(truncated));
 }
-
-/// We cannot use a threadlocal memory allocator for FileSystem-related things
-/// FileSystem is a singleton.
-pub const fs_allocator = default_allocator;
 
 pub fn typedAllocator(comptime T: type) std.mem.Allocator {
     if (heap_breakdown.enabled)

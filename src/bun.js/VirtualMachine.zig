@@ -834,7 +834,10 @@ extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     if (this.shouldDestructMainThreadOnExit()) {
+        if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
+        this.transpiler.deinit();
+        this.gc_controller.deinit();
         this.deinit();
     }
     bun.Global.exit(this.exit_handler.exit_code);
@@ -1911,7 +1914,6 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
     }
 }
 
-// TODO:
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
 

@@ -553,14 +553,10 @@ pub const JSValue = enum(i64) {
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
 
     /// Must come from globally-allocated memory if allocator is not null
-    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: ?std.mem.Allocator) JSValue {
+    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8) JSValue {
         jsc.markBinding(@src());
         @setRuntimeSafety(false);
-        if (allocator) |alloc| {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, jsc.array_buffer.MarkedArrayBuffer_deallocator);
-        } else {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
-        }
+        return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, jsc.array_buffer.MarkedArrayBuffer_deallocator);
     }
 
     extern fn JSC__JSValue__createUninitializedUint8Array(globalObject: *JSGlobalObject, len: usize) JSValue;

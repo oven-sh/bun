@@ -1998,10 +1998,12 @@ pub fn Bun__canonicalizeIP_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     const addr_arg = try arguments[0].toSlice(globalThis, bun.default_allocator);
     defer addr_arg.deinit();
     const addr_str = addr_arg.slice();
-    if (addr_str.len >= INET6_ADDRSTRLEN) {
+    if (addr_str.len >= INET6_ADDRSTRLEN)
         return .js_undefined;
-    }
-    for (addr_str) |char| if (char == '/') return .js_undefined; // CIDR not allowed
+
+    // CIDR not allowed
+    if (strings.containsChar(addr_str, '/'))
+        return .js_undefined;
 
     var ip_binary: [16]u8 = undefined; // 16 bytes is enough for both IPv4 and IPv6
 

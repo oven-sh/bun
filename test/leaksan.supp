@@ -1,21 +1,3 @@
-leak:bunfig.Bunfig.parse__anon
-leak:resolver.package_json.PackageJSON.parse__anon
-leak:resolver.resolver.Resolver.parseTSConfig
-leak:JSC::Identifier::fromString
-leak:Zig__GlobalObject__create
-leak:_objc_msgSend_uncached
-leak:WTF::fastMalloc
-leak:WTF::AutomaticThread::start
-leak:Bun__transpileFile
-leak:WTF::SymbolRegistry::symbolForKey
-leak:js_printer.printAst__anon
-leak:Bun__resolveSync
-leak:JSC::moduleLoaderParseModule
-leak:JSC::ScriptExecutable::newCodeBlockFor
-leak:JSC::Parser<JSC::Lexer<unsigned char>>::parseFunctionExpression
-leak:JSC::Parser<JSC::Lexer<unsigned char>>::parsePrimaryExpression
-leak:JSC::Parser<JSC::Lexer<unsigned char>>::parseStatement
-leak:JSCInitialize
 leak:getaddrinfo_send_reply
 leak:start_wqthread
 leak:CRYPTO_set_thread_local

@@ -340,7 +340,6 @@ public:
 
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
-
     JSC::JSUint8Array* uint8Array = nullptr;
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -350,7 +349,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     if (length > 0) [[likely]] {
         ASSERT(bytesDeallocator);
         auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([=](void* p) {
-            bytesDeallocator(p, NULL);
+            bytesDeallocator(p, ctx);
         }));
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), 0, length);

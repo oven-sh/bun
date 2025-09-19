@@ -88,7 +88,7 @@ declare module "react-server-dom-bun/client.browser" {
   export function createFromReadableStream<T>(readable: ReadableStream<T>): Promise<T>;
 }
 
-declare module "react-server-dom-bun/client.server" {
+declare module "react-server-dom-bun/client.node.unbundled.js" {
   import type { SSRManifest } from "bun:app/server";
   import type { Readable } from "node:stream";
 
@@ -111,7 +111,7 @@ declare module "react-server-dom-bun/client.server" {
   export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
 }
 
-declare module "react-server-dom-bun/server" {
+declare module "react-server-dom-bun/server.node.unbundled.js" {
   import type { ServerManifest } from "bun:app/server";
   import type { ReactElement } from "react";
 

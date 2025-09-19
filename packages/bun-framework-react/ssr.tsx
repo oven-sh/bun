@@ -7,7 +7,7 @@ import type { Readable } from "node:stream";
 import * as React from "react";
 import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server.node";
-import { createFromNodeStream, type Manifest } from "react-server-dom-bun/client.server";
+import { createFromNodeStream, type Manifest } from "react-server-dom-bun/client.node.unbundled.js";
 import type { MiniAbortSignal } from "./server.tsx";
 
 // Verify that React 19 is being used.

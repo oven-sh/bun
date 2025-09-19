@@ -1026,7 +1026,7 @@ pub const Transpiler = struct {
             }
 
             const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
-                if (use_shared_buffer) bun.fs_allocator else this_parse.allocator,
+                if (use_shared_buffer) bun.default_allocator else this_parse.allocator,
                 transpiler.fs,
                 path.text,
                 dirname_fd,

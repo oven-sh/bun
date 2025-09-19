@@ -933,6 +933,7 @@ export async function describeWithContainer(
       "mysql_native_password": 3306,
       "mysql_tls": 3306,
       "mysql:8": 3306,  // Map mysql:8 to mysql_plain
+      "mysql:9": 3306,  // Map mysql:9 to mysql_native_password
       "redis_plain": 6379,
       "redis_unified": 6379,
       "minio": 9000,
@@ -941,9 +942,9 @@ export async function describeWithContainer(
 
     const servicePort = services[image];
     if (servicePort) {
-      // Map mysql:8 based on environment variables
+      // Map mysql:8 and mysql:9 based on environment variables
       let actualService = image;
-      if (image === "mysql:8") {
+      if (image === "mysql:8" || image === "mysql:9") {
         if (env.MYSQL_ROOT_PASSWORD === "bun") {
           actualService = "mysql_native_password"; // Has password "bun"
         } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {

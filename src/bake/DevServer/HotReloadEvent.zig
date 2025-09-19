@@ -130,14 +130,11 @@ pub fn processFileList(
 
     var rest_extra = event.extra_files.items;
     while (bun.strings.indexOfChar(rest_extra, 0)) |str| {
-        // extra_files will be cleared when the event is reset
-        const duped = bun.handleOom(dev.allocator().dupe(u8, rest_extra[0..str]));
-        bun.handleOom(event.files.put(dev.allocator(), duped, {}));
+        bun.handleOom(event.files.put(dev.allocator(), rest_extra[0..str], {}));
         rest_extra = rest_extra[str + 1 ..];
     }
     if (rest_extra.len > 0) {
-        const duped = bun.handleOom(dev.allocator().dupe(u8, rest_extra));
-        bun.handleOom(event.files.put(dev.allocator(), duped, {}));
+        bun.handleOom(event.files.put(dev.allocator(), rest_extra, {}));
     }
 
     const changed_file_paths = event.files.keys();

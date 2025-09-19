@@ -2,7 +2,7 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 
 # bun test
 
-Fixes #8768, Fixes #14624, Fixes #20100, Fixes #19875, Fixes #14135, Fixes #20980, Fixes #21830
+Fixes #8768, Fixes #14624, Fixes #20100, Fixes #19875, Fixes #14135, Fixes #20980, Fixes #21830, Fixes #5738
 
 Might fix 5996
 

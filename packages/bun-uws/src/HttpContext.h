@@ -192,6 +192,12 @@ private:
             /* Get socket ext */
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
+            if(httpResponseData && httpResponseData->isStreamingRequest) {
+                if(httpResponseData->inStream) {
+                    httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
+                    httpResponseData->inStream = nullptr;
+                }                
+            }
 
 
             /* Call filter */
@@ -254,7 +260,9 @@ private:
 
             /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isStreamingRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+
+                
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);
@@ -514,6 +522,7 @@ private:
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             asyncSocket->uncorkWithoutSending();
+            
             /* We do not care for half closed sockets */
             return asyncSocket->close();
         });

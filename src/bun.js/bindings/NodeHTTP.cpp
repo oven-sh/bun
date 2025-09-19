@@ -44,6 +44,8 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnDrain);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosed);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain);
+JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnData);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBufferLength);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
@@ -61,6 +63,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished);
 static const HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
     { "onclose"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnClose, jsNodeHttpServerSocketSetterOnClose } },
     { "ondrain"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnDrain, jsNodeHttpServerSocketSetterOnDrain } },
+    { "ondata"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnData, jsNodeHttpServerSocketSetterOnData } },
     { "bufferLength"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterBufferLength, noOpSetter } },
     { "bytesWritten"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterBytesWritten, noOpSetter } },
     { "closed"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosed, noOpSetter } },
@@ -202,6 +205,7 @@ public:
 
     mutable WriteBarrier<JSObject> functionToCallOnClose;
     mutable WriteBarrier<JSObject> functionToCallOnDrain;
+    mutable WriteBarrier<JSObject> functionToCallOnData;
     mutable WriteBarrier<WebCore::JSNodeHTTPResponse> currentResponseObject;
     mutable WriteBarrier<JSObject> m_remoteAddress;
     mutable WriteBarrier<JSObject> m_localAddress;
@@ -322,6 +326,47 @@ public:
                 }
                 auto callData = JSC::getCallData(callbackObject);
                 MarkedArgumentBuffer args;
+                EnsureStillAliveScope ensureStillAlive(self);
+
+                if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+                    profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+
+                    if (auto* ptr = exception.get()) {
+                        exception.clear();
+                        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                    }
+                }
+            });
+        }
+    }
+
+    void onData(JSValue chunk, bool last)
+    {
+        // This function can be called during GC!
+        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+        if (!functionToCallOnData) {
+            return;
+        }
+
+        WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
+
+        if (scriptExecutionContext) {
+            gcProtect(chunk);
+            scriptExecutionContext->postTask([self = this, chunk = chunk, last = last](ScriptExecutionContext& context) {
+                WTF::NakedPtr<JSC::Exception> exception;
+                auto* globalObject = defaultGlobalObject(context.globalObject());
+                auto* thisObject = self;
+                auto* callbackObject = thisObject->functionToCallOnData.get();
+                EnsureStillAliveScope ensureChunkStillAlive(chunk);
+                gcUnprotect(chunk);
+                if (!callbackObject) {
+                    return;
+                }
+
+                auto callData = JSC::getCallData(callbackObject);
+                MarkedArgumentBuffer args;
+                args.append(chunk);
+                args.append(JSC::jsBoolean(last));
                 EnsureStillAliveScope ensureStillAlive(self);
 
                 if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
@@ -529,6 +574,36 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain, (JSC::JSGlobalObje
     thisObject->functionToCallOnDrain.set(vm, thisObject, value.getObject());
     return true;
 }
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnData, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+
+    if (thisObject->functionToCallOnData) {
+        return JSValue::encode(thisObject->functionToCallOnData.get());
+    }
+
+    return JSValue::encode(JSC::jsUndefined());
+}
+JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    JSValue value = JSC::JSValue::decode(encodedValue);
+
+    if (value.isUndefined() || value.isNull()) {
+        thisObject->functionToCallOnData.clear();
+        return true;
+    }
+
+    if (!value.isCallable()) {
+        return false;
+    }
+
+    thisObject->functionToCallOnData.set(vm, thisObject, value.getObject());
+    return true;
+}
 JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
@@ -589,6 +664,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->currentResponseObject);
     visitor.append(fn->functionToCallOnClose);
     visitor.append(fn->functionToCallOnDrain);
+    visitor.append(fn->functionToCallOnData);
     visitor.append(fn->m_remoteAddress);
     visitor.append(fn->m_localAddress);
     visitor.append(fn->m_duplex);
@@ -661,6 +737,12 @@ extern "C" void Bun__callNodeHTTPServerSocketOnDrain(EncodedJSValue thisValue)
 {
     auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
     response->onDrain();
+}
+
+extern "C" void Bun__callNodeHTTPServerSocketOnData(EncodedJSValue thisValue, EncodedJSValue chunk, bool last)
+{
+    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
+    response->onData(JSValue::decode(chunk), last);
 }
 
 extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocket(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)

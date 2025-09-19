@@ -228,6 +228,7 @@ pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *jsc.VirtualMachine, th
     {
         const had_ref = this.body_read_ref.has;
         if (!this.flags.upgraded and !this.flags.socket_closed) {
+            log("clearOnData", .{});
             this.raw_response.clearOnData();
         }
 
@@ -574,15 +575,13 @@ pub fn onTimeout(this: *NodeHTTPResponse, _: uws.AnyResponse) void {
     this.handleAbortOrTimeout(.timeout, .zero);
 }
 
-pub fn doPause(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame, thisValue: jsc.JSValue) bun.JSError!jsc.JSValue {
+pub fn doPause(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame, _: jsc.JSValue) bun.JSError!jsc.JSValue {
     log("doPause", .{});
     if (this.flags.request_has_completed or this.flags.socket_closed or this.flags.ended or this.flags.upgraded) {
         return .false;
     }
-    if (this.body_read_ref.has and js.onDataGetCached(thisValue) == null) {
-        this.flags.is_data_buffered_during_pause = true;
-        this.raw_response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
-    }
+    this.flags.is_data_buffered_during_pause = true;
+    this.raw_response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
 
     if (!Environment.isWindows) {
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
@@ -596,6 +595,7 @@ pub fn drainRequestBody(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObje
 }
 
 fn drainBufferedRequestBodyFromPause(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
+    log("drainBufferedRequestBodyFromPause {d}", .{this.buffered_request_body_data_during_pause.len});
     if (this.buffered_request_body_data_during_pause.len > 0) {
         const result = jsc.JSValue.createBuffer(globalObject, this.buffered_request_body_data_during_pause.slice());
         this.buffered_request_body_data_during_pause = .{};
@@ -612,7 +612,7 @@ pub fn doResume(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, _: *
 
     var result: jsc.JSValue = .true;
     if (this.flags.is_data_buffered_during_pause) {
-        this.raw_response.clearOnData();
+        this.raw_response.onData(*NodeHTTPResponse, onData, this);
         this.flags.is_data_buffered_during_pause = false;
     }
 
@@ -648,6 +648,7 @@ pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *jsc.JSGlobalObject,
         if (this_value != .zero) {
             js.onAbortedSetCached(this_value, globalObject, .zero);
         }
+        log("clearOnData", .{});
         this.raw_response.clearOnData();
         this.raw_response.clearOnWritable();
         this.raw_response.clearTimeout();
@@ -674,6 +675,7 @@ pub export fn Bun__NodeHTTPRequest__onReject(globalObject: *jsc.JSGlobalObject, 
         if (this_value != .zero) {
             js.onAbortedSetCached(this_value, globalObject, .zero);
         }
+        log("clearOnData", .{});
         this.raw_response.clearOnData();
         this.raw_response.clearOnWritable();
         this.raw_response.clearTimeout();
@@ -699,6 +701,7 @@ pub fn abort(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFrame)
         return .js_undefined;
     }
     resumeSocket(this);
+    log("clearOnData", .{});
     this.raw_response.clearOnData();
     this.raw_response.clearOnWritable();
     this.raw_response.clearTimeout();
@@ -722,7 +725,33 @@ fn onBufferRequestBodyWhilePaused(this: *NodeHTTPResponse, chunk: []const u8, la
     }
 }
 
+fn getBytes(this: *NodeHTTPResponse, globalThis: *jsc.JSGlobalObject, chunk: []const u8) jsc.JSValue {
+    const bytes: jsc.JSValue = brk: {
+        if (chunk.len > 0 and this.buffered_request_body_data_during_pause.len > 0) {
+            const buffer = jsc.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch return .js_undefined; // TODO: properly propagate exception upwards
+            this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
+            if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
+                var input = array_buffer.slice();
+                @memcpy(input[0..this.buffered_request_body_data_during_pause.len], this.buffered_request_body_data_during_pause.slice());
+                @memcpy(input[this.buffered_request_body_data_during_pause.len..], chunk);
+                break :brk buffer;
+            }
+        }
+
+        if (this.drainBufferedRequestBodyFromPause(globalThis)) |buffered_data| {
+            break :brk buffered_data;
+        }
+
+        if (chunk.len > 0) {
+            break :brk jsc.ArrayBuffer.createBuffer(globalThis, chunk) catch return .js_undefined; // TODO: properly propagate exception upwards
+        }
+        break :brk .js_undefined;
+    };
+    return bytes;
+}
+
 fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event: AbortEvent, thisValue: jsc.JSValue) void {
+    log("onDataOrAborted({d}, {})", .{ chunk.len, last });
     if (last) {
         this.ref();
         this.body_read_state = .done;
@@ -739,6 +768,8 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
         }
     }
 
+    const socketValue = this.getServerSocketValue();
+
     if (js.onDataGetCached(thisValue)) |callback| {
         if (callback.isUndefined()) {
             return;
@@ -747,33 +778,23 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
         const globalThis = jsc.VirtualMachine.get().global;
         const event_loop = globalThis.bunVM().eventLoop();
 
-        const bytes: jsc.JSValue = brk: {
-            if (chunk.len > 0 and this.buffered_request_body_data_during_pause.len > 0) {
-                const buffer = jsc.JSValue.createBufferFromLength(globalThis, chunk.len + this.buffered_request_body_data_during_pause.len) catch return; // TODO: properly propagate exception upwards
-                this.buffered_request_body_data_during_pause.clearAndFree(bun.default_allocator);
-                if (buffer.asArrayBuffer(globalThis)) |array_buffer| {
-                    var input = array_buffer.slice();
-                    @memcpy(input[0..this.buffered_request_body_data_during_pause.len], this.buffered_request_body_data_during_pause.slice());
-                    @memcpy(input[this.buffered_request_body_data_during_pause.len..], chunk);
-                    break :brk buffer;
-                }
-            }
+        const bytes = this.getBytes(globalThis, chunk);
 
-            if (this.drainBufferedRequestBodyFromPause(globalThis)) |buffered_data| {
-                break :brk buffered_data;
-            }
-
-            if (chunk.len > 0) {
-                break :brk jsc.ArrayBuffer.createBuffer(globalThis, chunk) catch return; // TODO: properly propagate exception upwards
-            }
-            break :brk .js_undefined;
-        };
+        if (socketValue != .zero) {
+            log("Bun__callNodeHTTPServerSocketOnData", .{});
+            Bun__callNodeHTTPServerSocketOnData(socketValue, bytes, last);
+        }
 
         event_loop.runCallback(callback, globalThis, .js_undefined, &.{
             bytes,
             jsc.JSValue.jsBoolean(last),
             jsc.JSValue.jsNumber(@intFromEnum(event)),
         });
+    } else if (socketValue != .zero) {
+        const globalThis = jsc.VirtualMachine.get().global;
+        const bytes = this.getBytes(globalThis, chunk);
+        log("Bun__callNodeHTTPServerSocketOnData", .{});
+        Bun__callNodeHTTPServerSocketOnData(socketValue, bytes, last);
     }
 }
 pub const BUN_DEBUG_REFCOUNT_NAME = "NodeHTTPServerResponse";
@@ -1026,6 +1047,7 @@ pub fn setOnData(this: *NodeHTTPResponse, thisValue: jsc.JSValue, globalObject: 
         switch (this.body_read_state) {
             .pending, .done => {
                 if (!this.flags.request_has_completed and !this.flags.socket_closed and !this.flags.upgraded) {
+                    log("clearOnData", .{});
                     this.raw_response.clearOnData();
                 }
                 this.body_read_state = .done;
@@ -1159,6 +1181,7 @@ comptime {
 extern "c" fn Bun__setNodeHTTPServerSocketUsSocketValue(jsc.JSValue, ?*anyopaque) void;
 extern "c" fn Bun__callNodeHTTPServerSocketOnClose(jsc.JSValue) void;
 extern "c" fn Bun__callNodeHTTPServerSocketOnDrain(jsc.JSValue) void;
+extern "c" fn Bun__callNodeHTTPServerSocketOnData(jsc.JSValue, jsc.JSValue, bool) void;
 
 pub export fn Bun__NodeHTTPResponse_freeBuffer(buffer: [*]u8, bufferLength: usize) void {
     bun.default_allocator.free(buffer[0..bufferLength]);

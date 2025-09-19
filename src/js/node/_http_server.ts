@@ -528,7 +528,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (isAncientHTTP) {
           http_req.httpVersion = "1.0";
         }
-
         if (method === "CONNECT") {
           // Handle CONNECT method for HTTP tunneling/proxy
           if (server.listenerCount("connect") > 0) {
@@ -822,6 +821,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this._secureEstablished = !!handle?.secureEstablished;
     handle.onclose = this.#onClose.bind(this);
     handle.ondrain = this.#onDrain.bind(this);
+    handle.ondata = this.#onData.bind(this);
     handle.duplex = this;
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
@@ -845,6 +845,14 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       this.#pendingCallback = null;
     }
     this.emit("drain");
+  }
+  #onData(chunk, last) {
+    if (chunk) {
+      this.push(chunk);
+    }
+    if (last) {
+      this.push(null);
+    }
   }
   #closeHandle(handle, callback) {
     this[kHandle] = undefined;
@@ -1190,8 +1198,12 @@ function ServerResponse(req, options): void {
 
     if (handle) {
       this[kHandle] = handle;
+    } else {
+      this[kHandle] = req[kHandle];
     }
     this[kRejectNonStandardBodyWrites] = options[kRejectNonStandardBodyWrites] ?? false;
+  } else {
+    this[kHandle] = req[kHandle];
   }
 
   this.statusCode = 200;

@@ -18,7 +18,7 @@ const framework: Framework = {
   serverComponents: {
     separateSSRGraph: true,
     serverRegisterClientReferenceExport: "registerClientReference",
-    serverRuntimeImportSource: "react-server-dom-webpack/server",
+    serverRuntimeImportSource: "react-server-dom-bun/server",
   },
 
   reactFastRefresh: {

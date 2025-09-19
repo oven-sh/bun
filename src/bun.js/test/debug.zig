@@ -56,11 +56,11 @@ pub const group = struct {
         if (wants_quiet) |v| return !v;
         if (bun.getenvZ("WANTS_LOUD")) |val| {
             if (!std.mem.eql(u8, val, "1")) {
-                wants_quiet = true;
+                wants_quiet = false;
                 return !wants_quiet.?;
             }
         }
-        wants_quiet = false;
+        wants_quiet = true;
         return !wants_quiet.?;
     }
     inline fn getLogEnabledStaticFalse() bool {

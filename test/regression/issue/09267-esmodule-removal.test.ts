@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import path from "path";
 
 test("CommonJS module.exports function should be directly callable (#4506)", async () => {
   using dir = tempDir("test-cjs-function", {
@@ -36,11 +35,7 @@ console.log(isNatural.isPositive(1) === true ? 'PASS: isPositive(1)' : 'FAIL: is
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
@@ -82,11 +77,7 @@ console.log(mod.__esModule === undefined ? 'PASS: no __esModule' : 'FAIL: has __
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
@@ -135,11 +126,7 @@ console.log(mod.namedExport === 'named' ? 'PASS: mod.namedExport' : 'FAIL: mod.n
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
@@ -187,11 +174,7 @@ console.log(typeof mod.func === 'function' ? 'PASS: mod.func' : 'FAIL: mod.func'
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");
@@ -242,11 +225,7 @@ console.log(mod.__esModule === true ? 'PASS: mod.__esModule' : 'FAIL: mod.__esMo
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stderr).toBe("");

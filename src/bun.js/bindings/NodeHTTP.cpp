@@ -241,7 +241,6 @@ public:
 
     void onClose()
     {
-        if (!this->socket) return;
 
         this->socket = nullptr;
         if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {

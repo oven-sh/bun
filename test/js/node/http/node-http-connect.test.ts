@@ -14,6 +14,7 @@ import { createProxy } from "proxy";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
+import { C } from "node_modules/@electric-sql/pglite/dist/pglite-Csk75SCB";
 
 function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, add_http_prefix: boolean) {
   const client = net.connect({ port: proxyAddress.port, host: proxyAddress.address }, () => {
@@ -156,7 +157,7 @@ describe("HTTP server CONNECT", () => {
     }
   });
 
-  test("should handle data, drain and end events", async () => {
+  test("should handle data, drain, end and close events", async () => {
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });
@@ -166,6 +167,7 @@ describe("HTTP server CONNECT", () => {
     let data_received: string[] = [];
     let client_data_received: string[] = [];
     let proxy_drain_received = false;
+    let proxy_end_received = false;
 
     const { promise, resolve, reject } = Promise.withResolvers<string>();
 
@@ -189,6 +191,9 @@ describe("HTTP server CONNECT", () => {
         data_received.push(chunk?.toString());
       });
       socket.on("end", () => {
+        proxy_end_received = true;
+      });
+      socket.on("close", () => {
         resolve(data_received.join(""));
       });
       socket.on("drain", () => {
@@ -205,5 +210,22 @@ describe("HTTP server CONNECT", () => {
     expect(await promise).toContain("Hello World");
     expect(await clientPromise).toContain(BIG_DATA);
     expect(proxy_drain_received).toBe(true);
+    expect(proxy_end_received).toBe(true);
+  });
+
+  test("close event should fire when the client ends", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    await using server = http.createServer(async (req, res) => {
+      res.socket?.on("close", resolve);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const serverAddress = server.address() as AddressInfo;
+
+    const client = net.connect(serverAddress.port, serverAddress.address, () => {
+      client.on("error", reject);
+      client.write("GET / HTTP/1.1\r\nHost: localhost:80\r\nConnection: close\r\nContent-Length: 10\r\n\r\n");
+      client.end();
+    });
+    await promise;
   });
 });

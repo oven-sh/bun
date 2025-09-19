@@ -592,7 +592,7 @@ async function runTests() {
             }
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
-              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
+              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
               env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
@@ -1322,7 +1322,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   }
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
-    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore
     env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }

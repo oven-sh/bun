@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { createFromReadableStream } from "react-server-dom-bun/client";
+import { createFromReadableStream } from "react-server-dom-bun/client.browser";
 import { getAppState, setAppState, type AppState, type NonNullishReactNode } from "./app.ts";
 import { BakeCSSManager } from "./css.ts";
 

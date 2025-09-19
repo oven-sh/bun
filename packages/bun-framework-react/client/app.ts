@@ -1,5 +1,5 @@
 import type { ReactNode, SetStateAction } from "react";
-import { createFromReadableStream } from "react-server-dom-bun/client";
+import { createFromReadableStream } from "react-server-dom-bun/client.browser";
 import { store, useStore, type Store } from "./simple-store.ts";
 
 export type NonNullishReactNode = Exclude<ReactNode, null | undefined>;

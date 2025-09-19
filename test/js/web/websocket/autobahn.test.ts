@@ -1,25 +1,8 @@
 import { which } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import child_process from "child_process";
-import { isLinux, tempDirWithFiles } from "harness";
-const dockerCLI = which("docker") as string;
-function isDockerEnabled(): boolean {
-  if (!dockerCLI) {
-    return false;
-  }
-
-  // TODO: investigate why its not starting on Linux arm64
-  if (isLinux && process.arch === "arm64") {
-    return false;
-  }
-
-  try {
-    const info = child_process.execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
-    return info.toString().indexOf("Server Version:") !== -1;
-  } catch {
-    return false;
-  }
-}
+import { dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
+const dockerCLI = dockerExe() as string;
 
 let docker: child_process.ChildProcess | null = null;
 let url: string = "";

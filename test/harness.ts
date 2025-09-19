@@ -859,6 +859,9 @@ export function dockerExe(): string | null {
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 
@@ -866,6 +869,9 @@ export function isDockerEnabled(): boolean {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 }

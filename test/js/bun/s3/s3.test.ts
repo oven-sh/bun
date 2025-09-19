@@ -3,24 +3,12 @@ import { S3Client, s3 as defaultS3, file, randomUUIDv7, which } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { bunRun, getSecret, isCI, tempDirWithFiles } from "harness";
+import { bunRun, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
-const dockerCLI = which("docker") as string;
-function isDockerEnabled(): boolean {
-  if (!dockerCLI) {
-    return false;
-  }
-
-  try {
-    const info = child_process.execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
-    return info.toString().indexOf("Server Version:") !== -1;
-  } catch (error) {
-    return false;
-  }
-}
+const dockerCLI = dockerExe() as string;
 type S3Credentials = S3Options & {
   service: string;
 };

@@ -4471,7 +4471,7 @@ const ExternalFreeFunctionAllocator = struct {
     }
 
     fn free(ext_free_function: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {
-        const info: *ExternalFreeFunctionAllocator = @ptrCast(@alignCast(ext_free_function));
+        const info: *ExternalFreeFunctionAllocator = @alignCast(@ptrCast(ext_free_function));
         info.free_callback(info.context);
         bun.default_allocator.destroy(info);
     }

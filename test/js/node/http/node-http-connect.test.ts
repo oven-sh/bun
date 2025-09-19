@@ -6,10 +6,10 @@
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
-import { createProxy } from "proxy";
 import http from "http";
+import { createProxy } from "proxy";
 
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";

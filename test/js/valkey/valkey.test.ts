@@ -8,8 +8,8 @@ import {
   DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
-  setupDockerContainer,
   randomCoinFlip,
+  setupDockerContainer,
 } from "./test-utils";
 
 describe.skipIf(!isEnabled)("Valkey Redis Client", () => {

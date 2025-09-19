@@ -537,7 +537,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Don't assign the socket to a response for CONNECT
             // The handler should write the raw response
             const { promise, resolve } = $newPromiseCapability(Promise);
-            socket.on("close", resolve);
+            socket.on("end", resolve);
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request

@@ -1180,47 +1180,6 @@ install_rust() {
 	esac
 }
 
-prepare_docker_images() {
-	print "Preparing Docker images for tests..."
-
-	# Only prepare images if we're in CI or explicitly requested
-	if [ -z "$CI" ] && [ "$PREPARE_DOCKER_IMAGES" != "1" ]; then
-		print "Skipping Docker image preparation (not in CI)"
-		return 0
-	fi
-
-	# Check if Docker is running
-	docker="$(which docker)"
-	if ! [ -f "$docker" ]; then
-		print "Docker not found, skipping image preparation"
-		return 0
-	fi
-
-	if ! "$docker" info >/dev/null 2>&1; then
-		print "Docker daemon not running, skipping image preparation"
-		return 0
-	fi
-
-	# Check for docker-compose v2
-	if ! "$docker" compose version >/dev/null 2>&1; then
-		print "Docker Compose v2 not available, skipping image preparation"
-		return 0
-	fi
-
-	# Run the prepare script if it exists
-	prepare_script="$repo/test/docker/prepare-ci.sh"
-	if [ -f "$prepare_script" ]; then
-		print "Running Docker image preparation script..."
-		sh="$(require sh)"
-		if ! "$sh" "$prepare_script"; then
-			print "Warning: Docker image preparation failed"
-			# Don't fail the bootstrap, just warn
-		fi
-	else
-		print "Docker preparation script not found at: $prepare_script"
-	fi
-}
-
 install_docker() {
 	case "$pm" in
 	brew)
@@ -1257,9 +1216,6 @@ install_docker() {
 			execute_sudo "$usermod" -aG docker "$user"
 		fi
 	fi
-
-	# Pre-load Docker images for tests
-	prepare_docker_images
 }
 
 macos_sdk_version() {

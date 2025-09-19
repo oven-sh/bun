@@ -437,6 +437,13 @@ pub const Transpiler = struct {
         };
     }
 
+    pub fn deinit(this: *Transpiler) void {
+        this.options.deinit();
+        this.log.deinit();
+        this.resolver.deinit();
+        this.fs.deinit();
+    }
+
     pub fn configureLinkerWithAutoJSX(transpiler: *Transpiler, auto_jsx: bool) void {
         transpiler.linker = Linker.init(
             transpiler.allocator,

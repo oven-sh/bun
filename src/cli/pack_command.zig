@@ -2527,7 +2527,7 @@ pub const bindings = struct {
         sha512.final(&sha512_digest);
         var base64_buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
         const encode_count = bun.simdutf.base64.encode(&sha512_digest, &base64_buf, false);
-        const integrity_str = String.cloneUTF8(base64_buf[0..encode_count]);
+        const integrity_value = try String.createUTF8ForJS(global, base64_buf[0..encode_count]);
 
         const EntryInfo = struct {
             pathname: String,
@@ -2658,7 +2658,7 @@ pub const bindings = struct {
         result.put(global, "entries", entries);
         result.put(global, "size", JSValue.jsNumber(tarball.len));
         result.put(global, "shasum", shasum_str.toJS(global));
-        result.put(global, "integrity", integrity_str.toJS(global));
+        result.put(global, "integrity", integrity_value);
 
         return result;
     }

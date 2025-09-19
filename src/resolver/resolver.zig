@@ -586,6 +586,11 @@ pub const Resolver = struct {
         };
     }
 
+    pub fn deinit(r: *ThisResolver) void {
+        for (r.dir_cache.values()) |*di| di.deinit();
+        r.dir_cache.deinit();
+    }
+
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;

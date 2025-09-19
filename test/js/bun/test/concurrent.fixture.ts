@@ -5,11 +5,7 @@ function deterministicWait() {
   const { resolve, reject, promise } = Promise.withResolvers();
   activeGroup.push(() => resolve());
   setTimeout(() => {
-    process.nextTick(() => {
-      Promise.resolve().then(() => {
-        activeGroup.shift()?.();
-      });
-    });
+    activeGroup.shift()?.();
   }, 0);
   return promise;
 }

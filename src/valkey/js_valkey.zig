@@ -968,10 +968,13 @@ pub const JSValkeyClient = struct {
         this.this_value.deinit();
         this.client.flags.finalized = true;
         this.client.close();
-        if (this._subscription_ctx) |*ctx| {
-            ctx.deinit();
-            this._subscription_ctx = null;
-        }
+
+        // We do not need to free the subscription context here because we're
+        // guaranteed to have freed it by virtue of the fact that we are
+        // garbage collected now and the subscription context holds a reference
+        // to us. If we still had a subscription context, we would never be
+        // garbage collected.
+        bun.debugAssert(this._subscription_ctx == null);
 
         this.deref();
     }
@@ -1088,7 +1091,11 @@ pub const JSValkeyClient = struct {
     }
 
     /// Keep the event loop alive, or don't keep it alive
+    ///
+    /// This requires this_value to be alive.
     pub fn updatePollRef(this: *JSValkeyClient) void {
+        bun.debugAssert(this.this_value.isNotEmpty());
+
         // TODO(markovejnovic): This function is such a crazy cop out. We really
         // should be treating valkey as a state machine, with well-defined
         // state and modes in which it tracks and manages its own lifecycle.

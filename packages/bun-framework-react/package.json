@@ -10,10 +10,10 @@
     "./*": "./*"
   },
   "dependencies": {
-    "react": "19.2.0-canary-67a44bcd-20250915",
-    "react-dom": "19.2.0-canary-67a44bcd-20250915",
-    "react-refresh": "^0.17.0",
-    "react-server-dom-bun": "^0.0.0-experimental-603e6108-20241029"
+    "react": "0.0.0-experimental-d415fd3e-20250919",
+    "react-dom": "0.0.0-experimental-d415fd3e-20250919",
+    "react-refresh": "0.0.0-experimental-d415fd3e-20250919",
+    "react-server-dom-bun": "link:react-server-dom-bun"
   },
   "devDependencies": {
     "@types/react": "^19.1.13",

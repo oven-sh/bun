@@ -249,7 +249,16 @@ describe("bun build --compress", () => {
     );
 
     const { exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), "build", srcFile, "--outdir", outdir, "--sourcemap=external", "--compress=gzip", "--compress=zstd"],
+      cmd: [
+        bunExe(),
+        "build",
+        srcFile,
+        "--outdir",
+        outdir,
+        "--sourcemap=external",
+        "--compress=gzip",
+        "--compress=zstd",
+      ],
       env: bunEnv,
       stderr: "pipe",
     });

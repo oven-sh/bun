@@ -1017,6 +1017,12 @@ class PostgresAdapter
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
     if (typeof strings === "string") {
       // identifier or unsafe query
+      // PostgreSQL doesn't support object parameters - only arrays
+      if (values && typeof values === "object" && !$isArray(values)) {
+        throw new PostgresError("PostgreSQL adapter only supports array parameters, not object parameters. Use array notation with $1, $2, etc.", {
+          code: "ERR_POSTGRES_OBJECT_PARAMS_NOT_SUPPORTED",
+        });
+      }
       return [strings, values || []];
     }
 

@@ -3,11 +3,9 @@ import { createFromReadableStream } from "react-server-dom-bun/client.browser";
 import { getAppState, setAppState, type AppState, type NonNullishReactNode } from "./app.ts";
 import { BakeCSSManager } from "./css.ts";
 
-export namespace Router {
-  export interface CachedPage {
-    css: string[];
-    element: NonNullishReactNode;
-  }
+export interface CachedPage {
+  css: string[];
+  element: NonNullishReactNode;
 }
 
 export class Router {
@@ -16,7 +14,7 @@ export class Router {
 
   // Keep a cache of page objects to avoid re-fetching a page when pressing the
   // back button. The cache is indexed by the date it was created.
-  private readonly cachedPages = new Map<number, Router.CachedPage>();
+  private readonly cachedPages = new Map<number, CachedPage>();
 
   public readonly css: BakeCSSManager = new BakeCSSManager();
 
@@ -24,7 +22,7 @@ export class Router {
     return this.lastNavigationId !== 0;
   }
 
-  public setCachedPage(id: number, page: Router.CachedPage): void {
+  public setCachedPage(id: number, page: CachedPage): void {
     this.cachedPages.set(id, page);
   }
 

@@ -69,7 +69,6 @@ leak:bun.js.node.node_fs.NodeFS.realpathInner
 leak:sys.Error.toShellSystemError
 leak:lazyLoadSQLite
 leak:JSC::intlAvailableLocales
-leak:getaddrinfo
 leak:bun.js.api.filesystem_router.FileSystemRouter.constructor
 leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref

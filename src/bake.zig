@@ -39,64 +39,6 @@ pub const UserOptions = struct {
         var bundler_options = SplitBundlerOptions.empty;
 
         if (!config.isObject()) {
-            // Allow users to do `export default { app: 'react' }` for convenience
-            if (config.isString()) {
-                const bunstr = try config.toBunString(global);
-                defer bunstr.deref();
-                const utf8_string = bunstr.toUTF8(bun.default_allocator);
-                defer utf8_string.deinit();
-
-                if (bun.strings.eql(utf8_string.byteSlice(), "react")) {
-                    const root = bun.getcwdAlloc(alloc) catch |err| switch (err) {
-                        error.OutOfMemory => {
-                            return global.throwOutOfMemory();
-                        },
-                        else => {
-                            return global.throwError(err, "while querying current working directory");
-                        },
-                    };
-
-                    // Try to load the React framework
-                    const framework = if (resolver) |r| brk: {
-                        // Try to resolve "bun-framework-react"
-                        _ = r.resolve(r.fs.top_level_dir, "bun-framework-react", .stmt) catch {
-                            // TODO: Load and execute the module
-                            // For now, return a minimal framework
-                            break :brk Framework{
-                                .is_built_in_react = false,
-                                .file_system_router_types = &.{},
-                                .server_components = null,
-                                .react_fast_refresh = null,
-                                .built_in_modules = .empty,
-                            };
-                        };
-
-                        // TODO: Actually load the module
-                        break :brk Framework{
-                            .is_built_in_react = false,
-                            .file_system_router_types = &.{},
-                            .server_components = null,
-                            .react_fast_refresh = null,
-                            .built_in_modules = .empty,
-                        };
-                    } else Framework{
-                        .is_built_in_react = false,
-                        .file_system_router_types = &.{},
-                        .server_components = null,
-                        .react_fast_refresh = null,
-                        .built_in_modules = .empty,
-                        .needs_package_load = try alloc.dupe(u8, "react"),
-                    };
-
-                    return UserOptions{
-                        .arena = arena,
-                        .allocations = allocations,
-                        .root = try alloc.dupeZ(u8, root),
-                        .framework = framework,
-                        .bundler_options = bundler_options,
-                    };
-                }
-            }
             return global.throwInvalidArguments("'" ++ api_name ++ "' is not an object", .{});
         }
 
@@ -121,73 +63,65 @@ pub const UserOptions = struct {
             defer str.deref();
             const name = allocations.track(str.toUTF8(alloc));
 
-            // If we have a resolver, try to load the framework module now
-            if (resolver) |r| {
-                // Try to resolve "bun-framework-<name>" first
-                const prefixed_name = try std.fmt.allocPrint(alloc, "bun-framework-{s}", .{name});
+            // We require a resolver to load framework modules
+            const r = resolver orelse {
+                return global.throwInvalidArguments("A resolver is required to load framework module '{s}'", .{name});
+            };
 
-                const resolved_path = r.resolve(r.fs.top_level_dir, prefixed_name, .stmt) catch |err| blk: {
-                    // If that fails, try "<name>" directly
-                    r.log.reset();
-                    const direct_path = r.resolve(r.fs.top_level_dir, name, .stmt) catch {
-                        return global.throwError(err, "Failed to resolve framework package");
-                    };
-                    break :blk direct_path;
+            // Try to resolve "bun-framework-<name>" first
+            const prefixed_name = try std.fmt.allocPrint(alloc, "bun-framework-{s}", .{name});
+
+            const resolved_path = r.resolve(r.fs.top_level_dir, prefixed_name, .stmt) catch blk: {
+                // If that fails, try "<name>" directly
+                r.log.reset();
+                const direct_path = r.resolve(r.fs.top_level_dir, name, .stmt) catch {
+                    return global.throwInvalidArguments("Failed to resolve framework package '{s}' (tried '{s}' and '{s}')", .{ name, prefixed_name, name });
                 };
+                break :blk direct_path;
+            };
 
-                const module_path_str = bun.String.cloneUTF8(resolved_path.pathConst().?.text);
-                defer module_path_str.deref();
+            const module_path_str = bun.String.cloneUTF8(resolved_path.pathConst().?.text);
+            defer module_path_str.deref();
 
-                const promise = jsc.JSModuleLoader.loadAndEvaluateModule(global, &module_path_str) orelse {
-                    if (global.hasException()) {
-                        return error.JSError;
+            const promise = jsc.JSModuleLoader.loadAndEvaluateModule(global, &module_path_str) orelse {
+                if (global.hasException()) {
+                    return error.JSError;
+                }
+                return global.throwInvalidArguments("Failed to load framework module '{s}'", .{name});
+            };
+
+            const vm = global.vm();
+            promise.setHandled(vm);
+            global.bunVM().waitForPromise(.{ .internal = promise });
+
+            const result = switch (promise.unwrap(vm, .mark_handled)) {
+                .pending => unreachable,
+                .fulfilled => |resolved| blk: {
+                    _ = resolved;
+                    const default_export = BakeGetDefaultExportFromModule(global, module_path_str.toJS(global));
+
+                    if (!default_export.isObject()) {
+                        return global.throwInvalidArguments("Framework module '{s}' must export an object as default", .{name});
                     }
-                    return global.throwInvalidArguments("Failed to load framework module", .{});
-                };
 
-                const vm = global.vm();
-                promise.setHandled(vm);
-                global.bunVM().waitForPromise(.{ .internal = promise });
+                    break :blk try Framework.fromJS(
+                        default_export,
+                        global,
+                        &allocations,
+                        &bundler_options,
+                        alloc,
+                    );
+                },
+                .rejected => |err| {
+                    _ = err;
+                    if (!global.hasException()) {
+                        return global.throwInvalidArguments("Failed to load framework module '{s}'", .{name});
+                    }
+                    return error.JSError;
+                },
+            };
 
-                const result = switch (promise.unwrap(vm, .mark_handled)) {
-                    .pending => unreachable,
-                    .fulfilled => |resolved| blk: {
-                        _ = resolved;
-                        const default_export = BakeGetDefaultExportFromModule(global, module_path_str.toJS(global));
-
-                        if (!default_export.isObject()) {
-                            return global.throwInvalidArguments("Framework module must export an object as default", .{});
-                        }
-
-                        break :blk try Framework.fromJS(
-                            default_export,
-                            global,
-                            &allocations,
-                            &bundler_options,
-                            alloc,
-                        );
-                    },
-                    .rejected => |err| {
-                        _ = err;
-                        if (!global.hasException()) {
-                            return global.throwInvalidArguments("Failed to load framework module", .{});
-                        }
-                        return error.JSError;
-                    },
-                };
-
-                break :brk result;
-            } else {
-                // No resolver available, defer loading
-                break :brk Framework{
-                    .is_built_in_react = false,
-                    .file_system_router_types = &.{},
-                    .server_components = null,
-                    .react_fast_refresh = null,
-                    .built_in_modules = .empty,
-                    .needs_package_load = name,
-                };
-            }
+            break :brk result;
         } else try Framework.fromJS(
             framework_value,
             global,
@@ -493,18 +427,6 @@ pub const Framework = struct {
             // 2. Executing it as JavaScript/TypeScript
             // 3. Getting the default export
             // 4. Converting it to a Framework struct
-
-            // For now, if it's "react", return a basic config
-            if (bun.strings.eql(package_name, "react")) {
-                clone = .{
-                    .is_built_in_react = false,
-                    .file_system_router_types = &.{},
-                    .server_components = null,
-                    .react_fast_refresh = null,
-                    .built_in_modules = .empty,
-                    .needs_package_load = null,
-                };
-            }
         }
 
         if (clone.react_fast_refresh) |*react_fast_refresh| {

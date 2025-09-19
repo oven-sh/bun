@@ -9,21 +9,17 @@
  * an app built with the Bun Rendering API.
  */
 declare module "bun:app" {
-  type FrameworkDefinitionLike = Framework | `bun-framework-${string}` | (string & {});
-
-  interface Options {
+  interface Config {
     /**
-     * Bun supports loading frameworks in two ways:
+     * The framework definition
      *
-     * - 1. Passing the actual framework object itself
-     * - 2. Passing the name of a `bun-framework-<name>` package, with or
-     *      without the `bun-framework-` prefix.
-     *
-     * When given a string, bun will first try to resolve `bun-framework-<name>`
-     * before trying just `<name>`. For example, `react` would try to resolve
-     * `bun-framework-react` before trying `react`.
+     * @example
+     * ```ts
+     * import react from 'bun-framework-react';
+     * export default {app: {framework: react}};
+     * ```
      */
-    framework: FrameworkDefinitionLike;
+    framework: Framework;
 
     // Note: To contribute to 'bun-framework-react', it can be run from this file:
     // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
@@ -548,7 +544,7 @@ declare module "bun:app" {
 declare module "bun" {
   interface GenericServeOptions {
     /** Add a fullstack web app to this server using Bun Bake */
-    app?: import("bun:app").Options | import("bun:app").FrameworkDefinitionLike | undefined;
+    app?: import("bun:app").Config | import("bun:app").FrameworkDefinitionLike | undefined;
   }
 
   // TODO(@alii): Before merging, figure out if this was ever implemented in

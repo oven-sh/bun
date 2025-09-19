@@ -291,8 +291,6 @@ pub const Framework = struct {
     server_components: ?ServerComponents = null,
     react_fast_refresh: ?ReactFastRefresh = null,
     built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{},
-    /// If set, this framework needs to be loaded from a package
-    needs_package_load: ?[]const u8 = null,
 
     /// Default that requires no packages or configuration.
     /// - If `react-refresh` is installed, enable react fast refresh with it.
@@ -394,40 +392,6 @@ pub const Framework = struct {
     pub fn resolve(f: Framework, server: *bun.resolver.Resolver, client: *bun.resolver.Resolver, arena: Allocator) !Framework {
         var clone = f;
         var had_errors: bool = false;
-
-        // If this framework needs to be loaded from a package, do it now
-        if (clone.needs_package_load) |package_name| {
-            // Try to resolve "bun-framework-<name>" first
-            const prefixed_name = try std.fmt.allocPrint(arena, "bun-framework-{s}", .{package_name});
-
-            _ = server.resolve(server.fs.top_level_dir, prefixed_name, .stmt) catch |err| {
-                // If that fails, try "<name>" directly
-                server.log.reset();
-                _ = server.resolve(server.fs.top_level_dir, package_name, .stmt) catch {
-                    bun.Output.err(err, "Failed to resolve framework package '{s}' (tried '{s}' and '{s}')", .{ package_name, prefixed_name, package_name });
-                    had_errors = true;
-                    return error.ModuleNotFound;
-                };
-
-                // TODO: Actually load and execute the framework module
-                // For now, return a minimal config
-                clone = .{
-                    .is_built_in_react = false,
-                    .file_system_router_types = &.{},
-                    .server_components = null,
-                    .react_fast_refresh = null,
-                    .built_in_modules = .empty,
-                    .needs_package_load = null,
-                };
-            };
-
-            // TODO: Load the resolved module and extract the framework config
-            // This would involve:
-            // 1. Reading the file at framework_path
-            // 2. Executing it as JavaScript/TypeScript
-            // 3. Getting the default export
-            // 4. Converting it to a Framework struct
-        }
 
         if (clone.react_fast_refresh) |*react_fast_refresh| {
             f.resolveHelper(client, &react_fast_refresh.import_source, &had_errors, "react refresh runtime");

@@ -10,3 +10,4 @@ preload = "./test/preload.ts"
 
 [install]
 linker = "isolated"
+minimumReleaseAge=1

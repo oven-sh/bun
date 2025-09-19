@@ -43,7 +43,7 @@ pub const Authorization = enum {
 // https://github.com/oven-sh/bun/issues/341
 // https://www.jfrog.com/jira/browse/RTFACT-18398
 const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
-const accept_header_value_extended = "application/json";
+const accept_header_value_extended = "application/json, */*";
 
 const default_headers_buf: string = "Accept" ++ accept_header_value;
 const extended_headers_buf: string = "Accept" ++ accept_header_value_extended;

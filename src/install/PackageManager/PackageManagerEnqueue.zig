@@ -1634,7 +1634,7 @@ fn getOrPutResolvedPackage(
                 else => unreachable,
             };
 
-            const find_result: ?Npm.PackageManifest.FindResult = switch (version_result) {
+            const find_result: Npm.PackageManifest.FindResult = switch (version_result) {
                 .found => |result| result,
                 .found_with_filter => |filtered| blk: {
                     const package_name = this.lockfile.str(&name);
@@ -1684,12 +1684,10 @@ fn getOrPutResolvedPackage(
                     break :blk filtered.result;
                 },
                 .err => |err_type| switch (err_type) {
-                    .not_found => null, // Handle below with existing logic
                     .too_recent, .all_versions_too_recent => return error.TooRecentVersion,
+                    .not_found => null, // Handle below with existing logic
                 },
-            };
-
-            const result = find_result orelse {
+            } orelse {
                 resolve_workspace_from_dist_tag: {
                     // choose a workspace for a dist_tag only if a version was not found
                     if (version.tag == .dist_tag) {
@@ -1701,8 +1699,11 @@ fn getOrPutResolvedPackage(
 
                             for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
                                 if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
-                                    return ResolvedPackageResult{
+                                    // make sure verifyResolutions sees this resolution as a valid package id
+                                    successFn(this, dependency_id, workspace_package_id);
+                                    return .{
                                         .package = this.lockfile.packages.get(workspace_package_id),
+                                        .is_first_time = false,
                                     };
                                 }
                             }
@@ -1730,7 +1731,7 @@ fn getOrPutResolvedPackage(
                 dependency_id,
                 behavior,
                 manifest,
-                result,
+                find_result,
                 install_peer,
                 successFn,
             );

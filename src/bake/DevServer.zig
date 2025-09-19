@@ -273,12 +273,9 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
-    const root_copy = try bun.default_allocator.dupeZ(u8, options.root);
-    errdefer bun.default_allocator.free(root_copy);
-
     const dev = bun.new(DevServer, .{
         .allocation_scope = .initDefault(),
-        .root = root_copy,
+        .root = options.root,
         .vm = options.vm,
         .server = null,
         .directory_watchers = .empty,
@@ -561,9 +558,7 @@ pub fn deinit(dev: *DevServer) void {
         .frontend_only = {},
         .generation = {},
         .plugin_state = {},
-        .root = {
-            bun.default_allocator.free(dev.root);
-        },
+        .root = {},
         .server = {},
         .server_transpiler = {},
         .ssr_transpiler = {},

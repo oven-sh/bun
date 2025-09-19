@@ -29,7 +29,7 @@ pub const UserOptions = struct {
     }
 
     /// Currently, this function must run at the top of the event loop.
-    pub fn fromJS(config: JSValue, global: *jsc.JSGlobalObject, resolver: ?*bun.resolver.Resolver) !UserOptions {
+    pub fn fromJS(config: JSValue, global: *jsc.JSGlobalObject, resolver: *bun.resolver.Resolver) !UserOptions {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         errdefer arena.deinit();
         const alloc = arena.allocator();
@@ -63,18 +63,13 @@ pub const UserOptions = struct {
             defer str.deref();
             const name = allocations.track(str.toUTF8(alloc));
 
-            // We require a resolver to load framework modules
-            const r = resolver orelse {
-                return global.throwInvalidArguments("A resolver is required to load framework module '{s}'", .{name});
-            };
-
             // Try to resolve "bun-framework-<name>" first
             const prefixed_name = try std.fmt.allocPrint(alloc, "bun-framework-{s}", .{name});
 
-            const resolved_path = r.resolve(r.fs.top_level_dir, prefixed_name, .stmt) catch blk: {
+            const resolved_path = resolver.resolve(resolver.fs.top_level_dir, prefixed_name, .stmt) catch blk: {
                 // If that fails, try "<name>" directly
-                r.log.reset();
-                const direct_path = r.resolve(r.fs.top_level_dir, name, .stmt) catch {
+                resolver.log.reset();
+                const direct_path = resolver.resolve(resolver.fs.top_level_dir, name, .stmt) catch {
                     return global.throwInvalidArguments("Failed to resolve framework package '{s}' (tried '{s}' and '{s}')", .{ name, prefixed_name, name });
                 };
                 break :blk direct_path;

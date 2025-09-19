@@ -831,7 +831,7 @@ pub fn fromJS(
                     return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
                 }
 
-                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global, null);
+                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global, &global.bunVM().transpiler.resolver);
             }
         }
 

@@ -487,16 +487,9 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
 
     // Encode the signature in DER format
     auto buf = asn1_sig.encode();
-    if (buf.len < 0) {
-        return false;
-    }
-
-    if (!derBuffer.tryAppend(std::span<uint8_t> { buf.data, buf.len })) {
-        OPENSSL_clear_free(buf.data, buf.len);
-        return false;
-    }
-
-    OPENSSL_clear_free(buf.data, buf.len);
+    if (buf.len < 0) return false;
+    auto bsource = ByteSource::allocated(buf);
+    if (!derBuffer.tryAppend(bsource.span())) return false;
     return true;
 }
 

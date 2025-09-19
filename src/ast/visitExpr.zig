@@ -1433,6 +1433,41 @@ pub fn VisitExpr(
                     if (!ReactRefresh.isHookName(original_name)) break :try_record_hook;
                     if (p.options.features.react_fast_refresh) {
                         p.handleReactRefreshHookCall(e_, original_name);
+                    } else if (
+                    // If we're here it means we're in server component.
+                    // Error if the user is using the `useState` hook as it
+                    // is disallowed in server components.
+                    //
+                    // We're also specifically checking that the target is
+                    // `.e_import_identifier`.
+                    //
+                    // Why? Because we *don't* want to check for uses of
+                    // `useState` _inside_ React, and we know React uses
+                    // commonjs so it will never be `.e_import_identifier`.
+                    check_for_usestate: {
+                        if (e_.target.data == .e_import_identifier) break :check_for_usestate true;
+                        // Also check for `React.useState(...)`
+                        if (e_.target.data == .e_dot and e_.target.data.e_dot.target.data == .e_import_identifier) {
+                            const id = e_.target.data.e_dot.target.data.e_import_identifier;
+                            const name = p.symbols.items[id.ref.innerIndex()].original_name;
+                            break :check_for_usestate bun.strings.eqlComptime(name, "React");
+                        }
+                        break :check_for_usestate false;
+                    }) {
+                        bun.assert(p.options.features.server_components.isServerSide());
+                        if (!bun.strings.startsWith(p.source.path.pretty, "node_modules") and
+                            bun.strings.eqlComptime(original_name, "useState"))
+                        {
+                            p.log.addError(
+                                p.source,
+                                expr.loc,
+                                std.fmt.allocPrint(
+                                    p.allocator,
+                                    "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
+                                    .{},
+                                ) catch |err| bun.handleOom(err),
+                            ) catch |err| bun.handleOom(err);
+                        }
                     }
                 }
 

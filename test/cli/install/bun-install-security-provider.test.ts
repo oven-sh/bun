@@ -71,7 +71,7 @@ function test(
       });
 
       if (options.fails) {
-        expect(out).toContain("bun install aborted due to fatal security advisories");
+        expect(out).toContain("Installation aborted due to fatal security advisories");
       }
 
       await options.expect?.({ out, err });
@@ -139,7 +139,9 @@ describe("Security Scanner Edge Cases", () => {
     bunfigScanner: "./non-existent-scanner.ts",
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Failed to import security scanner");
+      expect(err).toContain(
+        "Security scanner './non-existent-scanner.ts' is configured in bunfig.toml but the file could not be found.\n  Please check that the file exists and the path is correct.",
+      );
     },
   });
 
@@ -147,7 +149,7 @@ describe("Security Scanner Edge Cases", () => {
     scanner: `throw new Error("Module failed to load");`,
     expectedExitCode: 1,
     expect: ({ err }) => {
-      expect(err).toContain("Failed to import security scanner");
+      expect(err).toContain("Security scanner failed: Module failed to load");
     },
   });
 

@@ -719,7 +719,7 @@ pub const Bin = extern struct {
 
             bun.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
 
-            switch (bun.sys.symlink(rel_target, abs_dest)) {
+            switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                 .err => |err| {
                     if (err.getErrno() != .EXIST and err.getErrno() != .NOENT) {
                         this.err = err.toZigErr();
@@ -738,7 +738,7 @@ pub const Bin = extern struct {
                         bun.makePath(std.fs.cwd(), this.node_modules_path.slice()) catch {};
                         node_modules_path_save.restore();
 
-                        switch (bun.sys.symlink(rel_target, abs_dest)) {
+                        switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                             .err => |real_error| {
                                 // It was just created, no need to delete destination and symlink again
                                 this.err = real_error.toZigErr();
@@ -746,7 +746,7 @@ pub const Bin = extern struct {
                             },
                             .result => return,
                         }
-                        bun.sys.symlink(rel_target, abs_dest).unwrap() catch |real_err| {
+                        bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |real_err| {
                             this.err = real_err;
                         };
                         return;
@@ -760,7 +760,7 @@ pub const Bin = extern struct {
 
             // delete and try again
             std.fs.deleteTreeAbsolute(abs_dest) catch {};
-            bun.sys.symlink(rel_target, abs_dest).unwrap() catch |err| {
+            bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |err| {
                 this.err = err;
             };
         }

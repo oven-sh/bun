@@ -181,6 +181,7 @@ typedef struct ZigStackFrame {
     BunString source_url;
     ZigStackFramePosition position;
     ZigStackFrameCode code_type;
+    bool is_async;
     bool remapped;
 } ZigStackFrame;
 
@@ -191,6 +192,7 @@ typedef struct ZigStackTrace {
     uint8_t source_lines_to_collect;
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
+    uint8_t frames_cap;
     JSC::SourceProvider* referenced_source_provider;
 } ZigStackTrace;
 
@@ -374,21 +376,9 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
-// Used in process.versions
-extern "C" const char* Bun__versions_boringssl;
-extern "C" const char* Bun__versions_libarchive;
-extern "C" const char* Bun__versions_mimalloc;
-extern "C" const char* Bun__versions_picohttpparser;
+// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
+// Only keep the ones still exported from Zig
 extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_webkit;
-extern "C" const char* Bun__versions_libdeflate;
-extern "C" const char* Bun__versions_zig;
-extern "C" const char* Bun__versions_zlib;
-extern "C" const char* Bun__versions_tinycc;
-extern "C" const char* Bun__versions_lolhtml;
-extern "C" const char* Bun__versions_c_ares;
-extern "C" const char* Bun__versions_lshpack;
-extern "C" const char* Bun__versions_zstd;
 extern "C" const char* Bun__versions_usockets;
 
 extern "C" const char* Bun__version_sha;
@@ -401,8 +391,8 @@ extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, uns
 extern "C" size_t Bun__encoding__byteLengthLatin1AsUTF8(const unsigned char* ptr, size_t len);
 extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const char16_t* ptr, size_t len);
 
-extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
-extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const char16_t* ptr, size_t len, Encoding encoding);
+extern "C" JSC::EncodedJSValue Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
+extern "C" JSC::EncodedJSValue Bun__encoding__constructFromUTF16(void*, const char16_t* ptr, size_t len, Encoding encoding);
 
 extern "C" void Bun__EventLoop__runCallback1(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1);
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);

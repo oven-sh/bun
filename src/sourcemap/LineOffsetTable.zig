@@ -171,7 +171,7 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
                 list.append(allocator, .{
                     .byte_offset_to_start_of_line = line_byte_offset,
                     .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
-                    .columns_for_non_ascii = BabyList(i32).init(owned),
+                    .columns_for_non_ascii = BabyList(i32).fromOwnedSlice(owned),
                 }) catch unreachable;
 
                 column = 0;
@@ -213,7 +213,7 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
         list.append(allocator, .{
             .byte_offset_to_start_of_line = line_byte_offset,
             .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
-            .columns_for_non_ascii = BabyList(i32).init(owned),
+            .columns_for_non_ascii = BabyList(i32).fromOwnedSlice(owned),
         }) catch unreachable;
     }
 

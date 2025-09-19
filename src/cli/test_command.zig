@@ -1442,7 +1442,11 @@ pub const TestCommand = struct {
                     // don't error if multiple are passed; one might fail
                     // but the others may not
                     error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                        Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                        if (Output.isAIAgent()) {
+                            Output.prettyErrorln("Test filter <b>{}<r> had no matches in --cwd={}", .{ bun.fmt.quote(arg), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
+                        } else {
+                            Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                        }
                         Global.exit(1);
                     },
                 };
@@ -1480,7 +1484,11 @@ pub const TestCommand = struct {
             scanner.scan(dir_to_scan) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.DoesNotExist => {
-                    Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {s}", .{dir_to_scan});
+                    if (Output.isAIAgent()) {
+                        Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}", .{ bun.fmt.quote(dir_to_scan), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
+                    } else {
+                        Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {}", .{bun.fmt.quote(dir_to_scan)});
+                    }
                     Global.exit(1);
                 },
             };
@@ -1562,7 +1570,11 @@ pub const TestCommand = struct {
                     , .{});
                 }
             } else {
-                Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
+                if (Output.isAIAgent()) {
+                    Output.prettyErrorln("<yellow>The following filters did not match any test files in --cwd={}:<r>", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                } else {
+                    Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
+                }
                 var has_file_like: ?usize = null;
                 for (ctx.positionals[1..], 1..) |filter, i| {
                     Output.prettyError(" {s}", .{filter});
@@ -1723,12 +1735,11 @@ pub const TestCommand = struct {
         const summary = reporter.summary();
 
         if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
-            Global.exit(1);
+            vm.exit_handler.exit_code = 1;
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
-            Global.exit(reporter.jest.unhandled_errors_between_tests);
-        } else {
-            vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
+            vm.exit_handler.exit_code = 1;
         }
+        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
     }
 
     fn runEventLoopForWatch(vm: *jsc.VirtualMachine) void {

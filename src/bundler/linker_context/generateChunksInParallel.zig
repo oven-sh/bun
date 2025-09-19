@@ -205,6 +205,25 @@ pub fn generateChunksInParallel(
     // broken module. It is DevServer's job to create and send HMR patches.
     if (is_dev_server) return;
 
+    // Finalize HTML chunk hashes now that JS/CSS chunks have their hashes computed
+    for (chunks) |*chunk| {
+        if (chunk.content == .html) {
+            if (chunk.isolated_hash_hasher) |*hasher| {
+                // Include the hashes of JS and CSS dependencies
+                if (chunk.getJSChunkForHTML(chunks)) |js_chunk| {
+                    const hash_bytes = std.mem.asBytes(&js_chunk.isolated_hash);
+                    hasher.write(hash_bytes);
+                }
+                if (chunk.getCSSChunkForHTML(chunks)) |css_chunk| {
+                    const hash_bytes = std.mem.asBytes(&css_chunk.isolated_hash);
+                    hasher.write(hash_bytes);
+                }
+                chunk.isolated_hash = hasher.digest();
+                chunk.isolated_hash_hasher = null;
+            }
+        }
+    }
+
     // TODO: enforceNoCyclicChunkImports()
     {
         var path_names_map = bun.StringHashMap(void).init(c.allocator());

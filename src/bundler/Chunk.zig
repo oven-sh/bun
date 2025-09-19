@@ -34,6 +34,10 @@ pub const Chunk = struct {
     intermediate_output: IntermediateOutput = .{ .empty = {} },
     isolated_hash: u64 = std.math.maxInt(u64),
 
+    /// For HTML chunks, we need to defer computing the final hash until after
+    /// JS/CSS chunks have their hashes computed
+    isolated_hash_hasher: ?ContentHasher = null,
+
     renamer: renamer.Renamer = undefined,
 
     compile_results_for_chunk: []CompileResult = &.{},
@@ -660,6 +664,7 @@ const Stmt = js_ast.Stmt;
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;
 const CompileResult = bundler.CompileResult;
+const ContentHasher = bundler.ContentHasher;
 const CrossChunkImport = bundler.CrossChunkImport;
 const EntryPoint = bundler.EntryPoint;
 const Graph = bundler.Graph;

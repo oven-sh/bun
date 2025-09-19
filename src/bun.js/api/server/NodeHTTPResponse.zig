@@ -1207,7 +1207,11 @@ const StreamBuffer = extern struct {
     bytesWritten: usize = 0,
 
     pub fn update(this: *StreamBuffer, stream_buffer: bun.io.StreamBuffer) void {
-        this.buffer = stream_buffer.list.items.ptr;
+        if (stream_buffer.list.capacity > 0) {
+            this.buffer = stream_buffer.list.items.ptr;
+        } else {
+            this.buffer = null;
+        }
         this.bufferLength = stream_buffer.list.items.len;
         this.bufferPosition = stream_buffer.cursor;
     }
@@ -1233,11 +1237,11 @@ const StreamBuffer = extern struct {
     pub fn deinit(this: *StreamBuffer) void {
         if (this.buffer) |buffer| {
             bun.default_allocator.free(buffer[0..this.bufferLength]);
-            this.buffer = null;
-            this.bufferLength = 0;
-            this.bufferPosition = 0;
-            this.bytesWritten = 0;
         }
+        this.buffer = null;
+        this.bufferLength = 0;
+        this.bufferPosition = 0;
+        this.bytesWritten = 0;
     }
 };
 

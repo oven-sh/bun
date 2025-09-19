@@ -161,14 +161,14 @@ const randomTag = await redis.srandmember("tags");
 const poppedTag = await redis.spop("tags");
 ```
 
-## PUB/SUB
+## Pub/Sub
 
 Bun provides native bindings for the [Redis
-PUB/SUB](https://redis.io/docs/latest/develop/pubsub/) protocol. **New in Bun
+Pub/Sub](https://redis.io/docs/latest/develop/pubsub/) protocol. **New in Bun
 1.2.23**
 
 {% callout %}
-**🚧** — The Redis PUB/SUB feature is experimental. Although we expect it to be
+**🚧** — The Redis Pub/Sub feature is experimental. Although we expect it to be
 stable, we're currently actively looking for feedback and areas for improvement.
 {% /callout %}
 
@@ -580,7 +580,7 @@ Current limitations of the Redis client we are planning to address in future ver
 
 - [ ] Transactions (MULTI/EXEC) must be done through raw commands for now
 - [ ] Streams are supported but without dedicated methods
-- [ ] PUB/SUB does not currently support binary data, nor pattern-based
+- [ ] Pub/Sub does not currently support binary data, nor pattern-based
       subscriptions.
 
 Unsupported features:

@@ -991,8 +991,33 @@ class MySQLAdapter
     }
   }
 
+  convertNamedToPositional(sql: string, params: Record<string, unknown>): [string, unknown[]] {
+    const values: unknown[] = [];
+
+    // MySQL protocol only supports ? placeholders
+    // Convert :name style parameters to ? for compatibility
+    // This matches the behavior of node-mysql2 with namedPlaceholders option
+    const paramPattern = /:([a-zA-Z_][a-zA-Z0-9_]*)/g;
+    const convertedSql = sql.replace(paramPattern, (match, paramName) => {
+      if (!(paramName in params)) {
+        throw new MySQLError(`Missing parameter: :${paramName}`, {
+          code: "ERR_MYSQL_MISSING_PARAMETER",
+        });
+      }
+      values.push(params[paramName]);
+      return '?';
+    });
+
+    return [convertedSql, values];
+  }
+
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
     if (typeof strings === "string") {
+      // MySQL doesn't support named parameters natively
+      // If we get an object, convert :name placeholders to ? and build array
+      if (values && typeof values === "object" && !$isArray(values)) {
+        return this.convertNamedToPositional(strings, values);
+      }
       return [strings, values || []];
     }
 

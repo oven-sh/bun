@@ -4,8 +4,6 @@
 
 const FrameworkRouter = @This();
 
-const bakeDebug = bun.Output.scoped(.bake, .hidden);
-
 /// Metadata for route files is specified out of line, either in DevServer where
 /// it is an IncrementalGraph(.server).FileIndex or the production build context
 /// where it is an entrypoint index.
@@ -972,14 +970,10 @@ pub fn scan(
     ctx: InsertionContext,
 ) bun.OOM!void {
     const t = &fw.types[ty.get()];
-    bakeDebug("Scanning type {d}: root={s}", .{ ty.get(), t.abs_root });
     bun.assert(!strings.hasSuffixComptime(t.abs_root, "/"));
     bun.assert(std.fs.path.isAbsolute(t.abs_root));
-    const root_info = r.readDirInfoIgnoreError(t.abs_root) orelse {
-        bakeDebug("Could not read directory: {s}", .{t.abs_root});
+    const root_info = r.readDirInfoIgnoreError(t.abs_root) orelse
         return;
-    };
-    bakeDebug("Found directory, scanning inner...", .{});
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     try fw.scanInner(alloc, t, ty, r, root_info, &arena_state, ctx);
@@ -999,12 +993,10 @@ fn scanInner(
     const fs_impl = &fs.fs;
 
     if (dir_info.getEntriesConst()) |entries| {
-        bun.Output.prettyln("      <d>Directory has {d} entries<r>", .{entries.data.count()});
         var it = entries.data.iterator();
         outer: while (it.next()) |entry| {
             const file = entry.value_ptr.*;
             const base = file.base();
-            bun.Output.prettyln("      <d>Processing: {s} (kind: {s})<r>", .{ base, @tagName(file.kind(fs_impl, false)) });
             switch (file.kind(fs_impl, false)) {
                 .dir => {
                     if (t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
@@ -1022,16 +1014,11 @@ fn scanInner(
                 },
                 .file => {
                     const ext = std.fs.path.extension(base);
-                    bakeDebug("File {s} has extension: '{s}'", .{ base, ext });
 
                     if (t.extensions.len > 0) {
                         for (t.extensions) |allowed_ext| {
-                            bakeDebug("Checking against allowed: '{s}'", .{allowed_ext});
                             if (strings.eql(ext, allowed_ext)) break;
-                        } else {
-                            bakeDebug("Skipping - extension not allowed", .{});
-                            continue :outer;
-                        }
+                        } else continue :outer;
                     }
 
                     var rel_path_buf: bun.PathBuffer = undefined;
@@ -1044,37 +1031,20 @@ fn scanInner(
                     );
                     rel_path_buf[0] = '/';
                     bun.path.platformToPosixInPlace(u8, rel_path_buf[0..full_rel_path.len]);
-                    bakeDebug("Path calc: t.abs_root.len={d}, fr.root.len={d}, full_rel_path.len={d}", .{ t.abs_root.len, fr.root.len, full_rel_path.len });
                     const rel_path = if (t.abs_root.len == fr.root.len)
                         rel_path_buf[0 .. full_rel_path.len + 1]
-                    else blk: {
-                        const offset = t.abs_root.len - fr.root.len - 1;
-                        bun.Output.prettyln("        <d>Using offset {d} for slice<r>", .{offset});
-                        if (offset >= full_rel_path.len) {
-                            bun.Output.prettyln("        <red>ERROR: offset >= full_rel_path.len!<r>", .{});
-                            continue :outer;
-                        }
-                        break :blk full_rel_path[offset..];
-                    };
-                    bun.Output.prettyln("        <d>Relative path: {s}<r>", .{rel_path});
+                    else
+                        full_rel_path[t.abs_root.len - fr.root.len - 1 ..];
                     var log = TinyLog.empty;
                     defer _ = arena_state.reset(.retain_capacity);
                     const parsed = (t.style.parse(rel_path, ext, &log, t.allow_layouts, arena_state.allocator()) catch {
                         log.cursor_at += @intCast(t.abs_root.len - fr.root.len);
-                        bun.Output.prettyln("        <d>Parse error for {s}<r>", .{rel_path});
                         try ctx.vtable.onRouterSyntaxError(ctx.opaque_ctx, full_rel_path, log);
                         continue :outer;
-                    }) orelse {
-                        bun.Output.prettyln("        <d>Parse returned null for {s}<r>", .{rel_path});
-                        continue :outer;
-                    };
+                    }) orelse continue :outer;
 
-                    if (parsed.kind == .page and t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_")) {
-                        bun.Output.prettyln("        <d>Skipping underscore file: {s}<r>", .{base});
+                    if (parsed.kind == .page and t.ignore_underscores and bun.strings.hasPrefixComptime(base, "_"))
                         continue :outer;
-                    }
-
-                    bun.Output.prettyln("        <d>Parsed successfully! kind={s}, parts_len={d}<r>", .{ @tagName(parsed.kind), parsed.parts.len });
 
                     var static_total_len: usize = 0;
                     var param_count: usize = 0;
@@ -1138,26 +1108,20 @@ fn scanInner(
                         },
                     };
 
-                    const insert_result = result catch |err| switch (err) {
+                    result catch |err| switch (err) {
                         error.OutOfMemory => |e| return e,
                         error.RouteCollision => {
-                            bakeDebug("Route collision for {s}", .{rel_path});
                             try ctx.vtable.onRouterCollisionError(
                                 ctx.opaque_ctx,
                                 full_rel_path,
                                 out_colliding_file_id,
                                 file_kind,
                             );
-                            continue :outer;
                         },
                     };
-                    bakeDebug("Successfully added route for {s}", .{rel_path});
-                    _ = insert_result;
                 },
             }
         }
-    } else {
-        bakeDebug("WARNING: Directory has no entries!", .{});
     }
 }
 

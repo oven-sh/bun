@@ -492,11 +492,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             const buf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(buf);
             const joined_root = bun.path.joinAbsStringBuf(dev.root, buf, &.{fsr.root}, .auto);
-            Output.prettyln("  <d>Looking for routes in: {s}<r>", .{joined_root});
-            const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse {
-                Output.prettyln("  <d>Directory not found: {s}<r>", .{joined_root});
-                continue;
-            };
+            const entry = dev.server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse continue;
 
             const server_file = try dev.server_graph.insertStaleExtra(fsr.entry_server, false, true);
 

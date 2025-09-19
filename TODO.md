@@ -36,15 +36,32 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 - [ ] test/js/node/test/parallel/test-worker-heap-snapshot.js
 - [ ] test/js/bun/s3/s3.leak.test.ts
 - [ ] test/regression/issue/11297/11297.test.ts
+- [ ] test/js/node/dns/node-dns.test.js
+- [ ] test/js/node/test/parallel/test-stream-readable-unpipe-resume.js
+- [ ] test/cli/hot/hot.test.ts
+- [ ] test/bundler/bundler_splitting.test.ts
+- [ ] test/cli/hot/watch-many-dirs.test.ts
+- [ ] test/js/node/test/parallel/test-worker-uncaught-exception-async.js
+- [ ] test/js/bun/css/doesnt_crash.test.ts
+- [ ] test/js/third_party/@duckdb/node-api/duckdb.test.ts
+- [ ] test/js/node/child_process/child_process_ipc.test.js
+- [ ] test/bake/dev/css.test.ts
+- [ ] test/cli/run/require-cache.test.ts
+- [ ] test/js/node/zlib/bytesWritten.test.ts
+- [ ] test/js/bun/util/bun-file.test.ts
 
 ## Real
 
+- [ ] test/js/bun/net/socket.test.ts
+  - new failure on windows. same issue as below
+- [ ] test/js/bun/net/tcp-server.test.ts
+  - new flaky failure on windows. same issue as above.
+- [ ] (maybe flaky) test/js/web/fetch/abort-signal-leak.test.ts
+- [ ] (maybe flaky) test/js/node/http/node-http-primoridals.test.ts
 - [x] test/js/bun/test/concurrent.test.ts
   - this test is relying on timings. we should fix it to be guaranteed order.
 - [x] test/js/web/fetch/client-fetch.test.ts
   - re-entry issue? it's with .resolves.toPass
-- [ ] test/js/bun/net/tcp-server.test.ts
-  - new flaky failure on windows
   - gc(true) was supposed to fix this. unclear.
 - [x] test/js/node/test/parallel/test-runner-subtest-after-hook.js
   - Instead of this vvvv, we will modify our node:test implementation to support this.

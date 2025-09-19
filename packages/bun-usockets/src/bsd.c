@@ -1213,13 +1213,13 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
     if (port != 0) {
-        /* Should this also go for UDP? */
         int enabled = 1;
         setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
     }
 
     if (bsd_set_reuse(listenFd, options) != 0) {
         freeaddrinfo(result);
+        bsd_close_socket(listenFd);
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1227,6 +1227,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
         if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            freeaddrinfo(result);
+            bsd_close_socket(listenFd);
             return LIBUS_SOCKET_ERROR;
         }
     }

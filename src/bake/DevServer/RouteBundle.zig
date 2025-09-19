@@ -72,8 +72,6 @@ pub const State = enum {
     unqueued,
     /// A bundle associated with this route is happening
     bundling,
-    /// A bundle associated with this route *will happen in the next bundle*
-    deferred_to_next_bundle,
     /// This route was flagged for bundling failures. There are edge cases
     /// where a route can be disconnected from its failures, so the route
     /// imports has to be traced to discover if possible failures still

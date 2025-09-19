@@ -29,9 +29,13 @@ loc diff: `git diff (git merge-base origin/main HEAD) HEAD --numstat --shortstat
 - [ ] test/regression/issue/09041.test.ts
 - [ ] test/js/web/fetch/fetch.test.ts
 - [ ] test/integration/next-pages/test/dev-server-ssr-100.test.ts
+- [ ] test/js/sql/sql-mysql.helpers.test.ts
+- [ ] test/js/bun/glob/scan.test.ts
 
 ## Real
 
+- [ ] test/js/bun/test/concurrent.test.ts
+  - this test is relying on timings. we should fix it to be guaranteed order.
 - [ ] test/js/web/fetch/client-fetch.test.ts
   - re-entry issue? it's with .resolves.toPass
 - [ ] test/js/bun/net/tcp-server.test.ts

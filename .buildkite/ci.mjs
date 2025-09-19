@@ -604,7 +604,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1,disable_coredump=0,detect_leaks=0",
-    }
+    },
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`

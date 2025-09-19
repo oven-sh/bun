@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { join } from "path";
 
 describe("HTML entrypoint isolated_hash", () => {
@@ -28,7 +28,7 @@ describe("HTML entrypoint isolated_hash", () => {
     expect(result1.success).toBe(true);
 
     // Find HTML output
-    const htmlOutput1 = result1.outputs.find((o) => o.path.endsWith(".html"));
+    const htmlOutput1 = result1.outputs.find(o => o.path.endsWith(".html"));
     expect(htmlOutput1).toBeDefined();
     const htmlPath1 = htmlOutput1!.path;
     const htmlHash1 = htmlPath1.match(/index-([a-z0-9]+)\.html/)?.[1];
@@ -47,7 +47,7 @@ describe("HTML entrypoint isolated_hash", () => {
     expect(result2.success).toBe(true);
 
     // Find HTML output
-    const htmlOutput2 = result2.outputs.find((o) => o.path.endsWith(".html"));
+    const htmlOutput2 = result2.outputs.find(o => o.path.endsWith(".html"));
     expect(htmlOutput2).toBeDefined();
     const htmlPath2 = htmlOutput2!.path;
     const htmlHash2 = htmlPath2.match(/index-([a-z0-9]+)\.html/)?.[1];
@@ -82,7 +82,7 @@ describe("HTML entrypoint isolated_hash", () => {
     expect(result1.success).toBe(true);
 
     // Find HTML output
-    const htmlOutput1 = result1.outputs.find((o) => o.path.endsWith(".html"));
+    const htmlOutput1 = result1.outputs.find(o => o.path.endsWith(".html"));
     expect(htmlOutput1).toBeDefined();
     const htmlPath1 = htmlOutput1!.path;
     const htmlHash1 = htmlPath1.match(/index-([a-z0-9]+)\.html/)?.[1];
@@ -101,7 +101,7 @@ describe("HTML entrypoint isolated_hash", () => {
     expect(result2.success).toBe(true);
 
     // Find HTML output
-    const htmlOutput2 = result2.outputs.find((o) => o.path.endsWith(".html"));
+    const htmlOutput2 = result2.outputs.find(o => o.path.endsWith(".html"));
     expect(htmlOutput2).toBeDefined();
     const htmlPath2 = htmlOutput2!.path;
     const htmlHash2 = htmlPath2.match(/index-([a-z0-9]+)\.html/)?.[1];
@@ -147,8 +147,8 @@ describe("HTML entrypoint isolated_hash", () => {
     expect(result2.success).toBe(true);
 
     // Find HTML outputs
-    const htmlOutput1 = result1.outputs.find((o) => o.path.endsWith(".html"));
-    const htmlOutput2 = result2.outputs.find((o) => o.path.endsWith(".html"));
+    const htmlOutput1 = result1.outputs.find(o => o.path.endsWith(".html"));
+    const htmlOutput2 = result2.outputs.find(o => o.path.endsWith(".html"));
 
     expect(htmlOutput1).toBeDefined();
     expect(htmlOutput2).toBeDefined();

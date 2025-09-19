@@ -134,10 +134,6 @@ pub fn intFromFloat(comptime Int: type, value: anytype) Int {
     return @as(Int, @intFromFloat(truncated));
 }
 
-/// We cannot use a threadlocal memory allocator for FileSystem-related things
-/// FileSystem is a singleton.
-pub const fs_allocator = default_allocator;
-
 pub fn typedAllocator(comptime T: type) std.mem.Allocator {
     if (heap_breakdown.enabled)
         return heap_breakdown.allocator(comptime T);

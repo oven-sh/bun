@@ -611,7 +611,7 @@ pub const PackageJSON = struct {
 
         // DirInfo cache is reused globally
         // So we cannot free these
-        const allocator = bun.fs_allocator;
+        const allocator = bun.default_allocator;
 
         var entry = r.caches.fs.readFileWithAllocator(
             allocator,

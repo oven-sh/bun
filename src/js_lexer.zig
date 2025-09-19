@@ -882,7 +882,7 @@ fn NewLexer_(
                     lexer.step();
 
                     if (lexer.code_point != 'u') {
-                        try lexer.addSyntaxError(lexer.loc().toUsize(), "{s}", .{InvalidEscapeSequenceFormatter{ .code_point = lexer.code_point }});
+                        try lexer.addSyntaxError(lexer.loc().toUsize(), "{any}", .{InvalidEscapeSequenceFormatter{ .code_point = lexer.code_point }});
                     }
                     lexer.step();
                     if (lexer.code_point == '{') {

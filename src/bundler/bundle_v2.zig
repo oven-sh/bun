@@ -4649,8 +4649,8 @@ pub const Graph = @import("./Graph.zig");
 
 const string = []const u8;
 
-const options = @import("../options.zig");
 const libdeflate = @import("../deps/libdeflate.zig");
+const options = @import("../options.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -279,10 +279,13 @@ describe("in-memory builds with compression", () => {
     const tmpdir = tmpdirSync();
     const entryPath = path.join(tmpdir, "index.ts");
 
-    fs.writeFileSync(entryPath, `
+    fs.writeFileSync(
+      entryPath,
+      `
       export const message = "Hello from in-memory build!";
       console.log(message);
-    `);
+    `,
+    );
 
     const result = await Bun.build({
       entrypoints: [entryPath],
@@ -316,10 +319,13 @@ describe("in-memory builds with compression", () => {
     const tmpdir = tmpdirSync();
     const entryPath = path.join(tmpdir, "index.ts");
 
-    fs.writeFileSync(entryPath, `
+    fs.writeFileSync(
+      entryPath,
+      `
       export const data = Array.from({length: 100}, (_, i) => \`Item \${i}\`);
       console.log(data);
-    `);
+    `,
+    );
 
     const result = await Bun.build({
       entrypoints: [entryPath],
@@ -356,11 +362,14 @@ describe("in-memory builds with compression", () => {
     const entryPath = path.join(tmpdir, "index.ts");
     const versionPath = path.join(tmpdir, "version.ts");
 
-    fs.writeFileSync(entryPath, `
+    fs.writeFileSync(
+      entryPath,
+      `
       import { version } from "./version.ts";
       export { version };
       console.log("Version:", version);
-    `);
+    `,
+    );
     fs.writeFileSync(versionPath, `export const version = "1.0.0";`);
 
     const result = await Bun.build({
@@ -394,11 +403,14 @@ describe("in-memory builds with compression", () => {
     const tmpdir = tmpdirSync();
     const entryPath = path.join(tmpdir, "index.ts");
 
-    fs.writeFileSync(entryPath, `
+    fs.writeFileSync(
+      entryPath,
+      `
       const a = 1;
       const b = 2;
       export const sum = a + b;
-    `);
+    `,
+    );
 
     const result = await Bun.build({
       entrypoints: [entryPath],

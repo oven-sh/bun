@@ -1,7 +1,5 @@
 const Npm = @This();
 
-extern fn Bun__parseISODate(dateStr: [*]const u8, length: usize) f64;
-
 const WhoamiError = OOM || error{
     NeedAuth,
     ProbablyInvalidAuth,
@@ -2580,10 +2578,10 @@ pub const PackageManifest = struct {
                             .e_object => |time_obj_obj| {
                                 if (time_obj_obj.get(version_name)) |time_str| {
                                     if (time_str.asString(allocator)) |version_str| {
-                                        const parse_result = Bun__parseISODate(version_str.ptr, version_str.len);
-                                        if (!std.math.isNan(parse_result)) {
-                                            const timestamp: u32 = @intFromFloat(parse_result / @as(f64, @floatFromInt(std.time.ms_per_s)));
-                                            package_version.publish_timestamp = timestamp;
+                                        const parse_result = bun.jsc.wtf.parseISODate(version_str) catch null;
+                                        if (parse_result) |ms| {
+                                            const seconds: u32 = @intFromFloat(ms / @as(f64, @floatFromInt(std.time.ms_per_s)));
+                                            package_version.publish_timestamp = seconds;
                                         }
                                     }
                                 }

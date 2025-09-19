@@ -74,15 +74,15 @@ This tool has support for simple static analysis. The following rules are availa
  * be invoked.
  */
 async function lintScope(ruleName: string, location: Srcloc, callback: () => void) {
-  const lineIdx = location.start.line;
+  const lineNumber = location.start.line;
   const fileContent = await Bun.file(location.file).text();
   const lines = fileContent.split("\n");
-  const line = lines[lineIdx - 1];
+  const line = lines[lineNumber - 1];
 
   function parseNolints(nolintKeyword: string, line: string): string[] | "total" {
     // First check if line ends with NOLINT pattern(s)
     const escKw = nolintKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const endsWithPattern = new RegExp(`${escKw}(?:\\([^)]*\\))?\\s*(?:${escKw}(?:\\([^)]*\\))?\\s*)*$`);
+    const endsWithPattern = new RegExp(`${escKw}(\\([^)]*\\))?\\s*$`);
 
     if (!endsWithPattern.test(line)) {
       return [];
@@ -105,7 +105,7 @@ async function lintScope(ruleName: string, location: Srcloc, callback: () => voi
     return;
   }
 
-  const nolintPrev = parseNolints("NOLINTNEXTLINE", lines[lineIdx - 2] ?? "");
+  const nolintPrev = parseNolints("NOLINTNEXTLINE", lines[lineNumber - 2] ?? "");
   if (nolintPrev === "total" || nolintPrev.includes(ruleName)) {
     // This isn't a line we lint. Bail.
     return;

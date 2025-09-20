@@ -2757,11 +2757,11 @@ test("chunked encoding must be valid after flushHeaders", async () => {
     res.end();
   });
 
-  server.listen(3000);
+  server.listen(0);
   await once(server, "listening");
 
-  const socket = connect(3000, () => {
-    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
+  const socket = connect(server.address().port, () => {
+    socket.write(`GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\n\r\n`);
   });
 
   const chunks = [];
@@ -2840,11 +2840,11 @@ test("chunked encoding must be valid using minimal code", async () => {
     res.end("chunk 2");
   });
 
-  server.listen(3000);
+  server.listen(0);
   await once(server, "listening");
 
-  const socket = connect(3000, () => {
-    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
+  const socket = connect(server.address().port, () => {
+    socket.write(`GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\n\r\n`);
   });
 
   const chunks = [];
@@ -2929,11 +2929,11 @@ test("chunked encoding must be valid after without flushHeaders", async () => {
     res.end();
   });
 
-  server.listen(3000);
+  server.listen(0);
   await once(server, "listening");
 
-  const socket = connect(3000, () => {
-    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n");
+  const socket = connect(server.address().port, () => {
+    socket.write(`GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\n\r\n`);
   });
 
   const chunks = [];
@@ -3011,7 +3011,9 @@ test("should accept received and send blank headers", async () => {
   await once(server, "listening");
 
   const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
-    socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nEmpty-Header:\r\n\r\n");
+    socket.write(
+      `GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\nEmpty-Header:\r\n\r\n`,
+    );
   });
 
   socket.on("data", data => {
@@ -3044,7 +3046,7 @@ test("should handle header overflow", async () => {
 
   const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
     socket.write(
-      "GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nBig-Header: " +
+      `GET / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\nBig-Header: ` +
         "a".repeat(http.maxHeaderSize) + // will overflow because of host and connection headers
         "\r\n\r\n",
     );
@@ -3069,7 +3071,7 @@ test("should handle invalid method", async () => {
 
   const socket = createConnection((server.address() as AddressInfo).port, "localhost", () => {
     socket.write(
-      "BUN / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\nBig-Header: " +
+      `BUN / HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nConnection: close\r\nBig-Header: ` +
         "a".repeat(http.maxHeaderSize) + // will overflow because of host and connection headers
         "\r\n\r\n",
     );
@@ -3348,5 +3350,58 @@ describe("HTTP Server Security Tests - Advanced", () => {
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
+  });
+
+  test("Server should not crash in clientError is emitted when calling destroy", async () => {
+    await using server = http.createServer(async (req, res) => {
+      res.end("Hello World");
+    });
+
+    const clientErrors: Promise<void>[] = [];
+    server.on("clientError", (err, socket) => {
+      clientErrors.push(
+        Bun.sleep(10).then(() => {
+          socket.destroy();
+        }),
+      );
+    });
+    await once(server.listen(), "listening");
+    const address = server.address() as AddressInfo;
+
+    async function doRequests(address: AddressInfo) {
+      const client = connect(address.port, address.address, () => {
+        client.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nContent-Length: 0\r\n\r\n");
+      });
+      {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        client.on("data", resolve);
+        client.on("error", reject);
+        client.on("end", resolve);
+        await promise;
+      }
+      {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        client.write("GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n");
+        client.on("error", reject);
+        client.on("end", resolve);
+        await promise;
+      }
+    }
+
+    async function doInvalidRequests(address: AddressInfo) {
+      const client = connect(address.port, address.address, () => {
+        client.write("GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n");
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      client.on("error", reject);
+      client.on("close", resolve);
+      await promise;
+    }
+
+    await doRequests(address);
+    await Promise.all(clientErrors);
+    clientErrors.length = 0;
+    await doInvalidRequests(address);
+    await Promise.all(clientErrors);
   });
 });

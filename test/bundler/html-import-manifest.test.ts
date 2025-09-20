@@ -117,7 +117,7 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "hZ3u5t2Rmuo",
+                  "etag": "QIYevWsvV7E",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
@@ -239,7 +239,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "_Qy4EtlcGvs",
+                  "etag": "jw7KdDcSMEs",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -274,7 +274,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "igL7YEH9e0I",
+                  "etag": "n7AkTjznnHQ",
                 },
                 "input": "about.html",
                 "isEntry": true,

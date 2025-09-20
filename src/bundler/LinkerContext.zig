@@ -820,7 +820,7 @@ pub const LinkerContext = struct {
         return pieces;
     }
 
-    pub fn generateIsolatedHash(c: *LinkerContext, chunk: *const Chunk) u64 {
+    pub fn generateIsolatedHash(c: *LinkerContext, chunk: *Chunk) u64 {
         const trace = bun.perf.trace("Bundler.generateIsolatedHash");
         defer trace.end();
 
@@ -919,6 +919,12 @@ pub const LinkerContext = struct {
         hasher.write(chunk.output_source_map.prefix.items);
         hasher.write(chunk.output_source_map.mappings.items);
         hasher.write(chunk.output_source_map.suffix.items);
+
+        // For HTML chunks, store the hasher to finalize later with dependency hashes
+        if (chunk.content == .html) {
+            chunk.isolated_hash_hasher = hasher;
+            return std.math.maxInt(u64); // Temporary value, will be finalized later
+        }
 
         return hasher.digest();
     }

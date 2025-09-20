@@ -165,48 +165,92 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     var already_visited_output_file = try bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, additional_output_files.len);
     defer already_visited_output_file.deinit(bun.default_allocator);
 
-    // Write all chunks that have files associated with this entry point.
+    // Collect chunks that have files associated with this entry point and sort them
+    // by source index to ensure deterministic output order
+    var matching_chunks = std.ArrayList(*const Chunk).init(bun.default_allocator);
+    defer matching_chunks.deinit();
+
     for (chunks) |*ch| {
         if (ch.entryBits().hasIntersection(&entry_point_bits)) {
-            if (!first) try writer.writeAll(",");
-            first = false;
-
-            try writeEntryItem(
-                writer,
-                brk: {
-                    if (!ch.entry_point.is_entry_point) break :brk "";
-                    var path_for_key = bun.path.relativeNormalized(
-                        root_dir,
-                        sources[ch.entry_point.source_index].path.text,
-                        .posix,
-                        false,
-                    );
-
-                    path_for_key = bun.strings.removeLeadingDotSlash(path_for_key);
-
-                    break :brk path_for_key;
-                },
-                brk: {
-                    if (inject_compiler_filesystem_prefix) {
-                        temp_buffer.clearRetainingCapacity();
-                        try temp_buffer.appendSlice(public_path);
-                        try temp_buffer.appendSlice(bun.strings.removeLeadingDotSlash(ch.final_rel_path));
-                        break :brk temp_buffer.items;
-                    }
-                    break :brk ch.final_rel_path;
-                },
-                ch.isolated_hash,
-                ch.content.loader(),
-                if (ch.entry_point.is_entry_point)
-                    .@"entry-point"
-                else
-                    .chunk,
-            );
+            try matching_chunks.append(ch);
         }
     }
 
+    // Sort for stable ordering
+    const ChunkSorter = struct {
+        pub fn lessThan(_: void, a: *const Chunk, b: *const Chunk) bool {
+            // When source indices are the same, sort by content type in this order: js, html, css
+            if (a.entry_point.source_index == b.entry_point.source_index) {
+                const a_order: u8 = switch (a.content) {
+                    .javascript => 0,
+                    .html => 1,
+                    .css => 2,
+                };
+                const b_order: u8 = switch (b.content) {
+                    .javascript => 0,
+                    .html => 1,
+                    .css => 2,
+                };
+                if (a_order != b_order) {
+                    return a_order < b_order;
+                }
+            }
+            // Otherwise sort by source index for stable ordering
+            return a.entry_point.source_index < b.entry_point.source_index;
+        }
+    };
+    std.mem.sort(*const Chunk, matching_chunks.items, {}, ChunkSorter.lessThan);
+
+    // Write all chunks that have files associated with this entry point.
+    for (matching_chunks.items) |ch| {
+        if (!first) try writer.writeAll(",");
+        first = false;
+
+        try writeEntryItem(
+            writer,
+            brk: {
+                if (!ch.entry_point.is_entry_point) break :brk "";
+                var path_for_key = bun.path.relativeNormalized(
+                    root_dir,
+                    sources[ch.entry_point.source_index].path.text,
+                    .posix,
+                    false,
+                );
+
+                path_for_key = bun.strings.removeLeadingDotSlash(path_for_key);
+
+                break :brk path_for_key;
+            },
+            brk: {
+                if (inject_compiler_filesystem_prefix) {
+                    temp_buffer.clearRetainingCapacity();
+                    try temp_buffer.appendSlice(public_path);
+                    try temp_buffer.appendSlice(bun.strings.removeLeadingDotSlash(ch.final_rel_path));
+                    break :brk temp_buffer.items;
+                }
+                break :brk ch.final_rel_path;
+            },
+            ch.isolated_hash,
+            ch.content.loader(),
+            if (ch.entry_point.is_entry_point)
+                .@"entry-point"
+            else
+                .chunk,
+        );
+    }
+
+    // Collect and sort additional output files by source index for deterministic order
+    const OutputFileWithIndex = struct {
+        output_file: *const @TypeOf(additional_output_files[0]),
+        index: usize,
+        source_index: u32,
+    };
+
+    var matching_output_files = std.ArrayList(OutputFileWithIndex).init(bun.default_allocator);
+    defer matching_output_files.deinit();
+
     for (additional_output_files, 0..) |*output_file, i| {
-        // Only print the file once.
+        // Only process the file once.
         if (already_visited_output_file.isSet(i)) continue;
 
         if (output_file.source_index.unwrap()) |source_index| {
@@ -215,35 +259,65 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
 
             if (bits.hasIntersection(&entry_point_bits)) {
                 already_visited_output_file.set(i);
-                if (!first) try writer.writeAll(",");
-                first = false;
-
-                var path_for_key = bun.path.relativeNormalized(
-                    root_dir,
-                    sources[source_index.get()].path.text,
-                    .posix,
-                    false,
-                );
-                path_for_key = bun.strings.removeLeadingDotSlash(path_for_key);
-
-                try writeEntryItem(
-                    writer,
-                    path_for_key,
-                    brk: {
-                        if (inject_compiler_filesystem_prefix) {
-                            temp_buffer.clearRetainingCapacity();
-                            try temp_buffer.appendSlice(public_path);
-                            try temp_buffer.appendSlice(bun.strings.removeLeadingDotSlash(output_file.dest_path));
-                            break :brk temp_buffer.items;
-                        }
-                        break :brk output_file.dest_path;
-                    },
-                    output_file.hash,
-                    output_file.loader,
-                    output_file.output_kind,
-                );
+                try matching_output_files.append(.{
+                    .output_file = output_file,
+                    .index = i,
+                    .source_index = source_index.get(),
+                });
             }
         }
+    }
+
+    // Sort by source index for stable ordering
+    const OutputFileSorter = struct {
+        pub fn lessThan(_: void, a: OutputFileWithIndex, b: OutputFileWithIndex) bool {
+            // Sort by source index first
+            if (a.source_index != b.source_index) {
+                return a.source_index < b.source_index;
+            }
+            // Then by loader for stable ordering
+            const a_loader = @intFromEnum(a.output_file.loader);
+            const b_loader = @intFromEnum(b.output_file.loader);
+            if (a_loader != b_loader) {
+                return a_loader < b_loader;
+            }
+            // Finally by original index to ensure complete determinism
+            return a.index < b.index;
+        }
+    };
+    std.mem.sort(OutputFileWithIndex, matching_output_files.items, {}, OutputFileSorter.lessThan);
+
+    for (matching_output_files.items) |item| {
+        const output_file = item.output_file;
+        const source_index = item.source_index;
+
+        if (!first) try writer.writeAll(",");
+        first = false;
+
+        var path_for_key = bun.path.relativeNormalized(
+            root_dir,
+            sources[source_index].path.text,
+            .posix,
+            false,
+        );
+        path_for_key = bun.strings.removeLeadingDotSlash(path_for_key);
+
+        try writeEntryItem(
+            writer,
+            path_for_key,
+            brk: {
+                if (inject_compiler_filesystem_prefix) {
+                    temp_buffer.clearRetainingCapacity();
+                    try temp_buffer.appendSlice(public_path);
+                    try temp_buffer.appendSlice(bun.strings.removeLeadingDotSlash(output_file.dest_path));
+                    break :brk temp_buffer.items;
+                }
+                break :brk output_file.dest_path;
+            },
+            output_file.hash,
+            output_file.loader,
+            output_file.output_kind,
+        );
     }
 
     try writer.writeAll("]}");

@@ -445,6 +445,7 @@ pub const Framework = struct {
         if (try opts.get(global, "serverEntryPoint") != null) {
             bun.Output.warn("deprecation notice: 'framework.serverEntryPoint' has been replaced with 'fileSystemRouterTypes[n].serverEntryPoint'", .{});
         }
+
         if (try opts.get(global, "clientEntryPoint") != null) {
             bun.Output.warn("deprecation notice: 'framework.clientEntryPoint' has been replaced with 'fileSystemRouterTypes[n].clientEntryPoint'", .{});
         }

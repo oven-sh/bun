@@ -1,6 +1,6 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path from "path";
 describe.concurrent("bun init", () => {
   test("bun init works", async () => {

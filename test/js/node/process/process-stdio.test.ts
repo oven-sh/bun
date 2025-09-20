@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import { isatty } from "tty";

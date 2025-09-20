@@ -1,5 +1,5 @@
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { expect, it, describe } from "bun:test";
 import { join } from "node:path";
 import tls from "node:tls";
 

@@ -448,7 +448,7 @@ const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const Strong = jsc.Strong.Safe;
+const Strong = jsc.Strong.Deprecated;
 
 const bun_test = jsc.Jest.bun_test;
 const BunTest = bun_test.BunTest;

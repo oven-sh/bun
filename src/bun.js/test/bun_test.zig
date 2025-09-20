@@ -876,4 +876,4 @@ const test_command = @import("../../cli/test_command.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
-const Strong = jsc.Strong.Safe;
+const Strong = jsc.Strong.Deprecated;

@@ -10,7 +10,7 @@ active_scope: *DescribeScope,
 filter_buffer: std.ArrayList(u8),
 
 const QueuedDescribe = struct {
-    callback: jsc.Strong.Safe,
+    callback: jsc.Strong.Deprecated,
     active_scope: *DescribeScope,
     new_scope: *DescribeScope,
     fn deinit(this: *QueuedDescribe) void {

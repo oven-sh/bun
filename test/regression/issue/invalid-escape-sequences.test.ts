@@ -17,7 +17,7 @@ test("Invalid escape sequence \\x in identifier shows helpful error message", as
 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /x41 = 1;
+    "1 | const \\x41 = 1;
               ^
     error: Unexpected escape sequence
         at <dir>/test.js:1:7
@@ -41,7 +41,7 @@ test("Invalid escaped double quote in identifier shows helpful error message", a
 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /" = 1;
+    "1 | const \\" = 1;
               ^
     error: Unexpected escaped double quote '"'
         at <dir>/test.js:1:7
@@ -65,7 +65,7 @@ test("Invalid escaped single quote in identifier shows helpful error message", a
 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /' = 1;
+    "1 | const \\' = 1;
               ^
     error: Unexpected escaped single quote "'"
         at <dir>/test.js:1:7
@@ -89,7 +89,7 @@ test("Invalid escaped backtick in identifier shows helpful error message", async
 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /\` = 1;
+    "1 | const \\\` = 1;
               ^
     error: Unexpected escaped backtick '\`'
         at <dir>/test.js:1:7
@@ -113,9 +113,9 @@ test("Invalid escaped backslash in identifier shows helpful error message", asyn
 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const // = 1;
+    "1 | const \\\\ = 1;
               ^
-    error: Unexpected escaped backslash '/'
+    error: Unexpected escaped backslash '\\'
         at <dir>/test.js:1:7
 
     Bun v<bun-version>"
@@ -137,7 +137,7 @@ test("Invalid escaped z in identifier shows helpful error message", async () => 
 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /z = 1;
+    "1 | const \\z = 1;
               ^
     error: Unexpected escape sequence
         at <dir>/test.js:1:7

@@ -1788,7 +1788,9 @@ export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
   return (
     snapshot
       .replaceAll("\r\n", "\n")
-      .replaceAll("\\", "/")
+      // Only replace backslashes in file paths (at the end of "at <path>:<line>:<col>" lines)
+      // Don't replace backslashes that are part of the source code being displayed
+      .replace(/(\s+at\s+[^\n]+?)\\([^\n]*)/gm, "$1/$2")
       .replaceAll(fs.realpathSync.native(process.cwd()).replaceAll("\\", "/"), "<cwd>")
       .replaceAll(fs.realpathSync.native(os.tmpdir()).replaceAll("\\", "/"), "<tmp>")
       .replaceAll(fs.realpathSync.native(os.homedir()).replaceAll("\\", "/"), "<home>")

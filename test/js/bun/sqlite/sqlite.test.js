@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, realpathSync, writeFileSync } from "fs";
-import { bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { bunExe, bunEnv, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -303,6 +303,7 @@ it("upsert cross-process, see #1366", () => {
   const dir = realpathSync(tmpdir()) + "/";
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/sqlite-cross-process.js"], {
     env: {
+      ...bunEnv,
       SQLITE_DIR: dir,
     },
     stderr: "inherit",

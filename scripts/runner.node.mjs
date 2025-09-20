@@ -1123,10 +1123,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
 
-  if (basename(execPath).includes("asan") && bunEnv.ASAN_OPTIONS === undefined) {
-    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
-  }
-
   if (isWindows && bunEnv.Path) {
     delete bunEnv.Path;
   }

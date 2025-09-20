@@ -26,7 +26,7 @@ pub const log = Output.scoped(.debugger, .visible);
 extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
 extern "c" fn Bun__ensureDebugger(u32, bool) void;
 extern "c" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool) void;
-var futex_atomic: std.atomic.Value(u32) = undefined;
+var futex_atomic: std.atomic.Value(u32) = .init(0);
 
 pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     const debugger = &(this.debugger orelse return);
@@ -127,7 +127,6 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
         debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
         if (!this.has_started_debugger) {
             this.has_started_debugger = true;
-            futex_atomic = std.atomic.Value(u32).init(0);
             var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
             thread.detach();
         }

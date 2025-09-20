@@ -1447,7 +1447,8 @@ pub const TestCommand = struct {
                         } else {
                             Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
                         }
-                        Global.exit(1);
+                        vm.exit_handler.exit_code = 1;
+                        vm.globalExit();
                     },
                 };
             }
@@ -1489,7 +1490,8 @@ pub const TestCommand = struct {
                     } else {
                         Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {}", .{bun.fmt.quote(dir_to_scan)});
                     }
-                    Global.exit(1);
+                    vm.exit_handler.exit_code = 1;
+                    vm.globalExit();
                 },
             };
         }
@@ -1851,7 +1853,8 @@ pub const TestCommand = struct {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
 
-                        Global.exit(1);
+                        vm.exit_handler.exit_code = 1;
+                        vm.globalExit();
                     }
 
                     return;

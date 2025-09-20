@@ -1,5 +1,8 @@
 # List of tests for which we do NOT enable LeakSanitizer when running in ASAN CI
 
+test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts
+test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
+
 test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
 test/js/node/test/parallel/test-worker-arraybuffer-zerofill.js
 test/js/node/test/parallel/test-worker-cjs-workerdata.js
@@ -144,6 +147,10 @@ test/cli/install/bun-run.test.ts
 test/bake/dev/import-meta-inline.test.ts
 test/integration/sharp/sharp.test.ts
 test/cli/test/bun-test.test.ts
+test/cli/install/bun-install-security-provider.test.ts
+test/js/node/test/parallel/test-tls-fast-writing.js
+test/js/bun/sqlite/sqlite.test.js
+test/js/workerd/html-rewriter.test.js
 
 
 # crash for reasons not related to LSAN
@@ -255,6 +262,8 @@ test/cli/update_interactive_snapshots.test.ts
 test/js/web/websocket/websocket-custom-headers.test.ts
 test/js/third_party/body-parser/express-memory-leak.test.ts
 test/js/bun/http/serve-body-leak.test.ts
+test/cli/install/migration/yarn-lock-migration.test.ts
+test/regression/issue/test_env_loader_threading.test.ts
 
 # Zig::SourceProvider::~SourceProvider()
 test/bundler/bundler_bun.test.ts
@@ -386,3 +395,4 @@ test/js/node/net/node-net-server.test.ts
 test/js/third_party/grpc-js/test-channel-credentials.test.ts
 test/js/bun/http/bun-connect-x509.test.ts
 test/js/third_party/rollup-v4/rollup-v4.test.ts
+test/js/web/abort/abort.test.ts

@@ -538,7 +538,7 @@ function getLinkBunStep(platform, options) {
     cancel_on_build_failing: isMergeQueue(),
     env: {
       BUN_LINK_ONLY: "ON",
-      ASAN_OPTIONS: "allow_user_segv_handler=1,disable_coredump=0,detect_leaks=0",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
     command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
@@ -603,7 +603,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     env: {
-      ASAN_OPTIONS: "allow_user_segv_handler=1,disable_coredump=0,detect_leaks=0",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
     command:
       os === "windows"

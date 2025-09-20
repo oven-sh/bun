@@ -856,8 +856,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const handle = this[kHandle];
     this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
     if (this.#pendingCallback) {
-      this.#pendingCallback();
+      const callback = this.#pendingCallback;
       this.#pendingCallback = null;
+      callback();
     }
     this.emit("drain");
   }

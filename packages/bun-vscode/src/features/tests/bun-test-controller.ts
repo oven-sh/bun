@@ -1351,7 +1351,7 @@ export class BunTestController implements vscode.Disposable {
       return null;
     }
 
-    return testNames.map(e => `^ ?(${e})`).join("|");
+    return "^ ?" + testNames.map(e => `(${e})`).join("|");
   }
 
   private disconnectInspector(): void {

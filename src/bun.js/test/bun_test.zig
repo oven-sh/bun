@@ -544,7 +544,7 @@ pub const BunTest = struct {
     }
 
     /// if sync, the result is queued and appended later
-    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg: CallbackEntry, timeout: bun.timespec) void {
+    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg_callback: jsc.JSValue, cfg_done_parameter: bool, cfg_data: BunTest.RefDataValue, timeout: bun.timespec) void {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
@@ -552,19 +552,19 @@ pub const BunTest = struct {
         var done_arg: ?jsc.JSValue = null;
 
         var done_callback: ?jsc.JSValue = null;
-        if (cfg.done_parameter) {
-            group.log("callTestCallback -> appending done callback param: data {}", .{cfg.data});
+        if (cfg_done_parameter) {
+            group.log("callTestCallback -> appending done callback param: data {}", .{cfg_data});
             done_callback = DoneCallback.createUnbound(globalThis);
             done_arg = DoneCallback.bind(done_callback.?, globalThis) catch |e| blk: {
-                this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg.data);
+                this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg_data);
                 break :blk jsc.JSValue.js_undefined; // failed to bind done callback
             };
         }
 
         this.updateMinTimeout(globalThis, timeout);
-        const result: ?jsc.JSValue = cfg.callback.get().call(globalThis, .js_undefined, if (done_arg) |done| &.{done} else &.{}) catch blk: {
+        const result: ?jsc.JSValue = cfg_callback.call(globalThis, .js_undefined, if (done_arg) |done| &.{done} else &.{}) catch blk: {
             globalThis.clearTerminationException();
-            this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg.data);
+            this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg_data);
             group.log("callTestCallback -> error", .{});
             break :blk null;
         };
@@ -575,15 +575,15 @@ pub const BunTest = struct {
                 if (dcb_data.called or result == null) {
                     // done callback already called or the callback errored; add result immediately
                 } else {
-                    dcb_ref = ref(this_strong, cfg.data);
+                    dcb_ref = ref(this_strong, cfg_data);
                     dcb_data.ref = dcb_ref;
                 }
             } else bun.debugAssert(false); // this should be unreachable, we create DoneCallback above
         }
 
         if (result != null and result.?.asPromise() != null) {
-            group.log("callTestCallback -> promise: data {}", .{cfg.data});
-            const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg.data);
+            group.log("callTestCallback -> promise: data {}", .{cfg_data});
+            const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
             result.?.then(globalThis, this_ref, bunTestThen, bunTestCatch);
             drain(globalThis);
             return;
@@ -598,7 +598,7 @@ pub const BunTest = struct {
 
         group.log("callTestCallback -> sync", .{});
         drain(globalThis);
-        this.addResult(cfg.data);
+        this.addResult(cfg_data);
         return;
     }
 
@@ -645,22 +645,6 @@ pub const ResultQueue = bun.LinearFifo(BunTest.RefDataValue, .Dynamic);
 pub const StepResult = union(enum) {
     waiting: struct { timeout: bun.timespec = .epoch },
     complete,
-};
-
-pub const CallbackEntry = struct {
-    callback: Strong,
-    done_parameter: bool,
-    data: BunTest.RefDataValue,
-    pub fn init(gpa: std.mem.Allocator, callback: Strong, done_parameter: bool, data: BunTest.RefDataValue) CallbackEntry {
-        return .{
-            .callback = callback.dupe(gpa),
-            .done_parameter = done_parameter,
-            .data = data,
-        };
-    }
-    pub fn deinit(this: *CallbackEntry, gpa: std.mem.Allocator) void {
-        this.callback.deinit(gpa);
-    }
 };
 
 pub const Collection = @import("./Collection.zig");

@@ -888,9 +888,11 @@ if(NOT WIN32)
     if(ENABLE_ASAN)
       target_compile_options(${bun} PUBLIC
         -fsanitize=address
+        -fsanitize=leak
       )
       target_link_libraries(${bun} PUBLIC
         -fsanitize=address
+        -fsanitize=leak
       )
     endif()
 
@@ -932,9 +934,11 @@ if(NOT WIN32)
     if(ENABLE_ASAN)
       target_compile_options(${bun} PUBLIC
         -fsanitize=address
+        -fsanitize=leak
       )
       target_link_libraries(${bun} PUBLIC
         -fsanitize=address
+        -fsanitize=leak
       )
     endif()
   endif()

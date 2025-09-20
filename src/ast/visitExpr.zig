@@ -876,6 +876,13 @@ pub fn VisitExpr(
                     .property_access_for_method_call_maybe_should_replace_with_undefined = in.property_access_for_method_call_maybe_should_replace_with_undefined,
                 });
 
+                // When bundling to CJS, replace import.meta.* with undefined
+                if (p.options.bundle and p.options.output_format == .cjs and
+                    e_.target.data == .e_import_meta)
+                {
+                    return p.newExpr(E.Undefined{}, expr.loc);
+                }
+
                 // 'require.resolve' -> .e_require_resolve_call_target
                 if (e_.target.data == .e_require_call_target and
                     strings.eqlComptime(e_.name, "resolve"))

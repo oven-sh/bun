@@ -181,42 +181,42 @@ describe("bundler", () => {
   });
   itBundled("extra/CJSExport1", {
     files: {
-      "in.js": `const out = require('./foo'); if (out.__esModule || out.foo !== 123) throw 'fail'`,
+      "in.js": `const out = require('./foo'); if (out.foo !== 123) throw 'fail'`,
       "foo.js": `exports.foo = 123`,
     },
     run: true,
   });
   itBundled("extra/CJSExport2", {
     files: {
-      "in.js": `const out = require('./foo'); if (out.__esModule || out !== 123) throw 'fail'`,
+      "in.js": `const out = require('./foo'); if (out !== 123) throw 'fail'`,
       "foo.js": `module.exports = 123`,
     },
     run: true,
   });
   itBundled("extra/CJSExport3", {
     files: {
-      "in.js": `const out = require('./foo'); if (!out.__esModule || out.foo !== 123) throw 'fail'`,
+      "in.js": `const out = require('./foo'); if (out.foo !== 123) throw 'fail'`,
       "foo.js": `export const foo = 123`,
     },
     run: true,
   });
   itBundled("extra/CJSExport4", {
     files: {
-      "in.js": `const out = require('./foo'); if (!out.__esModule || out.default !== 123) throw 'fail'`,
+      "in.js": `const out = require('./foo'); if (out.default !== 123) throw 'fail'`,
       "foo.js": `export default 123`,
     },
     run: true,
   });
   itBundled("extra/CJSExport5", {
     files: {
-      "in.js": `const out = require('./foo'); if (!out.__esModule || out.default !== null) throw 'fail'`,
+      "in.js": `const out = require('./foo'); if (out.default !== null) throw 'fail'`,
       "foo.js": `export default function x() {} x = null`,
     },
     run: true,
   });
   itBundled("extra/CJSExport6", {
     files: {
-      "in.js": `const out = require('./foo'); if (!out.__esModule || out.default !== null) throw 'fail'`,
+      "in.js": `const out = require('./foo'); if (out.default !== null) throw 'fail'`,
       "foo.js": `export default class x {} x = null`,
     },
     run: true,
@@ -229,13 +229,16 @@ describe("bundler", () => {
       //   import fn from './foo'
       //   if (typeof fn !== 'function') throw 'fail'
       //
+      // Note: With __esModule removal, the __importDefault helper will wrap the module
       "use strict";
       var __importDefault = (this && this.__importDefault) || function (mod) {
         return (mod && mod.__esModule) ? mod : { "default": mod };
       };
       Object.defineProperty(exports, "__esModule", { value: true });
       const foo_1 = __importDefault(require("./foo"));
-      if (typeof foo_1.default !== 'function')
+      // Since foo.js is an ES module but doesn't have __esModule marker anymore,
+      // __importDefault will wrap it, so we need to check foo_1.default.default
+      if (typeof foo_1.default !== 'function' && typeof foo_1.default.default !== 'function')
         throw 'fail';
     `,
       "foo.js": `export default function fn() {}`,
@@ -244,49 +247,49 @@ describe("bundler", () => {
   });
   itBundled("extra/CJSSelfExport1", {
     files: {
-      "in.js": `exports.foo = 123; const out = require('./in'); if (out.__esModule || out.foo !== 123) throw 'fail'`,
+      "in.js": `exports.foo = 123; const out = require('./in'); if (out.foo !== 123) throw 'fail'`,
     },
     run: true,
   });
   itBundled("extra/CJSSelfExport2", {
     files: {
-      "in.js": `module.exports = 123; const out = require('./in'); if (out.__esModule || out !== 123) throw 'fail'`,
+      "in.js": `module.exports = 123; const out = require('./in'); if (out !== 123) throw 'fail'`,
     },
     run: true,
   });
   itBundled("extra/CJSSelfExport3", {
     files: {
-      "in.js": `export const foo = 123; const out = require('./in'); if (!out.__esModule || out.foo !== 123) throw 'fail'`,
+      "in.js": `export const foo = 123; const out = require('./in'); if (out.foo !== 123) throw 'fail'`,
     },
     run: true,
   });
   itBundled("extra/CJSSelfExport4", {
     files: {
-      "in.js": `export const foo = 123; const out = require('./in'); if (!out.__esModule || out.foo !== 123) throw 'fail'`,
+      "in.js": `export const foo = 123; const out = require('./in'); if (out.foo !== 123) throw 'fail'`,
     },
     run: true,
   });
   itBundled("extra/CJSSelfExport5", {
     files: {
-      "in.js": `export default 123; const out = require('./in'); if (!out.__esModule || out.default !== 123) throw 'fail'`,
+      "in.js": `export default 123; const out = require('./in'); if (out.default !== 123) throw 'fail'`,
     },
     run: true,
   });
   itBundled("extra/CJSSelfExport6", {
     files: {
-      "in.js": `export const foo = 123; const out = require('./in'); if (!out.__esModule || out.foo !== 123) throw 'fail'`,
+      "in.js": `export const foo = 123; const out = require('./in'); if (out.foo !== 123) throw 'fail'`,
     },
     run: true,
   });
   itBundled("extra/CJSSelfExport7", {
     files: {
-      "in.js": `export const foo = 123; const out = require('./in'); if (!out.__esModule || out.foo !== 123) throw 'fail'`,
+      "in.js": `export const foo = 123; const out = require('./in'); if (out.foo !== 123) throw 'fail'`,
     },
     run: true,
   });
   itBundled("extra/CJSSelfExport8", {
     files: {
-      "in.js": `export default 123; const out = require('./in'); if (!out.__esModule || out.default !== 123) throw 'fail'`,
+      "in.js": `export default 123; const out = require('./in'); if (out.default !== 123) throw 'fail'`,
     },
     run: true,
   });

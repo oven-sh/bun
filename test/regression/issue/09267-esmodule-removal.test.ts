@@ -295,3 +295,228 @@ PASS: call result
 PASS: extra property"
 `);
 });
+
+test("Node.js compatibility - require() should return raw module.exports", async () => {
+  using dir = tempDir("test-nodejs-compat", {
+    "package.json": JSON.stringify({ name: "test-pkg" }),
+    "cjs-array.js": `
+// Module that exports an array directly
+module.exports = [1, 2, 3];
+`,
+    "cjs-string.js": `
+// Module that exports a string directly
+module.exports = "hello world";
+`,
+    "cjs-number.js": `
+// Module that exports a number directly
+module.exports = 42;
+`,
+    "cjs-null.js": `
+// Module that exports null
+module.exports = null;
+`,
+    "test.js": `
+const arr = require('./cjs-array.js');
+const str = require('./cjs-string.js');
+const num = require('./cjs-number.js');
+const nil = require('./cjs-null.js');
+
+// Arrays should work
+console.log(Array.isArray(arr) ? 'PASS: array' : 'FAIL: not array');
+console.log(arr.length === 3 ? 'PASS: array length' : 'FAIL: array length');
+
+// Strings should work
+console.log(typeof str === 'string' ? 'PASS: string' : 'FAIL: not string');
+console.log(str === 'hello world' ? 'PASS: string value' : 'FAIL: string value');
+
+// Numbers should work
+console.log(typeof num === 'number' ? 'PASS: number' : 'FAIL: not number');
+console.log(num === 42 ? 'PASS: number value' : 'FAIL: number value');
+
+// Null should work
+console.log(nil === null ? 'PASS: null' : 'FAIL: not null');
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+"PASS: array
+PASS: array length
+PASS: string
+PASS: string value
+PASS: number
+PASS: number value
+PASS: null"
+`);
+});
+
+test("CommonJS circular dependencies should work like Node.js", async () => {
+  using dir = tempDir("test-circular", {
+    "package.json": JSON.stringify({ name: "test-pkg" }),
+    "a.js": `
+console.log('a starting');
+exports.done = false;
+const b = require('./b.js');
+console.log('in a, b.done = ' + b.done);
+exports.done = true;
+console.log('a done');
+`,
+    "b.js": `
+console.log('b starting');
+exports.done = false;
+const a = require('./a.js');
+console.log('in b, a.done = ' + a.done);
+exports.done = true;
+console.log('b done');
+`,
+    "main.js": `
+console.log('main starting');
+const a = require('./a.js');
+const b = require('./b.js');
+console.log('in main, a.done=' + a.done + ', b.done=' + b.done);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+"main starting
+a starting
+b starting
+in b, a.done = false
+b done
+in a, b.done = true
+a done
+in main, a.done=true, b.done=true"
+`);
+});
+
+test("CommonJS module.exports reassignment", async () => {
+  using dir = tempDir("test-reassign", {
+    "package.json": JSON.stringify({ name: "test-pkg" }),
+    "module.js": `
+// Initially set exports properties
+exports.foo = 'bar';
+exports.num = 123;
+
+// Then reassign module.exports completely
+module.exports = function myFunc() {
+  return 'replaced';
+};
+
+// Adding to exports after reassignment should have no effect
+exports.ignored = 'this should not be visible';
+`,
+    "test.js": `
+const mod = require('./module.js');
+
+// Should be the function, not the original exports object
+console.log(typeof mod === 'function' ? 'PASS: is function' : 'FAIL: not function');
+console.log(mod() === 'replaced' ? 'PASS: function works' : 'FAIL: function broken');
+
+// Original exports properties should not exist
+console.log(mod.foo === undefined ? 'PASS: no foo' : 'FAIL: has foo');
+console.log(mod.num === undefined ? 'PASS: no num' : 'FAIL: has num');
+console.log(mod.ignored === undefined ? 'PASS: no ignored' : 'FAIL: has ignored');
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+"PASS: is function
+PASS: function works
+PASS: no foo
+PASS: no num
+PASS: no ignored"
+`);
+});
+
+test("ESM importing CommonJS with various exports patterns", async () => {
+  using dir = tempDir("test-esm-cjs-patterns", {
+    "package.json": JSON.stringify({ name: "test-pkg", type: "module" }),
+    "cjs-class.cjs": `
+class MyClass {
+  constructor(name) {
+    this.name = name;
+  }
+  greet() {
+    return 'Hello ' + this.name;
+  }
+}
+module.exports = MyClass;
+`,
+    "cjs-factory.cjs": `
+module.exports = function createUser(name) {
+  return { name: name, type: 'user' };
+};
+module.exports.VERSION = '1.0.0';
+`,
+    "test.mjs": `
+import MyClass from './cjs-class.cjs';
+import createUser from './cjs-factory.cjs';
+
+// Class import should work
+const instance = new MyClass('World');
+console.log(typeof MyClass === 'function' ? 'PASS: class is function' : 'FAIL: class not function');
+console.log(instance.greet() === 'Hello World' ? 'PASS: class works' : 'FAIL: class broken');
+
+// Factory function with properties should work
+console.log(typeof createUser === 'function' ? 'PASS: factory is function' : 'FAIL: factory not function');
+const user = createUser('Alice');
+console.log(user.name === 'Alice' ? 'PASS: factory works' : 'FAIL: factory broken');
+console.log(createUser.VERSION === '1.0.0' ? 'PASS: factory property' : 'FAIL: no property');
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+"PASS: class is function
+PASS: class works
+PASS: factory is function
+PASS: factory works
+PASS: factory property"
+`);
+});

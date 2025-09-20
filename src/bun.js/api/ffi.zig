@@ -713,12 +713,7 @@ pub const FFI = struct {
                     if (!std.fs.path.isAbsolute(source_path)) {
                         // Build the resolved path using standard path joining
                         var pathbuf: bun.PathBuffer = undefined;
-                        const joined = bun.path.joinAbsStringBufZ(
-                            caller_dir,
-                            &pathbuf,
-                            &[_][]const u8{source_path},
-                            .auto
-                        );
+                        const joined = bun.path.joinAbsStringBufZ(caller_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
                         const resolved = bun.default_allocator.dupeZ(u8, joined) catch |err| {
                             bun.default_allocator.free(source_path);
                             return err;
@@ -736,12 +731,7 @@ pub const FFI = struct {
                 if (!std.fs.path.isAbsolute(source_path)) {
                     // Build the resolved path using standard path joining
                     var pathbuf: bun.PathBuffer = undefined;
-                    const joined = bun.path.joinAbsStringBufZ(
-                        caller_dir,
-                        &pathbuf,
-                        &[_][]const u8{source_path},
-                        .auto
-                    );
+                    const joined = bun.path.joinAbsStringBufZ(caller_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
                     const resolved = bun.default_allocator.dupeZ(u8, joined) catch |err| {
                         bun.default_allocator.free(source_path);
                         return err;

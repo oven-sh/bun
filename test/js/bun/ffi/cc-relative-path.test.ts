@@ -1,17 +1,19 @@
+import { cc } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { cc, CString } from "bun:ffi";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { join } from "path";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
+import { join } from "path";
 
 test("FFI cc resolves relative paths from source file", () => {
   // Create a temporary directory for our test
   const tempDir = mkdtempSync(join(tmpdir(), "bun-ffi-cc-test-"));
-  
+
   try {
     // Write a simple C file in the temp directory
     const cFilePath = join(tempDir, "test.c");
-    writeFileSync(cFilePath, `
+    writeFileSync(
+      cFilePath,
+      `
       int add(int a, int b) {
         return a + b;
       }
@@ -19,10 +21,11 @@ test("FFI cc resolves relative paths from source file", () => {
       const char* get_hello() {
         return "Hello from C!";
       }
-    `);
-    
+    `,
+    );
+
     // Test with relative path (should resolve relative to this test file)
-    // Since this test file is in /workspace/bun/test/js/bun/ffi/, 
+    // Since this test file is in /workspace/bun/test/js/bun/ffi/,
     // we need to use a path that goes to our temp directory
     // For this test, we'll use absolute path first to ensure it works
     const lib = cc({
@@ -37,16 +40,16 @@ test("FFI cc resolves relative paths from source file", () => {
         },
       },
     });
-    
+
     expect(lib.symbols.add(5, 3)).toBe(8);
     expect(lib.symbols.add(100, -50)).toBe(50);
-    
+
     const result = lib.symbols.get_hello();
     // TODO: Fix CString return type
     // expect(result).toBeInstanceOf(CString);
     // expect(result.toString()).toBe("Hello from C!");
     expect(typeof result).toBe("number"); // For now it returns a pointer
-    
+
     lib.close();
   } finally {
     // Clean up

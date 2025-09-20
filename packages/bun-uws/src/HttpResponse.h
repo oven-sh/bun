@@ -742,6 +742,10 @@ public:
 
         return httpResponseData->socketData;
     }
+    bool isStreamingRequest() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        return httpResponseData->isStreamingRequest;
+    }
 
     void setWriteOffset(uint64_t offset) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();

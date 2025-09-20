@@ -870,6 +870,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       if (handle) {
         handle.ondata = undefined;
       }
+
       this.push(null);
     }
   }

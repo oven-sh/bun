@@ -1811,6 +1811,26 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
+  void *uws_res_get_socket_data(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->getSocketData();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->getSocketData();
+    }
+  }
+
+  bool uws_res_is_streaming(int ssl, uws_res_r res)
+  {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->isStreamingRequest();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->isStreamingRequest();
+    }
+  }
   void *uws_res_get_native_handle(int ssl, uws_res_r res)
   {
     if (ssl)

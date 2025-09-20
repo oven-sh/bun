@@ -159,6 +159,7 @@ public:
     template<bool SSL>
     static void clearSocketData(us_socket_t* socket)
     {
+
         auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
         httpResponseData->socketData = nullptr;
     }
@@ -241,6 +242,7 @@ public:
 
     void onClose()
     {
+        if (!this->socket) return;
 
         this->socket = nullptr;
         if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
@@ -769,13 +771,26 @@ extern "C" void Bun__callNodeHTTPServerSocketOnData(EncodedJSValue thisValue, En
     response->onData(JSValue::decode(chunk), last);
 }
 
-extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocket(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocketForClientError(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (isSSL) {
+        uWS::HttpResponse<true>* response = reinterpret_cast<uWS::HttpResponse<true>*>(us_socket);
+        auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(response->getHttpResponseData()->socketData);
+        if (currentSocketDataPtr) {
+            return JSValue::encode(currentSocketDataPtr);
+        }
+    } else {
+        uWS::HttpResponse<false>* response = reinterpret_cast<uWS::HttpResponse<false>*>(us_socket);
+        auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(response->getHttpResponseData()->socketData);
+        if (currentSocketDataPtr) {
+            return JSValue::encode(currentSocketDataPtr);
+        }
+    }
     // socket without response because is not valid http
     JSNodeHTTPServerSocket* socket = JSNodeHTTPServerSocket::create(
         vm,
@@ -787,6 +802,20 @@ extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocket(bool isSSL, us_so
     if (socket) {
         socket->strongThis.set(vm, socket);
         return JSValue::encode(socket);
+    }
+    // this means we dont have any abort handler set and this will be called as soon as the callback is called
+    if (isSSL) {
+        uWS::HttpResponse<true>* response = reinterpret_cast<uWS::HttpResponse<true>*>(us_socket);
+        response->onAborted(socket, [](uWS::HttpResponse<true>*, void* userData) {
+            auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(userData);
+            socket->onClose();
+        });
+    } else {
+        uWS::HttpResponse<false>* response = reinterpret_cast<uWS::HttpResponse<false>*>(us_socket);
+        response->onAborted(socket, [](uWS::HttpResponse<false>*, void* userData) {
+            auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(userData);
+            socket->onClose();
+        });
     }
     return JSValue::encode(JSC::jsNull());
 }

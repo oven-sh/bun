@@ -2810,7 +2810,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) void {
             if (this.on_clienterror.get()) |callback| {
                 const is_ssl = protocol_enum == .https;
-                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocket, .{ is_ssl, socket, this.globalThis }) catch return;
+
+                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocketForClientError, .{ is_ssl, socket, this.globalThis }) catch return;
                 if (node_socket.isUndefinedOrNull()) return;
 
                 const error_code_value = JSValue.jsNumber(error_code);
@@ -3308,7 +3309,7 @@ extern fn NodeHTTPServer__onRequest_https(
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
-extern fn Bun__createNodeHTTPServerSocket(bool, *anyopaque, *jsc.JSGlobalObject) jsc.JSValue;
+extern fn Bun__createNodeHTTPServerSocketForClientError(bool, *anyopaque, *jsc.JSGlobalObject) jsc.JSValue;
 extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
 extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 extern "c" fn Bun__ServerRouteList__callRoute(

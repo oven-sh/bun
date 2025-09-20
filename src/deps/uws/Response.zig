@@ -34,6 +34,14 @@ pub fn NewResponse(ssl_flag: i32) type {
             return c.uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close_);
         }
 
+        pub fn getSocketData(res: *Response) ?*anyopaque {
+            return c.uws_res_get_socket_data(ssl_flag, res.downcast());
+        }
+
+        pub fn isStreaming(res: *Response) bool {
+            return c.uws_res_is_streaming(ssl_flag, res.downcast());
+        }
+
         pub fn flushHeaders(res: *Response) void {
             c.uws_res_flush_headers(ssl_flag, res.downcast());
         }
@@ -359,6 +367,11 @@ pub const AnyResponse = union(enum) {
             inline else => |resp| resp.downcast(),
         };
     }
+    pub fn getSocketData(this: AnyResponse) ?*anyopaque {
+        return switch (this) {
+            inline else => |resp| resp.getSocketData(),
+        };
+    }
     pub fn getRemoteSocketInfo(this: AnyResponse) ?SocketAddress {
         return switch (this) {
             inline else => |resp| resp.getRemoteSocketInfo(),
@@ -554,6 +567,12 @@ pub const AnyResponse = union(enum) {
         }
     }
 
+    pub fn isStreaming(this: AnyResponse) bool {
+        return switch (this) {
+            inline else => |resp| resp.isStreaming(),
+        };
+    }
+
     pub fn endStream(this: AnyResponse, close_connection: bool) void {
         switch (this) {
             inline else => |resp| resp.endStream(close_connection),
@@ -635,10 +654,12 @@ const c = struct {
     pub extern fn uws_res_write_mark(ssl: i32, res: *c.uws_res) void;
     pub extern fn us_socket_mark_needs_more_not_ssl(socket: ?*c.uws_res) void;
     pub extern fn uws_res_state(ssl: c_int, res: *const c.uws_res) State;
+    pub extern fn uws_res_is_streaming(ssl: i32, res: *c.uws_res) bool;
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
     pub extern fn uws_res_uncork(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_end(ssl: i32, res: *c.uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
     pub extern fn uws_res_flush_headers(ssl: i32, res: *c.uws_res) void;
+    pub extern fn uws_res_get_socket_data(ssl: i32, res: *c.uws_res) ?*uws.SocketData;
     pub extern fn uws_res_pause(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_resume(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_write_continue(ssl: i32, res: *c.uws_res) void;

@@ -788,7 +788,7 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
         const event_loop = globalThis.bunVM().eventLoop();
 
         const bytes = this.getBytes(globalThis, chunk);
-        if (socketValue != .zero) {
+        if (socketValue != .zero and this.raw_response.isStreaming()) {
             log("Bun__callNodeHTTPServerSocketOnData", .{});
             Bun__callNodeHTTPServerSocketOnData(socketValue, bytes, last);
         }
@@ -798,7 +798,7 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
             jsc.JSValue.jsBoolean(last),
             jsc.JSValue.jsNumber(@intFromEnum(event)),
         });
-    } else if (socketValue != .zero) {
+    } else if (socketValue != .zero and this.raw_response.isStreaming()) {
         const globalThis = jsc.VirtualMachine.get().global;
         const bytes = this.getBytes(globalThis, chunk);
         log("Bun__callNodeHTTPServerSocketOnData", .{});
@@ -817,7 +817,7 @@ fn onDrainCorked(this: *NodeHTTPResponse, offset: u64) void {
     this.ref();
     defer this.deref();
     const socketValue = this.getServerSocketValue();
-    if (socketValue != .zero) {
+    if (socketValue != .zero and this.raw_response.isStreaming()) {
         Bun__callNodeHTTPServerSocketOnDrain(socketValue);
     }
 
@@ -1269,6 +1269,9 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         buffer.wrote(total_written);
     }
     response_ctx.setOnAbortedHandler();
+    if (!response_ctx.raw_response.isStreaming()) {
+        return globalObject.throw("Is only possible to write in CONNECT requests.", .{}) catch .zero;
+    }
 
     var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
     const node_buffer: jsc.Node.BlobOrStringOrBuffer = if (data.isUndefined())

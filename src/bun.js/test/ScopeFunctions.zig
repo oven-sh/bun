@@ -424,7 +424,7 @@ pub fn createUnbound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue,
 
 pub fn bind(value: JSValue, globalThis: *JSGlobalObject, name: *const bun.String) bun.JSError!JSValue {
     const callFn = jsc.host_fn.NewFunction(globalThis, &name.toZigString(), 1, callAsFunction, false);
-    const bound = try callFn.bind(globalThis, value, name, 1);
+    const bound = try callFn.bind(globalThis, value, name, 1, &.{});
     try bound.setPrototypeDirect(value.getPrototype(globalThis), globalThis);
     return bound;
 }

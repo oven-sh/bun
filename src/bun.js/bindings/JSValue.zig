@@ -2372,7 +2372,9 @@ pub const JSValue = enum(i64) {
         Output.flush();
     }
 
-    pub const bind = bun.cpp.Bun__JSValue__bind;
+    pub fn bind(this: JSValue, globalObject: *JSGlobalObject, bindThisArg: JSValue, name: *const bun.String, length: f64, args: []JSValue) bun.JSError!JSValue {
+        return bun.cpp.Bun__JSValue__bind(this, globalObject, bindThisArg, name, length, args.ptr, args.len);
+    }
     pub const setPrototypeDirect = bun.cpp.Bun__JSValue__setPrototypeDirect;
 
     pub const JSPropertyNameIterator = struct {

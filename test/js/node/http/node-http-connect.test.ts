@@ -40,7 +40,7 @@ describe("HTTP server CONNECT", () => {
     await using targetServer = net.createServer(socket => {
       socket.write(responseHeader, () => {
         socket.write(BIG_DATA, () => {
-          // is this a net bug?
+          //TODO: is this a net bug? on windows the connection is closed before everything is sended
           Bun.sleep(100).then(() => {
             socket.end();
           });

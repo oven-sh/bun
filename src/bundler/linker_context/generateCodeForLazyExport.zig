@@ -1,4 +1,4 @@
-pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) !void {
+pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) bun.OOM!void {
     const exports_kind = this.graph.ast.items(.exports_kind)[source_index];
     const all_sources = this.parse_graph.input_files.items(.source);
     const all_css_asts = this.graph.ast.items(.css);
@@ -333,12 +333,12 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                     // end up actually being used at this point (since import binding hasn't
                     // happened yet). So we need to wait until after tree shaking happens.
                     const generated = try this.generateNamedExportInFile(source_index, module_ref, name, name);
-                    parts.ptr[generated[1]].stmts = this.allocator().alloc(Stmt, 1) catch unreachable;
+                    parts.ptr[generated[1]].stmts = try this.allocator().alloc(Stmt, 1);
                     parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
                         S.Local,
                         S.Local{
                             .is_export = true,
-                            .decls = js_ast.G.Decl.List.fromSlice(
+                            .decls = try js_ast.G.Decl.List.fromSlice(
                                 this.allocator(),
                                 &.{
                                     .{
@@ -352,7 +352,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                                         .value = property.value.?,
                                     },
                                 },
-                            ) catch unreachable,
+                            ),
                         },
                         property.key.?.loc,
                     );
@@ -363,14 +363,14 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 const generated = try this.generateNamedExportInFile(
                     source_index,
                     module_ref,
-                    std.fmt.allocPrint(
+                    try std.fmt.allocPrint(
                         this.allocator(),
                         "{}_default",
                         .{this.parse_graph.input_files.items(.source)[source_index].fmtIdentifier()},
-                    ) catch unreachable,
+                    ),
                     "default",
                 );
-                parts.ptr[generated[1]].stmts = this.allocator().alloc(Stmt, 1) catch unreachable;
+                parts.ptr[generated[1]].stmts = try this.allocator().alloc(Stmt, 1);
                 parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
                     S.ExportDefault,
                     S.ExportDefault{

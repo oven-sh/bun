@@ -181,6 +181,10 @@ pub const global_no_side_effect_property_accesses = &[_][]const string{
     &[_]string{ "console", "trace" },
     &[_]string{ "console", "warn" },
 
+    &[_]string{ "Promise", "resolve" },
+    &[_]string{ "Promise", "reject" },
+    &[_]string{ "Promise", "all" },
+
     // Crypto: Static methods
     &[_]string{ "crypto", "randomUUID" },
 };

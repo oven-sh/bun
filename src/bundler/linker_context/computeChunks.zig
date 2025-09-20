@@ -389,7 +389,10 @@ pub noinline fn computeChunks(
                 };
                 defer dir.close();
 
-                break :dir try dir.getFdPath(&real_path_buf);
+                break :dir dir.getFdPath(&real_path_buf) catch |err| {
+                    try this.log.addErrorFmt(null, .Empty, this.allocator(), "{s}: Failed to get full path for directory '{s}'", .{ @errorName(err), dir_path });
+                    return error.BuildFailed;
+                };
             };
 
             chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator(), this.resolver.opts.root_dir, dir);

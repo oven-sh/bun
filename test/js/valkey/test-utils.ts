@@ -5,8 +5,6 @@ import path from "path";
 
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
-import * as fs from "node:fs";
-import * as os from "node:os";
 
 const dockerCLI = Bun.which("docker") as string;
 export const isEnabled =

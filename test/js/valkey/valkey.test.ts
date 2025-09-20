@@ -28,6 +28,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     }
 
     // Flush all data for clean test state
+    await ctx.redis.connect();
     await ctx.redis.send("FLUSHALL", ["SYNC"]);
   });
 
@@ -42,11 +43,11 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(setResult).toMatchInlineSnapshot(`"OK"`);
 
       const setResult2 = await redis.set(testKey, testValue, "GET");
-      expect(setResult2).toMatchInlineSnapshot(`"Hello from Bun Redis!"`);
+      expect(setResult2).toMatchInlineSnapshot(`"${testValue}"`);
 
       // GET should return the value we set
       const getValue = await redis.get(testKey);
-      expect(getValue).toMatchInlineSnapshot(`"Hello from Bun Redis!"`);
+      expect(getValue).toMatchInlineSnapshot(`"${testValue}"`);
     });
 
     test("should test key existence", async () => {

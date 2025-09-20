@@ -10,19 +10,18 @@ const framework: Framework = {
       style: "nextjs-pages",
       layouts: true,
       ignoreUnderscores: true,
+      prefix: "/",
+      ignoreDirs: ["node_modules", ".git"],
     },
   ],
-
   serverComponents: {
     separateSSRGraph: true,
     serverRegisterClientReferenceExport: "registerClientReference",
     serverRuntimeImportSource: "react-server-dom-bun/server",
   },
-
   reactFastRefresh: {
     importSource: "react-refresh/runtime",
   },
-
   bundlerOptions: {
     ssr: {
       conditions: ["react-server"],

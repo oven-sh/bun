@@ -1074,19 +1074,16 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _write(_chunk, _encoding, _callback) {
     const handle = this[kHandle];
     // only enable writting if we can drain
-    if (handle && handle.ondrain) {
-      try {
-        if (!handle.write(_chunk, _encoding)) {
-          this.#pendingCallback = _callback;
-          return false;
-        }
-        _callback();
-      } catch (err) {
-        _callback(err);
+    let err;
+    try {
+      if (handle && handle.ondrain && !handle.write(_chunk, _encoding)) {
+        this.#pendingCallback = _callback;
+        return false;
       }
-      return;
+    } catch (e) {
+      err = e;
     }
-    _callback();
+    err ? _callback(err) : _callback();
   }
 
   pause() {
@@ -1374,10 +1371,11 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
   this._header = " ";
   const req = this.req;
-
+  const socket = req.socket;
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
     req._dump();
   }
+  this.detachSocket(socket);
   this.finished = true;
   process.nextTick(self => {
     self._ended = true;

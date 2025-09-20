@@ -1918,6 +1918,23 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     const start = parser.pos;
 
+                    if (first_char == .positive or first_char == .negative) {
+                        switch (parser.next()) {
+                            ' ', '\t', 0, '\n', '\r', ':' => {
+                                return;
+                            },
+                            ',', ']', '}' => {
+                                switch (parser.context.get()) {
+                                    .flow_in, .flow_key => {
+                                        return;
+                                    },
+                                    .block_in, .block_out => {},
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
                     var decimal = parser.next() == '.';
                     var x = false;
                     var o = false;
@@ -2570,6 +2587,13 @@ pub fn Parser(comptime enc: Encoding) type {
                     };
                 },
 
+                0 => {
+                    return .{
+                        indent_indicator orelse .default,
+                        chomp orelse .default,
+                    };
+                },
+
                 else => {
                     return error.UnexpectedCharacter;
                 },
@@ -3195,15 +3219,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 '\n',
                 '\r',
                 => {
-                    // c-non-specific-tag
-                    // primary tag handle
-
-                    return .tag(.{
-                        .start = start,
-                        .indent = self.line_indent,
-                        .line = self.line,
-                        .tag = .non_specific,
-                    });
+                    return error.UnexpectedCharacter;
                 },
 
                 '<' => {
@@ -3434,6 +3450,7 @@ pub fn Parser(comptime enc: Encoding) type {
             };
 
             const previous_token_line = self.token.line;
+            const previous_token_data = self.token.data;
 
             self.token = next: switch (self.next()) {
                 0 => {
@@ -3467,6 +3484,10 @@ pub fn Parser(comptime enc: Encoding) type {
                         ' ',
                         '\t',
                         => {
+                            if (previous_token_data == .mapping_value and previous_token_line == self.line) {
+                                break :next try self.scanPlainScalar(opts);
+                            }
+
                             self.inc(1);
 
                             switch (self.context.get()) {
@@ -3499,15 +3520,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 .flow_in,
                                 .flow_key,
                                 => {
-                                    self.inc(1);
-
-                                    self.token = .sequenceEntry(.{
-                                        .start = start,
-                                        .indent = self.line_indent,
-                                        .line = self.line,
-                                    });
-
-                                    return error.UnexpectedToken;
+                                    break :next try self.scanPlainScalar(opts);
                                 },
                                 .block_in,
                                 .block_out,
@@ -3551,6 +3564,11 @@ pub fn Parser(comptime enc: Encoding) type {
                         '\n',
                         '\r',
                         => {
+                            if ((previous_token_data == .mapping_value or previous_token_data == .sequence_entry) and previous_token_line == self.line) {
+                                self.token.start = start;
+                                return error.UnexpectedToken;
+                            }
+
                             self.inc(1);
                             break :next .mappingKey(.{
                                 .start = start,
@@ -3575,6 +3593,11 @@ pub fn Parser(comptime enc: Encoding) type {
                                 .flow_in,
                                 .flow_key,
                                 => {
+                                    if (previous_token_data == .mapping_value or previous_token_data == .collect_entry) {
+                                        self.token.start = start;
+                                        return error.UnexpectedToken;
+                                    }
+
                                     self.inc(1);
                                     break :next .mappingKey(.{
                                         .start = start,

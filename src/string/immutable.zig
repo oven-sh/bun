@@ -379,7 +379,7 @@ pub fn indexEqualAny(in: anytype, target: string) ?usize {
     return null;
 }
 
-pub fn repeatingAlloc(allocator: std.mem.Allocator, count: usize, char: u8) ![]u8 {
+pub fn repeatingAlloc(allocator: std.mem.Allocator, count: usize, char: u8) bun.OOM![]u8 {
     const buf = try allocator.alloc(u8, count);
     repeatingBuf(buf, char);
     return buf;

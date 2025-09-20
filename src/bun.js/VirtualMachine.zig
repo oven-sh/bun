@@ -367,7 +367,7 @@ const SourceMapHandlerGetter = struct {
     /// When the inspector is enabled, we want to generate an inline sourcemap.
     /// And, for now, we also store it in source_mappings like normal
     /// This is hideously expensive memory-wise...
-    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
+    pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) bun.OOM!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
         try chunk.printSourceMapContentsAtOffset(source, &temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
@@ -1491,6 +1491,8 @@ pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, 
     return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
 }
 
+const FetchWithoutOnLoadPluginsError = ModuleLoader.TranspileSourceCodeError || error{ModuleNotFound};
+
 pub fn fetchWithoutOnLoadPlugins(
     jsc_vm: *VirtualMachine,
     globalObject: *JSGlobalObject,
@@ -1498,10 +1500,10 @@ pub fn fetchWithoutOnLoadPlugins(
     referrer: String,
     log: *logger.Log,
     comptime flags: FetchFlags,
-) anyerror!ResolvedSource {
+) FetchWithoutOnLoadPluginsError!ResolvedSource {
     bun.assert(VirtualMachine.isLoaded());
 
-    if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
+    if (ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
         return builtin;
     }
 
@@ -1686,7 +1688,7 @@ pub fn resolve(
     source: bun.String,
     query_string: ?*ZigString,
     is_esm: bool,
-) !void {
+) bun.JSError!void {
     try resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
 }
 

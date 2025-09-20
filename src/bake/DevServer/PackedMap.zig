@@ -19,12 +19,12 @@ end_state: struct {
     original_column: i32,
 },
 
-pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.Shared(*Self) {
+pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.OOM!bun.ptr.Shared(*Self) {
     var buffer = chunk.buffer;
     assert(!buffer.isEmpty());
     const dev_allocator = DevAllocator.downcast(buffer.allocator);
     return .new(.{
-        .vlq_ = .fromRawIn(buffer.toOwnedSlice(), dev_allocator),
+        .vlq_ = .fromRawIn(try buffer.toOwnedSlice(), dev_allocator),
         .escaped_source = escaped_source,
         .end_state = .{
             .original_line = chunk.end_state.original_line,

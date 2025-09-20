@@ -98,7 +98,7 @@ pub const LinkerContext = struct {
 
                 const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx));
                 defer worker.unget();
-                SourceMapData.computeLineOffsets(task.ctx, worker.allocator, task.source_index);
+                bun.handleOom(SourceMapData.computeLineOffsets(task.ctx, worker.allocator, task.source_index));
             }
 
             pub fn runQuotedSourceContents(thread_task: *ThreadPoolLib.Task) void {
@@ -120,11 +120,11 @@ pub const LinkerContext = struct {
                 else
                     worker.allocator;
 
-                SourceMapData.computeQuotedSourceContents(task.ctx, alloc, task.source_index);
+                bun.handleOom(SourceMapData.computeQuotedSourceContents(task.ctx, alloc, task.source_index));
             }
         };
 
-        pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) bun.OOM!void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
             const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
@@ -139,7 +139,7 @@ pub const LinkerContext = struct {
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
-            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
+            line_offset_table.* = try bun.sourcemap.LineOffsetTable.generate(
                 alloc,
                 source.contents,
 
@@ -148,7 +148,7 @@ pub const LinkerContext = struct {
             );
         }
 
-        pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
+        pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) bun.OOM!void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const quoted_source_contents = &this.graph.files.items(.quoted_source_contents)[source_index];
             quoted_source_contents.reset();
@@ -161,7 +161,7 @@ pub const LinkerContext = struct {
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             var mutable = MutableString.initEmpty(bun.default_allocator);
             bun.handleOom(js_printer.quoteForJSON(source.contents, &mutable, false));
-            var mutableOwned = mutable.toDefaultOwned();
+            var mutableOwned = try mutable.toDefaultOwned();
             quoted_source_contents.* = mutableOwned.toOptional();
         }
     };

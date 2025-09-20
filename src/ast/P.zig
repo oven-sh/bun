@@ -954,7 +954,7 @@ pub fn NewParser_(
                         switch (call.target.data) {
                             .e_identifier => |ident| {
                                 // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and call.args.ptr[0].data == .e_string) {
                                     _ = p.addImportRecord(.require, loc, call.args.at(0).data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },
@@ -970,7 +970,7 @@ pub fn NewParser_(
                         switch (call.target.data) {
                             .e_identifier => |ident| {
                                 // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and call.args.ptr[0].data == .e_string) {
                                     _ = p.addImportRecord(.require, loc, call.args.at(0).data.e_string.string(p.allocator) catch unreachable);
                                 }
                             },

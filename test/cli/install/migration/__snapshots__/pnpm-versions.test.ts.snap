@@ -1,0 +1,141 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`pnpm lockfile version support lockfileVersion: 6 (plain number): v6-plain 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+    },
+  },
+  "packages": {}
+}
+"
+`;
+
+exports[`pnpm lockfile version support lockfileVersion: 7 (plain number): v7-plain 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "is-odd": "^3.0.1",
+      },
+    },
+  },
+  "packages": {
+    "is-number": ["is-number@6.0.0", "", {}, "sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg=="],
+
+    "is-odd": ["is-odd@3.0.1", "", { "dependencies": { "is-number": "6.0.0" } }, "sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA=="],
+  }
+}
+"
+`;
+
+exports[`pnpm lockfile version support lockfileVersion: 8 (plain number): v8-plain 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "ms": "^2.1.3",
+      },
+    },
+  },
+  "packages": {
+    "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
+  }
+}
+"
+`;
+
+exports[`pnpm lockfile version support lockfileVersion: 9 (plain number): v9-plain 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "once": "^1.4.0",
+      },
+    },
+  },
+  "packages": {
+    "once": ["once@1.4.0", "", { "dependencies": { "wrappy": "1.0.2" } }, "sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w=="],
+
+    "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
+  }
+}
+"
+`;
+
+exports[`pnpm lockfile version support lockfileVersion: '6.0' (string with dot): v6-dot 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+    },
+  },
+  "packages": {}
+}
+"
+`;
+
+exports[`pnpm lockfile version support lockfileVersion: '7.1' (with minor version): v7-minor 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "ms": "^2.1.3",
+      },
+    },
+  },
+  "packages": {
+    "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
+  }
+}
+"
+`;
+
+exports[`pnpm lockfile version support lockfileVersion: '8.5' (with minor version): v8-minor 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "once": "^1.4.0",
+      },
+    },
+  },
+  "packages": {
+    "once": ["once@1.4.0", "", { "dependencies": { "wrappy": "1.0.2" } }, "sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w=="],
+
+    "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
+  }
+}
+"
+`;
+
+exports[`pnpm lockfile version support lockfileVersion: '9.0' (with dot zero): v9-dot-zero 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+      "dependencies": {
+        "is-number": "^7.0.0",
+      },
+    },
+  },
+  "packages": {
+    "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
+  }
+}
+"
+`;

@@ -1671,6 +1671,8 @@ pub fn migrateYarnLockfile(
 
     try this.resolve(log);
 
+    try this.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager);
+
     if (Environment.allow_assert) {
         try this.verifyData();
     }

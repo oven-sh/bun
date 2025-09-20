@@ -84,6 +84,49 @@ pub fn detectAndLoadOtherLockfile(
         return migrate_result;
     }
 
+    pnpm: {
+        var timer = std.time.Timer.start() catch unreachable;
+        const lockfile = File.openat(dir, "pnpm-lock.yaml", bun.O.RDONLY, 0).unwrap() catch break :pnpm;
+        defer lockfile.close();
+        const data = lockfile.readToEnd(allocator).unwrap() catch break :pnpm;
+        const migrate_result = @import("./pnpm.zig").migratePnpmLockfile(this, manager, allocator, log, data, dir) catch |err| {
+            switch (err) {
+                error.PnpmLockfileTooOld => {
+                    Output.prettyErrorln(
+                        \\<red><b>error<r><d>:<r> pnpm-lock.yaml version is too old (v5 or v6)
+                        \\
+                        \\Please upgrade using 'pnpm install --lockfile-only' first, then try again.
+                    , .{});
+                    Global.exit(1);
+                },
+                else => {},
+            }
+            if (Environment.isDebug) {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
+                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
+                log.print(Output.errorWriter()) catch {};
+                Output.prettyErrorln("Invalid pnpm-lock.yaml\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
+                Global.exit(1);
+            }
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "pnpm-lock.yaml",
+                .format = .binary,
+            } };
+        };
+
+        if (migrate_result == .ok) {
+            Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
+            Output.prettyError(" ", .{});
+            Output.prettyErrorln("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>", .{});
+            Output.flush();
+        }
+
+        return migrate_result;
+    }
+
     return LoadResult{ .not_found = {} };
 }
 

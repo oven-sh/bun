@@ -966,83 +966,93 @@ fn ensureRouteIsBundled(
     const state = dev.routeBundlePtr(route_bundle_index).server_state;
     sw: switch (state) {
         .unqueued => {
+            // We already are bundling something, defer the request
             if (dev.current_bundle != null) {
                 try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
                 try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
-            } else {
-                // If plugins are not yet loaded, prepare them.
-                // In the case plugins are set to &.{}, this will not hit `.pending`.
-                plugin: switch (dev.plugin_state) {
-                    .unknown => if (dev.bundler_options.plugin != null) {
-                        // Framework-provided plugin is likely going to be phased out later
-                        dev.plugin_state = .loaded;
-                    } else {
-                        // TODO: implement a proper solution here
-                        dev.has_tailwind_plugin_hack = if (dev.vm.transpiler.options.serve_plugins) |serve_plugins|
-                            for (serve_plugins) |plugin| {
-                                if (bun.strings.includes(plugin, "tailwind")) break .empty;
-                            } else null
-                        else
-                            null;
-
-                        switch (dev.server.?.getOrLoadPlugins(.{ .dev_server = dev })) {
-                            .pending => {
-                                dev.plugin_state = .pending;
-                                continue :plugin .pending;
-                            },
-                            .err => {
-                                dev.plugin_state = .err;
-                                continue :plugin .err;
-                            },
-                            .ready => |ready| {
-                                dev.plugin_state = .loaded;
-                                dev.bundler_options.plugin = ready;
-                            },
-                        }
-                    },
-                    .pending => {
-                        try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
-                        try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
-                        return;
-                    },
-                    .err => {
-                        // TODO: render plugin error page
-                        resp.end("Plugin Error", false);
-                        return;
-                    },
-                    .loaded => {},
-                }
-
-                // Prepare a bundle with just this route.
-                var sfa = std.heap.stackFallback(4096, dev.allocator());
-                const temp_alloc = sfa.get();
-
-                var entry_points: EntryPointList = .empty;
-                defer entry_points.deinit(temp_alloc);
-                try dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index);
-
-                // If all files were already bundled (possible with layouts),
-                // then no entry points will be queued up here. That does
-                // not mean the route is ready for presentation.
-                if (entry_points.set.count() == 0) {
-                    if (dev.bundling_failures.count() > 0) {
-                        dev.routeBundlePtr(route_bundle_index).server_state = .possible_bundling_failures;
-                        continue :sw .possible_bundling_failures;
-                    } else {
-                        dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
-                        continue :sw .loaded;
-                    }
-                }
-
-                try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
-                try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
-
-                dev.startAsyncBundle(
-                    entry_points,
-                    false,
-                    std.time.Timer.start() catch @panic("timers unsupported"),
-                ) catch |err| bun.handleOom(err);
+                dev.routeBundlePtr(route_bundle_index).server_state = .deferred_to_next_bundle;
+                return;
             }
+
+            // No current bundle, we'll create a bundle with just this route, but first:
+            // If plugins are not yet loaded, prepare them.
+            // In the case plugins are set to &.{}, this will not hit `.pending`.
+            plugin: switch (dev.plugin_state) {
+                .unknown => if (dev.bundler_options.plugin != null) {
+                    // Framework-provided plugin is likely going to be phased out later
+                    dev.plugin_state = .loaded;
+                } else {
+                    // TODO: implement a proper solution here
+                    dev.has_tailwind_plugin_hack = if (dev.vm.transpiler.options.serve_plugins) |serve_plugins|
+                        for (serve_plugins) |plugin| {
+                            if (bun.strings.includes(plugin, "tailwind")) break .empty;
+                        } else null
+                    else
+                        null;
+
+                    switch (dev.server.?.getOrLoadPlugins(.{ .dev_server = dev })) {
+                        .pending => {
+                            dev.plugin_state = .pending;
+                            continue :plugin .pending;
+                        },
+                        .err => {
+                            dev.plugin_state = .err;
+                            continue :plugin .err;
+                        },
+                        .ready => |ready| {
+                            dev.plugin_state = .loaded;
+                            dev.bundler_options.plugin = ready;
+                        },
+                    }
+                },
+                .pending => {
+                    try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
+                    try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+                    dev.routeBundlePtr(route_bundle_index).server_state = .deferred_to_next_bundle;
+                    return;
+                },
+                .err => {
+                    // TODO: render plugin error page
+                    resp.end("Plugin Error", false);
+                    return;
+                },
+                .loaded => {},
+            }
+
+            // Prepare a bundle with just this route.
+            var sfa = std.heap.stackFallback(4096, dev.allocator());
+            const temp_alloc = sfa.get();
+
+            var entry_points: EntryPointList = .empty;
+            defer entry_points.deinit(temp_alloc);
+            try dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index);
+
+            // If all files were already bundled (possible with layouts),
+            // then no entry points will be queued up here. That does
+            // not mean the route is ready for presentation.
+            if (entry_points.set.count() == 0) {
+                if (dev.bundling_failures.count() > 0) {
+                    dev.routeBundlePtr(route_bundle_index).server_state = .possible_bundling_failures;
+                    continue :sw .possible_bundling_failures;
+                } else {
+                    dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
+                    continue :sw .loaded;
+                }
+            }
+
+            try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
+            try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+            dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
+
+            dev.startAsyncBundle(
+                entry_points,
+                false,
+                std.time.Timer.start() catch @panic("timers unsupported"),
+            ) catch |err| bun.handleOom(err);
+        },
+        .deferred_to_next_bundle => {
+            bun.assert(dev.next_bundle.route_queue.get(route_bundle_index) != null);
+            try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
         },
         .bundling => {
             bun.assertf(dev.current_bundle != null, "dev.current_bundle is null", .{});
@@ -1743,6 +1753,7 @@ pub fn startAsyncBundle(
         .resolution_failure_entries = .{},
     };
     dev.next_bundle.requests = .{};
+    dev.next_bundle.route_queue.clearRetainingCapacity();
 }
 
 pub fn prepareAndLogResolutionFailures(dev: *DevServer) !void {
@@ -3747,30 +3758,6 @@ const c = struct {
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, separate_ssr_graph });
     }
 };
-
-/// Called on DevServer thread via HotReloadTask
-pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
-    defer event.files.clearRetainingCapacity();
-
-    var sfb = std.heap.stackFallback(4096, dev.allocator());
-    const temp_alloc = sfb.get();
-    var entry_points: EntryPointList = EntryPointList.empty;
-    defer entry_points.deinit(temp_alloc);
-
-    event.processFileList(dev, &entry_points, temp_alloc);
-    if (entry_points.set.count() == 0) {
-        return;
-    }
-
-    dev.startAsyncBundle(
-        entry_points,
-        true,
-        event.timer,
-    ) catch |err| {
-        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-        return;
-    };
-}
 
 fn markAllRouteChildren(router: *FrameworkRouter, comptime n: comptime_int, bits: [n]*DynamicBitSetUnmanaged, route_index: Route.Index) void {
     var next = router.routePtr(route_index).first_child.unwrap();

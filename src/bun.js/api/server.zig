@@ -2638,7 +2638,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // If onNodeHTTPRequest is configured, it might be needed for Node.js compatibility layer
             // for specific Node API routes, even if it's not the main "/*" handler.
             if (this.config.onNodeHTTPRequest != .zero) {
-                NodeHTTP_assignOnCloseFunction(ssl_enabled, app);
+                NodeHTTP_assignOnNodeJSCompat(ssl_enabled, app);
             }
 
             return route_list_value;
@@ -2810,7 +2810,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) void {
             if (this.on_clienterror.get()) |callback| {
                 const is_ssl = protocol_enum == .https;
-
                 const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocketForClientError, .{ is_ssl, socket, this.globalThis }) catch return;
                 if (node_socket.isUndefinedOrNull()) return;
 
@@ -3310,7 +3309,7 @@ extern fn NodeHTTPServer__onRequest_https(
 ) jsc.JSValue;
 
 extern fn Bun__createNodeHTTPServerSocketForClientError(bool, *anyopaque, *jsc.JSGlobalObject) jsc.JSValue;
-extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
+extern fn NodeHTTP_assignOnNodeJSCompat(bool, *anyopaque) void;
 extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 extern "c" fn Bun__ServerRouteList__callRoute(
     globalObject: *jsc.JSGlobalObject,

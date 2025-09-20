@@ -558,11 +558,6 @@ fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent, js_
         this.ref();
         defer this.deref();
         this.onDataOrAborted("", true, .abort, js_this);
-
-        const socketValue = this.getServerSocketValue();
-        if (socketValue != .zero) {
-            Bun__callNodeHTTPServerSocketOnClose(socketValue);
-        }
     }
 }
 
@@ -788,21 +783,12 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
         const event_loop = globalThis.bunVM().eventLoop();
 
         const bytes = this.getBytes(globalThis, chunk);
-        if (socketValue != .zero and this.raw_response.isStreaming()) {
-            log("Bun__callNodeHTTPServerSocketOnData", .{});
-            Bun__callNodeHTTPServerSocketOnData(socketValue, bytes, last);
-        }
 
         event_loop.runCallback(callback, globalThis, .js_undefined, &.{
             bytes,
             jsc.JSValue.jsBoolean(last),
             jsc.JSValue.jsNumber(@intFromEnum(event)),
         });
-    } else if (socketValue != .zero and this.raw_response.isStreaming()) {
-        const globalThis = jsc.VirtualMachine.get().global;
-        const bytes = this.getBytes(globalThis, chunk);
-        log("Bun__callNodeHTTPServerSocketOnData", .{});
-        Bun__callNodeHTTPServerSocketOnData(socketValue, bytes, last);
     }
 }
 pub const BUN_DEBUG_REFCOUNT_NAME = "NodeHTTPServerResponse";
@@ -816,10 +802,6 @@ fn onDrainCorked(this: *NodeHTTPResponse, offset: u64) void {
     log("onDrainCorked({d})", .{offset});
     this.ref();
     defer this.deref();
-    const socketValue = this.getServerSocketValue();
-    if (socketValue != .zero and this.raw_response.isStreaming()) {
-        Bun__callNodeHTTPServerSocketOnDrain(socketValue);
-    }
 
     const thisValue = this.getThisValue();
     const on_writable = js.onWritableGetCached(thisValue) orelse return;
@@ -1196,9 +1178,6 @@ comptime {
     @export(&create, .{ .name = "NodeHTTPResponse__createForJS" });
 }
 extern "c" fn Bun__setNodeHTTPServerSocketUsSocketValue(jsc.JSValue, ?*anyopaque) void;
-extern "c" fn Bun__callNodeHTTPServerSocketOnClose(jsc.JSValue) void;
-extern "c" fn Bun__callNodeHTTPServerSocketOnDrain(jsc.JSValue) void;
-extern "c" fn Bun__callNodeHTTPServerSocketOnData(jsc.JSValue, jsc.JSValue, bool) void;
 
 const StreamBuffer = extern struct {
     buffer: ?[*]u8 = null,

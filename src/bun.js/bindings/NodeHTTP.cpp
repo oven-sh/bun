@@ -159,7 +159,6 @@ public:
     template<bool SSL>
     static void clearSocketData(us_socket_t* socket)
     {
-
         auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
         httpResponseData->socketData = nullptr;
     }
@@ -242,7 +241,6 @@ public:
 
     void onClose()
     {
-        if (!this->socket) return;
 
         this->socket = nullptr;
         if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
@@ -353,7 +351,7 @@ public:
         }
     }
 
-    void onData(JSValue chunk, bool last)
+    void onData(char* data, int length, bool last)
     {
         // This function can be called during GC!
         Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
@@ -364,6 +362,13 @@ public:
         WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
         if (scriptExecutionContext) {
+            auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+            JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
+            auto chunk = JSC::JSValue(buffer);
+            if (scope.exception()) {
+                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
+                return;
+            }
             gcProtect(chunk);
             scriptExecutionContext->postTask([self = this, chunk = chunk, last = last](ScriptExecutionContext& context) {
                 WTF::NakedPtr<JSC::Exception> exception;
@@ -753,24 +758,6 @@ extern "C" void Bun__setNodeHTTPServerSocketUsSocketValue(EncodedJSValue thisVal
     response->socket = socket;
 }
 
-extern "C" void Bun__callNodeHTTPServerSocketOnClose(EncodedJSValue thisValue)
-{
-    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
-    response->onClose();
-}
-
-extern "C" void Bun__callNodeHTTPServerSocketOnDrain(EncodedJSValue thisValue)
-{
-    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
-    response->onDrain();
-}
-
-extern "C" void Bun__callNodeHTTPServerSocketOnData(EncodedJSValue thisValue, EncodedJSValue chunk, bool last)
-{
-    auto* response = jsCast<JSNodeHTTPServerSocket*>(JSValue::decode(thisValue));
-    response->onData(JSValue::decode(chunk), last);
-}
-
 extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocketForClientError(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
@@ -803,20 +790,7 @@ extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocketForClientError(boo
         socket->strongThis.set(vm, socket);
         return JSValue::encode(socket);
     }
-    // this means we dont have any abort handler set and this will be called as soon as the callback is called
-    if (isSSL) {
-        uWS::HttpResponse<true>* response = reinterpret_cast<uWS::HttpResponse<true>*>(us_socket);
-        response->onAborted(socket, [](uWS::HttpResponse<true>*, void* userData) {
-            auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(userData);
-            socket->onClose();
-        });
-    } else {
-        uWS::HttpResponse<false>* response = reinterpret_cast<uWS::HttpResponse<false>*>(us_socket);
-        response->onAborted(socket, [](uWS::HttpResponse<false>*, void* userData) {
-            auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(userData);
-            socket->onClose();
-        });
-    }
+
     return JSValue::encode(JSC::jsNull());
 }
 
@@ -1167,21 +1141,31 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 }
 
 template<bool isSSL>
-static void assignOnCloseFunction(uWS::TemplatedApp<isSSL>* app)
+static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
 {
-    app->setOnClose([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
+    app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
         socket->onClose();
     });
+    app->setOnSocketDrain([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
+        auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
+        ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
+        socket->onDrain();
+    });
+    app->setOnSocketData([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, char* data, int length, bool last) -> void {
+        auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
+        ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
+        socket->onData(data, length, last);
+    });
 }
 
-extern "C" void NodeHTTP_assignOnCloseFunction(bool is_ssl, void* uws_app)
+extern "C" void NodeHTTP_assignOnNodeJSCompat(bool is_ssl, void* uws_app)
 {
     if (is_ssl) {
-        assignOnCloseFunction<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app));
+        assignOnNodeJSCompat<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app));
     } else {
-        assignOnCloseFunction<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
+        assignOnNodeJSCompat<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
     }
 }
 

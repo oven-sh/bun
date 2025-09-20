@@ -315,10 +315,7 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
             sig.unref();
         }
 
-        if (this.#this_value.tryGet()) |this_value| {
-            if (js.socketGetCached(this_value)) |socket| {
-                Bun__callNodeHTTPServerSocketOnClose(socket);
-            }
+        if (this.#this_value.isNotEmpty()) {
             this.#this_value.downgrade();
         }
     }
@@ -1299,7 +1296,6 @@ const Corker = struct {
     }
 };
 
-extern "c" fn Bun__callNodeHTTPServerSocketOnClose(jsc.JSValue) void;
 extern "c" fn Bun__callNodeHTTPServerSocketOnDrain(jsc.JSValue) void;
 
 const string = []const u8;

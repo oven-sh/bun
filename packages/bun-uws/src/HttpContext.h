@@ -192,7 +192,12 @@ private:
             /* Get socket ext */
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
+
+            
             if(httpResponseData && httpResponseData->isStreamingRequest) {
+                if (httpResponseData->socketData && httpResponseData->onSocketData) {
+                    httpResponseData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
+                }
                 if(httpResponseData->inStream) {
                     httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
                     httpResponseData->inStream = nullptr;
@@ -208,14 +213,14 @@ private:
                 f((HttpResponse<SSL> *) s, -1);
             }
 
+            if (httpResponseData->socketData && httpContextData->onSocketClosed) {
+                httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
+            }
             /* Signal broken HTTP request only if we have a pending request */
             if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
 
-            if (httpResponseData->socketData && httpContextData->onSocketClosed) {
-                httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
-            }
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();
@@ -339,6 +344,9 @@ private:
                 return s;
 
             }, [httpResponseData](void *user, std::string_view data, bool fin) -> void * {
+                if (httpResponseData->socketData && httpResponseData->isStreamingRequest && httpResponseData->onSocketData) {
+                    httpResponseData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
+                }
                 /* We always get an empty chunk even if there is no data */
                 if (httpResponseData->inStream) {
 
@@ -478,6 +486,9 @@ private:
                 */
             }
 
+            if (httpResponseData->socketData && httpResponseData->isStreamingRequest && httpResponseData->onSocketDrain) {
+                httpResponseData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+            }
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
                 /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */

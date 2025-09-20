@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import fs from "fs";
-import { bunExe, bunEnv, gc } from "harness";
+import { bunEnv, bunExe, gc } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 

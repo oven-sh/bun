@@ -116,3 +116,5 @@ leak:create_ssl_context_from_bun_options
 leak:bun.js.Debugger.startJSDebuggerThread
 # test/js/sql/sqlite-sql.test.ts
 leak:WebCore::jsSQLStatementOpenStatementFunction
+# ci, test/js/node/test/parallel/test-dgram-unref-in-cluster.js
+leak:bun.js.api.bun.udp_socket.UDPSocket.udpSocket

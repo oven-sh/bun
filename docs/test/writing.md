@@ -150,12 +150,6 @@ describe.only("only", () => {
 The following command will only execute tests #2 and #3.
 
 ```sh
-$ bun test --only
-```
-
-The following command will only execute tests #1, #2 and #3.
-
-```sh
 $ bun test
 ```
 

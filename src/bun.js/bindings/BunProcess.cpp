@@ -72,7 +72,6 @@
 #include <sys/types.h>
 #include <pwd.h>
 #include <grp.h>
-#include <mimalloc.h>
 #else
 #include <uv.h>
 #include <io.h>

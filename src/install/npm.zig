@@ -457,7 +457,7 @@ pub const Registry = struct {
                 PackageManifest.Serializer.saveAsync(
                     &package,
                     scope,
-                    package_manager.getTemporaryDirectory(),
+                    package_manager.getTemporaryDirectory().handle,
                     package_manager.getCacheDirectory(),
                 );
             }
@@ -1070,7 +1070,7 @@ pub const PackageManifest = struct {
             // This needs many more call sites, doesn't have much impact on this location.
             var realpath_buf: bun.PathBuffer = undefined;
             const path_to_use_for_opening_file = if (Environment.isWindows)
-                bun.path.joinAbsStringBufZ(PackageManager.get().temp_dir_path, &realpath_buf, &.{ PackageManager.get().temp_dir_path, tmp_path }, .auto)
+                bun.path.joinAbsStringBufZ(PackageManager.get().getTemporaryDirectory().path, &realpath_buf, &.{tmp_path}, .auto)
             else
                 tmp_path;
 

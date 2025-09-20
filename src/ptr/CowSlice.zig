@@ -143,6 +143,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
                 try str.intoOwned(allocator);
             }
             defer str.* = Self.empty;
+            defer if (cow_str_assertions and str.isOwned()) if (str.debug) |d| bun.destroy(d);
             return str.ptr[0..str.flags.len];
         }
 

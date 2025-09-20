@@ -554,7 +554,7 @@ pub const ByteRangeMapping = struct {
                     }
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |*point| {
+                    if (parsed_mapping.mappings.find(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |*point| {
                         if (point.original.lines.zeroBased() < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
@@ -598,7 +598,7 @@ pub const ByteRangeMapping = struct {
 
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |point| {
+                    if (parsed_mapping.mappings.find(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |point| {
                         if (point.original.lines.zeroBased() < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));

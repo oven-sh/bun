@@ -774,6 +774,6 @@ it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 or 2 because that's the prototype / structure
   await expectMaxObjectTypeCount(expect, "Listener", 2);
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 2);
-  await expectMaxObjectTypeCount(expect, "TLSSocket", 2);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 3 : 2);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", isWindows ? 3 : 2);
 });

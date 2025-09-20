@@ -1,6 +1,6 @@
-import { createContext, render } from "preact";
-import { useContext, useRef, useState, useEffect, useCallback } from "preact/hooks";
 import type { JSX } from "preact";
+import { createContext, render } from "preact";
+import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 import type {
   FallbackMessageContainer,
   JSException,

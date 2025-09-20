@@ -126,7 +126,7 @@ pub fn pauseSocket(this: *NodeHTTPResponse) void {
         return;
     }
 
-    // this.raw_response.pause();
+    this.raw_response.pause();
 }
 
 pub fn resumeSocket(this: *NodeHTTPResponse) void {

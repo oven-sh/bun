@@ -211,9 +211,137 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         },
         .iife => {
             // Bun does not do arrow function lowering. So the wrapper can be an arrow.
-            const start = if (c.options.minify_whitespace) "(()=>{" else "(() => {\n";
-            j.pushStatic(start);
-            line_offset.advance(start);
+            if (c.options.global_name.len > 0) {
+                // Parse the global name and generate the proper prefix like esbuild
+                const space = if (c.options.minify_whitespace) "" else " ";
+                const join = if (c.options.minify_whitespace) ";" else ";\n";
+
+                // Find the first dot to split the global name
+                const first_dot = std.mem.indexOfScalar(u8, c.options.global_name, '.');
+
+                if (first_dot) |dot_index| {
+                    // Has dot expression: e.g., "window.MyLib" or "globalThis.my.lib"
+                    const first_part = c.options.global_name[0..dot_index];
+                    const rest = c.options.global_name[dot_index + 1 ..];
+
+                    // Generate: var window;
+                    j.pushStatic("var ");
+                    j.pushStatic(first_part);
+                    j.pushStatic(join);
+                    line_offset.advance("var ");
+                    line_offset.advance(first_part);
+                    line_offset.advance(join);
+
+                    // For simplicity, handle only 2-part names properly for now
+                    // e.g., "window.MyLib" -> "(window ||= {}).MyLib = "
+                    const second_dot = std.mem.indexOfScalar(u8, rest, '.');
+                    if (second_dot == null) {
+                        // Simple 2-part case: window.MyLib
+                        j.pushStatic("(");
+                        j.pushStatic(first_part);
+                        j.pushStatic(space);
+                        j.pushStatic("||=");
+                        j.pushStatic(space);
+                        j.pushStatic("{}).");
+                        j.pushStatic(rest);
+                        j.pushStatic(space);
+                        j.pushStatic("=");
+                        j.pushStatic(space);
+
+                        line_offset.advance("(");
+                        line_offset.advance(first_part);
+                        line_offset.advance(space);
+                        line_offset.advance("||=");
+                        line_offset.advance(space);
+                        line_offset.advance("{}).");
+                        line_offset.advance(rest);
+                        line_offset.advance(space);
+                        line_offset.advance("=");
+                        line_offset.advance(space);
+                    } else {
+                        // Multi-part case (3+ parts) - generate nested nullish coalescing
+                        // Example: "globalThis.my.lib" -> "((globalThis ||= {}).my ||= {}).lib = "
+
+                        // Split rest into individual parts
+                        var iter = std.mem.tokenizeScalar(u8, rest, '.');
+                        var rest_parts = std.ArrayList([]const u8).init(worker.allocator);
+                        defer rest_parts.deinit();
+
+                        while (iter.next()) |part| {
+                            rest_parts.append(part) catch {};
+                        }
+
+                        // Total parts = 1 (first_part) + rest_parts.len
+                        // We need (total_parts - 1) opening parens = rest_parts.len opening parens
+                        var i: usize = 0;
+                        while (i < rest_parts.items.len) : (i += 1) {
+                            j.pushStatic("(");
+                            line_offset.advance("(");
+                        }
+
+                        // Start with first part
+                        j.pushStatic(first_part);
+                        line_offset.advance(first_part);
+
+                        // Process all parts except the last
+                        for (rest_parts.items[0 .. rest_parts.items.len - 1]) |part| {
+                            j.pushStatic(space);
+                            j.pushStatic("||=");
+                            j.pushStatic(space);
+                            j.pushStatic("{}).");
+                            j.pushStatic(part);
+
+                            line_offset.advance(space);
+                            line_offset.advance("||=");
+                            line_offset.advance(space);
+                            line_offset.advance("{}).");
+                            line_offset.advance(part);
+                        }
+
+                        // Last part
+                        const last_part = rest_parts.items[rest_parts.items.len - 1];
+                        j.pushStatic(space);
+                        j.pushStatic("||=");
+                        j.pushStatic(space);
+                        j.pushStatic("{}).");
+                        j.pushStatic(last_part);
+                        j.pushStatic(space);
+                        j.pushStatic("=");
+                        j.pushStatic(space);
+
+                        line_offset.advance(space);
+                        line_offset.advance("||=");
+                        line_offset.advance(space);
+                        line_offset.advance("{}).");
+                        line_offset.advance(last_part);
+                        line_offset.advance(space);
+                        line_offset.advance("=");
+                        line_offset.advance(space);
+                    }
+
+                    j.pushStatic(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
+                    line_offset.advance(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
+                } else {
+                    // Simple identifier: e.g., "MyLib"
+                    j.pushStatic("var ");
+                    j.pushStatic(c.options.global_name);
+                    j.pushStatic(space);
+                    j.pushStatic("=");
+                    j.pushStatic(space);
+                    j.pushStatic(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
+
+                    line_offset.advance("var ");
+                    line_offset.advance(c.options.global_name);
+                    line_offset.advance(space);
+                    line_offset.advance("=");
+                    line_offset.advance(space);
+                    line_offset.advance(if (c.options.minify_whitespace) "(()=>{" else "(() => {\n");
+                }
+            } else {
+                const start = if (c.options.minify_whitespace) "(()=>{" else "(() => {\n";
+                j.pushStatic(start);
+                line_offset.advance(start);
+            }
         },
         else => {}, // no wrapper
     }
@@ -762,8 +890,82 @@ pub fn generateEntryPointTailJS(
             }
         },
 
-        // TODO: iife
-        .iife => {},
+        .iife => {
+            // When globalName is specified, we need to return the exports object
+            if (c.options.global_name.len > 0) {
+                switch (flags.wrap) {
+                    .cjs => {
+                        // "return require_foo();"
+                        stmts.append(
+                            Stmt.allocate(
+                                allocator,
+                                S.Return,
+                                S.Return{
+                                    .value = Expr.init(
+                                        E.Call,
+                                        E.Call{
+                                            .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                        ) catch unreachable;
+                    },
+                    .esm => {
+                        // "init_foo(); return exports_entry;"
+                        if (ast.wrapper_ref.isValid()) {
+                            stmts.append(
+                                Stmt.allocate(
+                                    allocator,
+                                    S.SExpr,
+                                    S.SExpr{
+                                        .value = Expr.init(
+                                            E.Call,
+                                            E.Call{
+                                                .target = Expr.initIdentifier(ast.wrapper_ref, Logger.Loc.Empty),
+                                            },
+                                            Logger.Loc.Empty,
+                                        ),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
+
+                        // Return the exports object if it has exports
+                        if (ast.exports_ref.isValid()) {
+                            stmts.append(
+                                Stmt.allocate(
+                                    allocator,
+                                    S.Return,
+                                    S.Return{
+                                        .value = Expr.initIdentifier(ast.exports_ref, Logger.Loc.Empty),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
+                    },
+                    else => {
+                        // For other cases, try to return the exports object if available
+                        if (ast.exports_ref.isValid()) {
+                            stmts.append(
+                                Stmt.allocate(
+                                    allocator,
+                                    S.Return,
+                                    S.Return{
+                                        .value = Expr.initIdentifier(ast.exports_ref, Logger.Loc.Empty),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
+                    },
+                }
+            }
+        },
 
         .internal_bake_dev => {
             // nothing needs to be done here, as the exports are already

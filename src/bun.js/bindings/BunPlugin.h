@@ -70,12 +70,14 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        VirtualModuleMap* _Nullable originalModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        void restoreModuleMocks(JSC::VM& vm, Zig::GlobalObject* globalObject);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
@@ -83,6 +85,9 @@ public:
         {
             if (virtualModules) {
                 delete virtualModules;
+            }
+            if (originalModules) {
+                delete originalModules;
             }
         }
     };

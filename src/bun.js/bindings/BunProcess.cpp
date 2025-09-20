@@ -2076,8 +2076,14 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         return report;
     }
-#else // !OS(WINDOWS)
-    return jsString(vm, String("Not implemented. blame @paperclover"_s));
+#else // OS(WINDOWS)
+    // Forward declaration - implemented in BunProcessReportObjectWindows.cpp
+    JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process);
+
+    // Get the Process object - needed for accessing report settings
+    Process* process = globalObject->processObject();
+
+    return constructReportObjectWindows(vm, globalObject, process);
 #endif
 }
 

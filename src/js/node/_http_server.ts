@@ -1373,9 +1373,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
     req._dump();
   }
-  if (socket) {
-    socket.removeAllListeners();
-  }
   this.finished = true;
   process.nextTick(self => {
     self._ended = true;

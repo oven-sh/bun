@@ -4,7 +4,7 @@
 
 #include "BunProcess.h"
 #include "ZigGlobalObject.h"
-#include "headers.h"  // For Bun__Process__createExecArgv and other exports
+#include "headers.h" // For Bun__Process__createExecArgv and other exports
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
@@ -41,7 +41,8 @@ extern WTF::String formatStackTrace(VM& vm, JSC::JSGlobalObject* globalObject, J
     const WTF::String& sourceURL, WTF::Vector<StackFrame>& stackFrames, JSC::JSObject* errorObject);
 
 // Helper function to convert time to ISO string
-static void toISOString(JSC::VM& vm, double time, char* buffer) {
+static void toISOString(JSC::VM& vm, double time, char* buffer)
+{
     time_t seconds = static_cast<time_t>(time / 1000);
     int milliseconds = static_cast<int>(time) % 1000;
     struct tm* timeinfo = gmtime(&seconds);

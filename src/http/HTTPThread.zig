@@ -291,13 +291,23 @@ fn drainEvents(this: *@This()) void {
         defer this.queued_shutdowns_lock.unlock();
         for (this.queued_shutdowns.items) |http| {
             if (bun.http.socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
-                if (http.is_tls) {
-                    const socket = uws.SocketTLS.fromAny(socket_ptr.value);
-                    // do a fast shutdown here since we are aborting and we dont want to wait for the close_notify from the other side
-                    socket.close(.failure);
-                } else {
-                    const socket = uws.SocketTCP.fromAny(socket_ptr.value);
-                    socket.close(.failure);
+                // Handle both connected and connecting sockets
+                switch (socket_ptr.value) {
+                    .connected => {
+                        if (http.is_tls) {
+                            const socket = uws.SocketTLS.fromAny(socket_ptr.value);
+                            // do a fast shutdown here since we are aborting and we dont want to wait for the close_notify from the other side
+                            socket.close(.failure);
+                        } else {
+                            const socket = uws.SocketTCP.fromAny(socket_ptr.value);
+                            socket.close(.failure);
+                        }
+                    },
+                    .connecting => |conn_sock| {
+                        // Close the connecting socket to abort the connection attempt
+                        conn_sock.close(http.is_tls);
+                    },
+                    else => {},
                 }
             }
         }

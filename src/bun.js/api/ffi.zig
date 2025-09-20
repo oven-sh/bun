@@ -689,12 +689,7 @@ pub const FFI = struct {
                     if (!std.fs.path.isAbsolute(source_path)) {
                         // Use Bun's cached top_level_dir (cwd at startup) - much cheaper than getCallerSrcLoc
                         var pathbuf: bun.PathBuffer = undefined;
-                        const joined = bun.path.joinAbsStringBufZ(
-                            Fs.FileSystem.instance.top_level_dir,
-                            &pathbuf,
-                            &[_][]const u8{source_path},
-                            .auto
-                        );
+                        const joined = bun.path.joinAbsStringBufZ(Fs.FileSystem.instance.top_level_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
                         const resolved = bun.default_allocator.dupeZ(u8, joined) catch |err| {
                             bun.default_allocator.free(source_path);
                             return err;
@@ -712,12 +707,7 @@ pub const FFI = struct {
                 if (!std.fs.path.isAbsolute(source_path)) {
                     // Use Bun's cached top_level_dir (cwd at startup) - much cheaper than getCallerSrcLoc
                     var pathbuf: bun.PathBuffer = undefined;
-                    const joined = bun.path.joinAbsStringBufZ(
-                        Fs.FileSystem.instance.top_level_dir,
-                        &pathbuf,
-                        &[_][]const u8{source_path},
-                        .auto
-                    );
+                    const joined = bun.path.joinAbsStringBufZ(Fs.FileSystem.instance.top_level_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
                     const resolved = bun.default_allocator.dupeZ(u8, joined) catch |err| {
                         bun.default_allocator.free(source_path);
                         return err;

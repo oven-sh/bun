@@ -917,6 +917,8 @@ pub const BundleV2 = struct {
         this.linker.options.banner = transpiler.options.banner;
         this.linker.options.footer = transpiler.options.footer;
         this.linker.options.css_chunking = transpiler.options.css_chunking;
+        this.linker.options.compression.gzip = transpiler.options.compression.gzip;
+        this.linker.options.compression.zstd = transpiler.options.compression.zstd;
         this.linker.options.source_maps = transpiler.options.source_map;
         this.linker.options.tree_shaking = transpiler.options.tree_shaking;
         this.linker.options.public_path = transpiler.options.public_path;
@@ -1864,6 +1866,8 @@ pub const BundleV2 = struct {
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             transpiler.options.css_chunking = config.css_chunking;
+            transpiler.options.compression.gzip = config.compression.gzip;
+            transpiler.options.compression.zstd = config.compression.zstd;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
 
@@ -2115,13 +2119,34 @@ pub const BundleV2 = struct {
                 .value => |*build| {
                     const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
                     const output_files = build.output_files.items;
-                    const output_files_js = jsc.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
+                    // Calculate the number of outputs including compressed versions
+                    const has_compression = this.config.compression.gzip or this.config.compression.zstd;
+                    const is_in_memory_build = this.config.outdir.isEmpty();
+                    var num_outputs = output_files.len;
+                    if (has_compression and is_in_memory_build) {
+                        // Count additional compressed outputs
+                        for (output_files) |*output_file| {
+                            if (output_file.value == .buffer) {
+                                if (this.config.compression.gzip) num_outputs += 1;
+                                if (this.config.compression.zstd) num_outputs += 1;
+                            }
+                        }
+                    }
+                    const output_files_js = jsc.JSValue.createEmptyArray(globalThis, num_outputs) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
                         @panic("Unexpected pending JavaScript exception in JSBundleCompletionTask.onComplete. This is a bug in Bun.");
                     }
 
                     var to_assign_on_sourcemap: jsc.JSValue = .zero;
-                    for (output_files, 0..) |*output_file, i| {
+                    var output_index: u32 = 0;
+                    for (output_files) |*output_file| {
+                        // Save the original buffer data before toJS() empties it
+                        const original_buffer_data: ?[]const u8 = if (is_in_memory_build and has_compression and output_file.value == .buffer)
+                            bun.default_allocator.dupe(u8, output_file.value.buffer.bytes) catch null
+                        else
+                            null;
+                        defer if (original_buffer_data) |data| bun.default_allocator.free(data);
+
                         const result = output_file.toJS(
                             if (!this.config.outdir.isEmpty())
                                 if (std.fs.path.isAbsolute(this.config.outdir.list.items))
@@ -2161,7 +2186,84 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch return; // TODO: properly propagate exception upwards
+                        output_files_js.putIndex(globalThis, output_index, result) catch return; // TODO: properly propagate exception upwards
+                        output_index += 1;
+
+                        // For in-memory builds with compression enabled, create compressed versions
+                        if (original_buffer_data) |buffer_data| {
+                            if (buffer_data.len > 0) {
+                                if (this.config.compression.gzip) {
+                                    libdeflate.load();
+                                    const compressor = libdeflate.Compressor.alloc(6) orelse {
+                                        Output.warn("Failed to allocate gzip compressor for in-memory build", .{});
+                                        continue;
+                                    };
+                                    defer compressor.deinit();
+
+                                    const max_size = compressor.maxBytesNeeded(buffer_data, .gzip);
+                                    const gzip_buffer = bun.default_allocator.alloc(u8, max_size) catch {
+                                        Output.warn("Failed to allocate memory for gzip compression", .{});
+                                        continue;
+                                    };
+
+                                    const gzip_result = compressor.gzip(buffer_data, gzip_buffer);
+                                    const compressed = gzip_buffer[0..gzip_result.written];
+
+                                    var compressed_blob = jsc.WebCore.Blob.init(@constCast(compressed), bun.default_allocator, globalThis);
+                                    compressed_blob.content_type = output_file.loader.toMimeType(&.{output_file.dest_path}).value;
+                                    compressed_blob.size = @as(jsc.WebCore.Blob.SizeType, @truncate(compressed.len));
+
+                                    const gzip_path = std.fmt.allocPrint(bun.default_allocator, "{s}.gz", .{output_file.dest_path}) catch unreachable;
+                                    var compressed_artifact = bun.default_allocator.create(jsc.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                                    compressed_artifact.* = jsc.API.BuildArtifact{
+                                        .blob = compressed_blob,
+                                        .hash = output_file.hash,
+                                        .loader = output_file.input_loader,
+                                        .output_kind = output_file.output_kind,
+                                        .path = gzip_path,
+                                    };
+
+                                    const artifact_js = compressed_artifact.toJS(globalThis);
+                                    output_files_js.putIndex(globalThis, output_index, artifact_js) catch return;
+                                    output_index += 1;
+                                }
+
+                                if (this.config.compression.zstd) {
+                                    const max_size = bun.zstd.compressBound(buffer_data.len);
+                                    const zstd_buffer = bun.default_allocator.alloc(u8, max_size) catch {
+                                        Output.warn("Failed to allocate memory for zstd compression", .{});
+                                        continue;
+                                    };
+
+                                    const zstd_result = bun.zstd.compress(zstd_buffer, buffer_data, 3);
+                                    const compressed = switch (zstd_result) {
+                                        .success => |written| zstd_buffer[0..written],
+                                        .err => |err| {
+                                            bun.default_allocator.free(zstd_buffer);
+                                            Output.warn("Failed to zstd compress output file: {s}", .{err});
+                                            continue;
+                                        },
+                                    };
+
+                                    var compressed_blob = jsc.WebCore.Blob.init(@constCast(compressed), bun.default_allocator, globalThis);
+                                    compressed_blob.content_type = output_file.loader.toMimeType(&.{output_file.dest_path}).value;
+                                    compressed_blob.size = @as(jsc.WebCore.Blob.SizeType, @truncate(compressed.len));
+
+                                    const zstd_path = std.fmt.allocPrint(bun.default_allocator, "{s}.zst", .{output_file.dest_path}) catch unreachable;
+                                    var compressed_artifact = bun.default_allocator.create(jsc.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
+                                    compressed_artifact.* = jsc.API.BuildArtifact{
+                                        .blob = compressed_blob,
+                                        .hash = output_file.hash,
+                                        .loader = output_file.input_loader,
+                                        .output_kind = output_file.output_kind,
+                                        .path = zstd_path,
+                                    };
+
+                                    output_files_js.putIndex(globalThis, output_index, compressed_artifact.toJS(globalThis)) catch return;
+                                    output_index += 1;
+                                }
+                            }
+                        }
                     }
 
                     build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
@@ -4547,6 +4649,7 @@ pub const Graph = @import("./Graph.zig");
 
 const string = []const u8;
 
+const libdeflate = @import("../deps/libdeflate.zig");
 const options = @import("../options.zig");
 
 const bun = @import("bun");

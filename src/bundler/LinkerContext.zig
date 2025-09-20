@@ -64,6 +64,10 @@ pub const LinkerContext = struct {
         banner: []const u8 = "",
         footer: []const u8 = "",
         css_chunking: bool = false,
+        compression: struct {
+            zstd: bool = false,
+            gzip: bool = false,
+        } = .{},
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
 

@@ -31,6 +31,10 @@ pub const JSBundler = struct {
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
+        compression: struct {
+            zstd: bool = false,
+            gzip: bool = false,
+        } = .{},
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
         throw_on_error: bool = true,
@@ -391,6 +395,30 @@ pub const JSBundler = struct {
 
             if (try config.getBooleanLoose(globalThis, "splitting")) |hot| {
                 this.code_splitting = hot;
+            }
+
+            // Parse compress option
+            if (try config.getTruthy(globalThis, "compress")) |compress_value| {
+                if (compress_value.isString()) {
+                    const slice = try compress_value.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    if (strings.eqlComptime(slice.slice(), "gzip")) {
+                        this.compression.gzip = true;
+                    } else if (strings.eqlComptime(slice.slice(), "zstd")) {
+                        this.compression.zstd = true;
+                    } else {
+                        return globalThis.throwInvalidArguments("compress must be 'gzip', 'zstd', or an object with gzip/zstd boolean properties", .{});
+                    }
+                } else if (compress_value.isObject()) {
+                    if (try compress_value.getBooleanLoose(globalThis, "gzip")) |gzip| {
+                        this.compression.gzip = gzip;
+                    }
+                    if (try compress_value.getBooleanLoose(globalThis, "zstd")) |zstd| {
+                        this.compression.zstd = zstd;
+                    }
+                } else {
+                    return globalThis.throwInvalidArguments("compress must be 'gzip', 'zstd', or an object with gzip/zstd boolean properties", .{});
+                }
             }
 
             if (try config.getTruthy(globalThis, "minify")) |minify| {

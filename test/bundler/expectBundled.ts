@@ -214,6 +214,7 @@ export interface BundlerTestInput {
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
   sourceMap?: "inline" | "external" | "linked" | "none" | "linked";
+  compress?: "gzip" | "zstd" | { gzip?: boolean; zstd?: boolean };
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
   production?: boolean;
@@ -431,6 +432,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    compress,
     conditions,
     dce,
     dceKeepMarkerCount,
@@ -1079,6 +1081,7 @@ function expectBundled(
           treeShaking,
           outdir: generateOutput ? buildOutDir : undefined,
           sourcemap: sourceMap,
+          compress,
           splitting,
           target,
           bytecode,

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import fs from "fs";
-import { bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
   const tempDir = tmpdirSync();
@@ -11,6 +11,7 @@ test("it will create a snapshot file and directory if they don't exist", () => {
   const { exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "test"],
     cwd: tempDir,
+    env: { ...bunEnv, CI: "false" },
   });
 
   expect(exitCode).toBe(0);
@@ -21,6 +22,7 @@ test("it will create a snapshot file and directory if they don't exist", () => {
   const { exitCode: exitCode2 } = Bun.spawnSync({
     cmd: [bunExe(), "test"],
     cwd: tempDir,
+    env: { ...bunEnv, CI: "false" },
   });
 
   expect(exitCode2).toBe(0);

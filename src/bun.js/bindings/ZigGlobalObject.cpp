@@ -629,7 +629,7 @@ WTF::String Bun::formatStackTrace(
         sb.append("    at "_s);
 
         if (!functionName.isEmpty()) {
-            if (frame.isAsyncFrame()) {
+            if (frame.isAsyncFrameWithoutCodeBlock()) { // Changed from isAsyncFrame() in newer WebKit
                 sb.append("async "_s);
             }
             sb.append(functionName);

@@ -1,6 +1,6 @@
 const Mode = enum { describe, @"test" };
 mode: Mode,
-cfg: describe2.BaseScopeCfg,
+cfg: bun_test.BaseScopeCfg,
 /// typically `.zero`. not Strong.Optional because codegen adds it to the visit function.
 each: jsc.JSValue,
 
@@ -74,7 +74,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
     const this = ScopeFunctions.fromJS(callFrame.this()) orelse return globalThis.throw("Expected callee to be ScopeFunctions", .{});
     const line_no = jsc.Jest.captureTestLineNumber(callFrame, globalThis);
 
-    var buntest_strong = try describe2.js_fns.cloneActiveStrong(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
+    var buntest_strong = try bun_test.js_fns.cloneActiveStrong(globalThis, .{ .signature = .{ .scope_functions = this }, .allow_in_preload = false });
     defer buntest_strong.deinit();
     const bunTest = buntest_strong.get();
 
@@ -99,7 +99,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         while (try iter.next()) |item| : (test_idx += 1) {
             if (item == .zero) break;
 
-            var callback: ?describe2.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
+            var callback: ?bun_test.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
             defer if (callback) |*cb| cb.deinit(bunTest.gpa);
 
             if (item.isArray()) {
@@ -121,7 +121,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, formatted_label, args.options.timeout, callback_length, line_no);
         }
     } else {
-        var callback: ?describe2.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
+        var callback: ?bun_test.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
         defer if (callback) |*cb| cb.deinit(bunTest.gpa);
 
         try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, args.description, args.options.timeout, callback_length, line_no);
@@ -147,7 +147,7 @@ const Write = struct {
         this.buf = this.buf[0 .. this.buf.len - write.len];
     }
 };
-fn filterNames(comptime Rem: type, rem: *Rem, description: ?[]const u8, parent_in: ?*describe2.DescribeScope) void {
+fn filterNames(comptime Rem: type, rem: *Rem, description: ?[]const u8, parent_in: ?*bun_test.DescribeScope) void {
     const sep = " ";
     rem.writeEnd(description orelse "");
     var parent = parent_in;
@@ -158,7 +158,7 @@ fn filterNames(comptime Rem: type, rem: *Rem, description: ?[]const u8, parent_i
     }
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?describe2.CallbackWithArgs, description: ?[]const u8, timeout: u32, callback_length: usize, line_no: u32) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?bun_test.CallbackWithArgs, description: ?[]const u8, timeout: u32, callback_length: usize, line_no: u32) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -238,7 +238,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *describe2.BunT
     }
 }
 
-fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, conditional_cfg: describe2.BaseScopeCfg, name: []const u8, invert: bool, fn_name: bun.String) bun.JSError!JSValue {
+fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame, conditional_cfg: bun_test.BaseScopeCfg, name: []const u8, invert: bool, fn_name: bun.String) bun.JSError!JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -251,7 +251,7 @@ fn genericIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Cal
         return createBound(globalThis, this.mode, this.each, this.cfg, fn_name);
     }
 }
-fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: describe2.BaseScopeCfg, name: []const u8, fn_name: bun.String) bun.JSError!JSValue {
+fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: bun_test.BaseScopeCfg, name: []const u8, fn_name: bun.String) bun.JSError!JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -410,7 +410,7 @@ pub fn finalize(
     VirtualMachine.get().allocator.destroy(this);
 }
 
-pub fn createUnbound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: describe2.BaseScopeCfg) JSValue {
+pub fn createUnbound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: bun_test.BaseScopeCfg) JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -429,7 +429,7 @@ pub fn bind(value: JSValue, globalThis: *JSGlobalObject, name: *const bun.String
     return bound;
 }
 
-pub fn createBound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: describe2.BaseScopeCfg, name: bun.String) bun.JSError!JSValue {
+pub fn createBound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue, cfg: bun_test.BaseScopeCfg, name: bun.String) bun.JSError!JSValue {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -447,8 +447,8 @@ const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 const Strong = jsc.Strong.Safe;
 
-const describe2 = jsc.Jest.describe2;
-const BunTest = describe2.BunTest;
-const ScopeFunctions = describe2.ScopeFunctions;
-const Signature = describe2.js_fns.Signature;
-const groupLog = describe2.debug.group;
+const bun_test = jsc.Jest.bun_test;
+const BunTest = bun_test.BunTest;
+const ScopeFunctions = bun_test.ScopeFunctions;
+const Signature = bun_test.js_fns.Signature;
+const groupLog = bun_test.debug.group;

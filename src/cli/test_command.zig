@@ -39,7 +39,7 @@ fn escapeXml(str: string, writer: anytype) !void {
         try writer.writeAll(str[last..]);
     }
 }
-fn fmtStatusTextLine(status: describe2.Execution.Result, emoji_or_color: bool) []const u8 {
+fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []const u8 {
     // emoji and color might be split into two different options in the future
     // some terminals support color, but not emoji.
     // For now, they are the same.
@@ -61,7 +61,7 @@ fn fmtStatusTextLine(status: describe2.Execution.Result, emoji_or_color: bool) [
     };
 }
 
-pub fn writeTestStatusLine(comptime status: describe2.Execution.Result, writer: anytype) void {
+pub fn writeTestStatusLine(comptime status: bun_test.Execution.Result, writer: anytype) void {
     // When using AI agents, only print failures
     if (Output.isAIAgent() and status != .fail) {
         return;
@@ -376,7 +376,7 @@ pub const JunitReporter = struct {
 
     pub fn writeTestCase(
         this: *JunitReporter,
-        status: bun.jsc.Jest.describe2.Execution.Result,
+        status: bun.jsc.Jest.bun_test.Execution.Result,
         file: string,
         name: string,
         class_name: string,
@@ -601,16 +601,16 @@ pub const CommandLineReporter = struct {
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
     fn printTestLine(
-        comptime status: describe2.Execution.Result,
-        buntest: *describe2.BunTest,
-        sequence: *describe2.Execution.ExecutionSequence,
-        test_entry: *describe2.ExecutionEntry,
+        comptime status: bun_test.Execution.Result,
+        buntest: *bun_test.BunTest,
+        sequence: *bun_test.Execution.ExecutionSequence,
+        test_entry: *bun_test.ExecutionEntry,
         elapsed_ns: u64,
         writer: anytype,
         comptime dim: bool,
     ) void {
-        var scopes_stack = bun.BoundedArray(*describe2.DescribeScope, 64).init(0) catch unreachable;
-        var parent_: ?*describe2.DescribeScope = test_entry.base.parent;
+        var scopes_stack = bun.BoundedArray(*bun_test.DescribeScope, 64).init(0) catch unreachable;
+        var parent_: ?*bun_test.DescribeScope = test_entry.base.parent;
         const assertions = sequence.expect_call_count;
         const line_number = test_entry.base.line_no;
 
@@ -621,7 +621,7 @@ pub const CommandLineReporter = struct {
             parent_ = scope.base.parent;
         }
 
-        const scopes: []*describe2.DescribeScope = scopes_stack.slice();
+        const scopes: []*bun_test.DescribeScope = scopes_stack.slice();
         const display_label = test_entry.base.name orelse "(unnamed)";
 
         // Quieter output when claude code is in use.
@@ -737,7 +737,7 @@ pub const CommandLineReporter = struct {
 
                     // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
                     // This assumes that the scopes are in the correct order.
-                    var needed_suites = std.ArrayList(*describe2.DescribeScope).init(bun.default_allocator);
+                    var needed_suites = std.ArrayList(*bun_test.DescribeScope).init(bun.default_allocator);
                     defer needed_suites.deinit();
 
                     for (scopes, 0..) |_, i| {
@@ -836,7 +836,7 @@ pub const CommandLineReporter = struct {
         return &this.jest.summary;
     }
 
-    pub fn handleTestCompleted(buntest: *describe2.BunTest, sequence: *describe2.Execution.ExecutionSequence, test_entry: *describe2.ExecutionEntry, elapsed_ns: u64) void {
+    pub fn handleTestCompleted(buntest: *bun_test.BunTest, sequence: *bun_test.Execution.ExecutionSequence, test_entry: *bun_test.ExecutionEntry, elapsed_ns: u64) void {
         var output_buf: std.ArrayListUnmanaged(u8) = .empty;
         defer output_buf.deinit(buntest.gpa);
 
@@ -1313,7 +1313,7 @@ pub const TestCommand = struct {
                     .counts = &snapshot_counts,
                     .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
-                .describe2Root = .init(ctx.allocator),
+                .bun_test_root = .init(ctx.allocator),
             },
         };
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
@@ -1808,13 +1808,13 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.on_unhandled_rejection.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            var describe2Root = &jest.Jest.runner.?.describe2Root;
-            describe2Root.enterFile(file_id, reporter);
-            defer describe2Root.exitFile();
+            var bun_test_root = &jest.Jest.runner.?.bun_test_root;
+            bun_test_root.enterFile(file_id, reporter);
+            defer bun_test_root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
-            bun.jsc.Jest.describe2.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
+            bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             reporter.summary().files += 1;
 
@@ -1853,21 +1853,21 @@ pub const TestCommand = struct {
                 _ = file_end;
                 _ = is_last;
 
-                // Check if describe2 is available and has tests to run
-                var buntest_strong = describe2Root.cloneActiveFile() orelse {
+                // Check if bun_test is available and has tests to run
+                var buntest_strong = bun_test_root.cloneActiveFile() orelse {
                     bun.assert(false);
                     break :blk;
                 };
                 defer buntest_strong.deinit();
                 const buntest = buntest_strong.get();
 
-                // Automatically execute describe2 tests
+                // Automatically execute bun_test tests
                 if (buntest.result_queue.readableLength() == 0) {
                     buntest.addResult(.start);
                 }
-                try bun.jsc.Jest.describe2.BunTest.run(buntest_strong, vm.global);
+                try bun.jsc.Jest.bun_test.BunTest.run(buntest_strong, vm.global);
 
-                // Process event loop while describe2 tests are running
+                // Process event loop while bun_test tests are running
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
@@ -1921,7 +1921,7 @@ const string = []const u8;
 
 const DotEnv = @import("../env_loader.zig");
 const Scanner = @import("./test/Scanner.zig");
-const describe2 = @import("../bun.js/test/describe2.zig");
+const bun_test = @import("../bun.js/test/bun_test.zig");
 const options = @import("../options.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
 const std = @import("std");

@@ -79,7 +79,7 @@ pub const TestRunner = struct {
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
-    describe2Root: describe2.BunTestRoot,
+    bun_test_root: bun_test.BunTestRoot,
 
     pub const Summary = struct {
         pass: u32 = 0,
@@ -130,24 +130,24 @@ pub const Jest = struct {
     pub fn createTestModule(globalObject: *JSGlobalObject) bun.JSError!JSValue {
         const module = JSValue.createEmptyObject(globalObject, 14);
 
-        const test_scope_functions = try describe2.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{}, describe2.ScopeFunctions.strings.@"test");
+        const test_scope_functions = try bun_test.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{}, bun_test.ScopeFunctions.strings.@"test");
         module.put(globalObject, ZigString.static("test"), test_scope_functions);
         module.put(globalObject, ZigString.static("it"), test_scope_functions);
 
-        const xtest_scope_functions = try describe2.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{ .self_mode = .skip }, describe2.ScopeFunctions.strings.xtest);
+        const xtest_scope_functions = try bun_test.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{ .self_mode = .skip }, bun_test.ScopeFunctions.strings.xtest);
         module.put(globalObject, ZigString.static("xtest"), xtest_scope_functions);
         module.put(globalObject, ZigString.static("xit"), xtest_scope_functions);
 
-        const describe_scope_functions = try describe2.ScopeFunctions.createBound(globalObject, .describe, .zero, .{}, describe2.ScopeFunctions.strings.describe);
+        const describe_scope_functions = try bun_test.ScopeFunctions.createBound(globalObject, .describe, .zero, .{}, bun_test.ScopeFunctions.strings.describe);
         module.put(globalObject, ZigString.static("describe"), describe_scope_functions);
 
-        const xdescribe_scope_functions = describe2.ScopeFunctions.createBound(globalObject, .describe, .zero, .{ .self_mode = .skip }, describe2.ScopeFunctions.strings.xdescribe) catch return .zero;
+        const xdescribe_scope_functions = bun_test.ScopeFunctions.createBound(globalObject, .describe, .zero, .{ .self_mode = .skip }, bun_test.ScopeFunctions.strings.xdescribe) catch return .zero;
         module.put(globalObject, ZigString.static("xdescribe"), xdescribe_scope_functions);
 
-        module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, describe2.js_fns.genericHook(.beforeEach).hookFn, false));
-        module.put(globalObject, ZigString.static("beforeAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeAll"), 1, describe2.js_fns.genericHook(.beforeAll).hookFn, false));
-        module.put(globalObject, ZigString.static("afterAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterAll"), 1, describe2.js_fns.genericHook(.afterAll).hookFn, false));
-        module.put(globalObject, ZigString.static("afterEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterEach"), 1, describe2.js_fns.genericHook(.afterEach).hookFn, false));
+        module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, bun_test.js_fns.genericHook(.beforeEach).hookFn, false));
+        module.put(globalObject, ZigString.static("beforeAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeAll"), 1, bun_test.js_fns.genericHook(.beforeAll).hookFn, false));
+        module.put(globalObject, ZigString.static("afterAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterAll"), 1, bun_test.js_fns.genericHook(.afterAll).hookFn, false));
+        module.put(globalObject, ZigString.static("afterEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterEach"), 1, bun_test.js_fns.genericHook(.afterEach).hookFn, false));
         module.put(globalObject, ZigString.static("setDefaultTimeout"), jsc.host_fn.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false));
         module.put(globalObject, ZigString.static("expect"), Expect.js.getConstructor(globalObject));
         module.put(globalObject, ZigString.static("expectTypeOf"), ExpectTypeOf.js.getConstructor(globalObject));
@@ -278,7 +278,7 @@ pub const Jest = struct {
 
 pub const on_unhandled_rejection = struct {
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
-        if (bun.jsc.Jest.describe2.cloneActiveStrong()) |buntest_strong_| {
+        if (bun.jsc.Jest.bun_test.cloneActiveStrong()) |buntest_strong_| {
             var buntest_strong = buntest_strong_;
             defer buntest_strong.deinit();
 
@@ -293,7 +293,7 @@ pub const on_unhandled_rejection = struct {
             }
             buntest.onUncaughtException(globalObject, rejection, true, current_state_data);
             buntest.addResult(current_state_data);
-            describe2.BunTest.run(buntest_strong, globalObject) catch |e| {
+            bun_test.BunTest.run(buntest_strong, globalObject) catch |e| {
                 globalObject.reportUncaughtExceptionFromError(e);
             };
             return;
@@ -439,7 +439,7 @@ pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObj
 
 const string = []const u8;
 
-pub const describe2 = @import("./describe2.zig");
+pub const bun_test = @import("./bun_test.zig");
 
 const std = @import("std");
 const Snapshots = @import("./snapshot.zig").Snapshots;

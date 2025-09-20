@@ -137,12 +137,12 @@ pub fn appendOrExtendConcurrentGroup(this: *Order, concurrent: bool, sequences_s
 const bun = @import("bun");
 const std = @import("std");
 
-const describe2 = bun.jsc.Jest.describe2;
-const DescribeScope = describe2.DescribeScope;
-const ExecutionEntry = describe2.ExecutionEntry;
-const Order = describe2.Order;
-const TestScheduleEntry = describe2.TestScheduleEntry;
+const bun_test = bun.jsc.Jest.bun_test;
+const DescribeScope = bun_test.DescribeScope;
+const ExecutionEntry = bun_test.ExecutionEntry;
+const Order = bun_test.Order;
+const TestScheduleEntry = bun_test.TestScheduleEntry;
 
-const Execution = describe2.Execution;
-const ConcurrentGroup = describe2.Execution.ConcurrentGroup;
-const ExecutionSequence = describe2.Execution.ExecutionSequence;
+const Execution = bun_test.Execution;
+const ConcurrentGroup = bun_test.Execution.ConcurrentGroup;
+const ExecutionSequence = bun_test.Execution.ExecutionSequence;

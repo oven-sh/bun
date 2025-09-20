@@ -1,6 +1,6 @@
 pub fn cloneActiveStrong() ?BunTestPtr {
     const runner = bun.jsc.Jest.Jest.runner orelse return null;
-    return runner.describe2Root.cloneActiveFile();
+    return runner.bun_test_root.cloneActiveFile();
 }
 
 pub const DoneCallback = @import("./DoneCallback.zig");
@@ -21,7 +21,7 @@ pub const js_fns = struct {
         if (bun.jsc.Jest.Jest.runner == null) {
             return globalThis.throw("Cannot use {s} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
         }
-        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.describe2Root;
+        const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.bun_test_root;
         const vm = globalThis.bunVM();
         if (vm.is_in_preload and !cfg.allow_in_preload) {
             return globalThis.throw("Cannot use {s} during preload.", .{cfg.signature});

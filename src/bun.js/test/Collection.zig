@@ -10,7 +10,7 @@ active_scope: *DescribeScope,
 filter_buffer: std.ArrayList(u8),
 
 const QueuedDescribe = struct {
-    callback: describe2.CallbackWithArgs,
+    callback: bun_test.CallbackWithArgs,
     active_scope: *DescribeScope,
     new_scope: *DescribeScope,
     fn deinit(this: *QueuedDescribe, gpa: std.mem.Allocator) void {
@@ -18,7 +18,7 @@ const QueuedDescribe = struct {
     }
 };
 
-pub fn init(gpa: std.mem.Allocator, bun_test_root: *describe2.BunTestRoot) Collection {
+pub fn init(gpa: std.mem.Allocator, bun_test_root: *bun_test.BunTestRoot) Collection {
     group.begin(@src());
     defer group.end();
 
@@ -58,7 +58,7 @@ fn bunTest(this: *Collection) *BunTest {
     return @fieldParentPtr("collection", this);
 }
 
-pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, callback: ?describe2.CallbackWithArgs) bun.JSError!void {
+pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, callback: ?bun_test.CallbackWithArgs) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -76,7 +76,7 @@ pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, cal
     }
 }
 
-pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: describe2.BunTest.RefDataValue) bun.JSError!void {
+pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?jsc.JSValue, data: bun_test.BunTest.RefDataValue) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -96,7 +96,7 @@ pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?j
     group.log("collection:runOneCompleted reset scope back to {s}", .{this.active_scope.base.name orelse "undefined"});
 }
 
-pub fn step(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObject, data: describe2.BunTest.RefDataValue) bun.JSError!describe2.StepResult {
+pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, data: bun_test.BunTest.RefDataValue) bun.JSError!bun_test.StepResult {
     group.begin(@src());
     defer group.end();
     const buntest = buntest_strong.get();
@@ -148,7 +148,7 @@ pub fn step(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObjec
     return .complete;
 }
 
-pub fn handleUncaughtException(this: *Collection, _: describe2.BunTest.RefDataValue) describe2.HandleUncaughtExceptionResult {
+pub fn handleUncaughtException(this: *Collection, _: bun_test.BunTest.RefDataValue) bun_test.HandleUncaughtExceptionResult {
     group.begin(@src());
     defer group.end();
 
@@ -162,8 +162,8 @@ const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;
 
-const describe2 = jsc.Jest.describe2;
-const BunTest = describe2.BunTest;
-const Collection = describe2.Collection;
-const DescribeScope = describe2.DescribeScope;
-const group = describe2.debug.group;
+const bun_test = jsc.Jest.bun_test;
+const BunTest = bun_test.BunTest;
+const Collection = bun_test.Collection;
+const DescribeScope = bun_test.DescribeScope;
+const group = bun_test.debug.group;

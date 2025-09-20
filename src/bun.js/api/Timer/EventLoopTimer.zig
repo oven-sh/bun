@@ -92,7 +92,7 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
-            .BunTest => jsc.Jest.describe2.BunTest,
+            .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
@@ -139,7 +139,7 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
-            .BunTest => jsc.Jest.describe2.BunTest,
+            .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
@@ -218,9 +218,9 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
             return .disarm;
         },
         .BunTest => {
-            var container_strong = jsc.Jest.describe2.BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self));
+            var container_strong = jsc.Jest.bun_test.BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self));
             defer container_strong.deinit();
-            return jsc.Jest.describe2.BunTest.bunTestTimeoutCallback(container_strong, now, vm);
+            return jsc.Jest.bun_test.BunTest.bunTestTimeoutCallback(container_strong, now, vm);
         },
         .EventLoopDelayMonitor => {
             const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));

@@ -97,8 +97,8 @@ pub const group = struct {
 const bun = @import("bun");
 const std = @import("std");
 
-const describe2 = @import("./describe2.zig");
-const DescribeScope = describe2.DescribeScope;
-const Execution = describe2.Execution;
-const ExecutionEntry = describe2.ExecutionEntry;
-const TestScheduleEntry = describe2.TestScheduleEntry;
+const bun_test = @import("./bun_test.zig");
+const DescribeScope = bun_test.DescribeScope;
+const Execution = bun_test.Execution;
+const ExecutionEntry = bun_test.ExecutionEntry;
+const TestScheduleEntry = bun_test.TestScheduleEntry;

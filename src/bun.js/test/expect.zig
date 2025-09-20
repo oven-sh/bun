@@ -22,7 +22,7 @@ pub const Expect = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     flags: Flags = .{},
-    parent: ?*bun.jsc.Jest.describe2.BunTest.RefData,
+    parent: ?*bun.jsc.Jest.bun_test.BunTest.RefData,
     custom_label: bun.String = bun.String.empty,
 
     pub const TestScope = struct {
@@ -44,7 +44,7 @@ pub const Expect = struct {
         }
     }
 
-    pub fn bunTest(this: *Expect) ?*bun.jsc.Jest.describe2.BunTest {
+    pub fn bunTest(this: *Expect) ?*bun.jsc.Jest.bun_test.BunTest {
         const parent = this.parent orelse return null;
         return parent.bunTest();
     }
@@ -346,10 +346,10 @@ pub const Expect = struct {
             return globalThis.throwOutOfMemory();
         };
 
-        const active_execution_entry_ref = if (bun.jsc.Jest.describe2.cloneActiveStrong()) |buntest_strong_| blk: {
+        const active_execution_entry_ref = if (bun.jsc.Jest.bun_test.cloneActiveStrong()) |buntest_strong_| blk: {
             var buntest_strong = buntest_strong_;
             defer buntest_strong.deinit();
-            break :blk bun.jsc.Jest.describe2.BunTest.ref(buntest_strong, buntest_strong.get().getCurrentStateData());
+            break :blk bun.jsc.Jest.bun_test.BunTest.ref(buntest_strong, buntest_strong.get().getCurrentStateData());
         } else null;
         errdefer if (active_execution_entry_ref) |entry_ref| entry_ref.deinit();
 
@@ -1144,7 +1144,7 @@ pub const Expect = struct {
         _ = callFrame;
         defer globalThis.bunVM().autoGarbageCollect();
 
-        var buntest_strong = bun.jsc.Jest.describe2.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        var buntest_strong = bun.jsc.Jest.bun_test.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
         defer buntest_strong.deinit();
         const buntest = buntest_strong.get();
         const state_data = buntest.getCurrentStateData();
@@ -1181,7 +1181,7 @@ pub const Expect = struct {
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
-        var buntest_strong = bun.jsc.Jest.describe2.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        var buntest_strong = bun.jsc.Jest.bun_test.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
         defer buntest_strong.deinit();
         const buntest = buntest_strong.get();
         const state_data = buntest.getCurrentStateData();

@@ -101,7 +101,7 @@ pub const ExecutionSequence = struct {
         };
     }
 
-    fn entryMode(this: ExecutionSequence) describe2.ScopeMode {
+    fn entryMode(this: ExecutionSequence) bun_test.ScopeMode {
         if (this.test_entry) |entry| return entry.base.mode;
         return .normal;
     }
@@ -217,7 +217,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
     this.bunTest().addResult(.start);
 }
 
-pub fn step(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObject, data: describe2.BunTest.RefDataValue) bun.JSError!describe2.StepResult {
+pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, data: bun_test.BunTest.RefDataValue) bun.JSError!bun_test.StepResult {
     groupLog.begin(@src());
     defer groupLog.end();
     const buntest = buntest_strong.get();
@@ -256,7 +256,7 @@ pub fn step(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObjec
     }
 }
 
-pub fn stepGroup(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObject, now: bun.timespec) bun.JSError!describe2.StepResult {
+pub fn stepGroup(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, now: bun.timespec) bun.JSError!bun_test.StepResult {
     groupLog.begin(@src());
     defer groupLog.end();
     const buntest = buntest_strong.get();
@@ -295,7 +295,7 @@ pub fn stepGroup(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobal
     }
 }
 const AdvanceStatus = union(enum) { done, execute: struct { timeout: bun.timespec = .epoch } };
-fn stepGroupOne(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObject, group: *ConcurrentGroup, now: bun.timespec) !AdvanceStatus {
+fn stepGroupOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, group: *ConcurrentGroup, now: bun.timespec) !AdvanceStatus {
     const buntest = buntest_strong.get();
     const this = &buntest.execution;
     var final_status: AdvanceStatus = .done;
@@ -320,13 +320,13 @@ const AdvanceSequenceStatus = union(enum) {
         timeout: bun.timespec = .epoch,
     },
 };
-fn stepSequence(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !AdvanceSequenceStatus {
+fn stepSequence(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !AdvanceSequenceStatus {
     while (true) {
         return try stepSequenceOne(buntest_strong, globalThis, sequence, group, sequence_index, now) orelse continue;
     }
 }
 /// returns null if the while loop should continue
-fn stepSequenceOne(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !?AdvanceSequenceStatus {
+fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !?AdvanceSequenceStatus {
     groupLog.begin(@src());
     defer groupLog.end();
     const buntest = buntest_strong.get();
@@ -362,7 +362,7 @@ fn stepSequenceOne(buntest_strong: describe2.BunTestPtr, globalThis: *jsc.JSGlob
     if (next_item.callback) |cb| {
         groupLog.log("runSequence queued callback", .{});
 
-        const callback_data: describe2.BunTest.RefDataValue = .{
+        const callback_data: bun_test.BunTest.RefDataValue = .{
             .execution = .{
                 .group_index = this.group_index,
                 .entry_data = .{
@@ -400,7 +400,7 @@ pub fn activeGroup(this: *Execution) ?*ConcurrentGroup {
     if (this.group_index >= this.groups.len) return null;
     return &this.groups[this.group_index];
 }
-fn getCurrentAndValidExecutionSequence(this: *Execution, data: describe2.BunTest.RefDataValue) ?struct { *ExecutionSequence, *ConcurrentGroup } {
+fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunTest.RefDataValue) ?struct { *ExecutionSequence, *ConcurrentGroup } {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -570,7 +570,7 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     }
 }
 
-pub fn handleUncaughtException(this: *Execution, user_data: describe2.BunTest.RefDataValue) describe2.HandleUncaughtExceptionResult {
+pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.RefDataValue) bun_test.HandleUncaughtExceptionResult {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -608,9 +608,9 @@ const test_command = @import("../../cli/test_command.zig");
 const bun = @import("bun");
 const jsc = bun.jsc;
 
-const describe2 = jsc.Jest.describe2;
-const BunTest = describe2.BunTest;
-const Execution = describe2.Execution;
-const ExecutionEntry = describe2.ExecutionEntry;
-const Order = describe2.Order;
-const groupLog = describe2.debug.group;
+const bun_test = jsc.Jest.bun_test;
+const BunTest = bun_test.BunTest;
+const Execution = bun_test.Execution;
+const ExecutionEntry = bun_test.ExecutionEntry;
+const Order = bun_test.Order;
+const groupLog = bun_test.debug.group;

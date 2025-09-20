@@ -3,7 +3,7 @@ import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 test("describe/test", async () => {
   const result = await Bun.spawn({
-    cmd: [bunExe(), "test", import.meta.dir + "/describe2.fixture.ts"],
+    cmd: [bunExe(), "test", import.meta.dir + "/bun_test.fixture.ts"],
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
@@ -19,7 +19,7 @@ test("describe/test", async () => {
     {
       "exitCode": 1,
       "stderr": 
-    "test/js/bun/test/describe2.fixture.ts:
+    "test/js/bun/test/bun_test.fixture.ts:
 
     # Unhandled error between tests
     -------------------------------

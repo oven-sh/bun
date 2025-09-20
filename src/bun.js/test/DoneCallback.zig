@@ -1,5 +1,5 @@
 /// value = not called yet. null = done already called, no-op.
-ref: ?*describe2.BunTest.RefData,
+ref: ?*bun_test.BunTest.RefData,
 called: bool = false,
 
 pub const js = jsc.Codegen.JSDoneCallback;
@@ -40,7 +40,7 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 
-const describe2 = jsc.Jest.describe2;
-const BunTest = describe2.BunTest;
-const DoneCallback = describe2.DoneCallback;
-const groupLog = describe2.debug.group;
+const bun_test = jsc.Jest.bun_test;
+const BunTest = bun_test.BunTest;
+const DoneCallback = bun_test.DoneCallback;
+const groupLog = bun_test.debug.group;

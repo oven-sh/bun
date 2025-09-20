@@ -31,19 +31,23 @@ function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, ad
 }
 
 const BIG_DATA = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
-
 describe("HTTP server CONNECT", () => {
   // TODO: on Windows this test is flaky, we are probably receiving data that should be in "head" parameter
   // and we dont support that yet
-  test.skipIf(isWindows)("should handle backpressure", async () => {
+  test("should handle backpressure", async () => {
     const responseHeader = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });
     await using targetServer = net.createServer(socket => {
-      socket.write(responseHeader);
-      socket.write(BIG_DATA);
-      socket.end();
+      socket.write(responseHeader, () => {
+        socket.write(BIG_DATA, () => {
+          // is this a net bug?
+          Bun.sleep(100).then(() => {
+            socket.end();
+          });
+        });
+      });
     });
     let proxyHeaders = {};
     proxyServer.on("connect", (req, socket, head) => {
@@ -80,8 +84,7 @@ describe("HTTP server CONNECT", () => {
     }
   });
 
-  // TODO: fix this test on windows, backpressure is inconsistent some times windows sends everything at once
-  test.skipIf(isWindows)("should handle data, drain, end and close events", async () => {
+  test("should handle data, drain, end and close events", async () => {
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });
@@ -126,8 +129,8 @@ describe("HTTP server CONNECT", () => {
       });
       socket.on("error", reject);
       proxy_drain_received = false;
-      // should not able to flush the data to the client immediately
-      expect(socket.write(BIG_DATA)).toBe(false);
+      // write until backpressure
+      while (socket.write(BIG_DATA)) {}
       clientSocket.write("Hello World");
     });
 

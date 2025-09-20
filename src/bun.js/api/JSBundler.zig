@@ -403,6 +403,8 @@ pub const JSBundler = struct {
                         if (runtime.development) |dev| {
                             this.jsx.development = dev;
                         }
+                    } else {
+                        return globalThis.throwInvalidArguments("Invalid jsx.runtime: '{s}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', 'react-jsxdev', or 'solid'", .{slice.slice()});
                     }
                 }
 
@@ -766,6 +768,19 @@ pub const JSBundler = struct {
                 }
                 bun.default_allocator.free(loaders.loaders);
                 bun.default_allocator.free(loaders.extensions);
+            }
+            // Free JSX allocated strings
+            if (self.jsx.factory.len > 0) {
+                allocator.free(self.jsx.factory);
+                self.jsx.factory = "";
+            }
+            if (self.jsx.fragment.len > 0) {
+                allocator.free(self.jsx.fragment);
+                self.jsx.fragment = "";
+            }
+            if (self.jsx.import_source.len > 0) {
+                allocator.free(self.jsx.import_source);
+                self.jsx.import_source = "";
             }
             self.names.deinit();
             self.outdir.deinit();

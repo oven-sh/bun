@@ -1847,7 +1847,7 @@ pub const BundleV2 = struct {
                     options.JSX.Pragma.Defaults.Fragment,
                 .runtime = config.jsx.runtime,
                 .development = config.jsx.development,
-                .package_name = config.jsx.import_source,
+                .package_name = if (config.jsx.import_source.len > 0) config.jsx.import_source else "react",
                 .classic_import_source = if (config.jsx.import_source.len > 0) config.jsx.import_source else "react",
                 .side_effects = config.jsx.side_effects,
                 .parse = true,

@@ -772,8 +772,6 @@ fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event
         }
     }
 
-    const socketValue = this.getServerSocketValue();
-
     if (js.onDataGetCached(thisValue)) |callback| {
         if (callback.isUndefined()) {
             return;

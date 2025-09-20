@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import dns from "node:dns";
 
-test("dns.resolve callback parameters match Node.js", (done) => {
+test("dns.resolve callback parameters match Node.js", done => {
   dns.resolve("dns.google", (...args) => {
     // Should receive exactly 2 parameters: error and addresses array
     expect(args.length).toBe(2);
@@ -12,7 +12,7 @@ test("dns.resolve callback parameters match Node.js", (done) => {
   });
 });
 
-test("dns.resolve with A record type callback parameters", (done) => {
+test("dns.resolve with A record type callback parameters", done => {
   dns.resolve("dns.google", "A", (...args) => {
     expect(args.length).toBe(2);
     expect(args[0]).toBe(null);
@@ -22,7 +22,7 @@ test("dns.resolve with A record type callback parameters", (done) => {
   });
 });
 
-test("dns.resolve with AAAA record type callback parameters", (done) => {
+test("dns.resolve with AAAA record type callback parameters", done => {
   // Use a hostname that has AAAA records
   dns.resolve("google.com", "AAAA", (...args) => {
     expect(args.length).toBe(2);

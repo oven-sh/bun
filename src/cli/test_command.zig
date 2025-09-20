@@ -842,14 +842,29 @@ pub const CommandLineReporter = struct {
         switch (sequence.result) {
             inline else => |result| {
                 if (result != .skipped_because_label or buntest.reporter != null and buntest.reporter.?.reporters.junit != null) {
-                    writeTestStatusLine(result, &writer);
-                    const dim = switch (comptime result.basicResult()) {
-                        .todo => if (bun.jsc.Jest.Jest.runner) |runner| !runner.run_todo else true,
-                        .skip, .pending => true,
-                        .pass, .fail => false,
-                    };
-                    switch (dim) {
-                        inline else => |dim_comptime| printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer, dim_comptime),
+                    if (buntest.reporter != null and buntest.reporter.?.reporters.dots and (comptime switch (result.basicResult()) {
+                        .pass, .skip, .todo, .pending => true,
+                        .fail => false,
+                    })) {
+                        switch (Output.enable_ansi_colors_stderr) {
+                            inline else => |enable_ansi_colors_stderr| switch (comptime result.basicResult()) {
+                                .pass => writer.print(comptime Output.prettyFmt("<r><green>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                                .skip => writer.print(comptime Output.prettyFmt("<r><yellow>.<d>", enable_ansi_colors_stderr), .{}) catch {},
+                                .todo => writer.print(comptime Output.prettyFmt("<r><magenta>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                                .pending => writer.print(comptime Output.prettyFmt("<r><d>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                                .fail => writer.print(comptime Output.prettyFmt("<r><red>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                            },
+                        }
+                    } else {
+                        writeTestStatusLine(result, &writer);
+                        const dim = switch (comptime result.basicResult()) {
+                            .todo => if (bun.jsc.Jest.Jest.runner) |runner| !runner.run_todo else true,
+                            .skip, .pending => true,
+                            .pass, .fail => false,
+                        };
+                        switch (dim) {
+                            inline else => |dim_comptime| printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer, dim_comptime),
+                        }
                     }
                 }
             },
@@ -860,12 +875,12 @@ pub const CommandLineReporter = struct {
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 
-        switch (sequence.result.basicResult()) {
+        if (!this.reporters.dots) switch (sequence.result.basicResult()) {
             .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .todo => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .fail => bun.handleOom(this.failures_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .pass, .pending => {},
-        }
+        };
 
         switch (sequence.result) {
             .pending => {},

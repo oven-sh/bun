@@ -199,7 +199,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-    clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
+    clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit and --reporter=dots are the only supported formats.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -441,8 +441,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.crash();
                 }
                 ctx.test_options.reporters.junit = true;
+            } else if (strings.eqlComptime(reporter, "dots")) {
+                ctx.test_options.reporters.dots = true;
             } else {
-                Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
+                Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' and 'dots' are supported", .{reporter});
                 Global.crash();
             }
         }

@@ -2209,8 +2209,9 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 #endif
 
 #if ASAN_ENABLED
-    // TODO: figure out why this causes v8 tests to fail in the C++ code test code.
+    // TODO: figure out why this causes v8.test.ts to fail.
     // variables->putDirect(vm, JSC::Identifier::fromString(vm, "asan"_s), JSC::jsNumber(1), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "asan"_s), JSC::jsNumber(0), 0);
 #else
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "asan"_s), JSC::jsNumber(0), 0);
 #endif

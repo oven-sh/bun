@@ -122,9 +122,8 @@ pub fn exit(code: u32) noreturn {
         },
         else => {
             if (Environment.enable_asan) {
-                // TODO:
-                // std.c.exit(@bitCast(code));
-                // std.c.abort(); // exit should be noreturn
+                std.c.exit(@bitCast(code));
+                std.c.abort(); // exit should be noreturn
             }
             bun.c.quick_exit(@bitCast(code));
             std.c.abort(); // quick_exit should be noreturn

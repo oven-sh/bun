@@ -326,4 +326,6 @@ test/cli/hot/hot.test.ts
 test/cli/install/bun-repl.test.ts
 test/bundler/esbuild/default.test.ts
 test/integration/vite-build/vite-build.test.ts
-test/cli/inspect/HTTPServerAgent.test.ts 
+test/cli/inspect/HTTPServerAgent.test.ts
+test/js/bun/glob/import-meta-glob.test.ts
+test/bundler/bundler_loader.test.ts

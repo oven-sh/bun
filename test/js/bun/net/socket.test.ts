@@ -1,7 +1,7 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
-import { expect, it, jest, describe } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tls } from "harness";
 describe.concurrent("socket", () => {

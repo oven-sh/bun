@@ -18,6 +18,7 @@ pub const JSBundler = struct {
             .fragment = "",
             .runtime = .automatic,
             .import_source = "",
+            .development = true, // Default to development mode like old Pragma
         },
         force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,

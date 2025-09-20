@@ -55,13 +55,12 @@ pub const group = struct {
     fn getLogEnabledRuntime() bool {
         if (wants_quiet) |v| return !v;
         if (bun.getenvZ("WANTS_LOUD")) |val| {
-            if (!std.mem.eql(u8, val, "1")) {
-                wants_quiet = false;
-                return !wants_quiet.?;
-            }
+            const loud = std.mem.eql(u8, val, "1") or std.mem.eql(u8, val, "true");
+            wants_quiet = !loud;
+            return loud;
         }
-        wants_quiet = true;
-        return !wants_quiet.?;
+        wants_quiet = true; // default quiet
+        return false;
     }
     inline fn getLogEnabledStaticFalse() bool {
         return false;

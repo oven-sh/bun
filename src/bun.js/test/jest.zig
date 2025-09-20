@@ -1,3 +1,31 @@
+pub const TestLineFilter = struct {
+    path: []const u8,
+    line: u32,
+
+    pub fn hash(self: TestLineFilter) u32 {
+        var hash_value: u32 = 0;
+        hash_value = @as(u32, @truncate(bun.hash(self.path)));
+        hash_value ^= @as(u32, self.line) *% 31;
+        return hash_value;
+    }
+
+    pub fn eql(a: TestLineFilter, b: TestLineFilter) bool {
+        return a.line == b.line and bun.strings.eql(a.path, b.path);
+    }
+
+    pub const HashContext = struct {
+        pub fn hash(_: HashContext, key: TestLineFilter) u32 {
+            return key.hash();
+        }
+
+        pub fn eql(_: HashContext, a: TestLineFilter, b: TestLineFilter) bool {
+            return a.eql(b);
+        }
+    };
+
+    pub const Map = std.HashMapUnmanaged(TestLineFilter, void, HashContext, 80);
+};
+
 const CurrentFile = struct {
     title: string = "",
     prefix: string = "",
@@ -76,6 +104,9 @@ pub const TestRunner = struct {
     // Used for --test-name-pattern to reduce allocations
     filter_regex: ?*RegularExpression,
 
+    // Used for file:line test filtering
+    line_filters: TestLineFilter.Map = .{},
+
     unhandled_errors_between_tests: u32 = 0,
     summary: Summary = Summary{},
 
@@ -97,6 +128,80 @@ pub const TestRunner = struct {
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
         return this.filter_regex != null;
+    }
+
+    pub fn hasTestLineFilter(this: *const TestRunner) bool {
+        return this.line_filters.count() > 0;
+    }
+
+    pub fn addLineFilter(this: *TestRunner, path: []const u8, line: u32) !void {
+        const filter = TestLineFilter{
+            .path = try this.allocator.dupe(u8, path),
+            .line = line,
+        };
+        try this.line_filters.put(this.allocator, filter, {});
+    }
+
+    pub fn shouldSkipBasedOnLineFilter(this: *const TestRunner, file_path: []const u8, line_number: u32) bool {
+        if (!this.hasTestLineFilter()) return false;
+
+        // Check if this specific test matches any filter
+        const test_filter = TestLineFilter{
+            .path = file_path,
+            .line = line_number,
+        };
+
+        if (this.line_filters.contains(test_filter)) {
+            return false; // Don't skip, this test is selected
+        }
+
+        // Check if any filter matches this file
+        var iter = this.line_filters.iterator();
+        while (iter.next()) |entry| {
+            if (bun.strings.eql(entry.key_ptr.path, file_path)) {
+                return true; // Skip, there's a filter for this file but not this line
+            }
+        }
+
+        return false; // Don't skip, no filters for this file
+    }
+
+    pub fn matchesLineFilter(this: *const TestRunner, file_path: []const u8, test_line: u32, parent_lines: []const u32) bool {
+        if (!this.hasTestLineFilter()) return true;
+
+        // Check if test line matches
+        const test_filter = TestLineFilter{
+            .path = file_path,
+            .line = test_line,
+        };
+        if (this.line_filters.contains(test_filter)) {
+            return true;
+        }
+
+        // Check if any parent describe block matches
+        for (parent_lines) |parent_line| {
+            const parent_filter = TestLineFilter{
+                .path = file_path,
+                .line = parent_line,
+            };
+            if (this.line_filters.contains(parent_filter)) {
+                return true;
+            }
+        }
+
+        // Check if there are any filters for this file
+        var has_file_filter = false;
+        var iter = this.line_filters.iterator();
+        while (iter.next()) |entry| {
+            if (bun.strings.eql(entry.key_ptr.path, file_path)) {
+                has_file_filter = true;
+                break;
+            }
+        }
+
+        // If there are no filters for this file, run the test
+        // If there are filters for this file but none match, skip the test
+        return !has_file_filter;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) struct { file_id: File.ID } {

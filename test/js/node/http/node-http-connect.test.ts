@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { nodeExe, bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe, nodeExe } from "harness";
 import http from "http";
 
 import { once } from "node:events";

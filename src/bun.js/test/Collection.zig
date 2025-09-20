@@ -84,10 +84,10 @@ pub fn runOneCompleted(this: *Collection, globalThis: *jsc.JSGlobalObject, _: ?j
     defer formatter.deinit();
 
     const prev_scope: *DescribeScope = switch (data) {
-        .collection => this.active_scope,
-        else => {
+        .collection => |c| c.active_scope,
+        else => blk: {
             bun.assert(false); // this probably can't happen
-            return;
+            break :blk this.active_scope;
         },
     };
 

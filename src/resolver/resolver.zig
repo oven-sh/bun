@@ -4176,7 +4176,7 @@ pub const Resolver = struct {
                         }
                     }
                 }
-            } else if (parent == null) {
+            } else {
                 tsconfig_path = r.opts.tsconfig_override.?;
             }
 

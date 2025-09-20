@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
 import path from "path";
 
-describe("Server", () => {
+describe.concurrent("Server", () => {
   test("normlizes incoming request URLs", async () => {
     using server = Bun.serve({
       fetch(request) {

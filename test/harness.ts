@@ -910,11 +910,13 @@ export async function describeWithContainer(
     env = {},
     args = [],
     archs,
+    concurrent = false,
   }: {
     image: string;
     env?: Record<string, string>;
     args?: string[];
     archs?: NodeJS.Architecture[];
+    concurrent?: boolean;
   },
   fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
@@ -924,7 +926,7 @@ export async function describeWithContainer(
     return;
   }
 
-  describe(label, () => {
+  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
     // Check if this is one of our docker-compose services
     const services: Record<string, number> = {
       "postgres_plain": 5432,

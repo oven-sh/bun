@@ -942,6 +942,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSHash;
     std::unique_ptr<IsoSubspace> m_subspaceForServerRouteList;
     std::unique_ptr<IsoSubspace> m_subspaceForBunRequest;
+    std::unique_ptr<IsoSubspace> m_subspaceForBakeResponse;
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellman;
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
     std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;

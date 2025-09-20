@@ -170,6 +170,21 @@ pub fn NewParser_(
         dirname_ref: Ref = Ref.None,
         import_meta_ref: Ref = Ref.None,
         hmr_api_ref: Ref = Ref.None,
+
+        /// If bake is enabled and this is a server-side file, we want to use
+        /// special `Response` class inside the `bun:app` built-in module to
+        /// support syntax like `return Response(<jsx />, {...})` or `return Response.render("/my-page")`
+        /// or `return Response.redirect("/other")`.
+        ///
+        /// So we'll need to add a `import { Response } from 'bun:app'` to the
+        /// top of the file
+        ///
+        /// We need to declare this `response_ref` upfront
+        response_ref: Ref = Ref.None,
+        /// We also need to declare the namespace ref for `bun:app` and attach
+        /// it to the symbol so the code generated `e_import_identifier`'s
+        bun_app_namespace_ref: Ref = Ref.None,
+
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
@@ -1220,6 +1235,81 @@ pub fn NewParser_(
             };
         }
 
+        pub fn generateImportStmtForBakeResponse(
+            noalias p: *P,
+            parts: *ListManaged(js_ast.Part),
+        ) !void {
+            bun.assert(!p.response_ref.isNull());
+            bun.assert(!p.bun_app_namespace_ref.isNull());
+            const allocator = p.allocator;
+
+            const import_path = "bun:app";
+
+            const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
+
+            var declared_symbols = DeclaredSymbol.List{};
+            try declared_symbols.ensureTotalCapacity(allocator, 2);
+
+            var stmts = try allocator.alloc(Stmt, 1);
+
+            declared_symbols.appendAssumeCapacity(
+                DeclaredSymbol{ .ref = p.bun_app_namespace_ref, .is_top_level = true },
+            );
+            try p.module_scope.generated.append(allocator, p.bun_app_namespace_ref);
+
+            const clause_items = try allocator.dupe(js_ast.ClauseItem, &.{
+                js_ast.ClauseItem{
+                    .alias = "Response",
+                    .original_name = "Response",
+                    .alias_loc = logger.Loc{},
+                    .name = LocRef{ .ref = p.response_ref, .loc = logger.Loc{} },
+                },
+            });
+
+            declared_symbols.appendAssumeCapacity(DeclaredSymbol{
+                .ref = p.response_ref,
+                .is_top_level = true,
+            });
+
+            // ensure every e_import_identifier holds the namespace
+            if (p.options.features.hot_module_reloading) {
+                const symbol = &p.symbols.items[p.response_ref.inner_index];
+                bun.assert(symbol.namespace_alias != null);
+                symbol.namespace_alias.?.import_record_index = import_record_i;
+            }
+
+            try p.is_import_item.put(allocator, p.response_ref, {});
+            try p.named_imports.put(allocator, p.response_ref, js_ast.NamedImport{
+                .alias = "Response",
+                .alias_loc = logger.Loc{},
+                .namespace_ref = p.bun_app_namespace_ref,
+                .import_record_index = import_record_i,
+            });
+
+            stmts[0] = p.s(
+                S.Import{
+                    .namespace_ref = p.bun_app_namespace_ref,
+                    .items = clause_items,
+                    .import_record_index = import_record_i,
+                    .is_single_line = true,
+                },
+                logger.Loc{},
+            );
+
+            var import_records = try allocator.alloc(u32, 1);
+            import_records[0] = import_record_i;
+
+            // This import is placed in a part before the main code, however
+            // the bundler ends up re-ordering this to be after... The order
+            // does not matter as ESM imports are always hoisted.
+            parts.append(js_ast.Part{
+                .stmts = stmts,
+                .declared_symbols = declared_symbols,
+                .import_record_indices = bun.BabyList(u32).fromOwnedSlice(import_records),
+                .tag = .runtime,
+            }) catch unreachable;
+        }
+
         pub fn generateImportStmt(
             noalias p: *P,
             import_path: string,
@@ -1227,7 +1317,7 @@ pub fn NewParser_(
             parts: *ListManaged(js_ast.Part),
             symbols: anytype,
             additional_stmt: ?Stmt,
-            comptime suffix: string,
+            comptime prefix: string,
             comptime is_internal: bool,
         ) anyerror!void {
             const allocator = p.allocator;
@@ -1237,13 +1327,13 @@ pub fn NewParser_(
                 import_record.path.namespace = "runtime";
             import_record.is_internal = is_internal;
             const import_path_identifier = try import_record.path.name.nonUniqueNameString(allocator);
-            var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + suffix.len);
+            var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + prefix.len);
             const clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
             var stmts = try allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
             var declared_symbols = DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(allocator, imports.len + 1);
-            bun.copy(u8, namespace_identifier, suffix);
-            bun.copy(u8, namespace_identifier[suffix.len..], import_path_identifier);
+            bun.copy(u8, namespace_identifier, prefix);
+            bun.copy(u8, namespace_identifier[prefix.len..], import_path_identifier);
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
             declared_symbols.appendAssumeCapacity(.{
@@ -2012,6 +2102,25 @@ pub fn NewParser_(
                 // TODO: these wrapping modes.
                 .wrap_anon_server_functions => {},
                 .wrap_exports_for_server_reference => {},
+            }
+
+            // Server-side components:
+            // Declare upfront the symbols for "Response" and "bun:app"
+            switch (p.options.features.server_components) {
+                .none, .client_side => {},
+                else => {
+                    p.response_ref = try p.declareGeneratedSymbol(.import, "Response");
+                    p.bun_app_namespace_ref = try p.newSymbol(
+                        .other,
+                        "import_bun_app",
+                    );
+                    const symbol = &p.symbols.items[p.response_ref.inner_index];
+                    symbol.namespace_alias = .{
+                        .namespace_ref = p.bun_app_namespace_ref,
+                        .alias = "Response",
+                        .import_record_index = std.math.maxInt(u32),
+                    };
+                },
             }
 
             if (p.options.features.hot_module_reloading) {
@@ -3071,7 +3180,7 @@ pub fn NewParser_(
             return ref;
         }
 
-        fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
+        pub fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
             // The bundler runs the renamer, so it is ok to not append a hash
             if (p.options.bundle) {
                 return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, name, true);

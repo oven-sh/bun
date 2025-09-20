@@ -562,30 +562,6 @@ pub const FFI = struct {
         }
         const allocator = bun.default_allocator;
 
-        // Get the caller's source location to resolve relative paths
-        const caller_src_loc = callframe.getCallerSrcLoc(globalThis);
-        defer if (!caller_src_loc.str.isEmpty()) caller_src_loc.str.deref();
-
-        // Get the current working directory to use as base for relative paths if needed
-        var cwd_buf: bun.PathBuffer = undefined;
-        const cwd = bun.getcwd(&cwd_buf) catch ".";
-
-        var caller_dir: []const u8 = cwd;
-        var caller_path_owned: ?[]u8 = null;
-        defer if (caller_path_owned) |path| allocator.free(path);
-
-        if (!caller_src_loc.str.isEmpty()) {
-            if (caller_src_loc.str.toOwnedSlice(allocator)) |path| {
-                caller_path_owned = path;
-                // Only use the caller's directory if it's an absolute path
-                if (std.fs.path.isAbsolute(path)) {
-                    caller_dir = std.fs.path.dirname(path) orelse cwd;
-                }
-            } else |_| {
-                // If we can't get the caller's path, use current working directory
-            }
-        }
-
         // Step 1. compile the user's code
 
         const object = arguments[0];
@@ -709,11 +685,16 @@ pub const FFI = struct {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
                     }
                     var source_path = try (try value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator);
-                    // Resolve relative paths against the calling module's directory
+                    // Only resolve relative paths - skip expensive work for absolute paths
                     if (!std.fs.path.isAbsolute(source_path)) {
-                        // Build the resolved path using standard path joining
+                        // Use Bun's cached top_level_dir (cwd at startup) - much cheaper than getCallerSrcLoc
                         var pathbuf: bun.PathBuffer = undefined;
-                        const joined = bun.path.joinAbsStringBufZ(caller_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
+                        const joined = bun.path.joinAbsStringBufZ(
+                            Fs.FileSystem.instance.top_level_dir,
+                            &pathbuf,
+                            &[_][]const u8{source_path},
+                            .auto
+                        );
                         const resolved = bun.default_allocator.dupeZ(u8, joined) catch |err| {
                             bun.default_allocator.free(source_path);
                             return err;
@@ -727,11 +708,16 @@ pub const FFI = struct {
                 return globalThis.throwInvalidArgumentTypeValue("source", "string", source_value);
             } else {
                 var source_path = try (try source_value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator);
-                // Resolve relative paths against the calling module's directory
+                // Only resolve relative paths - skip expensive work for absolute paths
                 if (!std.fs.path.isAbsolute(source_path)) {
-                    // Build the resolved path using standard path joining
+                    // Use Bun's cached top_level_dir (cwd at startup) - much cheaper than getCallerSrcLoc
                     var pathbuf: bun.PathBuffer = undefined;
-                    const joined = bun.path.joinAbsStringBufZ(caller_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
+                    const joined = bun.path.joinAbsStringBufZ(
+                        Fs.FileSystem.instance.top_level_dir,
+                        &pathbuf,
+                        &[_][]const u8{source_path},
+                        .auto
+                    );
                     const resolved = bun.default_allocator.dupeZ(u8, joined) catch |err| {
                         bun.default_allocator.free(source_path);
                         return err;

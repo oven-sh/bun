@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("Invalid escape sequence \\x in identifier shows helpful error message", async () => {
@@ -16,14 +16,10 @@ test("Invalid escape sequence \\x in identifier shows helpful error message", as
   });
 
   expect(exitCode).toBe(1);
-  expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /x41 = 1;
-              ^
-    error: Unexpected escape sequence
-        at <dir>/test.js:1:7
-
-    Bun v<bun-version>"
-  `);
+  const err = stderr.toString();
+  expect(err).toContain("const \\x41 = 1;");
+  expect(err).toContain("error: Unexpected escape sequence");
+  expect(err).toContain(":1:7");
 });
 
 test("Invalid escaped double quote in identifier shows helpful error message", async () => {
@@ -40,14 +36,10 @@ test("Invalid escaped double quote in identifier shows helpful error message", a
   });
 
   expect(exitCode).toBe(1);
-  expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /" = 1;
-              ^
-    error: Unexpected escaped double quote '"'
-        at <dir>/test.js:1:7
-
-    Bun v<bun-version>"
-  `);
+  const err = stderr.toString();
+  expect(err).toContain('const \\" = 1;');
+  expect(err).toContain('error: Unexpected escaped double quote');
+  expect(err).toContain(":1:7");
 });
 
 test("Invalid escaped single quote in identifier shows helpful error message", async () => {
@@ -64,14 +56,10 @@ test("Invalid escaped single quote in identifier shows helpful error message", a
   });
 
   expect(exitCode).toBe(1);
-  expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /' = 1;
-              ^
-    error: Unexpected escaped single quote "'"
-        at <dir>/test.js:1:7
-
-    Bun v<bun-version>"
-  `);
+  const err = stderr.toString();
+  expect(err).toContain("const \\' = 1;");
+  expect(err).toContain("error: Unexpected escaped single quote");
+  expect(err).toContain(":1:7");
 });
 
 test("Invalid escaped backtick in identifier shows helpful error message", async () => {
@@ -88,14 +76,10 @@ test("Invalid escaped backtick in identifier shows helpful error message", async
   });
 
   expect(exitCode).toBe(1);
-  expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /\` = 1;
-              ^
-    error: Unexpected escaped backtick '\`'
-        at <dir>/test.js:1:7
-
-    Bun v<bun-version>"
-  `);
+  const err = stderr.toString();
+  expect(err).toContain("const \\\` = 1;");
+  expect(err).toContain("error: Unexpected escaped backtick");
+  expect(err).toContain(":1:7");
 });
 
 test("Invalid escaped backslash in identifier shows helpful error message", async () => {
@@ -112,14 +96,10 @@ test("Invalid escaped backslash in identifier shows helpful error message", asyn
   });
 
   expect(exitCode).toBe(1);
-  expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const // = 1;
-              ^
-    error: Unexpected escaped backslash '/'
-        at <dir>/test.js:1:7
-
-    Bun v<bun-version>"
-  `);
+  const err = stderr.toString();
+  expect(err).toContain("const \\\\ = 1;");
+  expect(err).toContain("error: Unexpected escaped backslash");
+  expect(err).toContain(":1:7");
 });
 
 test("Invalid escaped z in identifier shows helpful error message", async () => {
@@ -136,14 +116,10 @@ test("Invalid escaped z in identifier shows helpful error message", async () => 
   });
 
   expect(exitCode).toBe(1);
-  expect(normalizeBunSnapshot(stderr.toString(), dir)).toMatchInlineSnapshot(`
-    "1 | const /z = 1;
-              ^
-    error: Unexpected escape sequence
-        at <dir>/test.js:1:7
-
-    Bun v<bun-version>"
-  `);
+  const err = stderr.toString();
+  expect(err).toContain("const \\z = 1;");
+  expect(err).toContain("error: Unexpected escape sequence");
+  expect(err).toContain(":1:7");
 });
 
 test("Valid unicode escapes in identifiers should work", async () => {

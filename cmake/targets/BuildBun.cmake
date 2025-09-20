@@ -2,6 +2,8 @@ include(PathUtils)
 
 if(DEBUG)
   set(bun bun-debug)
+elseif(ENABLE_ASAN AND ENABLE_VALGRIND)
+  set(bun bun-asan-valgrind)
 elseif(ENABLE_ASAN)
   set(bun bun-asan)
 elseif(ENABLE_VALGRIND)
@@ -619,6 +621,7 @@ register_command(
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
+      -Denable_valgrind=$<IF:$<BOOL:${ENABLE_VALGRIND}>,true,false>
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
@@ -886,12 +889,8 @@ if(NOT WIN32)
     endif()
 
     if(ENABLE_ASAN)
-      target_compile_options(${bun} PUBLIC
-        -fsanitize=address
-      )
-      target_link_libraries(${bun} PUBLIC
-        -fsanitize=address
-      )
+      target_compile_options(${bun} PUBLIC -fsanitize=address)
+      target_link_libraries(${bun} PUBLIC -fsanitize=address)
     endif()
 
     target_compile_options(${bun} PUBLIC
@@ -930,12 +929,8 @@ if(NOT WIN32)
     )
 
     if(ENABLE_ASAN)
-      target_compile_options(${bun} PUBLIC
-        -fsanitize=address
-      )
-      target_link_libraries(${bun} PUBLIC
-        -fsanitize=address
-      )
+      target_compile_options(${bun} PUBLIC -fsanitize=address)
+      target_link_libraries(${bun} PUBLIC -fsanitize=address)
     endif()
   endif()
 else()
@@ -1061,7 +1056,7 @@ if(LINUX)
     )
   endif()
 
-  if (NOT DEBUG AND NOT ENABLE_ASAN)
+  if (NOT DEBUG AND NOT ENABLE_ASAN AND NOT ENABLE_VALGRIND)
     target_link_options(${bun} PUBLIC
       -Wl,-icf=safe
     )
@@ -1363,12 +1358,20 @@ if(NOT BUN_CPP_ONLY)
     if(ENABLE_BASELINE)
       set(bunTriplet ${bunTriplet}-baseline)
     endif()
-    if(ENABLE_ASAN)
+
+    if (ENABLE_ASAN AND ENABLE_VALGRIND)
+      set(bunTriplet ${bunTriplet}-asan-valgrind)
+      set(bunPath ${bunTriplet})
+    elseif (ENABLE_VALGRIND)
+      set(bunTriplet ${bunTriplet}-valgrind)
+      set(bunPath ${bunTriplet})
+    elseif(ENABLE_ASAN)
       set(bunTriplet ${bunTriplet}-asan)
       set(bunPath ${bunTriplet})
     else()
       string(REPLACE bun ${bunTriplet} bunPath ${bun})
     endif()
+
     set(bunFiles ${bunExe} features.json)
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)

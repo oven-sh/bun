@@ -114,11 +114,14 @@ endif()
 
 if(DEBUG AND ((APPLE AND ARCH STREQUAL "aarch64") OR LINUX))
   set(DEFAULT_ASAN ON)
+  set(DEFAULT_VALGRIND OFF)
 else()
   set(DEFAULT_ASAN OFF)
+  set(DEFAULT_VALGRIND OFF)
 endif()
 
 optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})
+optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT ${DEFAULT_ASAN})
 optionx(ENABLE_ZIG_ASAN BOOL "If Zig ASAN support should be enabled" DEFAULT ${ENABLE_ASAN})
 
 if (NOT ENABLE_ASAN)

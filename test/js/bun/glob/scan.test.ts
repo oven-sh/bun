@@ -650,6 +650,17 @@ describe("absolute path pattern", async () => {
     expect(entries.sort()).toEqual(files.slice(0, files.length - 1).sort());
   });
 
+  test("absolute file path", async () => {
+    const tmpdir = tmpdirSync();
+    const file = `${tmpdir}${path.sep}foo`;
+
+    await Bun.$`touch ${file}`;
+
+    const glob = new Glob(file);
+    const entries = await Array.fromAsync(glob.scan());
+    expect(entries.sort()).toEqual([file]);
+  });
+
   test("non-special path as first component", async () => {
     const glob = new Glob("/**lol");
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));

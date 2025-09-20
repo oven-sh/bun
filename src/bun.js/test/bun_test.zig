@@ -549,21 +549,20 @@ pub const BunTest = struct {
         defer group.end();
         const this = this_strong.get();
 
-        var args: Strong.List = cfg.callback.args.dupe(this.gpa);
-        defer args.deinit(this.gpa);
+        var done_arg: ?jsc.JSValue = null;
 
         var done_callback: ?jsc.JSValue = null;
         if (cfg.done_parameter) {
             group.log("callTestCallback -> appending done callback param: data {}", .{cfg.data});
             done_callback = DoneCallback.createUnbound(globalThis);
-            args.append(this.gpa, DoneCallback.bind(done_callback.?, globalThis) catch |e| blk: {
+            done_arg = DoneCallback.bind(done_callback.?, globalThis) catch |e| blk: {
                 this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg.data);
                 break :blk jsc.JSValue.js_undefined; // failed to bind done callback
-            });
+            };
         }
 
         this.updateMinTimeout(globalThis, timeout);
-        const result: ?jsc.JSValue = cfg.callback.callback.get().call(globalThis, .js_undefined, args.get()) catch blk: {
+        const result: ?jsc.JSValue = cfg.callback.get().call(globalThis, .js_undefined, if (done_arg) |done| &.{done} else &.{}) catch blk: {
             globalThis.clearTerminationException();
             this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg.data);
             group.log("callTestCallback -> error", .{});
@@ -649,10 +648,10 @@ pub const StepResult = union(enum) {
 };
 
 pub const CallbackEntry = struct {
-    callback: CallbackWithArgs,
+    callback: Strong,
     done_parameter: bool,
     data: BunTest.RefDataValue,
-    pub fn init(gpa: std.mem.Allocator, callback: CallbackWithArgs, done_parameter: bool, data: BunTest.RefDataValue) CallbackEntry {
+    pub fn init(gpa: std.mem.Allocator, callback: Strong, done_parameter: bool, data: BunTest.RefDataValue) CallbackEntry {
         return .{
             .callback = callback.dupe(gpa),
             .done_parameter = done_parameter,
@@ -661,28 +660,6 @@ pub const CallbackEntry = struct {
     }
     pub fn deinit(this: *CallbackEntry, gpa: std.mem.Allocator) void {
         this.callback.deinit(gpa);
-    }
-};
-
-pub const CallbackWithArgs = struct {
-    callback: Strong,
-    args: Strong.List,
-
-    pub fn init(gpa: std.mem.Allocator, callback: jsc.JSValue, args: []const jsc.JSValue) CallbackWithArgs {
-        return .{
-            .callback = .init(gpa, callback),
-            .args = .init(gpa, args),
-        };
-    }
-    pub fn deinit(this: *CallbackWithArgs, gpa: std.mem.Allocator) void {
-        this.callback.deinit();
-        this.args.deinit(gpa);
-    }
-    pub fn dupe(this: CallbackWithArgs, gpa: std.mem.Allocator) CallbackWithArgs {
-        return .{
-            .callback = this.callback.dupe(gpa),
-            .args = this.args.dupe(gpa),
-        };
     }
 };
 
@@ -813,7 +790,7 @@ pub const DescribeScope = struct {
         try this.entries.append(.{ .describe = child });
         return child;
     }
-    pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?CallbackWithArgs, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+    pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
         const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base);
         entry.base.propagate(entry.callback != null);
         try this.entries.append(.{ .test_callback = entry });
@@ -829,9 +806,7 @@ pub const DescribeScope = struct {
         }
     }
     pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        var callback_with_args: ?CallbackWithArgs = if (callback) |c| .init(gpa, c, &.{}) else null;
-        defer if (callback_with_args) |*c| c.deinit(gpa);
-        const entry = try ExecutionEntry.create(gpa, null, callback_with_args, cfg, this, base);
+        const entry = try ExecutionEntry.create(gpa, null, callback, cfg, this, base);
         try this.getHookEntries(tag).append(entry);
         return entry;
     }
@@ -843,7 +818,7 @@ pub const ExecutionEntryCfg = struct {
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
-    callback: ?CallbackWithArgs,
+    callback: ?Strong,
     /// 0 = unlimited timeout
     timeout: u32,
     has_done_parameter: bool,
@@ -851,7 +826,7 @@ pub const ExecutionEntry = struct {
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     timespec: bun.timespec = .epoch,
 
-    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?CallbackWithArgs, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
         const entry = bun.create(gpa, ExecutionEntry, .{
             .base = .init(base, gpa, name_not_owned, parent, cb != null),
             .callback = null,
@@ -864,15 +839,15 @@ pub const ExecutionEntry = struct {
                 .skip => null,
                 .todo => blk: {
                     const run_todo = if (bun.jsc.Jest.Jest.runner) |runner| runner.run_todo else false;
-                    break :blk if (run_todo) c.dupe(gpa) else null;
+                    break :blk if (run_todo) .init(gpa, c) else null;
                 },
-                else => c.dupe(gpa),
+                else => .init(gpa, c),
             };
         }
         return entry;
     }
     pub fn destroy(this: *ExecutionEntry, gpa: std.mem.Allocator) void {
-        if (this.callback) |*c| c.deinit(gpa);
+        if (this.callback) |*c| c.deinit();
         this.base.deinit(gpa);
         gpa.destroy(this);
     }

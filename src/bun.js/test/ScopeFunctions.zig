@@ -99,32 +99,35 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         while (try iter.next()) |item| : (test_idx += 1) {
             if (item == .zero) break;
 
-            var callback: ?bun_test.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
-            defer if (callback) |*cb| cb.deinit(bunTest.gpa);
+            var args_list: std.ArrayList(Strong) = .init(bunTest.gpa);
+            defer args_list.deinit();
+            defer for (args_list.items) |*arg| arg.deinit();
 
             if (item.isArray()) {
-                // Spread array as args (matching Jest & Vitest)
-                if (callback) |*c| c.args.ensureUnusedCapacity(bunTest.gpa, try item.getLength(globalThis));
+                // Spread array as args_list (matching Jest & Vitest)
+                bun.handleOom(args_list.ensureUnusedCapacity(try item.getLength(globalThis)));
 
                 var item_iter = try item.arrayIterator(globalThis);
                 var idx: usize = 0;
                 while (try item_iter.next()) |array_item| : (idx += 1) {
-                    if (callback) |*c| c.args.append(bunTest.gpa, array_item);
+                    bun.handleOom(args_list.append(.init(bunTest.gpa, array_item)));
                 }
             } else {
-                if (callback) |*c| c.args.append(bunTest.gpa, item);
+                bun.handleOom(args_list.append(.init(bunTest.gpa, item)));
             }
 
-            const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, if (callback) |*c| c.args.get() else &.{}, test_idx, bunTest.gpa) else null;
+            var args_list_raw = bun.handleOom(std.ArrayList(jsc.JSValue).initCapacity(bunTest.gpa, args_list.items.len)); // safe because the items are held strongly in args_list
+            defer args_list_raw.deinit();
+            for (args_list.items) |arg| bun.handleOom(args_list_raw.append(arg.get()));
+
+            const formatted_label: ?[]const u8 = if (args.description) |desc| try jsc.Jest.formatLabel(globalThis, desc, args_list_raw.items, test_idx, bunTest.gpa) else null;
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
-            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, formatted_label, args.options.timeout, callback_length, line_no);
+            const bound = if (args.callback) |cb| try cb.bind(globalThis, item, &bun.String.static("cb"), 0, args_list_raw.items) else null;
+            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, bound, formatted_label, args.options.timeout, callback_length -| args_list.items.len, line_no);
         }
     } else {
-        var callback: ?bun_test.CallbackWithArgs = if (args.callback) |callback| .init(bunTest.gpa, callback, &.{}) else null;
-        defer if (callback) |*cb| cb.deinit(bunTest.gpa);
-
-        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, callback, args.description, args.options.timeout, callback_length, line_no);
+        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, args.callback, args.description, args.options.timeout, callback_length, line_no);
     }
 
     return .js_undefined;
@@ -158,7 +161,7 @@ fn filterNames(comptime Rem: type, rem: *Rem, description: ?[]const u8, parent_i
     }
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?bun_test.CallbackWithArgs, description: ?[]const u8, timeout: u32, callback_length: usize, line_no: u32) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?jsc.JSValue, description: ?[]const u8, timeout: u32, callback_length: usize, line_no: u32) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -188,7 +191,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             test_id_for_debugger = globals.max_test_id_for_debugger;
         }
     }
-    const has_done_parameter = if (callback) |*c| callback_length > c.args.get().len else false;
+    const has_done_parameter = if (callback != null) callback_length >= 1 else false;
 
     var base = this.cfg;
     base.line_no = line_no;

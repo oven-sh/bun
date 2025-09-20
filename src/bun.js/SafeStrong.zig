@@ -87,39 +87,6 @@ pub const Optional = struct {
     }
 };
 
-pub const List = struct {
-    #backing: std.ArrayListUnmanaged(jsc.JSValue),
-    pub const empty: List = .{ .#backing = .{ .items = &.{} } };
-    pub fn init(gpa: std.mem.Allocator, items: []const jsc.JSValue) List {
-        var result: std.ArrayListUnmanaged(jsc.JSValue) = .empty;
-        bun.handleOom(result.appendSlice(gpa, items));
-        for (result.items) |*item| item.protect();
-        return .{ .#backing = result };
-    }
-    pub fn deinit(this: *List, gpa: std.mem.Allocator) void {
-        for (this.#backing.items) |*item| item.unprotect();
-        this.#backing.deinit(gpa);
-    }
-    pub fn get(this: List) []const jsc.JSValue {
-        return this.#backing.items;
-    }
-    pub fn append(this: *List, gpa: std.mem.Allocator, item: jsc.JSValue) void {
-        item.protect();
-        bun.handleOom(this.#backing.append(gpa, item));
-    }
-    pub fn ensureUnusedCapacity(this: *List, gpa: std.mem.Allocator, additional: usize) void {
-        bun.handleOom(this.#backing.ensureUnusedCapacity(gpa, additional));
-    }
-
-    pub fn swap(this: *List, gpa: std.mem.Allocator, items: []jsc.JSValue) void {
-        this.deinit(gpa);
-        this.* = .init(items);
-    }
-    pub fn dupe(this: List, gpa: std.mem.Allocator) List {
-        return .init(gpa, this.get());
-    }
-};
-
 const std = @import("std");
 
 const bun = @import("bun");

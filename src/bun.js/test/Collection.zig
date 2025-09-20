@@ -10,11 +10,11 @@ active_scope: *DescribeScope,
 filter_buffer: std.ArrayList(u8),
 
 const QueuedDescribe = struct {
-    callback: bun_test.CallbackWithArgs,
+    callback: jsc.Strong.Safe,
     active_scope: *DescribeScope,
     new_scope: *DescribeScope,
-    fn deinit(this: *QueuedDescribe, gpa: std.mem.Allocator) void {
-        this.callback.deinit(gpa);
+    fn deinit(this: *QueuedDescribe) void {
+        this.callback.deinit();
     }
 };
 
@@ -44,11 +44,11 @@ pub fn init(gpa: std.mem.Allocator, bun_test_root: *bun_test.BunTestRoot) Collec
 pub fn deinit(this: *Collection) void {
     this.root_scope.destroy(this.bunTest().gpa);
     for (this.describe_callback_queue.items) |*item| {
-        item.deinit(this.bunTest().gpa);
+        item.deinit();
     }
     this.describe_callback_queue.deinit();
     for (this.current_scope_callback_queue.items) |*item| {
-        item.deinit(this.bunTest().gpa);
+        item.deinit();
     }
     this.current_scope_callback_queue.deinit();
     this.filter_buffer.deinit();
@@ -58,7 +58,7 @@ fn bunTest(this: *Collection) *BunTest {
     return @fieldParentPtr("collection", this);
 }
 
-pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, callback: ?bun_test.CallbackWithArgs) bun.JSError!void {
+pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, callback: ?jsc.JSValue) bun.JSError!void {
     group.begin(@src());
     defer group.end();
 
@@ -70,7 +70,7 @@ pub fn enqueueDescribeCallback(this: *Collection, new_scope: *DescribeScope, cal
 
         try this.current_scope_callback_queue.append(.{
             .active_scope = this.active_scope,
-            .callback = cb.dupe(buntest.gpa),
+            .callback = .init(buntest.gpa, cb),
             .new_scope = new_scope,
         });
     }
@@ -113,7 +113,7 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
         i -= 1;
         const item = &this.current_scope_callback_queue.items[i];
         if (item.new_scope.failed) { // if there was an error in the describe callback, don't run any describe callbacks in this scope
-            item.deinit(buntest.gpa);
+            item.deinit();
         } else {
             bun.handleOom(this.describe_callback_queue.append(item.*));
         }
@@ -123,7 +123,7 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
     while (this.describe_callback_queue.items.len > 0) {
         group.log("runOne -> call next", .{});
         var first = this.describe_callback_queue.pop().?;
-        defer first.deinit(buntest.gpa);
+        defer first.deinit();
 
         if (first.active_scope.failed) continue; // do not execute callbacks that came from a failed describe scope
 

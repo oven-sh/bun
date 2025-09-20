@@ -162,6 +162,7 @@ const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("<POS> ...                              Package name to explain why it's installed") catch unreachable,
+    clap.parseParam("--json                                 Output in JSON format") catch unreachable,
     clap.parseParam("--top                                  Show only the top dependency tree instead of nested ones") catch unreachable,
     clap.parseParam("--depth <NUM>                          Maximum depth of the dependency tree to display") catch unreachable,
 });

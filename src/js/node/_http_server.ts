@@ -944,6 +944,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     handle.ondata = undefined;
     if (handle.closed) {
       const onclose = handle.onclose;
+      handle.onclose = undefined;
       if ($isCallable(onclose)) {
         onclose.$call(handle);
       }
@@ -982,24 +983,22 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   #resumeSocket() {
     const handle = this[kHandle];
-    if (handle) {
-      const response = handle.response;
-      if (response) {
-        const resumed = response.resume();
-        if (resumed && resumed !== true) {
-          const bodyReadState = handle.hasBody;
+    const response = handle?.response;
+    if (response) {
+      const resumed = response.resume();
+      if (resumed && resumed !== true) {
+        const bodyReadState = handle.hasBody;
 
-          const message = this._httpMessage;
-          const req = message?.req;
+        const message = this._httpMessage;
+        const req = message?.req;
 
-          if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-            emitServerSocketEOFNT(this, req);
-          }
-          if (req) {
-            req.push(resumed);
-          }
-          this.push(resumed);
+        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+          emitServerSocketEOFNT(this, req);
         }
+        if (req) {
+          req.push(resumed);
+        }
+        this.push(resumed);
       }
     }
   }
@@ -1088,11 +1087,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   pause() {
     const handle = this[kHandle];
-    if (handle) {
-      const response = handle.response;
-      if (response) {
-        response.pause();
-      }
+    const response = handle?.response;
+    if (response) {
+      response.pause();
     }
 
     return super.pause();

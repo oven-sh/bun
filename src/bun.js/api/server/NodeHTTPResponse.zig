@@ -1231,7 +1231,6 @@ pub export fn Bun__NodeHTTPResponse_freeBuffer(buffer: *StreamBuffer) void {
 pub export fn Bun__NodeHTTPResponse_rawWrite(
     socket: *uws.us_socket_t,
     is_ssl: bool,
-    response_ctx: *NodeHTTPResponse,
     ended: bool,
     buffer: *StreamBuffer,
     globalObject: *jsc.JSGlobalObject,
@@ -1246,10 +1245,6 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
     defer {
         buffer.update(stream_buffer);
         buffer.wrote(total_written);
-    }
-    response_ctx.setOnAbortedHandler();
-    if (!response_ctx.raw_response.isStreaming()) {
-        return globalObject.throw("Is only possible to write in CONNECT requests.", .{}) catch .zero;
     }
 
     var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
@@ -1279,7 +1274,6 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         total_written +|= written;
         if (written < to_flush.len) {
             if (data_slice.len > 0) {
-                response_ctx.raw_response.onWritable(*NodeHTTPResponse, onDrain, response_ctx);
                 bun.handleOom(stream_buffer.write(data_slice));
             }
             return JSValue.jsNumber(written);
@@ -1291,8 +1285,6 @@ pub export fn Bun__NodeHTTPResponse_rawWrite(
         const written: u32 = @max(0, socket.write(is_ssl, data_slice));
         total_written +|= written;
         if (written < data_slice.len) {
-            response_ctx.raw_response.onWritable(*NodeHTTPResponse, onDrain, response_ctx);
-
             bun.handleOom(stream_buffer.write(data_slice[written..]));
             return JSValue.jsNumber(total_written);
         }

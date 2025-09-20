@@ -1756,6 +1756,12 @@ export function itBundled(
   }
   return ref;
 }
+itBundled.concurrent = (id: string, opts: BundlerTestInput) => {
+  const { it } = testForFile(currentFile ?? callerSourceOrigin());
+  it.concurrent(id, () => expectBundled(id, opts as any));
+  return testRef(id, opts);
+};
+
 itBundled.only = (id: string, opts: BundlerTestInput) => {
   const { it } = testForFile(currentFile ?? callerSourceOrigin());
 

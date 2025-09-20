@@ -1599,7 +1599,7 @@ if (process.platform === "linux")
     }).toThrow("permission denied 0.0.0.0:1003");
   });
 
-describe("should error with invalid options", async () => {
+describe.concurrent("should error with invalid options", async () => {
   it("requestCert", () => {
     expect(() => {
       Bun.serve({
@@ -1659,7 +1659,7 @@ describe("should error with invalid options", async () => {
     }).toThrow("SNI tls object must have a serverName");
   });
 });
-it("should resolve pending promise if requested ended with pending read", async () => {
+it.concurrent("should resolve pending promise if requested ended with pending read", async () => {
   let error: Error;
   function shouldError(e: Error) {
     error = e;
@@ -1690,7 +1690,7 @@ it("should resolve pending promise if requested ended with pending read", async 
   );
 });
 
-it("should work with dispose keyword", async () => {
+it.concurrent("should work with dispose keyword", async () => {
   let url: string;
   {
     using server = Bun.serve({
@@ -1762,7 +1762,7 @@ it("should be able to abrupt stop the server", async () => {
   }
 });
 
-it("should not instanciate error instances in each request", async () => {
+it.concurrent("should not instanciate error instances in each request", async () => {
   const startErrorCount = heapStats().objectTypeCounts.Error || 0;
   using server = Bun.serve({
     port: 0,
@@ -1825,7 +1825,7 @@ it("should be able to abort a sendfile response and streams", async () => {
   expect().pass();
 }, 10_000);
 
-it("should not send extra bytes when using sendfile", async () => {
+it.concurrent("should not send extra bytes when using sendfile", async () => {
   const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const tmpFile = join(tmpdirSync(), "test.bin");
   await Bun.write(tmpFile, payload);
@@ -1891,7 +1891,7 @@ it("should not send extra bytes when using sendfile", async () => {
   expect(content_length).toBe(payload.byteLength);
 });
 
-it("we should always send date", async () => {
+it.concurrent("we should always send date", async () => {
   const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const tmpFile = join(tmpdirSync(), "test.bin");
   await Bun.write(tmpFile, payload);
@@ -1944,95 +1944,103 @@ it("we should always send date", async () => {
   }
 });
 
-it("should allow use of custom timeout", async () => {
-  using server = Bun.serve({
-    port: 0,
-    idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
-    async fetch(req) {
-      const url = new URL(req.url);
-      return new Response(
-        new ReadableStream({
-          async pull(controller) {
-            controller.enqueue("Hello,");
-            if (url.pathname === "/timeout") {
-              await Bun.sleep(10000);
-            } else {
-              await Bun.sleep(10);
-            }
-            controller.enqueue(" World!");
+it.concurrent(
+  "should allow use of custom timeout",
+  async () => {
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+      async fetch(req) {
+        const url = new URL(req.url);
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue("Hello,");
+              if (url.pathname === "/timeout") {
+                await Bun.sleep(10000);
+              } else {
+                await Bun.sleep(10);
+              }
+              controller.enqueue(" World!");
 
-            controller.close();
-          },
-        }),
-        { headers: { "Content-Type": "text/plain" } },
-      );
-    },
-  });
-  async function testTimeout(pathname: string, success: boolean) {
-    const res = await fetch(new URL(pathname, server.url.origin));
-    expect(res.status).toBe(200);
-    if (success) {
-      expect(res.text()).resolves.toBe("Hello, World!");
-    } else {
-      expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+              controller.close();
+            },
+          }),
+          { headers: { "Content-Type": "text/plain" } },
+        );
+      },
+    });
+    async function testTimeout(pathname: string, success: boolean) {
+      const res = await fetch(new URL(pathname, server.url.origin));
+      expect(res.status).toBe(200);
+      if (success) {
+        expect(res.text()).resolves.toBe("Hello, World!");
+      } else {
+        expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+      }
     }
-  }
-  await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
-}, 15_000);
+    await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
+  },
+  15_000,
+);
 
-it("should reset timeout after writes", async () => {
-  // the default is 10s so we send 15
-  // this test should take 15s at most
-  const CHUNKS = 15;
-  const payload = Buffer.from(`data: ${Date.now()}\n\n`);
-  using server = Bun.serve({
-    idleTimeout: 5,
-    port: 0,
-    fetch(request, server) {
-      let controller!: ReadableStreamDefaultController;
-      let count = CHUNKS;
-      let interval = setInterval(() => {
-        controller.enqueue(payload);
-        count--;
-        if (count == 0) {
-          clearInterval(interval);
-          interval = null;
-          controller.close();
-          return;
-        }
-      }, 1000);
-      return new Response(
-        new ReadableStream({
-          start(_controller) {
-            controller = _controller;
+it.concurrent(
+  "should reset timeout after writes",
+  async () => {
+    // the default is 10s so we send 15
+    // this test should take 15s at most
+    const CHUNKS = 15;
+    const payload = Buffer.from(`data: ${Date.now()}\n\n`);
+    using server = Bun.serve({
+      idleTimeout: 5,
+      port: 0,
+      fetch(request, server) {
+        let controller!: ReadableStreamDefaultController;
+        let count = CHUNKS;
+        let interval = setInterval(() => {
+          controller.enqueue(payload);
+          count--;
+          if (count == 0) {
+            clearInterval(interval);
+            interval = null;
+            controller.close();
+            return;
+          }
+        }, 1000);
+        return new Response(
+          new ReadableStream({
+            start(_controller) {
+              controller = _controller;
+            },
+            cancel(controller) {
+              if (interval) clearInterval(interval);
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+            },
           },
-          cancel(controller) {
-            if (interval) clearInterval(interval);
-          },
-        }),
-        {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-          },
-        },
-      );
-    },
-  });
-  let received = 0;
-  const response = await fetch(server.url);
-  const stream = response.body.getReader();
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await stream.read();
-    received += value?.length || 0;
-    if (done) break;
-  }
+        );
+      },
+    });
+    let received = 0;
+    const response = await fetch(server.url);
+    const stream = response.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await stream.read();
+      received += value?.length || 0;
+      if (done) break;
+    }
 
-  expect(received).toBe(CHUNKS * payload.byteLength);
-}, 20_000);
+    expect(received).toBe(CHUNKS * payload.byteLength);
+  },
+  20_000,
+);
 
-it("allow requestIP after async operation", async () => {
+it.concurrent("allow requestIP after async operation", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch(req, server) {
@@ -2048,24 +2056,28 @@ it("allow requestIP after async operation", async () => {
   expect(ip.family).toBeString();
 });
 
-it("allow custom timeout per request", async () => {
-  using server = Bun.serve({
-    idleTimeout: 1,
-    port: 0,
-    async fetch(req, server) {
-      server.timeout(req, 60);
-      await Bun.sleep(10000); //uWS precision is not great
+it.concurrent(
+  "allow custom timeout per request",
+  async () => {
+    using server = Bun.serve({
+      idleTimeout: 1,
+      port: 0,
+      async fetch(req, server) {
+        server.timeout(req, 60);
+        await Bun.sleep(10000); //uWS precision is not great
 
-      return new Response("Hello, World!");
-    },
-  });
-  expect(server.timeout).toBeFunction();
-  const res = await fetch(new URL("/long-timeout", server.url.origin));
-  expect(res.status).toBe(200);
-  expect(res.text()).resolves.toBe("Hello, World!");
-}, 20_000);
+        return new Response("Hello, World!");
+      },
+    });
+    expect(server.timeout).toBeFunction();
+    const res = await fetch(new URL("/long-timeout", server.url.origin));
+    expect(res.status).toBe(200);
+    expect(res.text()).resolves.toBe("Hello, World!");
+  },
+  20_000,
+);
 
-it("#6462", async () => {
+it.concurrent("#6462", async () => {
   let headers: string[] = [];
   using server = Bun.serve({
     port: 0,
@@ -2109,7 +2121,7 @@ it("#6462", async () => {
   ]);
 });
 
-it("#6583", async () => {
+it.concurrent("#6583", async () => {
   const callback = mock();
   using server = Bun.serve({
     fetch: callback,
@@ -2137,7 +2149,7 @@ it("#6583", async () => {
   expect(callback).not.toHaveBeenCalled();
 });
 
-it("do the best effort to flush everything", async () => {
+it.concurrent("do the best effort to flush everything", async () => {
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -2157,7 +2169,7 @@ it("do the best effort to flush everything", async () => {
   expect(await response.text()).toBe("bun");
 });
 
-it("#20283", async () => {
+it.concurrent("#20283", async () => {
   using server = Bun.serve({
     routes: {
       "/": async req => {

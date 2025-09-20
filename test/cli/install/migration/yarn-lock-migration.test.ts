@@ -3,7 +3,7 @@ import fs from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-describe("yarn.lock migration basic", () => {
+describe.concurrent("yarn.lock migration basic", () => {
   test("simple yarn.lock migration produces correct bun.lock", async () => {
     const tempDir = tempDirWithFiles("yarn-migration-simple", {
       "package.json": JSON.stringify(

@@ -23,7 +23,7 @@ const enum SQLCommand {
   update = 1,
   updateSet = 2,
   where = 3,
-  whereIn = 4,
+  in = 4,
   none = -1,
 }
 
@@ -40,7 +40,7 @@ function commandToString(command: SQLCommand): string {
     case SQLCommand.updateSet:
     case SQLCommand.update:
       return "UPDATE";
-    case SQLCommand.whereIn:
+    case SQLCommand.in:
     case SQLCommand.where:
       return "WHERE";
     default:
@@ -142,9 +142,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
               command = SQLCommand.updateSet;
             }
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-            if (command === SQLCommand.where) {
-              command = SQLCommand.whereIn;
-            }
+            command = SQLCommand.in;
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
             hasReturning = true;
           }
@@ -220,9 +218,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
               command = SQLCommand.updateSet;
             }
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-            if (command === SQLCommand.where) {
-              command = SQLCommand.whereIn;
-            }
+            command = SQLCommand.in;
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
             hasReturning = true;
           }
@@ -281,9 +277,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
           command = SQLCommand.updateSet;
         }
       } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-        if (command === SQLCommand.where) {
-          command = SQLCommand.whereIn;
-        }
+        command = SQLCommand.in;
       } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
         hasReturning = true;
       }
@@ -522,7 +516,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
             }
             const { columns, value: items } = value as SQLHelper;
             const columnCount = columns.length;
-            if (columnCount === 0 && command !== SQLCommand.whereIn) {
+            if (columnCount === 0 && command !== SQLCommand.in) {
               throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
             }
             const lastColumnIndex = columns.length - 1;
@@ -579,7 +573,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }
-            } else if (command === SQLCommand.whereIn) {
+            } else if (command === SQLCommand.in) {
               // SELECT * FROM users WHERE id IN (${sql([1, 2, 3])})
               if (!$isArray(items)) {
                 throw new SyntaxError("An array of values is required for WHERE IN helper");

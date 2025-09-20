@@ -1074,8 +1074,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // only enable writting if we can drain
     if (handle && handle.ondrain) {
       try {
-        handle.write(_chunk, _encoding);
-        if (handle.bufferLength > 0) {
+        if (!handle.write(_chunk, _encoding)) {
           this.#pendingCallback = _callback;
           return false;
         }

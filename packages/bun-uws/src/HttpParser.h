@@ -639,7 +639,7 @@ namespace uWS
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isStreamingRequest, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
             #ifdef UWS_WITH_PROXY
                 /* ProxyParser is passed as reserved parameter */
@@ -694,7 +694,7 @@ namespace uWS
                 isAncientHTTP = true;
             }
             if(requestLineResult.isConnect) {
-                isStreamingRequest = true;
+                isConnectRequest = true;
             }
             /* No request headers found */
             const char * headerStart = (headers[0].key.length() > 0) ? headers[0].key.data() : end;
@@ -805,7 +805,7 @@ namespace uWS
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isStreamingRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -816,7 +816,7 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isStreamingRequest, useStrictMethodValidation, maxHeaderSize);
+            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -923,7 +923,7 @@ namespace uWS
                     length -= emittable;
                     consumedTotal += emittable;
                 }
-            } else if(isStreamingRequest) {
+            } else if(isConnectRequest) {
                 // This only server to mark that the connect request read all headers
                 // and can starting emitting data
                 remainingStreamingBytes = STATE_IS_CHUNKED;
@@ -942,12 +942,12 @@ namespace uWS
     }
 
 public:
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isStreamingRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
         if (remainingStreamingBytes) {
-            if (isStreamingRequest) {
+            if (isConnectRequest) {
                 dataHandler(user, std::string_view(data, length), false);
                 return HttpParserResult::success(0, user);
             } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
@@ -993,7 +993,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, isStreamingRequest, requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 return consumed;
@@ -1010,7 +1010,7 @@ public:
                 length -= consumedBytes - had;
 
                 if (remainingStreamingBytes) {
-                    if(isStreamingRequest) {
+                    if(isConnectRequest) {
                         dataHandler(user, std::string_view(data, length), false);
                         return HttpParserResult::success(0, user);
                     } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
@@ -1053,7 +1053,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isStreamingRequest, requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             return consumed;

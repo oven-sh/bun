@@ -23,15 +23,16 @@
 #include "JSSocketAddressDTO.h"
 
 extern "C" {
-struct StreamBuffer {
-    char* buffer = nullptr;
-    size_t bufferLength = 0;
-    size_t bufferPosition = 0;
-    size_t bytesWritten = 0;
+struct us_socket_stream_buffer_t {
+    char* listPtr = nullptr;
+    size_t listCap = 0;
+    size_t listLen = 0;
+    size_t totalBytesWritten = 0;
+    size_t cursor = 0;
 
     size_t bufferedSize() const
     {
-        return bufferLength - bufferPosition;
+        return listLen - cursor;
     }
 };
 }
@@ -41,8 +42,8 @@ extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest,
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
-extern "C" EncodedJSValue Bun__NodeHTTP_rawWrite(void* socket, bool is_ssl, bool ended, StreamBuffer* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
-extern "C" void Bun__NodeHTTP_freeStreamBuffer(StreamBuffer* streamBuffer);
+extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 namespace Bun {
 
 using namespace JSC;
@@ -60,7 +61,6 @@ JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnData);
-JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBufferLength);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite);
@@ -78,7 +78,6 @@ static const HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
     { "onclose"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnClose, jsNodeHttpServerSocketSetterOnClose } },
     { "ondrain"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnDrain, jsNodeHttpServerSocketSetterOnDrain } },
     { "ondata"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnData, jsNodeHttpServerSocketSetterOnData } },
-    { "bufferLength"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterBufferLength, noOpSetter } },
     { "bytesWritten"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterBytesWritten, noOpSetter } },
     { "closed"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosed, noOpSetter } },
     { "response"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterResponse, noOpSetter } },
@@ -132,7 +131,7 @@ private:
 class JSNodeHTTPServerSocket : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    StreamBuffer streamBuffer = {};
+    us_socket_stream_buffer_t streamBuffer = {};
     us_socket_t* socket = nullptr;
     unsigned is_ssl : 1 = 0;
     unsigned ended : 1 = 0;
@@ -197,7 +196,7 @@ public:
                 clearSocketData<false>(socket);
             }
         }
-        Bun__NodeHTTP_freeStreamBuffer(&streamBuffer);
+        us_socket_free_stream_buffer(&streamBuffer);
     }
 
     JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
@@ -306,7 +305,7 @@ public:
 
             auto* globalObject = defaultGlobalObject(this->globalObject());
             auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-            Bun__NodeHTTP_rawWrite(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+            us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
             if (scope.exception()) {
                 globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
                 return;
@@ -431,7 +430,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsNumber(0));
     }
 
-    return Bun__NodeHTTP_rawWrite(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    return us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -447,7 +446,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     thisObject->ended = true;
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
     if (bufferedSize == 0) {
-        return Bun__NodeHTTP_rawWrite(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        return us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
     }
     return JSValue::encode(JSC::jsUndefined());
 }
@@ -644,17 +643,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosed, (JSGlobalObject * g
     return JSValue::encode(JSC::jsBoolean(thisObject->isClosed()));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBufferLength, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
-{
-    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
-    // We only care about the buffered size in js land
-    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.bufferedSize()));
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
-    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.bytesWritten));
+    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.totalBytesWritten));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))

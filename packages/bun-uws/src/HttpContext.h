@@ -196,7 +196,7 @@ private:
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             
-            if(httpResponseData && httpResponseData->isStreamingRequest) {
+            if(httpResponseData && httpResponseData->isConnectRequest) {
                 if (httpResponseData->socketData && httpContextData->onSocketData) {
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
@@ -263,7 +263,7 @@ private:
 
             /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isStreamingRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
                 
                 /* For every request we reset the timeout and hang until user makes action */
@@ -344,7 +344,7 @@ private:
             }, [httpResponseData, httpContextData](void *user, std::string_view data, bool fin) -> void * {
 
 
-                if (httpResponseData->isStreamingRequest && httpResponseData->socketData && httpContextData->onSocketData) {
+                if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
                 }
                 /* We always get an empty chunk even if there is no data */
@@ -489,7 +489,7 @@ private:
             auto *httpContextData = getSocketContextDataS(s);
 
 
-            if (httpResponseData->isStreamingRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+            if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
                 httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
             }
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */

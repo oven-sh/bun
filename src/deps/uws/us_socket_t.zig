@@ -233,3 +233,118 @@ const std = @import("std");
 
 const uws = @import("../uws.zig");
 const SocketContext = uws.SocketContext;
+
+const us_socket_stream_buffer_t = extern struct {
+    listPtr: ?[*]u8 = null,
+    listCap: usize = 0,
+    listLen: usize = 0,
+    totalBytesWritten: usize = 0,
+    cursor: usize = 0,
+
+    pub fn update(this: *us_socket_stream_buffer_t, stream_buffer: bun.io.StreamBuffer) void {
+        if (stream_buffer.list.capacity > 0) {
+            this.listPtr = stream_buffer.list.items.ptr;
+        } else {
+            this.listPtr = null;
+        }
+        this.listLen = stream_buffer.list.items.len;
+        this.listCap = stream_buffer.list.capacity;
+        this.cursor = stream_buffer.cursor;
+    }
+    pub fn wrote(this: *us_socket_stream_buffer_t, written: usize) void {
+        this.totalBytesWritten +|= written;
+    }
+
+    pub fn toStreamBuffer(this: *us_socket_stream_buffer_t) bun.io.StreamBuffer {
+        return .{
+            .list = if (this.listPtr) |buffer_ptr| .{
+                .allocator = bun.default_allocator,
+                .items = buffer_ptr[0..this.listLen],
+                .capacity = this.listCap,
+            } else .{
+                .allocator = bun.default_allocator,
+                .items = &.{},
+                .capacity = 0,
+            },
+            .cursor = this.cursor,
+        };
+    }
+
+    pub fn deinit(this: *us_socket_stream_buffer_t) void {
+        if (this.listPtr) |buffer| {
+            bun.default_allocator.free(buffer[0..this.listCap]);
+        }
+    }
+};
+
+export fn us_socket_free_stream_buffer(buffer: *us_socket_stream_buffer_t) void {
+    buffer.deinit();
+}
+export fn us_socket_buffered_js_write(
+    socket: *uws.us_socket_t,
+    is_ssl: bool,
+    ended: bool,
+    buffer: *us_socket_stream_buffer_t,
+    globalObject: *jsc.JSGlobalObject,
+    data: jsc.JSValue,
+    encoding: jsc.JSValue,
+) jsc.JSValue {
+    // convever it back to StreamBuffer
+    var stream_buffer = buffer.toStreamBuffer();
+    var total_written: usize = 0;
+    // update the buffer pointer to the new buffer
+    defer {
+        buffer.update(stream_buffer);
+        buffer.wrote(total_written);
+    }
+
+    var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+    const node_buffer: jsc.Node.BlobOrStringOrBuffer = if (data.isUndefined())
+        jsc.Node.BlobOrStringOrBuffer{ .string_or_buffer = jsc.Node.StringOrBuffer.empty }
+    else
+        jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), data, encoding, false, true) catch {
+            return .zero;
+        } orelse {
+            if (!globalObject.hasException()) {
+                return globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data) catch .zero;
+            }
+            return .zero;
+        };
+
+    defer node_buffer.deinit();
+    if (node_buffer == .blob and node_buffer.blob.needsToReadFile()) {
+        return globalObject.throw("File blob not supported yet in this function.", .{}) catch .zero;
+    }
+
+    const data_slice = node_buffer.slice();
+    if (stream_buffer.isNotEmpty()) {
+        // need to flush
+        const to_flush = stream_buffer.slice();
+        const written: u32 = @max(0, socket.write(is_ssl, to_flush));
+        stream_buffer.wrote(written);
+        total_written +|= written;
+        if (written < to_flush.len) {
+            if (data_slice.len > 0) {
+                bun.handleOom(stream_buffer.write(data_slice));
+            }
+            return JSValue.jsBoolean(false);
+        }
+        // stream buffer is empty now
+    }
+
+    if (data_slice.len > 0) {
+        const written: u32 = @max(0, socket.write(is_ssl, data_slice));
+        total_written +|= written;
+        if (written < data_slice.len) {
+            bun.handleOom(stream_buffer.write(data_slice[written..]));
+            return JSValue.jsBoolean(false);
+        }
+    }
+    if (ended) {
+        // last part so we shutdown the writable side of the socket aka send FIN
+        socket.shutdown(is_ssl);
+    }
+    return JSValue.jsBoolean(true);
+}
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

@@ -407,7 +407,7 @@ var InternalResolver = class Resolver {
           switch (rrtype?.toLowerCase()) {
             case "a":
             case "aaaa":
-              callback(null, hostname, results.map(mapResolveX));
+              callback(null, results.map(mapResolveX));
               break;
             default:
               callback(null, results);
@@ -792,7 +792,7 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())));
+        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
       default:
         return translateErrorCode(dns.resolve(hostname, rrtype));
     }
@@ -870,7 +870,7 @@ const promises = {
         case "a":
         case "aaaa":
           return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())),
+            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
           );
         default:
           return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));

@@ -793,7 +793,8 @@ pub const DescribeScope = struct {
     fn markContainsOnly(this: *DescribeScope) void {
         var target: ?*DescribeScope = this;
         while (target) |scope| {
-            if (scope.base.only != .no) return; // already marked
+            if (scope.base.only == .contains) return; // already marked
+            // note that we overwrite '.yes' with '.contains' to support only-inside-only
             scope.base.only = .contains;
             target = scope.base.parent;
         }

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Test for macro panic with collections containing three or more arrays/objects
@@ -98,11 +98,7 @@ test("macros should handle collections with 3+ arrays/objects", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
@@ -110,7 +106,7 @@ test("macros should handle collections with 3+ arrays/objects", async () => {
   // Check output contains expected values
   expect(stdout).toContain('arrays: [{"a":[]},{"b":[]},{"c":[]}]');
   expect(stdout).toContain('objects: [{"a":{}},{"b":{}},{"c":{}}]');
-  expect(stdout).toContain('nested: [[[1]],[[2]],[[3]]]');
+  expect(stdout).toContain("nested: [[[1]],[[2]],[[3]]]");
   expect(stdout).toContain('mixed: [{"arr":[],"obj":{}},{"arr":[],"obj":{}},{"arr":[],"obj":{}}]');
   expect(stdout).toContain("SUCCESS");
 });

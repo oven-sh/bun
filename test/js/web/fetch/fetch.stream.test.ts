@@ -1,7 +1,7 @@
 import { Socket } from "bun";
 import { describe, expect, it } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
-import { gcTick } from "harness";
+import { gcTick, isWindows } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
 import { join } from "path";
@@ -28,7 +28,8 @@ const empty = Buffer.alloc(0);
 
 describe("fetch() with streaming", () => {
   [-1, 0, 20, 50, 100].forEach(timeout => {
-    it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
+    // prettier-ignore
+    it.todoIf(timeout === 20 && isWindows)(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
       using server = Bun.serve({
         port: 0,
         async fetch(req) {

@@ -10,12 +10,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
-export type RequestContext = {
-  responseOptions: ResponseInit;
-  streaming: boolean;
-  streamingStarted?: boolean;
-  renderAbort?: (path: string, params: Record<string, any> | null) => never;
-};
+export type RequestContext = import("bun:app").__internal.RequestContext;
 
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
@@ -67,7 +62,14 @@ server_exports = {
     }
 
     const [pageModule, ...layouts] = await Promise.all(
-      routeModules.map(loadExports) as [Promise<ServerEntryPoint>, ...Promise<ServerEntryPoint>[]],
+      routeModules.map(loadExports) as [
+        Promise<{
+          streaming?: boolean;
+          mode?: "ssr" | "static";
+          default: () => React.JSXElementConstructor<unknown>;
+        }>,
+        ...Promise<ServerEntryPoint>[],
+      ],
     );
 
     if (!pageModule) {
@@ -76,7 +78,7 @@ server_exports = {
 
     let requestWithCookies = req;
 
-    let storeValue: RequestContext = {
+    let storeValue: import("bun:app").__internal.RequestContext = {
       responseOptions: {},
       streaming: pageModule?.streaming ?? false,
     };

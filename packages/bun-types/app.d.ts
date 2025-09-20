@@ -9,6 +9,8 @@
  * an app built with the Bun Rendering API.
  */
 declare module "bun:app" {
+  type FrameworkDefinitionLike = Framework | `bun-framework-${string}` | (string & {});
+
   interface Config {
     /**
      * The framework definition
@@ -18,7 +20,7 @@ declare module "bun:app" {
      * export default {app: {framework: "bun-framework-react"}};
      * ```
      */
-    framework: Framework | `bun-framework-${string}` | (string & {});
+    framework: FrameworkDefinitionLike;
 
     // Note: To contribute to 'bun-framework-react', it can be run from this file:
     // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
@@ -374,6 +376,14 @@ declare module "bun:app" {
         type: "route" | "layout" | "extra";
       };
 
+  namespace __internal {
+    type RequestContext = {
+      responseOptions: ResponseInit;
+      streaming: boolean;
+      streamingStarted?: boolean;
+    };
+  }
+
   interface ServerEntryPoint {
     readonly streaming?: boolean;
     readonly mode?: "ssr" | "static";
@@ -388,7 +398,7 @@ declare module "bun:app" {
     render: (
       request: Request,
       routeMetadata: RouteMetadata,
-      storage: AsyncLocalStorage<RequestContext> | undefined,
+      storage: import("node:async_hooks").AsyncLocalStorage<__internal.RequestContext> | undefined,
     ) => Bun.MaybePromise<Response>;
 
     /**

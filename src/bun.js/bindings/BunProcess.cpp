@@ -76,6 +76,9 @@
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
+#include <windows.h>
+#include <psapi.h>
+#include <direct.h>
 // Using the same typedef and define for `mode_t` and `umask` as node on windows.
 // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
 #define umask _umask
@@ -2076,8 +2079,446 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         return report;
     }
-#else // !OS(WINDOWS)
-    return jsString(vm, String("Not implemented. blame @paperclover"_s));
+#else // OS(WINDOWS)
+    // Windows implementation
+    auto constructUserLimits = [&]() -> JSValue {
+        // Windows doesn't have the same resource limits as Unix
+        // Return an object with Windows-specific limits
+        JSC::JSObject* userLimits = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // Get some Windows-specific limits
+        SYSTEM_INFO sysInfo;
+        GetSystemInfo(&sysInfo);
+
+        // Maximum number of threads
+        JSC::JSObject* threadLimit = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        RETURN_IF_EXCEPTION(scope, {});
+        threadLimit->putDirect(vm, JSC::Identifier::fromString(vm, "soft"_s), JSC::jsNumber(10000), 0);
+        threadLimit->putDirect(vm, JSC::Identifier::fromString(vm, "hard"_s), JSC::jsString(vm, String("unlimited"_s)), 0);
+        userLimits->putDirect(vm, JSC::Identifier::fromString(vm, "max_user_processes"_s), threadLimit, 0);
+
+        // Open files limit (Windows handles)
+        JSC::JSObject* fileLimit = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        RETURN_IF_EXCEPTION(scope, {});
+        fileLimit->putDirect(vm, JSC::Identifier::fromString(vm, "soft"_s), JSC::jsNumber(8192), 0);
+        fileLimit->putDirect(vm, JSC::Identifier::fromString(vm, "hard"_s), JSC::jsNumber(16384), 0);
+        userLimits->putDirect(vm, JSC::Identifier::fromString(vm, "open_files"_s), fileLimit, 0);
+
+        // Virtual memory limit
+        MEMORYSTATUSEX memStatus;
+        memStatus.dwLength = sizeof(memStatus);
+        GlobalMemoryStatusEx(&memStatus);
+
+        JSC::JSObject* memLimit = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        RETURN_IF_EXCEPTION(scope, {});
+        memLimit->putDirect(vm, JSC::Identifier::fromString(vm, "soft"_s), JSC::jsNumber(memStatus.ullTotalVirtual / 1024), 0);
+        memLimit->putDirect(vm, JSC::Identifier::fromString(vm, "hard"_s), JSC::jsNumber(memStatus.ullTotalVirtual / 1024), 0);
+        userLimits->putDirect(vm, JSC::Identifier::fromString(vm, "virtual_memory_kbytes"_s), memLimit, 0);
+
+        return userLimits;
+    };
+
+    auto constructResourceUsage = [&]() -> JSC::JSValue {
+        JSC::JSObject* resourceUsage = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // Get memory information
+        PROCESS_MEMORY_COUNTERS_EX pmc;
+        pmc.cb = sizeof(pmc);
+        GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+
+        MEMORYSTATUSEX memStatus;
+        memStatus.dwLength = sizeof(memStatus);
+        GlobalMemoryStatusEx(&memStatus);
+
+        resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "free_memory"_s), JSC::jsNumber(memStatus.ullAvailPhys), 0);
+        resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "total_memory"_s), JSC::jsNumber(memStatus.ullTotalPhys), 0);
+        resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), JSC::jsNumber(pmc.WorkingSetSize), 0);
+        resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "available_memory"_s), JSC::jsNumber(memStatus.ullAvailPhys), 0);
+
+        // Get CPU time information
+        FILETIME creationTime, exitTime, kernelTime, userTime;
+        if (GetProcessTimes(GetCurrentProcess(), &creationTime, &exitTime, &kernelTime, &userTime)) {
+            ULARGE_INTEGER kTime, uTime;
+            kTime.LowPart = kernelTime.dwLowDateTime;
+            kTime.HighPart = kernelTime.dwHighDateTime;
+            uTime.LowPart = userTime.dwLowDateTime;
+            uTime.HighPart = userTime.dwHighDateTime;
+
+            // Convert 100-nanosecond intervals to seconds
+            double kernelSeconds = kTime.QuadPart / 10000000.0;
+            double userSeconds = uTime.QuadPart / 10000000.0;
+            double totalSeconds = kernelSeconds + userSeconds;
+
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "userCpuSeconds"_s), JSC::jsNumber(userSeconds), 0);
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "kernelCpuSeconds"_s), JSC::jsNumber(kernelSeconds), 0);
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "cpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "userCpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "kernelCpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+        } else {
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "userCpuSeconds"_s), JSC::jsNumber(0), 0);
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "kernelCpuSeconds"_s), JSC::jsNumber(0), 0);
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "cpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "userCpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+            resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "kernelCpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+        }
+
+        resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "maxRss"_s), JSC::jsNumber(pmc.PeakWorkingSetSize), 0);
+
+        JSC::JSObject* pageFaults = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        RETURN_IF_EXCEPTION(scope, {});
+        pageFaults->putDirect(vm, JSC::Identifier::fromString(vm, "IORequired"_s), JSC::jsNumber(pmc.PageFaultCount), 0);
+        pageFaults->putDirect(vm, JSC::Identifier::fromString(vm, "IONotRequired"_s), JSC::jsNumber(0), 0);
+        resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "pageFaults"_s), pageFaults, 0);
+
+        JSC::JSObject* fsActivity = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        RETURN_IF_EXCEPTION(scope, {});
+        IO_COUNTERS ioCounters;
+        if (GetProcessIoCounters(GetCurrentProcess(), &ioCounters)) {
+            fsActivity->putDirect(vm, JSC::Identifier::fromString(vm, "reads"_s), JSC::jsNumber(ioCounters.ReadOperationCount), 0);
+            fsActivity->putDirect(vm, JSC::Identifier::fromString(vm, "writes"_s), JSC::jsNumber(ioCounters.WriteOperationCount), 0);
+        } else {
+            fsActivity->putDirect(vm, JSC::Identifier::fromString(vm, "reads"_s), JSC::jsNumber(0), 0);
+            fsActivity->putDirect(vm, JSC::Identifier::fromString(vm, "writes"_s), JSC::jsNumber(0), 0);
+        }
+        resourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "fsActivity"_s), fsActivity, 0);
+
+        return resourceUsage;
+    };
+
+    auto constructHeader = [&]() -> JSC::JSValue {
+        JSC::JSObject* header = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+        RETURN_IF_EXCEPTION(scope, {});
+
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "reportVersion"_s), JSC::jsNumber(3), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "event"_s), JSC::jsString(vm, String("JavaScript API"_s)), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "trigger"_s), JSC::jsString(vm, String("GetReport"_s)), 0);
+        if (fileName.isEmpty()) {
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "filename"_s), JSC::jsNull(), 0);
+        } else {
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "filename"_s), JSC::jsString(vm, fileName), 0);
+        }
+
+        double time = WTF::jsCurrentTime();
+        char timeBuf[64] = { 0 };
+        Bun::toISOString(vm, time, timeBuf);
+        auto timeStamp = WTF::String::fromLatin1(timeBuf);
+
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "dumpEventTime"_s), JSC::numberToString(vm, time, 10), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "dumpEventTimeStamp"_s), JSC::jsString(vm, timeStamp));
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "processId"_s), JSC::jsNumber(_getpid()), 0);
+        // TODO: Get thread ID on Windows
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "threadId"_s), JSC::jsNumber(GetCurrentThreadId()), 0);
+
+        {
+            char cwd[MAX_PATH] = { 0 };
+            if (_getcwd(cwd, MAX_PATH) == nullptr) {
+                cwd[0] = '.';
+                cwd[1] = '\0';
+            }
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "cwd"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(cwd), strlen(cwd) })), 0);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__createExecArgv(globalObject)), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "nodejsVersion"_s), JSC::jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "wordSize"_s), JSC::jsNumber(64), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "arch"_s), constructArch(vm, header), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "platform"_s), constructPlatform(vm, header), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "componentVersions"_s), constructVersions(vm, header), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "release"_s), constructProcessReleaseObject(vm, header), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        {
+            // Windows version information
+            OSVERSIONINFOEXW osvi;
+            ZeroMemory(&osvi, sizeof(OSVERSIONINFOEXW));
+            osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEXW);
+
+            // Use RtlGetVersion to get accurate version info
+            typedef LONG (WINAPI* RtlGetVersionFunc)(PRTL_OSVERSIONINFOW);
+            HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+            if (ntdll) {
+                RtlGetVersionFunc RtlGetVersion = (RtlGetVersionFunc)GetProcAddress(ntdll, "RtlGetVersion");
+                if (RtlGetVersion) {
+                    RtlGetVersion((PRTL_OSVERSIONINFOW)&osvi);
+                }
+            }
+
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "osName"_s), JSC::jsString(vm, String("Windows_NT"_s)), 0);
+
+            String osRelease = makeString(String::number(osvi.dwMajorVersion), "."_s, String::number(osvi.dwMinorVersion), "."_s, String::number(osvi.dwBuildNumber));
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "osRelease"_s), JSC::jsString(vm, osRelease), 0);
+
+            String osVersion = makeString("Windows "_s, String::number(osvi.dwMajorVersion), "."_s, String::number(osvi.dwMinorVersion), "."_s, String::number(osvi.dwBuildNumber));
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "osVersion"_s), JSC::jsString(vm, osVersion), 0);
+
+            SYSTEM_INFO sysInfo;
+            GetNativeSystemInfo(&sysInfo);
+            String machine;
+            switch (sysInfo.wProcessorArchitecture) {
+                case PROCESSOR_ARCHITECTURE_AMD64:
+                    machine = "x86_64"_s;
+                    break;
+                case PROCESSOR_ARCHITECTURE_ARM:
+                    machine = "arm"_s;
+                    break;
+                case PROCESSOR_ARCHITECTURE_ARM64:
+                    machine = "arm64"_s;
+                    break;
+                case PROCESSOR_ARCHITECTURE_INTEL:
+                    machine = "i686"_s;
+                    break;
+                default:
+                    machine = "unknown"_s;
+                    break;
+            }
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "osMachine"_s), JSC::jsString(vm, machine), 0);
+        }
+
+        // host
+        {
+            char host[MAX_COMPUTERNAME_LENGTH + 1] = { 0 };
+            DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
+            if (!GetComputerNameA(host, &size)) {
+                host[0] = '0';
+            }
+            header->putDirect(vm, JSC::Identifier::fromString(vm, "host"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(host), strlen(host) })), 0);
+        }
+
+        header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        return header;
+    };
+
+    auto constructJavaScriptHeap = [&]() -> JSC::JSValue {
+        JSC::JSObject* heap = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 16);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSC::JSObject* heapSpaces = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "read_only_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "new_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "old_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "code_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "shared_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "new_large_object_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "large_object_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "code_large_object_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "shared_large_object_space"_s), JSC::constructEmptyObject(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalMemory"_s), JSC::jsNumber(WTF::ramSize()), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "executableMemory"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalCommittedMemory"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "availableMemory"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalGlobalHandlesMemory"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "usedGlobalHandlesMemory"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "usedMemory"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "memoryLimit"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "mallocedMemory"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "externalMemory"_s), JSC::jsNumber(vm.heap.externalMemorySize()), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "peakMallocedMemory"_s), jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "nativeContextCount"_s), JSC::jsNumber(1), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "detachedContextCount"_s), JSC::jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "doesZapGarbage"_s), JSC::jsNumber(0), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "heapSpaces"_s), heapSpaces, 0);
+
+        return heap;
+    };
+
+    auto constructUVThreadResourceUsage = [&]() -> JSC::JSValue {
+        JSC::JSObject* uvthreadResourceUsage = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 6);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        uvthreadResourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "userCpuSeconds"_s), JSC::jsNumber(0), 0);
+        uvthreadResourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "kernelCpuSeconds"_s), JSC::jsNumber(0), 0);
+        uvthreadResourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "cpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+        uvthreadResourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "userCpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+        uvthreadResourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "kernelCpuConsumptionPercent"_s), JSC::jsNumber(0), 0);
+
+        JSC::JSObject* fsActivity = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        RETURN_IF_EXCEPTION(scope, {});
+        fsActivity->putDirect(vm, JSC::Identifier::fromString(vm, "reads"_s), JSC::jsNumber(0), 0);
+        fsActivity->putDirect(vm, JSC::Identifier::fromString(vm, "writes"_s), JSC::jsNumber(0), 0);
+
+        uvthreadResourceUsage->putDirect(vm, JSC::Identifier::fromString(vm, "fsActivity"_s), fsActivity, 0);
+
+        return uvthreadResourceUsage;
+    };
+
+    auto constructJavaScriptStack = [&]() -> JSC::JSValue {
+        JSC::JSObject* javascriptStack = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
+
+        // TODO: allow errors as an argument
+        {
+            WTF::Vector<JSC::StackFrame> stackFrames;
+            vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
+            String name = "Error"_s;
+            String message = "JavaScript Callstack"_s;
+            OrdinalNumber line = OrdinalNumber::beforeFirst();
+            OrdinalNumber column = OrdinalNumber::beforeFirst();
+            WTF::String sourceURL;
+            WTF::String stackProperty = Bun::formatStackTrace(
+                vm, globalObject, globalObject, name, message,
+                line, column,
+                sourceURL, stackFrames, nullptr);
+
+            WTF::String stack;
+            // first line after "Error:"
+            size_t firstLine = stackProperty.find('\n');
+            if (firstLine != WTF::notFound) {
+                stack = stackProperty.substring(firstLine + 1);
+            }
+
+            JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            stack.split('\n', [&](const WTF::StringView& line) {
+                stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
+                RETURN_IF_EXCEPTION(scope, );
+            });
+            RETURN_IF_EXCEPTION(scope, {});
+
+            javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
+        }
+
+        JSC::JSObject* errorProperties = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+        RETURN_IF_EXCEPTION(scope, {});
+        errorProperties->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String("ERR_SYNTHETIC"_s)), 0);
+        javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
+        return javascriptStack;
+    };
+
+    auto constructSharedObjects = [&]() -> JSC::JSValue {
+        JSC::JSObject* sharedObjects = JSC::constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        // TODO: enumerate loaded DLLs on Windows
+        return sharedObjects;
+    };
+
+    auto constructLibUV = [&]() -> JSC::JSValue {
+        JSC::JSObject* libuv = JSC::constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        // TODO: UV handles information
+        return libuv;
+    };
+
+    auto constructWorkers = [&]() -> JSC::JSValue {
+        JSC::JSObject* workers = JSC::constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        // TODO: Worker threads information
+        return workers;
+    };
+
+    auto constructEnvironmentVariables = [&]() -> JSC::JSValue {
+        JSC::JSObject* envVars = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+        RETURN_IF_EXCEPTION(scope, {});
+
+        LPWCH env = GetEnvironmentStringsW();
+        if (env) {
+            LPWCH current = env;
+            while (*current) {
+                size_t len = wcslen(current);
+                WTF::String envStr = WTF::String(current, len);
+                size_t equalPos = envStr.find('=');
+                if (equalPos != WTF::notFound && equalPos > 0) {
+                    WTF::String key = envStr.substring(0, equalPos);
+                    WTF::String value = envStr.substring(equalPos + 1);
+                    envVars->putDirect(vm, JSC::Identifier::fromString(vm, key), JSC::jsString(vm, value), 0);
+                }
+                current += len + 1;
+            }
+            FreeEnvironmentStringsW(env);
+        }
+
+        return envVars;
+    };
+
+    auto constructCpus = [&]() -> JSC::JSValue {
+        JSC::JSArray* cpus = JSC::constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        SYSTEM_INFO sysInfo;
+        GetSystemInfo(&sysInfo);
+
+        for (DWORD i = 0; i < sysInfo.dwNumberOfProcessors; i++) {
+            JSC::JSObject* cpu = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+            RETURN_IF_EXCEPTION(scope, {});
+            cpu->putDirect(vm, JSC::Identifier::fromString(vm, "model"_s), JSC::jsString(vm, String("Unknown"_s)), 0);
+            cpu->putDirect(vm, JSC::Identifier::fromString(vm, "speed"_s), JSC::jsNumber(0), 0);
+
+            JSC::JSObject* times = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
+            RETURN_IF_EXCEPTION(scope, {});
+            times->putDirect(vm, JSC::Identifier::fromString(vm, "user"_s), JSC::jsNumber(0), 0);
+            times->putDirect(vm, JSC::Identifier::fromString(vm, "nice"_s), JSC::jsNumber(0), 0);
+            times->putDirect(vm, JSC::Identifier::fromString(vm, "sys"_s), JSC::jsNumber(0), 0);
+            times->putDirect(vm, JSC::Identifier::fromString(vm, "idle"_s), JSC::jsNumber(0), 0);
+            times->putDirect(vm, JSC::Identifier::fromString(vm, "irq"_s), JSC::jsNumber(0), 0);
+
+            cpu->putDirect(vm, JSC::Identifier::fromString(vm, "times"_s), times, 0);
+            cpus->push(globalObject, cpu);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        return cpus;
+    };
+
+    auto constructNetworkInterfaces = [&]() -> JSC::JSValue {
+        JSC::JSObject* networkInterfaces = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+        RETURN_IF_EXCEPTION(scope, {});
+        // TODO: enumerate network interfaces on Windows
+        return networkInterfaces;
+    };
+
+    // Construct the report object
+    JSC::JSObject* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 12);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "header"_s), constructHeader(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "javascriptStack"_s), constructJavaScriptStack(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "javascriptHeap"_s), constructJavaScriptHeap(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "nativeStack"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "resourceUsage"_s), constructResourceUsage(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "uvthreadResourceUsage"_s), constructUVThreadResourceUsage(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "libuv"_s), constructLibUV(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "workers"_s), constructWorkers(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "environmentVariables"_s), constructEnvironmentVariables(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "userLimits"_s), constructUserLimits(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "sharedObjects"_s), constructSharedObjects(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "cpus"_s), constructCpus(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "networkInterfaces"_s), constructNetworkInterfaces(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return report;
 #endif
 }
 

@@ -3742,19 +3742,16 @@ pub fn NewParser_(
             }
         }
 
-        pub fn keepExprSymbolName(_: *P, _value: Expr, _: string) Expr {
-            return _value;
-            // var start = p.expr_list.items.len;
-            // p.expr_list.ensureUnusedCapacity(2) catch unreachable;
-            // p.expr_list.appendAssumeCapacity(_value);
-            // p.expr_list.appendAssumeCapacity(p.newExpr(E.String{
-            //     .utf8 = name,
-            // }, _value.loc));
+        pub fn keepExprSymbolName(p: *P, _value: Expr, name: string) Expr {
+            // Create a call to the __name runtime helper
+            var args = p.allocator.alloc(Expr, 2) catch unreachable;
+            args[0] = _value;
+            args[1] = p.newExpr(E.String{ .data = name }, _value.loc);
 
-            // var value = p.callRuntime(_value.loc, "ℹ", p.expr_list.items[start..p.expr_list.items.len]);
-            // // Make sure tree shaking removes this if the function is never used
-            // value.getCall().can_be_unwrapped_if_unused = true;
-            // return value;
+            var value = p.callRuntime(_value.loc, "__name", args);
+            // Make sure tree shaking removes this if the function is never used
+            value.data.e_call.can_be_unwrapped_if_unused = .if_unused;
+            return value;
         }
 
         pub fn isSimpleParameterList(args: []G.Arg, has_rest_arg: bool) bool {

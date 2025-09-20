@@ -235,7 +235,6 @@ pub fn generateCodeForFileInChunkJS(
                     if (prop.key == null or prop.key.?.data != .e_string or prop.value == null) continue;
                     const name = prop.key.?.data.e_string.slice(temp_allocator);
                     if (strings.eqlComptime(name, "default") or
-                        strings.eqlComptime(name, "__esModule") or
                         !bun.js_lexer.isIdentifier(name)) continue;
 
                     if (resolved_exports.get(name)) |export_data| {

@@ -416,16 +416,9 @@ pub fn createExportsForFile(
         c.graph.ast.items(.flags)[id].uses_exports_ref = true;
     }
 
-    // Decorate "module.exports" with the "__esModule" flag to indicate that
-    // we used to be an ES module. This is done by wrapping the exports object
-    // instead of by mutating the exports object because other modules in the
-    // bundle (including the entry point module) may do "import * as" to get
-    // access to the exports object and should NOT see the "__esModule" flag.
+    // Export the ES module exports as CommonJS exports.
+    // With the __esModule workaround removed, we directly assign the exports object.
     if (force_include_exports_for_entry_point) {
-        const toCommonJSRef = c.runtimeFunction("__toCommonJS");
-
-        var call_args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
-        call_args[0] = Expr.initIdentifier(exports_ref, Loc.Empty);
         remaining_stmts[0] = js_ast.Stmt.assign(
             Expr.allocate(
                 allocator,
@@ -437,15 +430,7 @@ pub fn createExportsForFile(
                 },
                 Loc.Empty,
             ),
-            Expr.allocate(
-                allocator,
-                E.Call,
-                E.Call{
-                    .target = Expr.initIdentifier(toCommonJSRef, Loc.Empty),
-                    .args = js_ast.ExprNodeList.fromOwnedSlice(call_args),
-                },
-                Loc.Empty,
-            ),
+            Expr.initIdentifier(exports_ref, Loc.Empty),
         );
         remaining_stmts = remaining_stmts[1..];
     }

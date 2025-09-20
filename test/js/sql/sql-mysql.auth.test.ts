@@ -8,6 +8,7 @@ describeWithContainer(
     image: "mysql_native_password",
     env: {},
     args: [],
+    concurrent: true,
   },
   container => {
     // Create getters that will be evaluated when the test runs
@@ -15,7 +16,7 @@ describeWithContainer(
 
     test("should be able to connect with mysql_native_password auth plugin", async () => {
       console.log("Container info in test:", container);
-      const sql = new SQL({
+      await using sql = new SQL({
         url: getUrl(),
         max: 1,
       });
@@ -26,7 +27,7 @@ describeWithContainer(
 
     test("should be able to switch auth plugin", async () => {
       {
-        const sql = new SQL({
+        await using sql = new SQL({
           url: getUrl(),
           max: 1,
         });
@@ -36,7 +37,7 @@ describeWithContainer(
               GRANT ALL PRIVILEGES ON bun_sql_test.* TO caching@'%';
             FLUSH PRIVILEGES;`.simple();
       }
-      const sql = new SQL(`mysql://caching:bunbun@${container.host}:${container.port}/bun_sql_test`);
+      await using sql = new SQL(`mysql://caching:bunbun@${container.host}:${container.port}/bun_sql_test`);
       const result = await sql`select 1 as x`;
       expect(result).toEqual([{ x: 1 }]);
       await sql.end();

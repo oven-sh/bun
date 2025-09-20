@@ -7,6 +7,7 @@ describeWithContainer(
   {
     image: "mysql_plain",
     env: {},
+    concurrent: true,
     args: [],
   },
   container => {

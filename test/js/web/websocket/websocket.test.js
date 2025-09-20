@@ -8,7 +8,7 @@ import process from "process";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const COMMON_CERT = { ...tls };
 
-describe("WebSocket", () => {
+describe.concurrent("WebSocket", () => {
   it("should connect", async () => {
     using server = Bun.serve({
       port: 0,
@@ -696,8 +696,8 @@ describe("WebSocket", () => {
   });
 });
 
-describe("websocket in subprocess", () => {
-  it("should exit", async () => {
+describe.concurrent("websocket in subprocess", () => {
+  it.concurrent("should exit", async () => {
     let messageReceived = false;
     using server = Bun.serve({
       port: 0,
@@ -831,7 +831,7 @@ describe("websocket in subprocess", () => {
   });
 });
 
-it("#16995", async () => {
+it.concurrent("#16995", async () => {
   const publicAddress = new URL("https://1.1.1.1:3000");
   for (let i = 0; i < 4096; i++) {
     const socket = new WebSocket(publicAddress.toString());

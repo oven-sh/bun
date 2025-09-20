@@ -1369,7 +1369,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
   this._header = " ";
   const req = this.req;
-  const socket = req.socket;
+
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
     req._dump();
   }

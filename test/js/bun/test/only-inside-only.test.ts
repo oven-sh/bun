@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test("only-inside-only", async () => {
   const result = await Bun.spawn({

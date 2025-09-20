@@ -41,8 +41,8 @@ extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest,
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
-extern "C" EncodedJSValue Bun__NodeHTTPResponse_rawWrite(void* socket, bool is_ssl, bool ended, StreamBuffer* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
-extern "C" void Bun__NodeHTTPResponse_freeBuffer(StreamBuffer* streamBuffer);
+extern "C" EncodedJSValue Bun__NodeHTTP_rawWrite(void* socket, bool is_ssl, bool ended, StreamBuffer* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" void Bun__NodeHTTP_freeStreamBuffer(StreamBuffer* streamBuffer);
 namespace Bun {
 
 using namespace JSC;
@@ -197,7 +197,7 @@ public:
                 clearSocketData<false>(socket);
             }
         }
-        Bun__NodeHTTPResponse_freeBuffer(&streamBuffer);
+        Bun__NodeHTTP_freeStreamBuffer(&streamBuffer);
     }
 
     JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
@@ -306,7 +306,7 @@ public:
 
             auto* globalObject = defaultGlobalObject(this->globalObject());
             auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-            Bun__NodeHTTPResponse_rawWrite(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+            Bun__NodeHTTP_rawWrite(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
             if (scope.exception()) {
                 globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
                 return;
@@ -431,7 +431,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsNumber(0));
     }
 
-    return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
+    return Bun__NodeHTTP_rawWrite(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -447,7 +447,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     thisObject->ended = true;
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
     if (bufferedSize == 0) {
-        return Bun__NodeHTTPResponse_rawWrite(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        return Bun__NodeHTTP_rawWrite(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
     }
     return JSValue::encode(JSC::jsUndefined());
 }

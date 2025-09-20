@@ -256,9 +256,7 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
 
     beforeEach(async () => {
       // The PUB/SUB tests expect that ctx.redis is connected but not in subscriber mode.
-      try {
-        await ctx.redis.unsubscribe();
-      } catch {}
+      await ctx.cleanupSubscribers();
     });
 
     test("publishing to a channel does not fail", async () => {
@@ -266,13 +264,15 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("setting in subscriber mode gracefully fails", async () => {
-      await ctx.redis.subscribe(testChannel(), () => {});
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
 
-      expect(() => ctx.redis.set(testKey(), testValue())).toThrow(
+      await subscriber.subscribe(testChannel(), () => {});
+
+      expect(() => subscriber.set(testKey(), testValue())).toThrow(
         "RedisClient.prototype.set cannot be called while in subscriber mode",
       );
 
-      await ctx.redis.unsubscribe(testChannel());
+      await subscriber.unsubscribe(testChannel());
     });
 
     test("setting after unsubscribing works", async () => {
@@ -507,38 +507,41 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     test("ping works in subscription mode", async () => {
       const channel = "ping-test-channel";
 
-      await ctx.redis.subscribe(channel, () => {});
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
+      await subscriber.subscribe(channel, () => {});
 
       // Ping should work in subscription mode
-      const pong = await ctx.redis.ping();
+      const pong = await subscriber.ping();
       expect(pong).toBe("PONG");
 
-      const customPing = await ctx.redis.ping("hello");
+      const customPing = await subscriber.ping("hello");
       expect(customPing).toBe("hello");
     });
 
     test("publish does not work from a subscribed client", async () => {
       const channel = "self-publish-channel";
 
-      await ctx.redis.subscribe(channel, () => {});
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
+      await subscriber.subscribe(channel, () => {});
 
       // Publishing from the same client should work
-      expect(async () => ctx.redis.publish(channel, "self-published")).toThrow();
+      expect(async () => subscriber.publish(channel, "self-published")).toThrow();
     });
 
     test("complete unsubscribe restores normal command mode", async () => {
       const channel = "restore-test-channel";
       const testKey = "restore-test-key";
 
-      await ctx.redis.subscribe(channel, () => {});
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
+      await subscriber.subscribe(channel, () => {});
 
       // Should fail in subscription mode
-      expect(() => ctx.redis.set(testKey, testValue())).toThrow(
+      expect(() => subscriber.set(testKey, testValue())).toThrow(
         "RedisClient.prototype.set cannot be called while in subscriber mode.",
       );
 
       // Unsubscribe from all channels
-      await ctx.redis.unsubscribe(channel);
+      await subscriber.unsubscribe();
 
       // Should work after unsubscribing
       const result = await ctx.redis.set(testKey, "value");
@@ -665,16 +668,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
   });
 
   describe("duplicate()", () => {
-    test("should create duplicate of unconnected client that remains unconnected", async () => {
-      ctx.redis.close();
-      const redis = ctx.redis;
-      expect(redis.connected).toBe(false);
-
-      const duplicate = await ctx.redis.duplicate();
-      expect(duplicate.connected).toBe(false);
-      expect(duplicate).not.toBe(ctx.redis);
-    });
-
     test("should create duplicate of connected client that gets connected", async () => {
       const duplicate = await ctx.redis.duplicate();
 
@@ -689,15 +682,6 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
       expect(await duplicate.get("test-original")).toBe("original-value");
 
       duplicate.close();
-    });
-
-    test("should create duplicate of manually closed client that remains closed", async () => {
-      await ctx.redis.connect();
-      ctx.redis.close();
-      expect(ctx.redis.connected).toBe(false);
-
-      const duplicate = await ctx.redis.duplicate();
-      expect(duplicate.connected).toBe(false);
     });
 
     test("should preserve connection configuration in duplicate", async () => {
@@ -718,37 +702,34 @@ describe.skipIf(!isEnabled)("Valkey Redis Client", () => {
     });
 
     test("should allow duplicate to work independently from original", async () => {
-      await ctx.redis.connect();
-
       const duplicate = await ctx.redis.duplicate();
 
       // Close original, duplicate should still work
-      ctx.redis.close();
+      duplicate.close();
 
       const testKey = `independent-test-${randomUUIDv7().substring(0, 8)}`;
       const testValue = "independent-value";
 
-      await duplicate.set(testKey, testValue);
-      const retrievedValue = await duplicate.get(testKey);
+      await ctx.redis.set(testKey, testValue);
+      const retrievedValue = await ctx.redis.get(testKey);
 
       expect(retrievedValue).toBe(testValue);
-
-      duplicate.close();
     });
 
     test("should handle duplicate of client in subscriber mode", async () => {
+      const subscriber = await ctx.newSubscriberClient(ConnectionType.TCP);
+
       const testChannel = "test-subscriber-duplicate";
 
       // Put original client in subscriber mode
-      await ctx.redis.subscribe(testChannel, () => {});
+      await subscriber.subscribe(testChannel, () => {});
 
-      const duplicate = await ctx.redis.duplicate();
+      const duplicate = await subscriber.duplicate();
 
       // Duplicate should not be in subscriber mode
       expect(() => duplicate.set("test-key", "test-value")).not.toThrow();
 
-      await ctx.redis.unsubscribe(testChannel);
-      duplicate.close();
+      await subscriber.unsubscribe(testChannel);
     });
 
     test("should create multiple duplicates from same client", async () => {

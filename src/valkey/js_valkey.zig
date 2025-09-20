@@ -1129,6 +1129,16 @@ pub const JSValkeyClient = struct {
         switch (this.client.status) {
             .connecting, .connected => {
                 // Whenever we're connected, we need to keep the object alive.
+                //
+                // TODO(markovejnovic): This is a leak.
+                // Note this is an intentional leak. Unless the user manually
+                // closes the connection, the object will stay alive forever,
+                // even if it falls out of scope. This is kind of stupid, since
+                // if the object is out of scope, and isn't subscribed upon,
+                // how exactly is the user going to call anything on the object?
+                //
+                // It is 100% safe to drop the strong reference there and let
+                // the object be GC'd, but we're not doing that now.
                 this.this_value.upgrade(this.globalObject);
             },
             .disconnected, .failed => {
@@ -1281,6 +1291,7 @@ fn SocketHandler(comptime ssl: bool) type {
             this.client.socket = .{ .SocketTCP = .detached };
 
             this.client.onClose();
+            this.updatePollRef();
         }
 
         pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {

@@ -2239,7 +2239,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEXW);
 
             // Use RtlGetVersion to get accurate version info
-            typedef LONG (WINAPI* RtlGetVersionFunc)(PRTL_OSVERSIONINFOW);
+            typedef LONG(WINAPI * RtlGetVersionFunc)(PRTL_OSVERSIONINFOW);
             HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
             if (ntdll) {
                 RtlGetVersionFunc RtlGetVersion = (RtlGetVersionFunc)GetProcAddress(ntdll, "RtlGetVersion");
@@ -2260,21 +2260,21 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             GetNativeSystemInfo(&sysInfo);
             String machine;
             switch (sysInfo.wProcessorArchitecture) {
-                case PROCESSOR_ARCHITECTURE_AMD64:
-                    machine = "x86_64"_s;
-                    break;
-                case PROCESSOR_ARCHITECTURE_ARM:
-                    machine = "arm"_s;
-                    break;
-                case PROCESSOR_ARCHITECTURE_ARM64:
-                    machine = "arm64"_s;
-                    break;
-                case PROCESSOR_ARCHITECTURE_INTEL:
-                    machine = "i686"_s;
-                    break;
-                default:
-                    machine = "unknown"_s;
-                    break;
+            case PROCESSOR_ARCHITECTURE_AMD64:
+                machine = "x86_64"_s;
+                break;
+            case PROCESSOR_ARCHITECTURE_ARM:
+                machine = "arm"_s;
+                break;
+            case PROCESSOR_ARCHITECTURE_ARM64:
+                machine = "arm64"_s;
+                break;
+            case PROCESSOR_ARCHITECTURE_INTEL:
+                machine = "i686"_s;
+                break;
+            default:
+                machine = "unknown"_s;
+                break;
             }
             header->putDirect(vm, JSC::Identifier::fromString(vm, "osMachine"_s), JSC::jsString(vm, machine), 0);
         }

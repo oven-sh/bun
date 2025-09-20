@@ -381,21 +381,8 @@ pub const Runner = struct {
                         return _entry.value_ptr.*;
                     }
 
-                    var iter = try jsc.JSArrayIterator.init(value, this.global);
-                    if (iter.len == 0) {
-                        const result = Expr.init(
-                            E.Array,
-                            E.Array{
-                                .items = ExprNodeList.empty,
-                                .was_originally_macro = true,
-                            },
-                            this.caller.loc,
-                        );
-                        _entry.value_ptr.* = result;
-                        return result;
-                    }
-                    var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
-                    var out = Expr.init(
+                    // Store a placeholder to handle circular references
+                    _entry.value_ptr.* = Expr.init(
                         E.Array,
                         E.Array{
                             .items = ExprNodeList.empty,
@@ -403,19 +390,37 @@ pub const Runner = struct {
                         },
                         this.caller.loc,
                     );
-                    _entry.value_ptr.* = out;
 
+                    var iter = try jsc.JSArrayIterator.init(value, this.global);
+                    if (iter.len == 0) {
+                        // The placeholder is already correct for empty arrays
+                        return _entry.value_ptr.*;
+                    }
+
+                    // Process all array items
+                    var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
                     errdefer this.allocator.free(array);
+
                     var i: usize = 0;
                     while (try iter.next()) |item| {
                         array[i] = try this.run(item);
-                        if (array[i].isMissing())
-                            continue;
                         i += 1;
                     }
-                    out.data.e_array.items = ExprNodeList.fromOwnedSlice(array);
-                    _entry.value_ptr.* = out;
-                    return out;
+
+                    // Create the final result
+                    const result = Expr.init(
+                        E.Array,
+                        E.Array{
+                            .items = ExprNodeList.fromOwnedSlice(array),
+                            .was_originally_macro = true,
+                        },
+                        this.caller.loc,
+                    );
+
+                    // Update the visited map entry (use put since we know it exists)
+                    // This is safe even if the hash table was resized during recursion
+                    this.visited.put(this.allocator, value, result) catch unreachable;
+                    return result;
                 },
                 // TODO: optimize this
                 jsc.ConsoleObject.Formatter.Tag.Object => {
@@ -431,6 +436,17 @@ pub const Runner = struct {
                         }
                         return _entry.value_ptr.*;
                     }
+
+                    // Store a placeholder to handle circular references
+                    _entry.value_ptr.* = Expr.init(
+                        E.Object,
+                        E.Object{
+                            .properties = G.Property.List{},
+                            .was_originally_macro = true,
+                        },
+                        this.caller.loc,
+                    );
+
                     // SAFETY: tag ensures `value` is an object.
                     const obj = value.getObject() orelse unreachable;
                     var object_iter = try jsc.JSPropertyIterator(.{
@@ -439,18 +455,10 @@ pub const Runner = struct {
                     }).init(this.global, obj);
                     defer object_iter.deinit();
 
-                    const out = _entry.value_ptr;
-                    out.* = Expr.init(
-                        E.Object,
-                        E.Object{
-                            .properties = bun.handleOom(
-                                G.Property.List.initCapacity(this.allocator, object_iter.len),
-                            ),
-                            .was_originally_macro = true,
-                        },
-                        this.caller.loc,
+                    // Build properties list separately
+                    var properties = bun.handleOom(
+                        G.Property.List.initCapacity(this.allocator, object_iter.len),
                     );
-                    const properties = &out.data.e_object.properties;
                     errdefer properties.clearAndFree(this.allocator);
 
                     while (try object_iter.next()) |prop| {
@@ -468,7 +476,21 @@ pub const Runner = struct {
                             .value = try this.run(object_iter.value),
                         });
                     }
-                    return out.*;
+
+                    // Create the final result
+                    const result = Expr.init(
+                        E.Object,
+                        E.Object{
+                            .properties = properties,
+                            .was_originally_macro = true,
+                        },
+                        this.caller.loc,
+                    );
+
+                    // Update the visited map entry (use put since we know it exists)
+                    // This is safe even if the hash table was resized during recursion
+                    this.visited.put(this.allocator, value, result) catch unreachable;
+                    return result;
                 },
 
                 .JSON => {

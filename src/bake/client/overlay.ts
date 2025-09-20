@@ -488,7 +488,7 @@ function updateRuntimeErrorOverlay(err: RuntimeError) {
     elem("div", { class: "message-desc error" }, [
       elemText("code", { class: "name" }, name),
       elemText("code", { class: "muted" }, ": "),
-      elemText("code", {}, err.message),
+      elemText("pre", {}, err.message.trim()),
     ]),
   );
   const { code } = err;

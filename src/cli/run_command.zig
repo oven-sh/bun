@@ -1352,6 +1352,30 @@ pub const RunCommand = struct {
         }
         const passthrough = ctx.passthrough; // unclear why passthrough is an escaped string, it should probably be []const []const u8 and allow its users to escape it.
 
+        // Check if this is the feedback command
+        if (bun.strings.eqlComptime(target_name, "feedback")) {
+            // Get the embedded feedback.js code
+            const code = if (bun.Environment.codegen_embed)
+                @embedFile("codegen/feedback.js")
+            else
+                bun.runtimeEmbedFile(.codegen, "feedback.js");
+
+            // Set up eval to run the feedback code
+            ctx.runtime_options.eval.script = code;
+
+            // Ensure passthrough arguments are available to the eval script
+            // The passthrough already contains the arguments after "feedback"
+            // ctx.passthrough is already set correctly from the CLI parsing
+
+            // Run as eval
+            const trigger = bun.pathLiteral("/[eval]");
+            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            const cwd = try std.posix.getcwd(&entry_point_buf);
+            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+            try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+            return true;
+        }
+
         var try_fast_run = false;
         var skip_script_check = false;
         if (target_name.len > 0 and target_name[0] == '.') {

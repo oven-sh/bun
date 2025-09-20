@@ -1821,7 +1821,7 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  bool uws_res_is_streaming(int ssl, uws_res_r res)
+  bool uws_res_is_connect_request(int ssl, uws_res_r res)
   {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

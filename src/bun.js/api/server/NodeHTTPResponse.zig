@@ -579,9 +579,12 @@ pub fn doPause(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFram
     this.flags.is_data_buffered_during_pause = true;
     this.raw_response.onData(*NodeHTTPResponse, onBufferRequestBodyWhilePaused, this);
 
+    // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
     if (!Environment.isWindows) {
-        // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
-        pauseSocket(this);
+        // We never pause the socket if we are a CONNECT request
+        if (!this.raw_response.isConnectRequest()) {
+            pauseSocket(this);
+        }
     }
     return .true;
 }

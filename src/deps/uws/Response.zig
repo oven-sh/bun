@@ -38,8 +38,8 @@ pub fn NewResponse(ssl_flag: i32) type {
             return c.uws_res_get_socket_data(ssl_flag, res.downcast());
         }
 
-        pub fn isStreaming(res: *Response) bool {
-            return c.uws_res_is_streaming(ssl_flag, res.downcast());
+        pub fn isConnectRequest(res: *Response) bool {
+            return c.uws_res_is_connect_request(ssl_flag, res.downcast());
         }
 
         pub fn flushHeaders(res: *Response) void {
@@ -567,9 +567,9 @@ pub const AnyResponse = union(enum) {
         }
     }
 
-    pub fn isStreaming(this: AnyResponse) bool {
+    pub fn isConnectRequest(this: AnyResponse) bool {
         return switch (this) {
-            inline else => |resp| resp.isStreaming(),
+            inline else => |resp| resp.isConnectRequest(),
         };
     }
 
@@ -654,7 +654,7 @@ const c = struct {
     pub extern fn uws_res_write_mark(ssl: i32, res: *c.uws_res) void;
     pub extern fn us_socket_mark_needs_more_not_ssl(socket: ?*c.uws_res) void;
     pub extern fn uws_res_state(ssl: c_int, res: *const c.uws_res) State;
-    pub extern fn uws_res_is_streaming(ssl: i32, res: *c.uws_res) bool;
+    pub extern fn uws_res_is_connect_request(ssl: i32, res: *c.uws_res) bool;
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
     pub extern fn uws_res_uncork(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_end(ssl: i32, res: *c.uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;

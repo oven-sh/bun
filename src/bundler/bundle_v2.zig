@@ -1801,15 +1801,8 @@ pub const BundleV2 = struct {
         ) !void {
             const config = &completion.config;
 
-            // Convert JSX config to API format
-            const jsx_api = api.Jsx{
-                .factory = if (config.jsx.factory.len > 0) config.jsx.factory[0] else "",
-                .fragment = if (config.jsx.fragment.len > 0) config.jsx.fragment[0] else "",
-                .runtime = config.jsx.runtime,
-                .development = config.jsx.development,
-                .import_source = config.jsx.package_name,
-                .side_effects = config.jsx.side_effects,
-            };
+            // JSX config is already in API format
+            const jsx_api = config.jsx;
 
             transpiler.* = try bun.Transpiler.init(
                 alloc,
@@ -1842,7 +1835,33 @@ pub const BundleV2 = struct {
             }
 
             transpiler.options.entry_points = config.entry_points.keys();
-            transpiler.options.jsx = config.jsx;
+            // Convert API JSX config back to options.JSX.Pragma
+            transpiler.options.jsx = options.JSX.Pragma{
+                .factory = if (config.jsx.factory.len > 0)
+                    try options.JSX.Pragma.memberListToComponentsIfDifferent(alloc, &.{}, config.jsx.factory)
+                else
+                    options.JSX.Pragma.Defaults.Factory,
+                .fragment = if (config.jsx.fragment.len > 0)
+                    try options.JSX.Pragma.memberListToComponentsIfDifferent(alloc, &.{}, config.jsx.fragment)
+                else
+                    options.JSX.Pragma.Defaults.Fragment,
+                .runtime = config.jsx.runtime,
+                .development = config.jsx.development,
+                .package_name = config.jsx.import_source,
+                .classic_import_source = if (config.jsx.import_source.len > 0) config.jsx.import_source else "react",
+                .side_effects = config.jsx.side_effects,
+                .parse = true,
+                .import_source = .{
+                    .development = if (config.jsx.import_source.len > 0)
+                        try std.fmt.allocPrint(alloc, "{s}/jsx-dev-runtime", .{config.jsx.import_source})
+                    else
+                        "react/jsx-dev-runtime",
+                    .production = if (config.jsx.import_source.len > 0)
+                        try std.fmt.allocPrint(alloc, "{s}/jsx-runtime", .{config.jsx.import_source})
+                    else
+                        "react/jsx-runtime",
+                },
+            };
             transpiler.options.no_macros = config.no_macros;
             transpiler.options.loaders = try options.loadersFromTransformOptions(alloc, config.loaders, config.target);
             transpiler.options.entry_naming = config.names.entry_point.data;

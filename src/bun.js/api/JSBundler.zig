@@ -13,7 +13,12 @@ pub const JSBundler = struct {
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
-        jsx: options.JSX.Pragma = .{},
+        jsx: api.Jsx = .{
+            .factory = "",
+            .fragment = "",
+            .runtime = .automatic,
+            .import_source = "",
+        },
         force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
@@ -389,38 +394,30 @@ pub const JSBundler = struct {
 
                 if (try jsx_value.getOptional(globalThis, "runtime", ZigString.Slice)) |slice| {
                     defer slice.deinit();
-                    if (strings.eqlComptime(slice.slice(), "classic")) {
-                        this.jsx.runtime = .classic;
-                    } else if (strings.eqlComptime(slice.slice(), "automatic")) {
-                        this.jsx.runtime = .automatic;
-                    } else if (strings.eqlComptime(slice.slice(), "react")) {
-                        this.jsx.runtime = .classic;
-                    } else if (strings.eqlComptime(slice.slice(), "react-jsx")) {
-                        this.jsx.runtime = .automatic;
-                    } else if (strings.eqlComptime(slice.slice(), "react-jsxdev")) {
-                        this.jsx.runtime = .automatic;
-                        this.jsx.development = true;
-                    } else if (strings.eqlComptime(slice.slice(), "solid")) {
-                        this.jsx.runtime = .solid;
+                    var str_lower: [128]u8 = undefined;
+                    const len = @min(slice.len, str_lower.len);
+                    _ = strings.copyLowercase(slice.slice()[0..len], str_lower[0..len]);
+                    if (options.JSX.RuntimeMap.get(str_lower[0..len])) |runtime| {
+                        this.jsx.runtime = runtime.runtime;
+                        if (runtime.development) |dev| {
+                            this.jsx.development = dev;
+                        }
                     }
                 }
 
                 if (try jsx_value.getOptional(globalThis, "factory", ZigString.Slice)) |slice| {
                     defer slice.deinit();
-                    const str = try allocator.dupe(u8, slice.slice());
-                    this.jsx.factory = try options.JSX.Pragma.memberListToComponentsIfDifferent(allocator, this.jsx.factory, str);
+                    this.jsx.factory = try allocator.dupe(u8, slice.slice());
                 }
 
                 if (try jsx_value.getOptional(globalThis, "fragment", ZigString.Slice)) |slice| {
                     defer slice.deinit();
-                    const str = try allocator.dupe(u8, slice.slice());
-                    this.jsx.fragment = try options.JSX.Pragma.memberListToComponentsIfDifferent(allocator, this.jsx.fragment, str);
+                    this.jsx.fragment = try allocator.dupe(u8, slice.slice());
                 }
 
                 if (try jsx_value.getOptional(globalThis, "importSource", ZigString.Slice)) |slice| {
                     defer slice.deinit();
-                    this.jsx.package_name = try allocator.dupe(u8, slice.slice());
-                    this.jsx.setImportSource(allocator);
+                    this.jsx.import_source = try allocator.dupe(u8, slice.slice());
                 }
 
                 if (try jsx_value.getBooleanLoose(globalThis, "development")) |dev| {
@@ -430,9 +427,6 @@ pub const JSBundler = struct {
                 if (try jsx_value.getBooleanLoose(globalThis, "sideEffects")) |val| {
                     this.jsx.side_effects = val;
                 }
-
-                // Ensure parse flag is set when jsx options are provided
-                this.jsx.parse = true;
             }
 
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {

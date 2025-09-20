@@ -16,6 +16,14 @@ export class Router {
   // back button. The cache is indexed by the date it was created.
   private readonly cachedPages = new Map<number, CachedPage>();
 
+  // Track in-flight RSC fetches keyed by the resolved request URL so that
+  // navigations can adopt an existing stream instead of issuing a duplicate
+  // request.
+  private readonly inflight = new Map<
+    string,
+    { controller: AbortController; css: string[]; model: Promise<NonNullishReactNode> }
+  >();
+
   public readonly css: BakeCSSManager = new BakeCSSManager();
 
   public hasNavigatedSinceDOMContentLoaded(): boolean {
@@ -26,11 +34,61 @@ export class Router {
     this.cachedPages.set(id, page);
   }
 
+  /** Start fetching an RSC payload for a given href without committing UI. */
+  public async prefetch(href: string): Promise<void> {
+    const requestUrl = this.computeRequestUrl(href);
+
+    if (this.inflight.has(requestUrl)) return;
+
+    const controller = new AbortController();
+    const signal = controller.signal;
+
+    let response: Response;
+    try {
+      response = await fetch(requestUrl, {
+        headers: { Accept: "text/x-component" },
+        signal,
+      });
+      if (!response.ok) return;
+    } catch {
+      return;
+    }
+
+    // Parse CSS list without mutating the active CSS set, and keep the stream
+    // intact for React consumption.
+    const { stream, list } = await this.css.readCssMetadataForPrefetch(response.body!);
+
+    const model = createFromReadableStream(stream) as Promise<NonNullishReactNode>;
+
+    this.inflight.set(requestUrl, { controller, css: list, model });
+
+    // Cleanup when the model settles to avoid leaks (if we never navigate).
+    void model.finally(() => {
+      // Do not delete if it's currently adopted by a navigation (i.e. lastNavigationController === controller)
+      if (this.inflight.get(requestUrl)?.controller === controller) return;
+      this.inflight.delete(requestUrl);
+    });
+  }
+
+  private computeRequestUrl(href: string): string {
+    const url = new URL(href, location.href);
+    url.hash = "";
+    if (import.meta.env.STATIC) {
+      // For static, fetch the .rsc artifact
+      const path = url.pathname.replace(/\/(?:index)?$/, "") + "/index.rsc";
+      return new URL(path + url.search, location.origin).toString();
+    }
+    return url.toString();
+  }
+
   async navigate(href: string, cacheId: number | undefined): Promise<void> {
     const thisNavigationId = ++this.lastNavigationId;
     const olderController = this.lastNavigationController;
 
-    this.lastNavigationController = new AbortController();
+    // If there is an in-flight prefetch for this href, adopt it.
+    const requestUrl = this.computeRequestUrl(href);
+    const adopted = this.inflight.get(requestUrl);
+    this.lastNavigationController = adopted?.controller ?? new AbortController();
 
     const signal = this.lastNavigationController.signal;
 
@@ -59,50 +117,64 @@ export class Router {
       return;
     }
 
-    let response: Response;
-    try {
-      // When using static builds, it isn't possible for the server to reliably
-      // branch on the `Accept` header. Instead, a static build creates a `.rsc`
-      // file that can be fetched. `import.meta.env.STATIC` is inlined by Bake.
-
-      const url = import.meta.env.STATIC ? `${href.replace(/\/(?:index)?$/, "")}/index.rsc` : href;
-
-      response = await fetch(url, {
-        headers: {
-          Accept: "text/x-component",
-        },
-        signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch ${href}: ${response.status} ${response.statusText}`);
+    let p: NonNullishReactNode;
+    if (adopted) {
+      // Adopt prefetch: set CSS list and await the same model.
+      await this.css.set(adopted.css);
+      const cssWaitPromise = this.css.ensureCssIsReady();
+      {
+        const result = await adopted.model;
+        if (result == null) {
+          throw new Error("RSC payload was empty");
+        }
+        p = result as NonNullishReactNode;
       }
-    } catch (err) {
-      if (thisNavigationId === this.lastNavigationId) {
-        // Bail out to browser navigation if this fetch fails.
-        console.error(err);
-        location.href = href;
-      }
-
-      return;
-    }
-
-    // If the navigation id has changed, this fetch is no longer relevant.
-    if (thisNavigationId !== this.lastNavigationId) return;
-    let stream = response.body!;
-
-    // Read the css metadata at the start before handing it to react.
-    stream = await this.css.readCssMetadata(stream);
-    if (thisNavigationId !== this.lastNavigationId) return;
-
-    const cssWaitPromise = this.css.ensureCssIsReady();
-
-    const p = await createFromReadableStream(stream);
-    if (thisNavigationId !== this.lastNavigationId) return;
-
-    if (cssWaitPromise) {
-      await cssWaitPromise;
       if (thisNavigationId !== this.lastNavigationId) return;
+      if (cssWaitPromise) {
+        await cssWaitPromise;
+        if (thisNavigationId !== this.lastNavigationId) return;
+      }
+      // Remove from inflight now that it's adopted
+      this.inflight.delete(requestUrl);
+    } else {
+      let response: Response;
+      try {
+        response = await fetch(requestUrl, {
+          headers: { Accept: "text/x-component" },
+          signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch ${href}: ${response.status} ${response.statusText}`);
+        }
+      } catch (err) {
+        if (thisNavigationId === this.lastNavigationId) {
+          // Bail out to browser navigation if this fetch fails.
+          console.error(err);
+          location.href = href;
+        }
+        return;
+      }
+
+      if (thisNavigationId !== this.lastNavigationId) return;
+      let stream = response.body!;
+      stream = await this.css.readCssMetadata(stream);
+      if (thisNavigationId !== this.lastNavigationId) return;
+
+      const cssWaitPromise = this.css.ensureCssIsReady();
+      {
+        const model = createFromReadableStream(stream) as Promise<NonNullishReactNode | undefined | null>;
+        const result = await model;
+        if (result == null) {
+          throw new Error("RSC payload was empty");
+        }
+        p = result as NonNullishReactNode;
+      }
+      if (thisNavigationId !== this.lastNavigationId) return;
+      if (cssWaitPromise) {
+        await cssWaitPromise;
+        if (thisNavigationId !== this.lastNavigationId) return;
+      }
     }
 
     // Save this promise so that pressing the back button in the browser navigates

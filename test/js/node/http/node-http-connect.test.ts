@@ -32,8 +32,6 @@ function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, ad
 
 const BIG_DATA = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
 describe("HTTP server CONNECT", () => {
-  // TODO: on Windows this test is flaky, we are probably receiving data that should be in "head" parameter
-  // and we dont support that yet
   test("should handle backpressure", async () => {
     const responseHeader = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
     await using proxyServer = http.createServer((req, res) => {

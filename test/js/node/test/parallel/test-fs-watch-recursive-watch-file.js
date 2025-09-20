@@ -1,6 +1,7 @@
 'use strict';
 
 const common = require('../common');
+if (common.isASan) return; // TODO: BUN
 
 if (common.isIBMi)
   common.skip('IBMi does not support `fs.watch()`');

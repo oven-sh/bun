@@ -766,7 +766,13 @@ extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocketForClientError(boo
         globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject),
         us_socket,
         isSSL, nullptr);
-
+    if (isSSL) {
+        uWS::HttpResponse<true>* response = reinterpret_cast<uWS::HttpResponse<true>*>(us_socket);
+        response->getHttpResponseData()->socketData = socket;
+    } else {
+        uWS::HttpResponse<false>* response = reinterpret_cast<uWS::HttpResponse<false>*>(us_socket);
+        response->getHttpResponseData()->socketData = socket;
+    }
     RETURN_IF_EXCEPTION(scope, {});
     if (socket) {
         socket->strongThis.set(vm, socket);

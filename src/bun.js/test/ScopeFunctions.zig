@@ -202,6 +202,38 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
 
     switch (this.mode) {
         .describe => {
+            // Check line filter for describe blocks too
+            var matches_line_filter = true;
+            if (bunTest.reporter != null) {
+                const reporter = bunTest.reporter.?;
+                if (reporter.jest.hasTestLineFilter()) {
+                    // Get the current file path
+                    const file_path = if (vm.main.len > 0) vm.main else "";
+
+                    // For describe blocks, we need to check if any line filter matches this file
+                    // If there are no filters for this file, we proceed normally
+                    // If there are filters for this file, we check if this describe block or its parents match
+                    var parent_lines = std.ArrayList(u32).init(bunTest.gpa);
+                    defer parent_lines.deinit();
+
+                    var parent_scope = bunTest.collection.active_scope;
+                    while (parent_scope.base.parent) |parent| {
+                        if (parent.base.line_no > 0) {
+                            bun.handleOom(parent_lines.append(parent.base.line_no));
+                        }
+                        parent_scope = parent;
+                    }
+
+                    matches_line_filter = reporter.jest.matchesLineFilter(file_path, line_no, parent_lines.items);
+
+                    // If describe doesn't match but has a specific line filter for this file,
+                    // still create it but mark as potentially filtered
+                    if (!matches_line_filter) {
+                        base.self_mode = .filtered_out;
+                    }
+                }
+            }
+
             const new_scope = try bunTest.collection.active_scope.appendDescribe(bunTest.gpa, description, base);
             try bunTest.collection.enqueueDescribeCallback(new_scope, callback);
         },
@@ -225,6 +257,29 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
                 groupLog.log("matches_filter \"{}\"", .{std.zig.fmtEscapes(bunTest.collection.filter_buffer.items)});
                 matches_filter = filter_regex.matches(str);
             };
+
+            // Check line filter as well
+            if (matches_filter and bunTest.reporter != null) {
+                const reporter = bunTest.reporter.?;
+                if (reporter.jest.hasTestLineFilter()) {
+                    // Get the current file path
+                    const file_path = if (vm.main.len > 0) vm.main else "";
+
+                    // Collect parent line numbers for describe blocks
+                    var parent_lines = std.ArrayList(u32).init(bunTest.gpa);
+                    defer parent_lines.deinit();
+
+                    var parent_scope = bunTest.collection.active_scope;
+                    while (parent_scope.base.parent) |parent| {
+                        if (parent.base.line_no > 0) {
+                            bun.handleOom(parent_lines.append(parent.base.line_no));
+                        }
+                        parent_scope = parent;
+                    }
+
+                    matches_filter = reporter.jest.matchesLineFilter(file_path, line_no, parent_lines.items);
+                }
+            }
 
             if (!matches_filter) {
                 base.self_mode = .filtered_out;

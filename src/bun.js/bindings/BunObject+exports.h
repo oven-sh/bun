@@ -9,6 +9,7 @@
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(MD4) \
+    macro(Queue) \
     macro(MD5) \
     macro(S3Client) \
     macro(SHA1) \

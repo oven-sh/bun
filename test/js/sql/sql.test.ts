@@ -1,5 +1,5 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
-import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import * as net from "node:net";
 import path from "path";
@@ -18,7 +18,7 @@ import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 
 if (isDockerEnabled()) {
-  describe("PostgreSQL tests", () => {
+  describe("PostgreSQL tests", async () => {
     let container: { port: number; host: string };
     let socketProxy: UnixDomainSocketProxy;
     let login: Bun.SQL.PostgresOrMySQLOptions;
@@ -27,55 +27,53 @@ if (isDockerEnabled()) {
     let login_scram: Bun.SQL.PostgresOrMySQLOptions;
     let options: Bun.SQL.PostgresOrMySQLOptions;
 
-    beforeAll(async () => {
-      const info = await dockerCompose.ensure("postgres_plain");
-      console.log("PostgreSQL container ready at:", info.host + ":" + info.ports[5432]);
-      container = {
-        port: info.ports[5432],
-        host: info.host,
-      };
-      process.env.DATABASE_URL = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    const info = await dockerCompose.ensure("postgres_plain");
+    console.log("PostgreSQL container ready at:", info.host + ":" + info.ports[5432]);
+    container = {
+      port: info.ports[5432],
+      host: info.host,
+    };
+    process.env.DATABASE_URL = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
-      // Create Unix socket proxy for PostgreSQL
-      socketProxy = await UnixDomainSocketProxy.create("PostgreSQL", container.host, container.port);
+    // Create Unix socket proxy for PostgreSQL
+    socketProxy = await UnixDomainSocketProxy.create("PostgreSQL", container.host, container.port);
 
-      login = {
-        username: "bun_sql_test",
-        host: container.host,
-        port: container.port,
-        path: socketProxy.path,
-      };
+    login = {
+      username: "bun_sql_test",
+      host: container.host,
+      port: container.port,
+      path: socketProxy.path,
+    };
 
-      login_domain_socket = {
-        username: "bun_sql_test",
-        host: container.host,
-        port: container.port,
-        path: socketProxy.path,
-      };
+    login_domain_socket = {
+      username: "bun_sql_test",
+      host: container.host,
+      port: container.port,
+      path: socketProxy.path,
+    };
 
-      login_md5 = {
-        username: "bun_sql_test_md5",
-        password: "bun_sql_test_md5",
-        host: container.host,
-        port: container.port,
-      };
+    login_md5 = {
+      username: "bun_sql_test_md5",
+      password: "bun_sql_test_md5",
+      host: container.host,
+      port: container.port,
+    };
 
-      login_scram = {
-        username: "bun_sql_test_scram",
-        password: "bun_sql_test_scram",
-        host: container.host,
-        port: container.port,
-      };
+    login_scram = {
+      username: "bun_sql_test_scram",
+      password: "bun_sql_test_scram",
+      host: container.host,
+      port: container.port,
+    };
 
-      options = {
-        db: "bun_sql_test",
-        username: login.username,
-        password: login.password,
-        host: container.host,
-        port: container.port,
-        max: 1,
-      };
-    });
+    options = {
+      db: "bun_sql_test",
+      username: login.username,
+      password: login.password,
+      host: container.host,
+      port: container.port,
+      max: 1,
+    };
 
     afterAll(async () => {
       // Containers persist - managed by docker-compose

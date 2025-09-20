@@ -38,7 +38,7 @@ test("Invalid escaped double quote in identifier shows helpful error message", a
   expect(exitCode).toBe(1);
   const err = stderr.toString();
   expect(err).toContain('const \\" = 1;');
-  expect(err).toContain('error: Unexpected escaped double quote');
+  expect(err).toContain("error: Unexpected escaped double quote");
   expect(err).toContain(":1:7");
 });
 

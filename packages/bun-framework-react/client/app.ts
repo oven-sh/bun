@@ -38,33 +38,36 @@ export interface AppState {
 // this file is loaded asynchronously, the `__bun_f` becomes a clever way to
 // stream the arbitrary data while HTML is loading. In a static build, this is
 // setup as an array with one string.
-const initialRscPayload: Promise<NonNullishReactNode> = createFromReadableStream(
-  new ReadableStream<NonNullishReactNode>({
-    start(controller) {
-      const bunF = (self.__bun_f ??= []);
-      const originalPush = bunF.push;
+const initialRscPayload: Promise<NonNullishReactNode> =
+  typeof document === "undefined"
+    ? Promise.resolve(false)
+    : createFromReadableStream(
+        new ReadableStream<NonNullishReactNode>({
+          start(controller) {
+            const bunF = (self.__bun_f ??= []);
+            const originalPush = bunF.push;
 
-      bunF.push = function (this: typeof bunF, ...chunks: (string | Uint8Array<ArrayBuffer>)[]) {
-        enqueueChunks(controller, ...chunks);
-        return originalPush.apply(this, chunks);
-      }.bind(bunF);
+            bunF.push = function (this: typeof bunF, ...chunks: (string | Uint8Array<ArrayBuffer>)[]) {
+              enqueueChunks(controller, ...chunks);
+              return originalPush.apply(this, chunks);
+            }.bind(bunF);
 
-      bunF.forEach(chunk => enqueueChunks(controller, chunk));
+            bunF.forEach(chunk => enqueueChunks(controller, chunk));
 
-      if (document.readyState === "loading") {
-        document.addEventListener(
-          "DOMContentLoaded",
-          () => {
-            controller.close();
+            if (document.readyState === "loading") {
+              document.addEventListener(
+                "DOMContentLoaded",
+                () => {
+                  controller.close();
+                },
+                { once: true },
+              );
+            } else {
+              controller.close();
+            }
           },
-          { once: true },
-        );
-      } else {
-        controller.close();
-      }
-    },
-  }),
-);
+        }),
+      );
 
 const appStore: Store<AppState> = store<AppState>({
   rsc: initialRscPayload,

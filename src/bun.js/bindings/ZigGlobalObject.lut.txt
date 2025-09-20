@@ -69,6 +69,7 @@
   PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
   PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
   PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
+  Profiler                        ProfilerConstructorCallback                           PropertyCallback
   ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      PropertyCallback
   ReadableStream                  ReadableStreamConstructorCallback                    PropertyCallback
   ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          PropertyCallback

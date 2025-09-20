@@ -73,7 +73,7 @@ pub fn convertStmtsForChunkForDevServer(
                             .name_loc = stmt.loc,
                         }, stmt.loc),
                         .args = .fromOwnedSlice(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
-                            .data = record.path.pretty,
+                            .data = if (record.tag == .runtime) "bun:wrap" else record.path.pretty,
                         }, record.range.loc)})),
                     }, stmt.loc);
 

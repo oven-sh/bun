@@ -8,7 +8,7 @@
 // This was done to make incremental updates as isolated as possible.
 // This import is different based on client vs server side.
 
-import { ServerManifest, SSRManifest } from "bun:app/server";
+import type { ServerManifest, SSRManifest } from "bun:app/server";
 import {
   __callDispose,
   __legacyDecorateClassTS,
@@ -437,6 +437,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         throw e;
       }
     }
+
+    if (typeof loadOrEsmModule === "boolean") {
+      throw new Error(
+        `Module "${id}" was resolved to a synthetic module, but did not have any exports. This is a bug in Bun.`,
+      );
+    }
+
     const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
 
     if (!mod) {
@@ -963,10 +970,10 @@ declare global {
 // bun:app, bun:app/server, bun:app/client, and bun:wrap are provided by this
 // file instead of the bundler
 
-registerSynthetic("bun:app", {
-  // `bun:app` exports types only, but we don't declare it so we don't throw a
-  // not found error if the user does a normal, non-type-only import
-});
+// registerSynthetic("bun:app", {
+//   // `bun:app` exports types only, but we don't declare it so we don't throw a
+//   // not found error if the user does a normal, non-type-only import
+// });
 
 registerSynthetic("bun:wrap", {
   __name,

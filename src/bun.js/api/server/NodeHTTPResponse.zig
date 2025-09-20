@@ -122,18 +122,16 @@ pub fn getServerSocketValue(this: *NodeHTTPResponse) jsc.JSValue {
 
 pub fn pauseSocket(this: *NodeHTTPResponse) void {
     log("pauseSocket", .{});
-    if (this.flags.socket_closed or this.flags.upgraded) {
+    if (this.flags.socket_closed or this.flags.upgraded or this.raw_response.isConnectRequest()) {
         return;
     }
-    // We never pause the socket if we are a CONNECT request
-    if (!this.raw_response.isConnectRequest()) {
-        this.raw_response.pause();
-    }
+
+    this.raw_response.pause();
 }
 
 pub fn resumeSocket(this: *NodeHTTPResponse) void {
     log("resumeSocket", .{});
-    if (this.flags.socket_closed or this.flags.upgraded) {
+    if (this.flags.socket_closed or this.flags.upgraded or this.raw_response.isConnectRequest()) {
         return;
     }
 

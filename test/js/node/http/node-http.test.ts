@@ -3351,4 +3351,57 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(mockHandler).not.toHaveBeenCalled();
     });
   });
+
+  test("Server should not crash in clientError is emitted when calling destroy", async () => {
+    await using server = http.createServer(async (req, res) => {
+      res.end("Hello World");
+    });
+
+    const clientErrors: Promise<void>[] = [];
+    server.on("clientError", (err, socket) => {
+      clientErrors.push(
+        Bun.sleep(10).then(() => {
+          socket.destroy();
+        }),
+      );
+    });
+    await once(server.listen(), "listening");
+    const address = server.address() as AddressInfo;
+
+    async function doRequests(address: AddressInfo) {
+      const client = connect(address.port, address.address, () => {
+        client.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nContent-Length: 0\r\n\r\n");
+      });
+      {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        client.on("data", resolve);
+        client.on("error", reject);
+        client.on("end", resolve);
+        await promise;
+      }
+      {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        client.write("GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n");
+        client.on("error", reject);
+        client.on("end", resolve);
+        await promise;
+      }
+    }
+
+    async function doInvalidRequests(address: AddressInfo) {
+      const client = connect(address.port, address.address, () => {
+        client.write("GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n");
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      client.on("error", reject);
+      client.on("close", resolve);
+      await promise;
+    }
+
+    await doRequests(address);
+    await Promise.all(clientErrors);
+    clientErrors.length = 0;
+    await doInvalidRequests(address);
+    await Promise.all(clientErrors);
+  });
 });

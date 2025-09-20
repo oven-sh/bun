@@ -680,6 +680,12 @@ pub const FFI = struct {
             if (source_value.isArray()) {
                 compile_c.source = .{ .files = .{} };
                 var iter = try source_value.arrayIterator(globalThis);
+
+                // Get base directory once if we have any relative paths
+                var base_dir_buf: bun.PathBuffer = undefined;
+                var base_dir: [:0]const u8 = Fs.FileSystem.instance.top_level_dir;
+                var needs_base_dir = false;
+
                 while (try iter.next()) |value| {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
@@ -687,9 +693,32 @@ pub const FFI = struct {
                     var source_path = try (try value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator);
                     // Only resolve relative paths - skip expensive work for absolute paths
                     if (!std.fs.path.isAbsolute(source_path)) {
-                        // Use Bun's cached top_level_dir (cwd at startup) - much cheaper than getCallerSrcLoc
+                        // Lazily get base directory only once
+                        if (!needs_base_dir) {
+                            needs_base_dir = true;
+                            base_dir = Fs.FileSystem.instance.top_level_dir; // fallback
+
+                            // Try to get caller's directory
+                            const caller_src_loc = callframe.getCallerSrcLoc(globalThis);
+                            defer if (!caller_src_loc.str.isEmpty()) caller_src_loc.str.deref();
+
+                            if (!caller_src_loc.str.isEmpty()) {
+                                if (caller_src_loc.str.toOwnedSlice(allocator)) |caller_path| {
+                                    defer allocator.free(caller_path);
+                                    if (std.fs.path.isAbsolute(caller_path)) {
+                                        if (std.fs.path.dirname(caller_path)) |dir| {
+                                            // Copy to our buffer so it persists, with null terminator
+                                            @memcpy(base_dir_buf[0..dir.len], dir);
+                                            base_dir_buf[dir.len] = 0;
+                                            base_dir = base_dir_buf[0..dir.len :0];
+                                        }
+                                    }
+                                } else |_| {}
+                            }
+                        }
+
                         var pathbuf: bun.PathBuffer = undefined;
-                        const joined = bun.path.joinAbsStringBufZ(Fs.FileSystem.instance.top_level_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
+                        const joined = bun.path.joinAbsStringBufZ(base_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
                         const resolved = bun.default_allocator.dupeZ(u8, joined) catch |err| {
                             bun.default_allocator.free(source_path);
                             return err;
@@ -705,9 +734,29 @@ pub const FFI = struct {
                 var source_path = try (try source_value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator);
                 // Only resolve relative paths - skip expensive work for absolute paths
                 if (!std.fs.path.isAbsolute(source_path)) {
-                    // Use Bun's cached top_level_dir (cwd at startup) - much cheaper than getCallerSrcLoc
+                    var base_dir_buf: bun.PathBuffer = undefined;
+                    var base_dir: [:0]const u8 = Fs.FileSystem.instance.top_level_dir; // fallback
+
+                    // Only pay the cost of getting caller source for relative paths
+                    const caller_src_loc = callframe.getCallerSrcLoc(globalThis);
+                    defer if (!caller_src_loc.str.isEmpty()) caller_src_loc.str.deref();
+
+                    if (!caller_src_loc.str.isEmpty()) {
+                        if (caller_src_loc.str.toOwnedSlice(allocator)) |caller_path| {
+                            defer allocator.free(caller_path);
+                            if (std.fs.path.isAbsolute(caller_path)) {
+                                if (std.fs.path.dirname(caller_path)) |dir| {
+                                    // Copy to buffer with null terminator
+                                    @memcpy(base_dir_buf[0..dir.len], dir);
+                                    base_dir_buf[dir.len] = 0;
+                                    base_dir = base_dir_buf[0..dir.len :0];
+                                }
+                            }
+                        } else |_| {}
+                    }
+
                     var pathbuf: bun.PathBuffer = undefined;
-                    const joined = bun.path.joinAbsStringBufZ(Fs.FileSystem.instance.top_level_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
+                    const joined = bun.path.joinAbsStringBufZ(base_dir, &pathbuf, &[_][]const u8{source_path}, .auto);
                     const resolved = bun.default_allocator.dupeZ(u8, joined) catch |err| {
                         bun.default_allocator.free(source_path);
                         return err;

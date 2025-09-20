@@ -1745,13 +1745,13 @@ pub const TestCommand = struct {
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                        TestCommand.run(reporter, vm, file_name.slice(), allocator) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
             }
         };
 
@@ -1770,7 +1770,6 @@ pub const TestCommand = struct {
         vm: *jsc.VirtualMachine,
         file_name: string,
         _: std.mem.Allocator,
-        is_last: bool,
     ) !void {
         defer {
             js_ast.Expr.Data.Store.reset();
@@ -1789,7 +1788,6 @@ pub const TestCommand = struct {
         const prev_only = reporter.jest.only;
         defer reporter.jest.only = prev_only;
 
-        const file_start = reporter.jest.files.len;
         const resolution = try vm.transpiler.resolveEntryPoint(file_name);
         try vm.clearEntryPoint();
 
@@ -1846,12 +1844,7 @@ pub const TestCommand = struct {
                 }
             }
 
-            const file_end = reporter.jest.files.len;
-
             blk: {
-                _ = file_start;
-                _ = file_end;
-                _ = is_last;
 
                 // Check if bun_test is available and has tests to run
                 var buntest_strong = bun_test_root.cloneActiveFile() orelse {

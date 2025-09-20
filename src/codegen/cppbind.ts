@@ -471,7 +471,7 @@ function generateZigParameterList(parameters: CppParameter[], globalThisArg?: Cp
 function generateZigSourceComment(cfg: Cfg, resultSourceLinks: string[], fn: CppFn): string {
   const fileName = relative(cfg.dstDir, fn.position.file);
   resultSourceLinks.push(`${fn.name}:${fileName}:${fn.position.start.line}:${fn.position.start.column}`);
-  return `    /// Source: ${fn.name}`;
+  return `/// Source: ${fn.name}`;
 }
 
 function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
@@ -644,7 +644,7 @@ function generateZigFn(
   resultBindings.push(generateZigSourceComment(cfg, resultSourceLinks, fn));
   if (fn.tag === "nothrow") {
     resultBindings.push(
-      `    pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
+      `pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
     );
     return;
   }
@@ -667,21 +667,21 @@ function generateZigFn(
       );
     }
     resultBindings.push(
-      `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
-      `        if (comptime Environment.ci_assert) {`,
-      `            var scope: jsc.CatchScope = undefined;`,
-      `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
-      `            defer scope.deinit();`,
+      `pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
+      `    if (comptime Environment.ci_assert) {`,
+      `        var scope: jsc.CatchScope = undefined;`,
+      `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
+      `        defer scope.deinit();`,
       ``,
-      `            const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-      `            try scope.returnIfException();`,
-      `            return result;`,
-      `        } else {`,
-      `            const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-      `            if (Bun__RETURN_IF_EXCEPTION(${formatZigName(globalThisArg.name)})) return error.JSError;`,
-      `            return result;`,
-      `        }`,
+      `        const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+      `        try scope.returnIfException();`,
+      `        return result;`,
+      `    } else {`,
+      `        const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+      `        if (Bun__RETURN_IF_EXCEPTION(${formatZigName(globalThisArg.name)})) return error.JSError;`,
+      `        return result;`,
       `    }`,
+      `}`,
     );
     return;
   }
@@ -699,21 +699,21 @@ function generateZigFn(
     }
   } else assertNever(fn.tag);
   resultBindings.push(
-    `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
-    `        if (comptime Environment.ci_assert) {`,
-    `            var scope: jsc.ExceptionValidationScope = undefined;`,
-    `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
-    `            defer scope.deinit();`,
+    `pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${fn.tag === "false_is_throw" ? "void" : returnType} {`,
+    `    if (comptime Environment.ci_assert) {`,
+    `        var scope: jsc.ExceptionValidationScope = undefined;`,
+    `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
+    `        defer scope.deinit();`,
     ``,
-    `            const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-    `            scope.assertExceptionPresenceMatches(value == ${equalsValue});`,
-    `            return if (value == ${equalsValue}) error.JSError else value;`,
-    `        } else {`,
-    `            const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-    `            if (value == ${equalsValue}) return error.JSError;`,
-    `            return value;`,
-    `        }`,
+    `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+    `        scope.assertExceptionPresenceMatches(value == ${equalsValue});`,
+    `        return if (value == ${equalsValue}) error.JSError ${fn.tag === "false_is_throw" ? "" : "else value"};`,
+    `    } else {`,
+    `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
+    `        if (value == ${equalsValue}) return error.JSError;`,
+    ...(fn.tag === "false_is_throw" ? [] : [`        return value;`]),
     `    }`,
+    `}`,
   );
   return;
 }
@@ -783,10 +783,10 @@ async function main() {
   const resultFilePath = join(dstDir, "cpp.zig");
   const resultContents =
     typeDeclarations +
-    "\nconst raw = struct {\n" +
-    resultRaw.join("\n") +
-    "\n};\n\npub const bindings = struct {\n" +
+    "\n" +
     resultBindings.join("\n") +
+    "\n\nconst raw = struct {\n" +
+    resultRaw.join("\n") +
     "\n};\n";
   if ((await readFileOrEmpty(resultFilePath)) !== resultContents) {
     await Bun.write(resultFilePath, resultContents);

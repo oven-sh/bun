@@ -24,15 +24,19 @@
 
 extern "C" {
 struct us_socket_stream_buffer_t {
-    char* listPtr = nullptr;
-    size_t listCap = 0;
+    char* list_ptr = nullptr;
+    size_t list_cap = 0;
     size_t listLen = 0;
-    size_t totalBytesWritten = 0;
+    size_t total_bytes_written = 0;
     size_t cursor = 0;
 
     size_t bufferedSize() const
     {
         return listLen - cursor;
+    }
+    size_t totalBytesWritten() const
+    {
+        return total_bytes_written;
     }
 };
 }
@@ -646,7 +650,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosed, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
-    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.totalBytesWritten));
+    return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.totalBytesWritten()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))

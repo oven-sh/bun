@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
-import type { Bake } from "bun";
+import type { ServerEntryPoint } from "bun:app";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
 // import { AsyncLocalStorage } from "node:async_hooks";
@@ -10,12 +10,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
-export type RequestContext = {
-  responseOptions: ResponseInit;
-  streaming: boolean;
-  streamingStarted?: boolean;
-  renderAbort?: (path: string, params: Record<string, any> | null) => never;
-};
+export type RequestContext = import("bun:app").__internal.RequestContext;
 
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
@@ -30,7 +25,7 @@ interface Exports {
     styles: string[],
     params: Record<string, string> | null,
     setAsyncLocalStorage: Function,
-  ) => any;
+  ) => Bun.MaybePromise<Response>;
   registerUpdate: (
     modules: any,
     componentManifestAdd: null | string[],
@@ -55,7 +50,7 @@ server_exports = {
       });
     }
 
-    const exports = await loadExports<Bake.ServerEntryPoint>(routerTypeMain);
+    const exports = await loadExports<ServerEntryPoint>(routerTypeMain);
 
     const serverRenderer = exports.render;
 
@@ -66,13 +61,26 @@ server_exports = {
       throw new Error('Framework server entrypoint\'s "render" export is not a function.');
     }
 
-    const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
+    const [pageModule, ...layouts] = await Promise.all(
+      routeModules.map(loadExports) as [
+        Promise<{
+          streaming?: boolean;
+          mode?: "ssr" | "static";
+          default: () => React.JSXElementConstructor<unknown>;
+        }>,
+        ...Promise<ServerEntryPoint>[],
+      ],
+    );
+
+    if (!pageModule) {
+      throw new Error("Page module is missing for path: " + req.url);
+    }
 
     let requestWithCookies = req;
 
-    let storeValue: RequestContext = {
+    let storeValue: import("bun:app").__internal.RequestContext = {
       responseOptions: {},
-      streaming: pageModule.streaming ?? false,
+      streaming: pageModule?.streaming ?? false,
     };
 
     try {
@@ -89,7 +97,7 @@ server_exports = {
             modulepreload: [],
             params,
             // Pass request in metadata when mode is 'ssr'
-            request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
+            request: pageModule?.mode === "ssr" ? requestWithCookies : undefined,
           },
           responseOptionsALS,
         );

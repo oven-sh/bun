@@ -391,8 +391,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     assert(dev.client_transpiler.resolver.opts.target == .browser);
 
     dev.framework = dev.framework.resolve(&dev.server_transpiler.resolver, &dev.client_transpiler.resolver, options.arena) catch {
-        if (dev.framework.is_built_in_react)
-            try bake.Framework.addReactInstallCommandNote(&dev.log);
         return global.throwValue(try dev.log.toJSAggregateError(global, bun.String.static("Framework is missing required files!")));
     };
 
@@ -1057,7 +1055,7 @@ fn ensureRouteIsBundled(
             try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
         },
         .bundling => {
-            bun.assert(dev.current_bundle != null);
+            bun.assertf(dev.current_bundle != null, "dev.current_bundle is null", .{});
             try dev.deferRequest(&dev.current_bundle.?.requests, route_bundle_index, kind, req, resp);
         },
         .possible_bundling_failures => {

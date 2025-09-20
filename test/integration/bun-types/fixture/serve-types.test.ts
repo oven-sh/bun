@@ -543,3 +543,12 @@ test(
     },
   },
 );
+
+test("it works with .app", {
+  app: {
+    framework: "react",
+  },
+  routes: {
+    "/api/ping": new Response("pong"),
+  },
+});

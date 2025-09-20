@@ -524,7 +524,6 @@ pub fn generateChunksInParallel(
                 },
                 .bake_extra = brk: {
                     if (c.framework == null or is_dev_server) break :brk .{};
-                    if (!c.framework.?.is_built_in_react) break :brk .{};
 
                     var extra: OutputFile.BakeExtra = .{};
                     extra.bake_is_runtime = chunk.files_with_parts_in_chunk.contains(Index.runtime.get());

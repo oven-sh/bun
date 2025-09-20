@@ -125,7 +125,10 @@ pub fn pauseSocket(this: *NodeHTTPResponse) void {
     if (this.flags.socket_closed or this.flags.upgraded) {
         return;
     }
-    this.raw_response.pause();
+    // We never pause the socket if we are a CONNECT request
+    if (!this.raw_response.isConnectRequest()) {
+        this.raw_response.pause();
+    }
 }
 
 pub fn resumeSocket(this: *NodeHTTPResponse) void {
@@ -581,10 +584,7 @@ pub fn doPause(this: *NodeHTTPResponse, _: *jsc.JSGlobalObject, _: *jsc.CallFram
 
     // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
     if (!Environment.isWindows) {
-        // We never pause the socket if we are a CONNECT request
-        if (!this.raw_response.isConnectRequest()) {
-            pauseSocket(this);
-        }
+        pauseSocket(this);
     }
     return .true;
 }

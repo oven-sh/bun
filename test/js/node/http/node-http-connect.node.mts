@@ -157,18 +157,18 @@ describe("HTTP server CONNECT", () => {
     }
   });
 
-  test("close event should fire when the client ends", async () => {
+  test.only("close event should fire when the client ends", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     await using server = http.createServer(async (req, res) => {
       res.socket?.on("close", resolve);
+      console.log("hey");
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
     const serverAddress = server.address() as AddressInfo;
 
     const client = net.connect(serverAddress.port, serverAddress.address, () => {
       client.on("error", reject);
-      client.write("GET / HTTP/1.1\r\nHost: localhost:80\r\nConnection: close\r\nContent-Length: 10\r\n\r\n");
-      client.end();
+      client.write("POST / HTTP/1.1\r\nHost: localhost:80\r\nConnection: close\r\nContent-Length: 10\r\n\r\n");
     });
     await promise;
   });

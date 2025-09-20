@@ -855,10 +855,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onDrain() {
     const handle = this[kHandle];
     this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
-    if (this.#pendingCallback) {
-      const callback = this.#pendingCallback as Function;
+    const callback = this.#pendingCallback;
+    if (callback) {
       this.#pendingCallback = null;
-      callback();
+      (callback as Function)();
     }
     this.emit("drain");
   }
@@ -944,7 +944,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     handle.ondata = undefined;
     if (handle.closed) {
       const onclose = handle.onclose;
-      handle.onclose = null;
       if ($isCallable(onclose)) {
         onclose.$call(handle);
       }
@@ -983,22 +982,24 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   #resumeSocket() {
     const handle = this[kHandle];
-    const response = handle?.response;
-    if (response) {
-      const resumed = response.resume();
-      if (resumed && resumed !== true) {
-        const bodyReadState = handle.hasBody;
+    if (handle) {
+      const response = handle.response;
+      if (response) {
+        const resumed = response.resume();
+        if (resumed && resumed !== true) {
+          const bodyReadState = handle.hasBody;
 
-        const message = this._httpMessage;
-        const req = message?.req;
+          const message = this._httpMessage;
+          const req = message?.req;
 
-        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-          emitServerSocketEOFNT(this, req);
+          if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+            emitServerSocketEOFNT(this, req);
+          }
+          if (req) {
+            req.push(resumed);
+          }
+          this.push(resumed);
         }
-        if (req) {
-          req.push(resumed);
-        }
-        this.push(resumed);
       }
     }
   }
@@ -1090,10 +1091,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   pause() {
     const handle = this[kHandle];
-    const response = handle?.response;
-    if (response) {
-      response.pause();
+    if (handle) {
+      const response = handle.response;
+      if (response) {
+        response.pause();
+      }
     }
+
     return super.pause();
   }
 

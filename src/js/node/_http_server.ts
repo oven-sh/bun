@@ -531,6 +531,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (method === "CONNECT") {
           // Handle CONNECT method for HTTP tunneling/proxy
           if (server.listenerCount("connect") > 0) {
+            socket[kEnableStreaming](true);
             // For CONNECT, emit the event and let the handler respond
             server.emit("connect", http_req, socket, kEmptyBuffer);
 
@@ -545,6 +546,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
           return;
         }
+        socket[kEnableStreaming](false);
+
         const http_res = new ResponseClass(http_req, {
           [kHandle]: handle,
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
@@ -804,6 +807,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 }
 
 const kBytesWritten = Symbol("kBytesWritten");
+const kEnableStreaming = Symbol("kEnableStreaming");
 const NodeHTTPServerSocket = class Socket extends Duplex {
   bytesRead = 0;
   connecting = false;
@@ -820,9 +824,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kHandle] = handle;
     this._secureEstablished = !!handle?.secureEstablished;
     handle.onclose = this.#onClose.bind(this);
-    handle.ondrain = this.#onDrain.bind(this);
-    handle.ondata = this.#onData.bind(this);
     handle.duplex = this;
+
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
@@ -837,6 +840,18 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kBytesWritten] = value;
   }
 
+  [kEnableStreaming](enable: boolean) {
+    const handle = this[kHandle];
+    if (handle) {
+      if (enable) {
+        handle.ondata = this.#onData.bind(this);
+        handle.ondrain = this.#onDrain.bind(this);
+      } else {
+        handle.ondata = undefined;
+        handle.ondrain = undefined;
+      }
+    }
+  }
   #onDrain() {
     const handle = this[kHandle];
     this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
@@ -872,6 +887,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onClose() {
     this[kHandle] = null;
+
     const message = this._httpMessage;
     const req = message?.req;
 
@@ -1054,7 +1070,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   _write(_chunk, _encoding, _callback) {
     const handle = this[kHandle];
-    if (handle) {
+    // only enable writting if we can drain
+    if (handle && handle.ondrain) {
       try {
         handle.write(_chunk, _encoding);
         if (handle.bufferLength > 0) {
@@ -1356,7 +1373,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
     req._dump();
   }
-  this.detachSocket(socket);
+  if (socket) {
+    socket.removeAllListeners();
+  }
   this.finished = true;
   process.nextTick(self => {
     self._ended = true;
@@ -1696,6 +1715,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
     chunk = Buffer.from(chunk, encoding);
   }
   const req = this.req;
+
   const shouldEmitClose = req && req.emit && !this.finished;
   if (!this.headersSent) {
     let data = this[firstWriteSymbol];

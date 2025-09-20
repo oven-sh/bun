@@ -132,36 +132,6 @@ describe("HTTP server CONNECT", () => {
     expect(proxy_end_received).toBe(true);
   });
 
-  test("should be able to read data from the client using socket", async () => {
-    for (let payload of ["Hello World", Buffer.alloc(1024 * 64, "bun").toString(), BIG_DATA]) {
-      const { promise, resolve, reject } = Promise.withResolvers<string>();
-      let server_data_received: string[] = [];
-      let client;
-      await using server = http.createServer((req, res) => {
-        const socket = res.socket!;
-        socket.on("data", chunk => {
-          server_data_received.push(chunk?.toString());
-        });
-        socket.on("end", () => {
-          resolve(server_data_received.join(""));
-          socket.end();
-        });
-        client.write(payload, () => {
-          client.end();
-        });
-      });
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const serverAddress = server.address() as AddressInfo;
-      client = net.connect(serverAddress.port, serverAddress.address, () => {
-        client.on("error", reject);
-        client.write(
-          `GET / HTTP/1.1\r\nHost: localhost:80\r\nConnection: close\r\nContent-Length:${payload.length}\r\n\r\n`,
-        );
-      });
-      expect(await promise).toBe(payload);
-    }
-  });
-
   test("should handle CONNECT with invalid target", async () => {
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
@@ -461,61 +431,6 @@ describe("HTTP server socket access via normal requests", () => {
 
     const total = await promise;
     expect(total).toBeGreaterThan(0);
-  });
-
-  test("should handle socket write queue and drain events", async () => {
-    const hugeData = Buffer.alloc(1024 * 1024 * 16, "z");
-    let drainFired = false;
-    let writeReturnedFalse = false;
-
-    await using server = http.createServer((req, res) => {
-      const socket = res.socket!;
-
-      socket.on("drain", () => {
-        drainFired = true;
-      });
-
-      // Write HTTP response headers
-      socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n");
-
-      // Attempt to overflow the write buffer
-      for (let i = 0; i < 100; i++) {
-        const canWrite = socket.write(hugeData);
-        if (!canWrite) {
-          writeReturnedFalse = true;
-          break;
-        }
-      }
-
-      setTimeout(() => socket.end(), 200);
-    });
-
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const serverAddress = server.address() as AddressInfo;
-
-    const client = net.connect(serverAddress.port, serverAddress.address, () => {
-      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-
-      // Slow reader to cause backpressure
-      client.pause();
-      setTimeout(() => client.resume(), 100);
-    });
-
-    const { promise, resolve } = Promise.withResolvers<void>();
-    let totalBytes = 0;
-
-    client.on("data", chunk => {
-      totalBytes += chunk.length;
-    });
-
-    client.on("end", () => {
-      resolve();
-    });
-
-    await promise;
-    expect(writeReturnedFalse).toBe(true);
-    expect(drainFired).toBe(true);
-    expect(totalBytes).toBeGreaterThan(0);
   });
 });
 

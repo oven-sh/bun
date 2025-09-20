@@ -854,8 +854,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       const handle = this[kHandle];
       if (handle) {
         handle.ondata = undefined;
-        // no half-closed socket
-        process.nextTick(this.#closeHandle.bind(this, handle, undefined));
       }
       this.push(null);
     }

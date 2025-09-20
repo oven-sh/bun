@@ -282,9 +282,7 @@ describe("HTTP server CONNECT", () => {
       expect(await promise).toBe(payload);
     }
   });
-});
 
-describe("HTTP server CONNECT - Additional Tests", () => {
   test("should handle multiple concurrent CONNECT requests", async () => {
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");

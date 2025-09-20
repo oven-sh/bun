@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Regression test for issue #22770
 // https://github.com/oven-sh/bun/issues/22770

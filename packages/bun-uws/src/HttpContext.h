@@ -193,20 +193,18 @@ private:
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
 
+            /* Call filter */
+            HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             
             if(httpResponseData && httpResponseData->isStreamingRequest) {
-                if (httpResponseData->socketData && httpResponseData->onSocketData) {
-                    httpResponseData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
+                if (httpResponseData->socketData && httpContextData->onSocketData) {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
                 if(httpResponseData->inStream) {
                     httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
                     httpResponseData->inStream = nullptr;
                 }                
             }
-
-
-            /* Call filter */
-            HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
 
             for (auto &f : httpContextData->filterHandlers) {
@@ -343,9 +341,11 @@ private:
                 /* Continue parsing */
                 return s;
 
-            }, [httpResponseData](void *user, std::string_view data, bool fin) -> void * {
-                if (httpResponseData->socketData && httpResponseData->isStreamingRequest && httpResponseData->onSocketData) {
-                    httpResponseData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
+            }, [httpResponseData, httpContextData](void *user, std::string_view data, bool fin) -> void * {
+
+
+                if (httpResponseData->isStreamingRequest && httpResponseData->socketData && httpContextData->onSocketData) {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
                 }
                 /* We always get an empty chunk even if there is no data */
                 if (httpResponseData->inStream) {
@@ -486,8 +486,11 @@ private:
                 */
             }
 
-            if (httpResponseData->socketData && httpResponseData->isStreamingRequest && httpResponseData->onSocketDrain) {
-                httpResponseData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+            auto *httpContextData = getSocketContextDataS(s);
+
+
+            if (httpResponseData->isStreamingRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+                httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
             }
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {

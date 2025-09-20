@@ -346,7 +346,7 @@ public:
     }
 
     void
-    onData(char* data, int length, bool last)
+    onData(const char* data, int length, bool last)
     {
         // This function can be called during GC!
         Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
@@ -1135,7 +1135,7 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
         socket->onDrain();
     });
-    app->setOnSocketData([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, char* data, int length, bool last) -> void {
+    app->setOnSocketData([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, const char* data, int length, bool last) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
         socket->onData(data, length, last);

@@ -1,7 +1,7 @@
 import { use, useLayoutEffect, type ReactNode } from "react";
-import { isThenable } from "../lib/util.ts";
 import { useAppState } from "./app.ts";
 import { router } from "./constants.ts";
+import { isThenable } from "./lib/util.ts";
 
 // This is a function component that uses the `use` hook, which unwraps a
 // promise.  The promise results in a component containing suspense boundaries.

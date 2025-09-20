@@ -7,7 +7,10 @@
   "exports": {
     ".": "./index.ts",
     "./package.json": "./package.json",
-    "./*": "./*"
+    "./ssr.tsx": "./ssr.tsx",
+    "./server.tsx": "./server.tsx",
+    "./client.tsx": "./client.tsx",
+    "./*": "./src/*.tsx"
   },
   "dependencies": {
     "react": "0.0.0-experimental-d415fd3e-20250919",

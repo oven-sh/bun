@@ -440,7 +440,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Output.errGeneric("--reporter=junit expects an output file from --reporter-outfile", .{});
                     Global.crash();
                 }
-                ctx.test_options.file_reporter = .junit;
+                ctx.test_options.reporters.junit = true;
             } else {
                 Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
                 Global.crash();

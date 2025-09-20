@@ -344,7 +344,10 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
 
-        file_reporter: ?TestCommand.FileReporter = null,
+        reporters: struct {
+            dots: bool = false,
+            junit: bool = false,
+        } = .{},
         reporter_outfile: ?[]const u8 = null,
     };
 

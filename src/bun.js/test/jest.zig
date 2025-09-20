@@ -433,7 +433,7 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
 
 pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit) {
+        if (runner.test_options.reporters.junit) {
             return bun.cpp.Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }

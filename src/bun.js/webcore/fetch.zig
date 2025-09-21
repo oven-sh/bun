@@ -343,13 +343,6 @@ pub const FetchTasklet = struct {
         this.is_waiting_request_stream_start = false;
         bun.assert(this.request_body == .ReadableStream);
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
-            if (this.signal) |signal| {
-                if (signal.aborted()) {
-                    stream.abort(this.global_this);
-                    return;
-                }
-            }
-
             const globalThis = this.global_this;
             this.ref(); // lets only unref when sink is done
             // +1 because the task refs the sink

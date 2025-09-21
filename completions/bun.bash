@@ -82,17 +82,17 @@ _bun_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build audit info exec publish patch patch-commit";
 
-    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
-    GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
+    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js --minify --minify-syntax --minify-whitespace --minify-identifiers --sourcemap --target --splitting --compile --format --inspect --inspect-wait --inspect-brk --hot --watch --no-install --install --prefer-offline --prefer-latest --if-present --no-clear-screen --smol --require --import --fetch-preconnect --max-http-header-size --dns-result-order --expose-gc --no-deprecation --throw-deprecation --title --zero-fill-buffers --redis-preconnect --no-addons --unhandled-rejections --silent --elide-lines --revision --filter --bun --shell";
+    GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p -r -F -b";
 
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer";
+    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --dev --analyze --only-missing --exact";
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="";
 
-    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
+    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --ca --cafile --network-concurrency --save-text-lockfile --omit --lockfile-only --trust --concurrent-scripts --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
@@ -146,7 +146,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
             return;;
         upgrade)
-            COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
+            COMPREPLY=( $(compgen -W "--version --cwd --help --canary -v -h") );
             return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
@@ -156,7 +156,28 @@ _bun_completions() {
         pm)
             _long_short_completion \
                 "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
-            COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
+            COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string audit pack migrate untrusted trust default-trusted whoami version view" -- "${cur_word}") );
+            return;;
+        test)
+            _long_short_completion \
+                "--timeout --update-snapshots --rerun-each --only --todo --coverage --coverage-reporter --coverage-dir --bail --test-name-pattern --reporter --reporter-outfile" "-u -t"
+            return;;
+        build)
+            COMPREPLY=( $(compgen -W "--production --compile --bytecode --watch --no-clear-screen --target --outdir --outfile --sourcemap --minify --minify-syntax --minify-whitespace --minify-identifiers --format --banner --footer --root --splitting --public-path --entry-naming --chunk-naming --asset-naming --react-fast-refresh --no-bundle --emit-dce-annotations --css-chunking --conditions --app --server-components --env --windows-hide-console --windows-icon --debug-dump-server-files --debug-no-minify --external --packages" -- "${cur_word}") );
+            return;;
+        audit)
+            COMPREPLY=( $(compgen -W "--json" -- "${cur_word}") );
+            return;;
+        info)
+            _long_short_completion \
+                "--config --yarn --production --no-save --save --ca --cafile --dry-run --frozen-lockfile --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --trust --global --cwd --backend --registry --network-concurrency --save-text-lockfile --omit --lockfile-only --concurrent-scripts --json --help" \
+                "-c -y -p -f -g -h";
+            return;;
+        patch-commit)
+            COMPREPLY=( $(compgen -W "--patches-dir" -- "${cur_word}") );
+            return;;
+        init)
+            COMPREPLY=( $(compgen -W "--help --yes --minimal --react --react=tailwind --react=shadcn -y -m -r" -- "${cur_word}") );
             return;;
         *)
             local replaced_script;

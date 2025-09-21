@@ -5206,7 +5206,7 @@ describe("update", () => {
       expect(out).toEqual([
         expect.stringContaining("bun update v1."),
         "",
-        "installed no-deps@1.0.1",
+        "updated no-deps@1.0.1",
         "",
         expect.stringContaining("done"),
         "",
@@ -5226,7 +5226,7 @@ describe("update", () => {
       expect(out).toEqual([
         expect.stringContaining("bun update v1."),
         "",
-        "installed no-deps@2.0.0",
+        "updated no-deps@2.0.0",
         "",
         "1 package installed",
       ]);
@@ -5566,10 +5566,10 @@ describe("update", () => {
     expect(out).toEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "installed what-bin@1.5.0 with binaries:",
+      "updated what-bin@1.5.0 with binaries:",
       " - what-bin",
-      "installed uses-what-bin@1.5.0",
-      "installed a-dep@1.0.5",
+      "updated uses-what-bin@1.5.0",
+      "updated a-dep@1.0.5",
       "",
       "3 packages installed",
     ]);
@@ -5613,7 +5613,7 @@ describe("update", () => {
     expect(out).toEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "installed a-dep@1.0.10",
+      "updated a-dep@1.0.10",
       "",
       expect.stringMatching(/(\[\d+\.\d+m?s\])/),
       "",
@@ -5659,7 +5659,7 @@ describe("update", () => {
         expect(out).toEqual([
           expect.stringContaining("bun update v1."),
           "",
-          args ? "installed a-dep@1.0.10" : expect.stringContaining("+ a-dep@1.0.10"),
+          args ? "updated a-dep@1.0.10" : expect.stringContaining("+ a-dep@1.0.10"),
           "",
           "1 package installed",
         ]);
@@ -5729,7 +5729,7 @@ describe("update", () => {
     expect(out).toEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "installed no-deps@1.0.0",
+      "updated no-deps@1.0.0",
       "",
       expect.stringMatching(/(\[\d+\.\d+m?s\])/),
       "",
@@ -5745,7 +5745,7 @@ describe("update", () => {
     expect(out).toEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "installed no-deps@2.0.0",
+      "added no-deps@2.0.0",
       "",
       "1 package installed",
     ]);
@@ -5779,7 +5779,7 @@ describe("update", () => {
     expect(out).toEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "installed no-deps@1.1.0",
+      "updated no-deps@1.1.0",
       "",
       "1 package installed",
     ]);

@@ -1929,7 +1929,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                     .signal = signal,
                                 };
 
-                                const url = bun.String.cloneUTF8(render_body.path);
+                                const url = bun.String.cloneUTF8(render_body.path.get());
                                 const body: jsc.WebCore.Body.Value = .{ .Null = {} };
 
                                 const new_request = Request.new(.{
@@ -1950,7 +1950,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                     .ctx = AnyRequestContext.init(new_request_ctx),
                                     .request = new_request,
                                     .response = bun.uws.AnyResponse.init(resp.?),
-                                }, render_body.path, response) catch {
+                                }, render_body.path.get(), response) catch {
                                     // On error, render missing
                                     this.renderMissing();
                                     return;

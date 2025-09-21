@@ -586,7 +586,7 @@ pub fn constructRender(
         .body = Body{
             .value = .{
                 .Render = .{
-                    .path = path_copy,
+                    .path = bun.ptr.Owned([]const u8).fromRaw(path_copy),
                 },
             },
         },

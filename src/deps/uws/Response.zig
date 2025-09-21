@@ -306,6 +306,10 @@ pub fn NewResponse(ssl_flag: i32) type {
                 ctx,
             );
         }
+
+        pub fn memoryCost(this: *Response) usize {
+            return c.uws_res_memory_cost(ssl_flag, this.downcast());
+        }
     };
 }
 
@@ -315,6 +319,13 @@ pub const TLSResponse = NewResponse(1);
 pub const AnyResponse = union(enum) {
     SSL: *uws.NewApp(true).Response,
     TCP: *uws.NewApp(false).Response,
+
+    pub fn memoryCost(this: AnyResponse) usize {
+        return switch (this) {
+            .SSL => |resp| resp.memoryCost(),
+            .TCP => |resp| resp.memoryCost(),
+        };
+    }
 
     pub fn assertSSL(this: AnyResponse) *uws.NewApp(true).Response {
         return switch (this) {
@@ -670,6 +681,7 @@ const c = struct {
     pub extern fn uws_res_prepare_for_sendfile(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_get_native_handle(ssl: i32, res: *c.uws_res) *Socket;
     pub extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *c.uws_res, dest: *[*]const u8) usize;
+    pub extern fn uws_res_memory_cost(ssl: i32, res: *c.uws_res) usize;
 
     pub extern fn uws_res_on_data(
         ssl: i32,

@@ -1,0 +1,51 @@
+# This workflow tests bun-release's code and the packages to ensure that npm,
+# yarn, and pnpm can install bun on all platforms. This does not test that bun
+# itself works as it hardcodes 1.2.0 as the version to package.
+name: bun-release-test
+concurrency: release-test
+
+on:
+  pull_request:
+    paths:
+      - "packages/bun-release/**"
+      - ".github/workflows/bun-release-test.yml"
+
+jobs:
+  test-release-script:
+    name: Test Release Script
+    strategy:
+      matrix:
+        # https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-where-your-workflow-runs/choosing-the-runner-for-a-job#choosing-github-hosted-runners
+        machine: [
+            ubuntu-latest, # linux x64
+            ubuntu-24.04-arm, # linux arm
+            macos-13, # macos x64
+            macos-15, # macos arm
+            # windows-latest, # windows x64
+          ]
+      fail-fast: false
+    runs-on: ${{ matrix.machine }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/bun-release
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.2.0"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Dependencies
+        run: bun install && npm i -g pnpm yarn npm && which node
+
+      - name: Release
+        run: bun upload-npm -- 1.2.0 test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2966,14 +2966,14 @@ console.log(foo, array);
 
       expectPrinted("1 === 1", "!0");
       expectPrinted("1 === 2", "!1");
-      expectPrinted("1 === '1'", '1 === "1"');
+      expectPrinted("1 === '1'", '1 == "1"');
       expectPrinted("1 == 1", "!0");
       expectPrinted("1 == 2", "!1");
       expectPrinted("1 == '1'", '1 == "1"');
 
       expectPrinted("1 !== 1", "!1");
       expectPrinted("1 !== 2", "!0");
-      expectPrinted("1 !== '1'", '1 !== "1"');
+      expectPrinted("1 !== '1'", '1 != "1"');
       expectPrinted("1 != 1", "!1");
       expectPrinted("1 != 2", "!0");
       expectPrinted("1 != '1'", '1 != "1"');

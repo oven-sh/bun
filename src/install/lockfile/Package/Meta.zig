@@ -32,8 +32,8 @@ pub const Meta = extern struct {
 
     /// Does the `cpu` arch and `os` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn isDisabled(this: *const Meta) bool {
-        return !this.arch.isMatch() or !this.os.isMatch();
+    pub fn isDisabled(this: *const Meta, cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
+        return !this.arch.isMatchWithTarget(cpu) or !this.os.isMatchWithTarget(os);
     }
 
     pub fn hasInstallScript(this: *const Meta) bool {

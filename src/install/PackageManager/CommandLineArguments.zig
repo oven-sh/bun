@@ -50,6 +50,8 @@ const shared_params = [_]ParamType{
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
+    clap.parseParam("--cpu <STR>                           Override CPU architecture for optional dependencies (e.g., x64, arm64)") catch unreachable,
+    clap.parseParam("--os <STR>                            Override operating system for optional dependencies (e.g., linux, darwin, win32)") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -240,6 +242,10 @@ depth: ?usize = null,
 // `bun audit` options
 audit_level: ?AuditLevel = null,
 audit_ignore_list: []const string = &.{},
+
+// CPU and OS overrides for optional dependencies
+cpu: ?string = null,
+os: ?string = null,
 
 pub const AuditLevel = enum {
     low,
@@ -935,6 +941,14 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (args.option("--config")) |opt| {
         cli.config = opt;
+    }
+
+    if (args.option("--cpu")) |cpu| {
+        cli.cpu = cpu;
+    }
+
+    if (args.option("--os")) |os| {
+        cli.os = os;
     }
 
     if (comptime subcommand == .add or subcommand == .install) {

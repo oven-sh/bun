@@ -658,6 +658,10 @@ pub const OperatingSystem = enum(u16) {
         return (@intFromEnum(this) & @intFromEnum(current)) != 0;
     }
 
+    pub fn isMatchWithTarget(this: OperatingSystem, target: OperatingSystem) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
+    }
+
     pub inline fn has(this: OperatingSystem, other: u16) bool {
         return (@intFromEnum(this) & other) != 0;
     }
@@ -795,6 +799,10 @@ pub const Architecture = enum(u16) {
 
     pub fn isMatch(this: Architecture) bool {
         return @intFromEnum(this) & @intFromEnum(current) != 0;
+    }
+
+    pub fn isMatchWithTarget(this: Architecture, target: Architecture) bool {
+        return @intFromEnum(this) & @intFromEnum(target) != 0;
     }
 
     pub fn negatable(this: Architecture) Negatable(Architecture) {

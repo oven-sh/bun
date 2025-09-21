@@ -74,6 +74,12 @@ node_linker: NodeLinker = .auto,
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
 
+/// Override CPU architecture for optional dependencies filtering
+cpu: Npm.Architecture = Npm.Architecture.current,
+
+/// Override OS for optional dependencies filtering
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -579,6 +585,24 @@ pub fn load(
             PackageInstall.supported_method = backend;
         }
 
+        if (cli.cpu) |cpu_str| {
+            if (Npm.Architecture.NameMap.get(cpu_str)) |cpu_val| {
+                this.cpu = @enumFromInt(cpu_val);
+            } else {
+                Output.errGeneric("Invalid CPU architecture: '{s}'. Valid values are: arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64", .{cpu_str});
+                Global.crash();
+            }
+        }
+
+        if (cli.os) |os_str| {
+            if (Npm.OperatingSystem.NameMap.get(os_str)) |os_val| {
+                this.os = @enumFromInt(os_val);
+            } else {
+                Output.errGeneric("Invalid operating system: '{s}'. Valid values are: aix, darwin, freebsd, linux, openbsd, sunos, win32, android", .{os_str});
+                Global.crash();
+            }
+        }
+
         this.do.update_to_latest = cli.latest;
         this.do.recursive = cli.recursive;
 
@@ -709,6 +733,7 @@ const CommandLineArguments = @import("./CommandLineArguments.zig");
 const std = @import("std");
 
 const bun = @import("bun");
+const Global = bun.Global;
 const DotEnv = bun.DotEnv;
 const Environment = bun.Environment;
 const FD = bun.FD;

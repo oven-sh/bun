@@ -382,8 +382,10 @@ pub fn isResolvedDependencyDisabled(
     dep_id: DependencyID,
     features: Features,
     meta: *const Package.Meta,
+    cpu: Npm.Architecture,
+    os: Npm.OperatingSystem,
 ) bool {
-    if (meta.isDisabled()) return true;
+    if (meta.isDisabled(cpu, os)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
@@ -2033,6 +2035,7 @@ const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityCon
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 const bun = @import("bun");
+const Npm = @import("./npm.zig");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const GlobalStringBuilder = bun.StringBuilder;

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test.concurrent("fetch aborts when connect() returns EINPROGRESS but never completes", async () => {
   // Use TEST-NET-1 (192.0.2.0/24) from RFC 5737

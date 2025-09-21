@@ -30,7 +30,7 @@ describe("BunTestController", () => {
       const pattern = internal.buildTestNamePattern(mockTests);
 
       expect(pattern).toContain(".*?");
-      expect(pattern).toBe("^ ?(test with .*?$)|(test with \\.*?$)");
+      expect(pattern).toBe("(^ ?test with .*?$)|(^ ?test with \\.*?$)");
     });
 
     test("should escape % formatters", () => {
@@ -41,7 +41,7 @@ describe("BunTestController", () => {
 
       const pattern = internal.buildTestNamePattern(mockTests);
 
-      expect(pattern).toBe("^ ?(test with .*?$)|(test with .*?$)");
+      expect(pattern).toBe("(^ ?test with .*?$)|(^ ?test with .*?$)");
     });
 
     test("should join multiple patterns with |", () => {
@@ -53,7 +53,7 @@ describe("BunTestController", () => {
 
       const pattern = internal.buildTestNamePattern(mockTests);
 
-      expect(pattern).toBe("^ ?(test 1$)|(test 2$)|(test 3$)");
+      expect(pattern).toBe("(^ ?test 1$)|(^ ?test 2$)|(^ ?test 3$)");
     });
 
     test("should handle describe blocks differently", () => {
@@ -61,7 +61,7 @@ describe("BunTestController", () => {
 
       const pattern = internal.buildTestNamePattern(mockTests);
 
-      expect(pattern).toBe("^ ?(describe block )");
+      expect(pattern).toBe("(^ ?describe block )");
     });
 
     test("should handle complex nested test names", () => {
@@ -117,7 +117,7 @@ describe("BunTestController", () => {
       ] as any;
 
       const pattern = internal.buildTestNamePattern(mockTests);
-      expect(pattern).toBe("^ ?(test without tags)|(another test)");
+      expect(pattern).toBe("(test without tags)|(another test)");
     });
 
     test("should handle Unicode and emoji in test names", () => {

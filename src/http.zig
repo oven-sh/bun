@@ -828,11 +828,8 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
 
     // If we haven't already called onOpen(), then that means we need to
     // register the abort tracker. We need to do this in cases where the
-    // connection takes a long time to happen.
-    //
-    // If the DNS is valid but the server on the other end doesn't call
-    // accept(), then it can be awhile before the socket goes from EINPROGRESS
-    // -> writable/readable.
+    // connection takes a long time to happen such as when it's not routable.
+    // See test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts.
     //
     // We have to be careful here because if .connect() had finished
     // synchronously, then this socket is on longer valid and the pointer points

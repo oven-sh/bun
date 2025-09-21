@@ -1796,6 +1796,66 @@ export function readableStreamFromAsyncIterator(target, fn) {
     throw new TypeError("Expected an async generator");
   }
 
+  var runningAsyncIteratorPromise;
+  async function runAsyncIterator(controller) {
+    var closingError: Error | undefined, value, done, immediateTask;
+
+    try {
+      while (!cancelled && !done) {
+        const promise = iter.next(controller);
+
+        if (cancelled) {
+          return;
+        }
+
+        if ($isPromise(promise) && $isPromiseFulfilled(promise)) {
+          clearImmediate(immediateTask);
+          ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
+          $assert(!$isPromise(value), "Expected a value, not a promise");
+        } else {
+          immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));
+          ({ value, done } = await promise);
+
+          if (cancelled) {
+            return;
+          }
+        }
+
+        if (!$isUndefinedOrNull(value)) {
+          controller.write(value);
+        }
+      }
+    } catch (e) {
+      closingError = e;
+    } finally {
+      clearImmediate(immediateTask);
+      immediateTask = undefined;
+      // "iter" will be undefined if the stream was closed above.
+
+      // Stream was closed before we tried writing to it.
+      if (closingError?.code === "ERR_INVALID_THIS") {
+        await iter?.return?.();
+        return;
+      }
+
+      if (closingError) {
+        try {
+          await iter.throw?.(closingError);
+        } finally {
+          iter = undefined;
+          // eslint-disable-next-line no-throw-literal
+          throw closingError;
+        }
+      } else {
+        await controller.end();
+        if (iter) {
+          await iter.return?.();
+        }
+      }
+      iter = undefined;
+    }
+  }
+
   return new ReadableStream({
     type: "direct",
 
@@ -1826,62 +1886,20 @@ export function readableStreamFromAsyncIterator(target, fn) {
     },
 
     async pull(controller) {
-      var closingError: Error | undefined, value, done, immediateTask;
-
-      try {
-        while (!cancelled && !done) {
-          const promise = iter.next(controller);
-
-          if (cancelled) {
-            return;
-          }
-
-          if ($isPromise(promise) && $isPromiseFulfilled(promise)) {
-            clearImmediate(immediateTask);
-            ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
-            $assert(!$isPromise(value), "Expected a value, not a promise");
-          } else {
-            immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));
-            ({ value, done } = await promise);
-
-            if (cancelled) {
-              return;
-            }
-          }
-
-          if (!$isUndefinedOrNull(value)) {
-            controller.write(value);
-          }
+      // pull() may be called multiple times before a single call completes.
+      //
+      // But, we only call into the stream once while a stream is in-progress.
+      if (!runningAsyncIteratorPromise) {
+        const asyncIteratorPromise = runAsyncIterator(controller);
+        runningAsyncIteratorPromise = asyncIteratorPromise;
+        const result = await asyncIteratorPromise;
+        if (runningAsyncIteratorPromise === asyncIteratorPromise) {
+          runningAsyncIteratorPromise = undefined;
         }
-      } catch (e) {
-        closingError = e;
-      } finally {
-        clearImmediate(immediateTask);
-        immediateTask = undefined;
-        // "iter" will be undefined if the stream was closed above.
-
-        // Stream was closed before we tried writing to it.
-        if (closingError?.code === "ERR_INVALID_THIS") {
-          await iter?.return?.();
-          return;
-        }
-
-        if (closingError) {
-          try {
-            await iter.throw?.(closingError);
-          } finally {
-            iter = undefined;
-            // eslint-disable-next-line no-throw-literal
-            throw closingError;
-          }
-        } else {
-          await controller.end();
-          if (iter) {
-            await iter.return?.();
-          }
-        }
-        iter = undefined;
+        return result;
       }
+
+      return runningAsyncIteratorPromise;
     },
   });
 }

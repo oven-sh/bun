@@ -97,6 +97,15 @@ pub const Request = struct {
         ignore_insecure: bool = false,
         body: []const u8 = "",
 
+        fn isPrintableBody(ct: []const u8) bool {
+            if (ct.len == 0) return false;
+
+            return bun.strings.hasPrefixComptime(ct, "text/") or
+                bun.strings.hasPrefixComptime(ct, "application/json") or
+                bun.strings.containsComptime(ct, "json") or
+                bun.strings.hasPrefixComptime(ct, "application/x-www-form-urlencoded");
+        }
+
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
             const request = self.request;
             if (Output.enable_ansi_colors_stderr) {
@@ -132,7 +141,7 @@ pub const Request = struct {
                 }
             }
 
-            if (self.body.len > 0 and (content_type.len > 0 and bun.strings.hasPrefixComptime(content_type, "application/json") or bun.strings.hasPrefixComptime(content_type, "text/") or bun.strings.containsComptime(content_type, "json"))) {
+            if (self.body.len > 0 and isPrintableBody(content_type)) {
                 _ = try writer.writeAll(" --data-raw ");
                 try bun.js_printer.writeJSONString(self.body, @TypeOf(writer), writer, .utf8);
             }

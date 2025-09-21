@@ -3052,6 +3052,9 @@ pub const api = struct {
 
         security_scanner: ?[]const u8 = null,
 
+        minimal_age_gate: ?f32 = null,
+        minimal_age_gate_excludes: ?[]const []const u8 = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -3123,6 +3126,12 @@ pub const api = struct {
                     },
                     21 => {
                         this.concurrent_scripts = try reader.readValue(u32);
+                    },
+                    22 => {
+                        this.minimal_age_gate = try reader.readValue(f32);
+                    },
+                    23 => {
+                        this.minimal_age_gate_excludes = try reader.readArray([]const u8);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3216,6 +3225,14 @@ pub const api = struct {
             if (this.concurrent_scripts) |concurrent_scripts| {
                 try writer.writeFieldID(21);
                 try writer.writeInt(concurrent_scripts);
+            }
+            if (this.minimal_age_gate) |minimal_age_gate| {
+                try writer.writeFieldID(22);
+                try writer.writeValue(@TypeOf(minimal_age_gate), minimal_age_gate);
+            }
+            if (this.minimal_age_gate_excludes) |minimal_age_gate_excludes| {
+                try writer.writeFieldID(23);
+                try writer.writeArray([]const u8, minimal_age_gate_excludes);
             }
             try writer.endMessage();
         }

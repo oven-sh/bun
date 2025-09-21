@@ -620,6 +620,36 @@ pub const Bunfig = struct {
                             try this.addError(security_obj.loc, "Invalid security config, expected an object");
                         }
                     }
+
+                    if (install_obj.get("npmMinimalAgeGate")) |min_age| {
+                        switch (min_age.data) {
+                            .e_number => |num| {
+                                install.minimal_age_gate = @as(f32, @floatCast(num.value));
+                            },
+                            else => {
+                                try this.addError(min_age.loc, "Expected number for npmMinimalAgeGate");
+                            },
+                        }
+                    }
+
+                    if (install_obj.get("npmMinimalAgeGateExcludes")) |exclusions| {
+                        switch (exclusions.data) {
+                            .e_array => |arr| brk: {
+                                const raw_exclusions = arr.items.slice();
+                                if (raw_exclusions.len == 0) break :brk;
+
+                                const exclusions_list = try this.allocator.alloc(string, raw_exclusions.len);
+                                for (raw_exclusions, 0..) |p, i| {
+                                    try this.expectString(p);
+                                    exclusions_list[i] = try p.data.e_string.string(allocator);
+                                }
+                                install.minimal_age_gate_excludes = exclusions_list;
+                            },
+                            else => {
+                                try this.addError(exclusions.loc, "Expected array for npmMinimalAgeGateExcludes");
+                            },
+                        }
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {

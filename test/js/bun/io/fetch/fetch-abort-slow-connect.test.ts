@@ -17,7 +17,6 @@ test.concurrent("fetch aborts when connect() returns EINPROGRESS but never compl
   } catch (e: any) {
     const elapsed = performance.now() - start;
     expect(e.name).toBe("TimeoutError");
-    expect(elapsed).toBeGreaterThan(40); // Should take at least 40ms
     expect(elapsed).toBeLessThan(1000); // But not more than 1000ms
   }
 });

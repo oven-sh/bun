@@ -2761,7 +2761,7 @@ const JSType = jsc.C.JSType;
 const Body = jsc.WebCore.Body;
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;
 
 const Blob = jsc.WebCore.Blob;
 const AnyBlob = jsc.WebCore.Blob.Any;
-const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;

@@ -517,7 +517,6 @@ const Global = bun.Global;
 const Output = bun.Output;
 const jsc = bun.jsc;
 const strings = bun.strings;
-const uws = bun.uws;
 const Arena = bun.allocators.MimallocArena;
 const Batch = bun.ThreadPool.Batch;
 const UnboundedQueue = bun.threading.UnboundedQueue;

@@ -834,6 +834,7 @@ extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     if (this.shouldDestructMainThreadOnExit()) {
+        this.is_shutting_down = true;
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
         this.transpiler.deinit();

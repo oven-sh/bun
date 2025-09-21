@@ -13,8 +13,7 @@ queued_writes: std.ArrayListUnmanaged(WriteMessage) = std.ArrayListUnmanaged(Wri
 
 queued_shutdowns_lock: bun.Mutex = .{},
 queued_writes_lock: bun.Mutex = .{},
-
-queued_proxy_deref: std.ArrayListUnmanaged(*ProxyTunnel) = std.ArrayListUnmanaged(*ProxyTunnel){},
+queued_threadlocal_proxy_derefs: std.ArrayListUnmanaged(*ProxyTunnel) = std.ArrayListUnmanaged(*ProxyTunnel){},
 
 has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 timer: std.time.Timer,
@@ -285,28 +284,55 @@ pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {
     return if (is_ssl) &this.https_context else &this.http_context;
 }
 
-fn drainEvents(this: *@This()) void {
-    {
-        this.queued_shutdowns_lock.lock();
-        defer this.queued_shutdowns_lock.unlock();
-        for (this.queued_shutdowns.items) |http| {
+fn drainQueuedShutdowns(this: *@This()) void {
+    while (true) {
+        // socket.close() can potentially be slow
+        // Let's not block other threads while this runs.
+        var queued_shutdowns = brk: {
+            this.queued_shutdowns_lock.lock();
+            defer this.queued_shutdowns_lock.unlock();
+            const shutdowns = this.queued_shutdowns;
+            this.queued_shutdowns = .{};
+            break :brk shutdowns;
+        };
+        defer queued_shutdowns.deinit(bun.default_allocator);
+
+        for (queued_shutdowns.items) |http| {
             if (bun.http.socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
-                if (http.is_tls) {
-                    const socket = uws.SocketTLS.fromAny(socket_ptr.value);
-                    // do a fast shutdown here since we are aborting and we dont want to wait for the close_notify from the other side
-                    socket.close(.failure);
-                } else {
-                    const socket = uws.SocketTCP.fromAny(socket_ptr.value);
-                    socket.close(.failure);
+                switch (http.is_tls) {
+                    inline true, false => |is_tls| {
+                        const socket = uws.NewSocketHandler(is_tls).fromAny(socket_ptr.value);
+                        const tagged = HTTPThread.NewHTTPContext(comptime is_tls).getTaggedFromSocket(socket);
+                        if (tagged.get(HTTPClient)) |client| {
+                            // If we only call socket.close(), then it won't
+                            // call `onClose` if this happens before `onOpen` is
+                            // called.
+                            client.closeAndAbort(comptime is_tls, socket);
+                            continue;
+                        }
+                        socket.close(.failure);
+                    },
                 }
             }
         }
-        this.queued_shutdowns.clearRetainingCapacity();
+        if (queued_shutdowns.items.len == 0) {
+            break;
+        }
+        threadlog("drained {d} queued shutdowns", .{queued_shutdowns.items.len});
     }
-    {
-        this.queued_writes_lock.lock();
-        defer this.queued_writes_lock.unlock();
-        for (this.queued_writes.items) |write| {
+}
+
+fn drainQueuedWrites(this: *@This()) void {
+    while (true) {
+        var queued_writes = brk: {
+            this.queued_writes_lock.lock();
+            defer this.queued_writes_lock.unlock();
+            const writes = this.queued_writes;
+            this.queued_writes = .{};
+            break :brk writes;
+        };
+        defer queued_writes.deinit(bun.default_allocator);
+        for (queued_writes.items) |write| {
             const flags = write.flags;
             const messageType = flags.type;
             const ended = messageType == .end or messageType == .endChunked;
@@ -335,12 +361,22 @@ fn drainEvents(this: *@This()) void {
                 }
             }
         }
-        this.queued_writes.clearRetainingCapacity();
+        if (queued_writes.items.len == 0) {
+            break;
+        }
+        threadlog("drained {d} queued writes", .{queued_writes.items.len});
     }
+}
 
-    while (this.queued_proxy_deref.pop()) |http| {
+fn drainEvents(this: *@This()) void {
+    // Process any pending writes **before** aborting.
+    this.drainQueuedWrites();
+    this.drainQueuedShutdowns();
+
+    for (this.queued_threadlocal_proxy_derefs.items) |http| {
         http.deref();
     }
+    this.queued_threadlocal_proxy_derefs.clearRetainingCapacity();
 
     var count: usize = 0;
     var active = AsyncHTTP.active_requests_count.load(.monotonic);
@@ -400,6 +436,7 @@ fn processEvents(this: *@This()) noreturn {
 }
 
 pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {
+    threadlog("scheduleShutdown {d}", .{http.async_http_id});
     {
         this.queued_shutdowns_lock.lock();
         defer this.queued_shutdowns_lock.unlock();
@@ -429,10 +466,8 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
 }
 
 pub fn scheduleProxyDeref(this: *@This(), proxy: *ProxyTunnel) void {
-    // this is always called on the http thread
-    {
-        bun.handleOom(this.queued_proxy_deref.append(bun.default_allocator, proxy));
-    }
+    // this is always called on the http thread,
+    bun.handleOom(this.queued_threadlocal_proxy_derefs.append(bun.default_allocator, proxy));
     if (this.has_awoken.load(.monotonic))
         this.loop.loop.wakeup();
 }

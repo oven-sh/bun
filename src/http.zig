@@ -139,6 +139,9 @@ pub fn onOpen(
         return error.ClientAborted;
     }
 
+    if (client.state.request_stage == .pending)
+        client.state.request_stage = .opened;
+
     if (comptime is_ssl) {
         var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
@@ -181,8 +184,11 @@ pub fn firstCall(
         }
     }
 
-    if (client.state.request_stage == .pending) {
-        client.onWritable(true, comptime is_ssl, socket);
+    switch (client.state.request_stage) {
+        .opened, .pending => {
+            client.onWritable(true, comptime is_ssl, socket);
+        },
+        else => {},
     }
 }
 pub fn onClose(
@@ -819,6 +825,21 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         this.fail(error.ConnectionClosed);
         return;
     }
+
+    // If we haven't already called onOpen(), then that means we need to
+    // register the abort tracker. We need to do this in cases where the
+    // connection takes a long time to happen.
+    //
+    // If the DNS is valid but the server on the other end doesn't call
+    // accept(), then it can be awhile before the socket goes from EINPROGRESS
+    // -> writable/readable.
+    //
+    // We have to be careful here because if .connect() had finished
+    // synchronously, then this socket is on longer valid and the pointer points
+    // to invalid memory.
+    if (this.state.request_stage == .pending) {
+        this.registerAbortTracker(is_ssl, socket);
+    }
 }
 
 pub const HTTPResponseMetadata = struct {
@@ -1109,7 +1130,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
     }
 
     switch (this.state.request_stage) {
-        .pending, .headers => {
+        .pending, .headers, .opened => {
             log("sendInitialRequestPayload", .{});
             this.setTimeout(socket, 5);
             const result = sendInitialRequestPayload(this, is_first_call, is_ssl, socket) catch |err| {

@@ -1805,6 +1805,9 @@ pub const TestCommand = struct {
         vm.onUnhandledRejectionCtx = null;
         vm.onUnhandledRejection = jest.on_unhandled_rejection.onUnhandledRejection;
 
+        // Count each file only once, regardless of repeat count
+        reporter.summary().files += 1;
+
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
             bun_test_root.enterFile(file_id, reporter);
@@ -1814,7 +1817,6 @@ pub const TestCommand = struct {
 
             bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
             var promise = try vm.loadEntryPointForTestRunner(file_path);
-            reporter.summary().files += 1;
 
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
@@ -1880,9 +1882,9 @@ pub const TestCommand = struct {
 
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
-                try vm.clearEntryPoint();
+                vm.clearEntryPoint() catch {};
                 var entry = jsc.ZigString.init(file_path);
-                try vm.global.deleteModuleRegistryEntry(&entry);
+                vm.global.deleteModuleRegistryEntry(&entry) catch {};
             }
 
             if (Output.is_github_action) {

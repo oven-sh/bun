@@ -2891,6 +2891,29 @@ fn printErrorInstance(
     comptime allow_ansi_color: bool,
     comptime allow_side_effects: bool,
 ) !void {
+    // Initialize the visited map if not already initialized
+    var remove_from_map = false;
+    if (mode == .js) {
+        if (formatter.map_node == null) {
+            formatter.map_node = ConsoleObject.Formatter.Visited.Pool.get(default_allocator);
+            formatter.map_node.?.data.clearRetainingCapacity();
+            formatter.map = formatter.map_node.?.data;
+        }
+
+        // Check if this error has already been visited
+        const entry = formatter.map.getOrPut(error_instance) catch unreachable;
+        if (entry.found_existing) {
+            try writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", allow_ansi_color));
+            return;
+        }
+        remove_from_map = true;
+    }
+
+    // Remove from map when we're done processing this error
+    defer if (mode == .js and remove_from_map) {
+        _ = formatter.map.remove(error_instance);
+    };
+
     var exception_holder = if (mode == .js) ZigException.Holder.init();
     var exception = if (mode == .js) exception_holder.zigException() else error_instance;
     defer if (mode == .js) exception_holder.deinit(this);

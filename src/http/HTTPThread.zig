@@ -81,11 +81,7 @@ pub const RequestBodyBuffer = union(enum) {
 const threadlog = Output.scoped(.HTTPThread, .hidden);
 const WriteMessage = struct {
     async_http_id: u32,
-    flags: packed struct(u8) {
-        is_tls: bool,
-        type: Type,
-        _: u5 = 0,
-    },
+    message_type: Type,
 
     pub const Type = enum(u2) {
         data = 0,
@@ -95,7 +91,6 @@ const WriteMessage = struct {
 };
 const ShutdownMessage = struct {
     async_http_id: u32,
-    is_tls: bool,
 };
 
 pub const LibdeflateState = struct {
@@ -299,14 +294,16 @@ fn drainQueuedShutdowns(this: *@This()) void {
 
         for (queued_shutdowns.items) |http| {
             if (bun.http.socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
-                switch (http.is_tls) {
-                    inline true, false => |is_tls| {
-                        const socket = uws.NewSocketHandler(is_tls).fromAny(socket_ptr.value);
-                        const tagged = HTTPThread.NewHTTPContext(comptime is_tls).getTaggedFromSocket(socket);
+                switch (socket_ptr.value) {
+                    inline .SocketTLS, .SocketTCP => |socket, tag| {
+                        const is_tls = tag == .SocketTLS;
+                        const HTTPContext = HTTPThread.NewHTTPContext(comptime is_tls);
+                        const tagged = HTTPContext.getTaggedFromSocket(socket);
                         if (tagged.get(HTTPClient)) |client| {
                             // If we only call socket.close(), then it won't
                             // call `onClose` if this happens before `onOpen` is
                             // called.
+                            //
                             client.closeAndAbort(comptime is_tls, socket);
                             continue;
                         }
@@ -333,23 +330,22 @@ fn drainQueuedWrites(this: *@This()) void {
         };
         defer queued_writes.deinit(bun.default_allocator);
         for (queued_writes.items) |write| {
-            const flags = write.flags;
-            const messageType = flags.type;
-            const ended = messageType == .end or messageType == .endChunked;
+            const message = write.message_type;
+            const ended = message == .end or message == .endChunked;
 
             if (bun.http.socket_async_http_abort_tracker.get(write.async_http_id)) |socket_ptr| {
-                switch (flags.is_tls) {
-                    inline true, false => |is_tls| {
-                        const socket = uws.NewSocketHandler(is_tls).fromAny(socket_ptr);
+                switch (socket_ptr) {
+                    inline .SocketTLS, .SocketTCP => |socket, tag| {
+                        const is_tls = tag == .SocketTLS;
                         if (socket.isClosed() or socket.isShutdown()) {
                             continue;
                         }
-                        const tagged = NewHTTPContext(is_tls).getTaggedFromSocket(socket);
+                        const tagged = NewHTTPContext(comptime is_tls).getTaggedFromSocket(socket);
                         if (tagged.get(HTTPClient)) |client| {
                             if (client.state.original_request_body == .stream) {
                                 var stream = &client.state.original_request_body.stream;
                                 stream.ended = ended;
-                                if (messageType == .endChunked and client.flags.upgrade_state != .upgraded) {
+                                if (message == .endChunked and client.flags.upgrade_state != .upgraded) {
                                     // only send the 0-length chunk if the request body is chunked and not upgraded
                                     client.writeToStream(is_tls, socket, bun.http.end_of_chunked_http1_1_encoding_response_body);
                                 } else {
@@ -415,6 +411,14 @@ fn processEvents(this: *@This()) noreturn {
 
     while (true) {
         this.drainEvents();
+        if (comptime Environment.isDebug and bun.asan.enabled) {
+            for (bun.http.socket_async_http_abort_tracker.keys(), bun.http.socket_async_http_abort_tracker.values()) |http_id, socket| {
+                if (socket.socket().get()) |usocket| {
+                    _ = http_id;
+                    bun.asan.assertUnpoisoned(usocket);
+                }
+            }
+        }
 
         var start_time: i128 = 0;
         if (comptime Environment.isDebug) {
@@ -425,6 +429,15 @@ fn processEvents(this: *@This()) noreturn {
         this.loop.loop.inc();
         this.loop.loop.tick();
         this.loop.loop.dec();
+
+        if (comptime Environment.isDebug and bun.asan.enabled) {
+            for (bun.http.socket_async_http_abort_tracker.keys(), bun.http.socket_async_http_abort_tracker.values()) |http_id, socket| {
+                if (socket.socket().get()) |usocket| {
+                    _ = http_id;
+                    bun.asan.assertUnpoisoned(usocket);
+                }
+            }
+        }
 
         // this.loop.run();
         if (comptime Environment.isDebug) {
@@ -442,7 +455,6 @@ pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {
         defer this.queued_shutdowns_lock.unlock();
         this.queued_shutdowns.append(bun.default_allocator, .{
             .async_http_id = http.async_http_id,
-            .is_tls = http.client.isHTTPS(),
         }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))
@@ -455,10 +467,7 @@ pub fn scheduleRequestWrite(this: *@This(), http: *AsyncHTTP, messageType: Write
         defer this.queued_writes_lock.unlock();
         this.queued_writes.append(bun.default_allocator, .{
             .async_http_id = http.async_http_id,
-            .flags = .{
-                .is_tls = http.client.isHTTPS(),
-                .type = messageType,
-            },
+            .message_type = messageType,
         }) catch |err| bun.handleOom(err);
     }
     if (this.has_awoken.load(.monotonic))

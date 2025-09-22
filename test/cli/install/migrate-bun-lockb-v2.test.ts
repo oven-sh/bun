@@ -1,9 +1,9 @@
-import { expect, test } from "bun:test";
-import { tempDir, bunExe, bunEnv } from "harness";
-import { join } from "node:path";
 import { file, spawn } from "bun";
-import { cp } from "node:fs/promises";
 import { install_test_helpers } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { cp } from "node:fs/promises";
+import { join } from "node:path";
 const { parseLockfile } = install_test_helpers;
 
 test("old binary lockfile migrates successfully", async () => {

@@ -2221,6 +2221,7 @@ pub fn Package(comptime SemverIntType: type) type {
 const string = []const u8;
 
 const std = @import("std");
+const ResolutionType = @import("../resolution.zig").ResolutionType;
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
@@ -2252,7 +2253,6 @@ const PackageID = bun.install.PackageID;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;
 const Repository = install.Repository;
-const ResolutionType = @import("../resolution.zig").ResolutionType;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
 const initializeStore = install.initializeStore;
 const invalid_package_id = install.invalid_package_id;

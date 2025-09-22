@@ -490,6 +490,11 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
 
     if (sequence.test_entry) |entry| {
+        // Don't send start event for tests that are filtered out (skipped due to label)
+        if (entry.base.mode == .filtered_out) {
+            return;
+        }
+
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {
                 if (debugger.test_reporter_agent.isEnabled()) {

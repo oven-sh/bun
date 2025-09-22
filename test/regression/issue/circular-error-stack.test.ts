@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("error with circular stack reference should not cause infinite recursion", async () => {
   using dir = tempDir("circular-error-stack", {
@@ -19,11 +19,7 @@ test("error with circular stack reference should not cause infinite recursion", 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("after error print");
@@ -51,11 +47,7 @@ test("error with nested circular references should not cause infinite recursion"
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("after error print");
@@ -83,11 +75,7 @@ test("error with circular reference in cause chain", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("after error print");

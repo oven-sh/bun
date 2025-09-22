@@ -1543,6 +1543,7 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
       body: "A".repeat(11),
     });
     expect(resp.status).toBe(413);
+    expect(server.pendingRequests).toBe(0);
   }
 });
 

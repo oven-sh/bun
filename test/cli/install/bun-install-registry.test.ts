@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
@@ -26,8 +26,6 @@ import {
 } from "harness";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
-const { iniInternals } = require("bun:internal-for-testing");
-const { loadNpmrc } = iniInternals;
 
 expect.extend({
   toBeValidBin,
@@ -43,12 +41,10 @@ var packageJson: string;
 
 let users: Record<string, string> = {};
 
-beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 5);
-  registry = new VerdaccioRegistry();
-  port = registry.port;
-  await registry.start();
-});
+setDefaultTimeout(1000 * 60 * 5);
+registry = new VerdaccioRegistry();
+port = registry.port;
+await registry.start();
 
 afterAll(async () => {
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);

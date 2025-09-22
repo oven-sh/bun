@@ -61,7 +61,6 @@ is_printing_plugin: bool = false,
 is_shutting_down: bool = false,
 plugin_runner: ?PluginRunner = null,
 is_main_thread: bool = false,
-last_reported_error_for_dedupe: JSValue = .zero,
 exit_handler: ExitHandler = .{},
 
 default_tls_reject_unauthorized: ?bool = null,
@@ -202,10 +201,7 @@ pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
     return this.unhandledRejectionsMode() != .bun;
 }
 pub fn unhandledRejectionsMode(this: *VirtualMachine) api.UnhandledRejections {
-    return this.transpiler.options.transform_options.unhandled_rejections orelse switch (bun.FeatureFlags.breaking_changes_1_3) {
-        false => .bun,
-        true => .throw,
-    };
+    return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;
 }
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: jsc.WebCore.Body.Value) !*Body.Value.HiveRef {
@@ -838,7 +834,11 @@ extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     if (this.shouldDestructMainThreadOnExit()) {
+        this.is_shutting_down = true;
+        if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
+        this.transpiler.deinit();
+        this.gc_controller.deinit();
         this.deinit();
     }
     bun.Global.exit(this.exit_handler.exit_code);
@@ -1915,7 +1915,6 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
     }
 }
 
-// TODO:
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
 
@@ -1955,17 +1954,8 @@ pub fn printException(
     }
 }
 
-pub fn runErrorHandlerWithDedupe(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
-    if (this.last_reported_error_for_dedupe == result and !this.last_reported_error_for_dedupe.isEmptyOrUndefinedOrNull())
-        return;
-
-    this.runErrorHandler(result, exception_list);
-}
-
 pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
     @branchHint(.cold);
-    if (!result.isEmptyOrUndefinedOrNull())
-        this.last_reported_error_for_dedupe = result;
 
     const prev_had_errors = this.had_errors;
     this.had_errors = false;

@@ -186,6 +186,8 @@ export interface BundlerTestInput {
     importSource?: string; // for automatic
     factory?: string; // for classic
     fragment?: string; // for classic
+    sideEffects?: boolean; // whether jsx has side effects
+    development?: boolean; // whether to use development runtime
   };
   root?: string;
   /** Defaults to `/out.js` */
@@ -574,10 +576,6 @@ function expectBundled(
     if (!backend) {
       backend =
         dotenv ||
-        jsx.factory ||
-        jsx.fragment ||
-        jsx.runtime ||
-        jsx.importSource ||
         typeof production !== "undefined" ||
         bundling === false ||
         (run && target === "node") ||
@@ -773,7 +771,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
-              jsx.side_effects && `--jsx-side-effects`,
+              jsx.sideEffects && `--jsx-side-effects`,
               env?.NODE_ENV !== "production" && `--jsx-dev`,
               entryNaming &&
                 entryNaming !== "[dir]/[name].[ext]" &&
@@ -1089,6 +1087,14 @@ function expectBundled(
           define: define ?? {},
           throw: _throw ?? false,
           compile,
+          jsx: jsx ? {
+            runtime: jsx.runtime,
+            importSource: jsx.importSource,
+            factory: jsx.factory,
+            fragment: jsx.fragment,
+            sideEffects: jsx.sideEffects,
+            development: jsx.development,
+          } : undefined,
         } as BuildConfig;
 
         if (dotenv) {
@@ -1750,6 +1756,12 @@ export function itBundled(
   }
   return ref;
 }
+itBundled.concurrent = (id: string, opts: BundlerTestInput) => {
+  const { it } = testForFile(currentFile ?? callerSourceOrigin());
+  it.concurrent(id, () => expectBundled(id, opts as any));
+  return testRef(id, opts);
+};
+
 itBundled.only = (id: string, opts: BundlerTestInput) => {
   const { it } = testForFile(currentFile ?? callerSourceOrigin());
 

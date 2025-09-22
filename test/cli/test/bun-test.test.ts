@@ -278,7 +278,7 @@ describe("bun test", () => {
           });
           describe.only("describe #2", () => {
             test("test #8", () => {
-              console.error("reachable");
+              console.error("unreachable");
             });
             test.skip("test #9", () => {
               console.error("unreachable");
@@ -292,7 +292,7 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");
-      expect(stderr.match(/reachable/g)).toHaveLength(4);
+      expect(stderr.match(/reachable/g)).toHaveLength(3);
     });
   });
   describe("--bail", () => {

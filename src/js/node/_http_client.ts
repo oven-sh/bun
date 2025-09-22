@@ -976,9 +976,22 @@ function ClientRequest(input, options, cb) {
 
   this._httpMessage = this;
 
-  process.nextTick(emitContinueAndSocketNT, this);
-
   this[kEmitState] = 0;
+
+  // Emit socket event synchronously to match Node.js behavior
+  if (!(this[kEmitState] & (1 << ClientRequestEmitState.socket))) {
+    this[kEmitState] |= 1 << ClientRequestEmitState.socket;
+    this.emit("socket", this.socket);
+  }
+
+  // Emit continue event if needed (keep this async for now)
+  if (!this._closed && this.getHeader("expect") === "100-continue") {
+    process.nextTick(() => {
+      if (!this.destroyed && !this._closed) {
+        this.emit("continue");
+      }
+    });
+  }
 
   this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {
     $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
@@ -1091,19 +1104,7 @@ function validateHost(host, name) {
   return host;
 }
 
-function emitContinueAndSocketNT(self) {
-  if (self.destroyed) return;
-  // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
-  if (!(self[kEmitState] & (1 << ClientRequestEmitState.socket))) {
-    self[kEmitState] |= 1 << ClientRequestEmitState.socket;
-    self.emit("socket", self.socket);
-  }
-
-  // Emit continue event for the client (internally we auto handle it)
-  if (!self._closed && self.getHeader("expect") === "100-continue") {
-    self.emit("continue");
-  }
-}
+// Removed emitContinueAndSocketNT - socket event now emitted synchronously
 
 function emitAbortNextTick(self) {
   self.emit("abort");

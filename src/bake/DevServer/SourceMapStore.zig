@@ -207,8 +207,9 @@ pub const Entry = struct {
             .original_column = 0,
         };
 
-        // +2 because the magic fairy in my dreams said it would align the source maps.
-        var lines_between: u32 = runtime.line_count + 2;
+        // The runtime.line_count counts newlines (e.g., 2941 for a 2942-line file).
+        // The runtime ends at line 2942 with })({ so modules start after that.
+        var lines_between: u32 = runtime.line_count;
 
         // Join all of the mappings together.
         for (0..map_files.len) |i| switch (map_files.get(i)) {
@@ -261,7 +262,8 @@ pub const Entry = struct {
             .files = {
                 const files = entry.files.slice();
                 for (0..files.len) |i| {
-                    files.get(i).deinit();
+                    var file = files.get(i);
+                    file.deinit();
                 }
                 entry.files.deinit(entry.allocator());
             },
@@ -270,7 +272,7 @@ pub const Entry = struct {
     }
 
     fn allocator(entry: *const Entry) Allocator {
-        return entry.dev_allocator.get();
+        return entry.dev_allocator.allocator();
     }
 };
 
@@ -305,12 +307,13 @@ pub fn owner(store: *Self) *DevServer {
     return @alignCast(@fieldParentPtr("source_maps", store));
 }
 
-fn dev_allocator(store: *Self) DevAllocator {
-    return store.owner().dev_allocator();
+fn allocator(store: *Self) Allocator {
+    return store.dev_allocator().allocator();
 }
 
-fn allocator(store: *Self) Allocator {
-    return store.dev_allocator().get();
+fn dev_allocator(store: *const Self) DevAllocator {
+    const dev_server: *const DevServer = @constCast(store).owner();
+    return dev_server.dev_allocator();
 }
 
 const PutOrIncrementRefCount = union(enum) {

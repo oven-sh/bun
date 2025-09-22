@@ -292,6 +292,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
     , m_sourceURL()
     , m_functionName()
     , m_isWasmFrame(false)
+    , m_isAsync(false)
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
     m_callee = visitor->callee().asCell();
@@ -340,6 +341,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     , m_sourceURL()
     , m_functionName()
     , m_isWasmFrame(false)
+    , m_isAsync(frame.isAsyncFrame())
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
     m_callee = frame.callee();
@@ -665,7 +667,6 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
 
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, bool isInFinalizer, unsigned int* flags)
 {
-    WTF::String functionName;
     bool isConstructor = false;
     if (isInFinalizer) {
 
@@ -682,73 +683,65 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                     }
                 };
 
-                const auto getName = [&]() -> String {
-                    // First try the "name" property.
-                    {
-                        unsigned attributes;
-                        PropertyOffset offset = structure->getConcurrently(vm.propertyNames->name.impl(), attributes);
-                        if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                            JSValue name = object->getDirect(offset);
-                            if (name && name.isString()) {
-                                auto str = asString(name)->tryGetValueWithoutGC();
-                                if (!str->isEmpty()) {
-                                    setTypeFlagsIfNecessary();
-
-                                    return str.data;
-                                }
+                // First try the "name" property.
+                {
+                    unsigned attributes;
+                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->name.impl(), attributes);
+                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                        JSValue name = object->getDirect(offset);
+                        if (name && name.isString()) {
+                            auto str = asString(name)->tryGetValueWithoutGC();
+                            if (!str->isEmpty()) {
+                                setTypeFlagsIfNecessary();
+                                return str;
                             }
                         }
                     }
+                }
 
-                    // Then try the "displayName" property.
-                    {
-                        unsigned attributes;
-                        PropertyOffset offset = structure->getConcurrently(vm.propertyNames->displayName.impl(), attributes);
-                        if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                            JSValue name = object->getDirect(offset);
-                            if (name && name.isString()) {
-                                auto str = asString(name)->tryGetValueWithoutGC();
-                                if (!str->isEmpty()) {
-                                    functionName = str.data;
-                                    if (!functionName.isEmpty()) {
-                                        setTypeFlagsIfNecessary();
-                                        return functionName;
-                                    }
-                                }
+                // Then try the "displayName" property.
+                {
+                    unsigned attributes;
+                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->displayName.impl(), attributes);
+                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                        JSValue name = object->getDirect(offset);
+                        if (name && name.isString()) {
+                            auto str = asString(name)->tryGetValueWithoutGC();
+                            if (!str->isEmpty()) {
+                                setTypeFlagsIfNecessary();
+                                return str;
                             }
                         }
                     }
+                }
 
-                    // Lastly, try type-specific properties.
-                    if (jstype == JSC::JSFunctionType) {
-                        auto* function = jsCast<JSC::JSFunction*>(object);
-                        if (function) {
-                            functionName = function->nameWithoutGC(vm);
-                            if (functionName.isEmpty() && !function->isHostFunction()) {
-                                functionName = function->jsExecutable()->ecmaName().string();
-                            }
+                // Lastly, try type-specific properties.
+                if (jstype == JSC::JSFunctionType) {
+                    auto* function = jsCast<JSC::JSFunction*>(object);
+                    if (function) {
+                        auto str = function->nameWithoutGC(vm);
+                        if (str.isEmpty() && !function->isHostFunction()) {
                             setTypeFlagsIfNecessary();
-                            return functionName;
+                            return function->jsExecutable()->ecmaName().string();
                         }
-                    } else if (jstype == JSC::InternalFunctionType) {
-                        auto* function = jsCast<JSC::InternalFunction*>(object);
-                        if (function) {
-                            functionName = function->name();
-                            setTypeFlagsIfNecessary();
-                            return functionName;
-                        }
+                        setTypeFlagsIfNecessary();
+                        return str;
                     }
-
-                    return functionName;
-                };
-
-                functionName = getName();
+                } else if (jstype == JSC::InternalFunctionType) {
+                    auto* function = jsCast<JSC::InternalFunction*>(object);
+                    if (function) {
+                        auto str = function->name();
+                        setTypeFlagsIfNecessary();
+                        return str;
+                    }
+                }
             }
         }
 
-        return functionName;
+        return emptyString();
     }
 
+    WTF::String functionName;
     if (frame.hasLineAndColumnInfo()) {
         auto* codeblock = frame.codeBlock();
         if (codeblock->isConstructor()) {

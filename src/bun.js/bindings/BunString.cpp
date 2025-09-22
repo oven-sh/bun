@@ -14,6 +14,7 @@
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
+#include "mimalloc.h"
 
 #include <limits>
 #include <wtf/Seconds.h>
@@ -39,8 +40,6 @@
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringToIntegerConversion.h"
-
-extern "C" void mi_free(void* ptr);
 
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
@@ -169,7 +168,11 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.zig));
     }
 
-    return Zig::toJSStringGC(bunString.impl.zig, globalObject);
+    if (bunString.tag == BunStringTag::ZigString) {
+        return Zig::toJSStringGC(bunString.impl.zig, globalObject);
+    }
+
+    UNREACHABLE();
 }
 
 BunString toString(const char* bytes, size_t length)
@@ -715,6 +718,21 @@ WTF::String BunString::toWTFString() const
     }
 
     return WTF::String();
+}
+
+void BunString::appendToBuilder(WTF::StringBuilder& builder) const
+{
+    if (this->tag == BunStringTag::WTFStringImpl) {
+        builder.append(this->impl.wtf);
+        return;
+    }
+
+    if (this->tag == BunStringTag::ZigString || this->tag == BunStringTag::StaticZigString) {
+        Zig::appendToBuilder(this->impl.zig, builder);
+        return;
+    }
+
+    // append nothing for BunStringTag::Dead and BunStringTag::Empty
 }
 
 WTF::String BunString::toWTFString(ZeroCopyTag) const

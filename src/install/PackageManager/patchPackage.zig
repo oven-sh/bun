@@ -396,7 +396,7 @@ pub fn doPatchCommit(
     // write the patch contents to temp file then rename
     var tmpname_buf: [1024]u8 = undefined;
     const tempfile_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
-    const tmpdir = manager.getTemporaryDirectory();
+    const tmpdir = manager.getTemporaryDirectory().handle;
     const tmpfd = switch (bun.sys.openat(
         .fromStdDir(tmpdir),
         tempfile_name,

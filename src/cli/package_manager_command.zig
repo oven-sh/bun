@@ -1,5 +1,6 @@
 const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const ScanCommand = @import("./scan_command.zig").ScanCommand;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -92,6 +93,7 @@ pub const PackageManagerCommand = struct {
             \\
             \\<b>Commands:<r>
             \\
+            \\  <b><green>bun pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities
             \\  <b><green>bun pm<r> <blue>pack<r>                 create a tarball of the current workspace
             \\  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk
             \\  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in
@@ -136,6 +138,10 @@ pub const PackageManagerCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
+
+        // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
+        const is_direct_whoami = if (bun.argv.len > 1) strings.eqlComptime(bun.argv[1], "whoami") else false;
+
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
         var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
@@ -152,12 +158,15 @@ pub const PackageManagerCommand = struct {
         };
         defer ctx.allocator.free(cwd);
 
-        const subcommand = getSubcommand(&pm.options.positionals);
+        const subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
             try pm.setupGlobalDir(ctx);
         }
 
-        if (strings.eqlComptime(subcommand, "pack")) {
+        if (strings.eqlComptime(subcommand, "scan")) {
+            try ScanCommand.execWithManager(ctx, pm, cwd);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "pack")) {
             try PackCommand.execWithManager(ctx, pm);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "whoami")) {

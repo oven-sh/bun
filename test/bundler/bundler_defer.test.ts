@@ -536,56 +536,78 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
 
     const outdir = path.join(folder, "dist");
 
-    const result = await Bun.build({
-      entrypoints: [entrypoint],
-      outdir,
-      plugins: [
-        {
-          name: "xXx123_import_checker_321xXx",
-          setup(build) {
-            type Import = {
-              imported: string[];
-              dep: string;
-            };
-            type Export = {
-              ident: string;
-            };
-            let imports_and_exports: Record<string, { imports: Array<Import>; exports: Array<Export> }> = {};
-
-            build.onLoad({ filter: /\.ts/ }, async ({ path }) => {
-              const contents = await Bun.$`cat ${path}`.quiet().text();
-
-              const import_regex = /import\s+(?:([\s\S]*?)\s+from\s+)?['"]([^'"]+)['"];/g;
-              const imports: Array<Import> = [...contents.toString().matchAll(import_regex)].map(m => ({
-                imported: m
-                  .slice(1, m.length - 1)
-                  .map(match => (match[0] === "{" ? match.slice(2, match.length - 2) : match)),
-                dep: m[m.length - 1],
-              }));
-
-              const export_regex =
-                /export\s+(?:default\s+|const\s+|let\s+|var\s+|function\s+|class\s+|enum\s+|type\s+|interface\s+)?([\w$]+)?(?:\s*=\s*|(?:\s*{[^}]*})?)?[^;]*;/g;
-              const exports: Array<Export> = [...contents.matchAll(export_regex)].map(m => ({
-                ident: m[1],
-              }));
-
-              imports_and_exports[path.replaceAll("\\", "/").split("/").pop()!] = { imports, exports };
-              return undefined;
-            });
-
-            build.onLoad({ filter: /module_data\.json/ }, async ({ defer }) => {
-              await defer();
-              const contents = JSON.stringify(imports_and_exports);
-
-              return {
-                contents,
-                loader: "json",
-              };
-            });
-          },
-        },
-      ],
+    let onFinalizeCallCount = 0;
+    let onFinalizeCalledThrice = Promise.withResolvers();
+    let onFinalizeCallRegistry = new FinalizationRegistry(() => {
+      onFinalizeCallCount++;
+      if (onFinalizeCallCount === 3) {
+        onFinalizeCalledThrice.resolve();
+      }
     });
+
+    const result = await (async function () {
+      return await Bun.build({
+        entrypoints: [entrypoint],
+        outdir,
+        plugins: [
+          (() => {
+            const plugin = {
+              name: "xXx123_import_checker_321xXx",
+              setup(build) {
+                type Import = {
+                  imported: string[];
+                  dep: string;
+                };
+                type Export = {
+                  ident: string;
+                };
+                let imports_and_exports: Record<string, { imports: Array<Import>; exports: Array<Export> }> = {};
+
+                const onLoadTS = async ({ path }) => {
+                  const contents = await Bun.$`cat ${path}`.quiet().text();
+
+                  const import_regex = /import\s+(?:([\s\S]*?)\s+from\s+)?['"]([^'"]+)['"];/g;
+                  const imports: Array<Import> = [...contents.toString().matchAll(import_regex)].map(m => ({
+                    imported: m
+                      .slice(1, m.length - 1)
+                      .map(match => (match[0] === "{" ? match.slice(2, match.length - 2) : match)),
+                    dep: m[m.length - 1],
+                  }));
+
+                  const export_regex =
+                    /export\s+(?:default\s+|const\s+|let\s+|var\s+|function\s+|class\s+|enum\s+|type\s+|interface\s+)?([\w$]+)?(?:\s*=\s*|(?:\s*{[^}]*})?)?[^;]*;/g;
+                  const exports: Array<Export> = [...contents.matchAll(export_regex)].map(m => ({
+                    ident: m[1],
+                  }));
+
+                  imports_and_exports[path.replaceAll("\\", "/").split("/").pop()!] = { imports, exports };
+                  return undefined;
+                };
+
+                const onLoadModuleData = async ({ defer }) => {
+                  await defer();
+                  const contents = JSON.stringify(imports_and_exports);
+
+                  return {
+                    contents,
+                    loader: "json",
+                  };
+                };
+
+                build.onLoad({ filter: /\.ts/ }, onLoadTS);
+
+                build.onLoad({ filter: /module_data\.json/ }, onLoadModuleData);
+
+                onFinalizeCallRegistry.register(onLoadTS, undefined);
+                onFinalizeCallRegistry.register(onLoadModuleData, undefined);
+              },
+            };
+            onFinalizeCallRegistry.register(plugin.setup, undefined);
+            return plugin;
+          })(),
+        ],
+      });
+    })();
 
     expect(result.success).toBeTrue();
     await Bun.$`${bunExe()} run ${result.outputs[0].path}`;
@@ -619,5 +641,8 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
         "exports": [{ "ident": "logger" }],
       },
     });
+    Bun.gc(true);
+    await onFinalizeCalledThrice.promise;
+    expect(onFinalizeCallCount).toBe(3);
   });
 });

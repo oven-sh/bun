@@ -2249,6 +2249,21 @@ pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void)
     }
 }
 
+/// Same as symlink, except it handles ETXTBUSY by unlinking and retrying.
+pub fn symlinkRunningExecutable(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
+    return switch (symlink(target, dest)) {
+        .err => |err| switch (err.getErrno()) {
+            // If we get ETXTBUSY or BUSY, try deleting it and then symlinking.
+            .BUSY, .TXTBSY => {
+                _ = unlink(dest);
+                return symlink(target, dest);
+            },
+            else => .{ .err = err },
+        },
+        .result => .{ .result = {} },
+    };
+}
+
 pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(syscall.symlink(target, dest), .symlink)) |err| {
@@ -3810,6 +3825,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
             if (err.getErrno() == .XDEV) {
                 try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
                 _ = unlinkat(from_dir, filename);
+                return;
             }
 
             return bun.errnoToZigErr(err.errno);

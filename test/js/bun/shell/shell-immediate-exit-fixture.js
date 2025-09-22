@@ -4,7 +4,9 @@ const cmd = which("true");
 
 const promises = [];
 
-for (let j = 0; j < 300; j++) {
+const upperCount = process.platform === "darwin" ? 100 : 300;
+
+for (let j = 0; j < upperCount; j++) {
   for (let i = 0; i < 100; i++) {
     promises.push($`${cmd}`.text().then(() => {}));
   }

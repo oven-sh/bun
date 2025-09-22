@@ -553,14 +553,10 @@ pub const JSValue = enum(i64) {
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
 
     /// Must come from globally-allocated memory if allocator is not null
-    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: ?std.mem.Allocator) JSValue {
+    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8) JSValue {
         jsc.markBinding(@src());
         @setRuntimeSafety(false);
-        if (allocator) |alloc| {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, jsc.array_buffer.MarkedArrayBuffer_deallocator);
-        } else {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
-        }
+        return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, jsc.array_buffer.MarkedArrayBuffer_deallocator);
     }
 
     extern fn JSC__JSValue__createUninitializedUint8Array(globalObject: *JSGlobalObject, len: usize) JSValue;
@@ -584,7 +580,12 @@ pub const JSValue = enum(i64) {
         return switch (comptime Number) {
             JSValue => number,
             u0 => jsNumberFromInt32(0),
-            f32, f64 => jsDoubleNumber(@as(f64, number)),
+            f32, f64 => {
+                if (canBeStrictInt32(number)) {
+                    return jsNumberFromInt32(@intFromFloat(number));
+                }
+                return jsDoubleNumber(number);
+            },
             u31, c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
             c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
             usize, u64 => jsNumberFromUint64(@as(u64, @intCast(number))),
@@ -651,6 +652,17 @@ pub const JSValue = enum(i64) {
 
     pub fn jsNumber(number: anytype) JSValue {
         return jsNumberWithType(@TypeOf(number), number);
+    }
+
+    pub fn jsBigInt(number: anytype) JSValue {
+        const Number = @TypeOf(number);
+        return switch (comptime Number) {
+            u64 => JSValue.fromUInt64NoTruncate(number),
+            i64 => JSValue.fromInt64NoTruncate(number),
+            i32 => JSValue.fromInt64NoTruncate(number),
+            u32 => JSValue.fromUInt64NoTruncate(number),
+            else => @compileError("Expected u64, i64, u32 or i32, got " ++ @typeName(Number)),
+        };
     }
 
     pub inline fn jsTDZValue() JSValue {
@@ -771,20 +783,24 @@ pub const JSValue = enum(i64) {
         return jsDoubleNumber(@floatFromInt(i));
     }
 
-    pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
-        return this;
-    }
-
     pub fn jsNumberFromUint64(i: u64) JSValue {
         if (i <= std.math.maxInt(i32)) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
-        return jsNumberFromPtrSize(i);
+        return jsDoubleNumber(@floatFromInt(i));
     }
 
-    pub fn jsNumberFromPtrSize(i: usize) JSValue {
-        return jsDoubleNumber(@floatFromInt(i));
+    // https://github.com/oven-sh/WebKit/blob/df8aa4c4d01a1c2fe22ac599adfe0a582fce2b20/Source/JavaScriptCore/runtime/MathCommon.h#L243-L249
+    pub fn canBeStrictInt32(value: f64) bool {
+        if (std.math.isInf(value) or std.math.isNan(value)) {
+            return false;
+        }
+        const int: i32 = int: {
+            @setRuntimeSafety(false);
+            break :int @intFromFloat(value);
+        };
+        return !(@as(f64, @floatFromInt(int)) != value or (int == 0 and std.math.signbit(value))); // true for -0.0
     }
 
     fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
@@ -1259,6 +1275,17 @@ pub const JSValue = enum(i64) {
     pub fn getObject(this: JSValue) ?*JSObject {
         return if (this.isObject()) this.uncheckedPtrCast(JSObject) else null;
     }
+
+    /// Unwraps Number, Boolean, String, and BigInt objects to their primitive forms.
+    pub fn unwrapBoxedPrimitive(this: JSValue, global: *JSGlobalObject) JSError!JSValue {
+        var scope: CatchScope = undefined;
+        scope.init(global, @src());
+        defer scope.deinit();
+        const result = JSC__JSValue__unwrapBoxedPrimitive(global, this);
+        try scope.returnIfException();
+        return result;
+    }
+    extern fn JSC__JSValue__unwrapBoxedPrimitive(*JSGlobalObject, JSValue) JSValue;
 
     extern fn JSC__JSValue__getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue;
     pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue {
@@ -1831,6 +1858,11 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__createRangeError(message, code, global);
     }
 
+    extern fn JSC__JSValue__isStrictEqual(JSValue, JSValue, *JSGlobalObject) bool;
+    pub fn isStrictEqual(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__isStrictEqual, .{ this, other, global });
+    }
+
     extern fn JSC__JSValue__isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) bool;
 
     /// Object.is()
@@ -2339,6 +2371,11 @@ pub const JSValue = enum(i64) {
         try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
         Output.flush();
     }
+
+    pub fn bind(this: JSValue, globalObject: *JSGlobalObject, bindThisArg: JSValue, name: *const bun.String, length: f64, args: []JSValue) bun.JSError!JSValue {
+        return bun.cpp.Bun__JSValue__bind(this, globalObject, bindThisArg, name, length, args.ptr, args.len);
+    }
+    pub const setPrototypeDirect = bun.cpp.Bun__JSValue__setPrototypeDirect;
 
     pub const JSPropertyNameIterator = struct {
         array: jsc.C.JSPropertyNameArrayRef,

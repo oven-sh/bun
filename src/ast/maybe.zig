@@ -68,7 +68,7 @@ pub fn AstMaybe(
                                     .loc = name_loc,
                                     .ref = p.newSymbol(.import, name) catch unreachable,
                                 };
-                                p.module_scope.generated.push(p.allocator, new_item.ref.?) catch unreachable;
+                                bun.handleOom(p.module_scope.generated.append(p.allocator, new_item.ref.?));
 
                                 import_items.put(name, new_item) catch unreachable;
                                 p.is_import_item.put(p.allocator, new_item.ref.?, {}) catch unreachable;
@@ -214,7 +214,7 @@ pub fn AstMaybe(
                                             .other,
                                             std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(key)}) catch unreachable,
                                         ) catch unreachable;
-                                        p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                        bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                         named_export_entry.value_ptr.* = .{
                                             .loc_ref = LocRef{
                                                 .loc = name_loc,
@@ -320,7 +320,7 @@ pub fn AstMaybe(
                                         .other,
                                         std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
                                     ) catch unreachable;
-                                    p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                    bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                     named_export_entry.value_ptr.* = .{
                                         .loc_ref = LocRef{
                                             .loc = name_loc,
@@ -493,7 +493,7 @@ pub fn AstMaybe(
                                             .other,
                                             std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
                                         ) catch unreachable;
-                                        p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                        bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                         named_export_entry.value_ptr.* = .{
                                             .loc_ref = LocRef{
                                                 .loc = name_loc,
@@ -650,6 +650,9 @@ pub fn AstMaybe(
                         E.Unary{
                             .op = .un_typeof,
                             .value = expr,
+                            .flags = .{
+                                .was_originally_typeof_identifier = expr.data == .e_identifier,
+                            },
                         },
                         logger.Loc.Empty,
                     ),

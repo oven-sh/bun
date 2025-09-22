@@ -928,7 +928,8 @@ pub const PackageManifest = struct {
         // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
         // - v0.0.4: fixed bug with cpu & os tag not being added correctly
         // - v0.0.5: added bundled dependencies
-        pub const version = "bun-npm-manifest-cache-v0.0.5\n";
+        // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
+        pub const version = "bun-npm-manifest-cache-v0.0.6\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {

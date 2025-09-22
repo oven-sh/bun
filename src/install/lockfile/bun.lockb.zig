@@ -271,9 +271,20 @@ pub fn load(
         return error.InvalidLockfile;
     }
 
+    var migrate_from_v2 = false;
     const format = try reader.readInt(u32, .little);
-    if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
-        return error.@"Outdated lockfile version";
+    if (format > @intFromEnum(Lockfile.FormatVersion.current)) {
+        return error.@"Unexpected lockfile version";
+    }
+
+    if (format < @intFromEnum(Lockfile.FormatVersion.current)) {
+
+        // we only allow migrating from v2 to v3 or above
+        if (format != @intFromEnum(Lockfile.FormatVersion.v2)) {
+            return error.@"Outdated lockfile version";
+        }
+
+        migrate_from_v2 = true;
     }
 
     lockfile.format = Lockfile.FormatVersion.current;
@@ -290,6 +301,7 @@ pub fn load(
         stream,
         total_buffer_size,
         allocator,
+        migrate_from_v2,
     );
 
     lockfile.packages = packages_load_result.list;

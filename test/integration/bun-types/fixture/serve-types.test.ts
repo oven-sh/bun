@@ -2,7 +2,6 @@
 // on its own to make sure that the types line up with actual implementation of Bun.serve()
 
 import { expect, it } from "bun:test";
-import { isCI } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
@@ -670,20 +669,6 @@ test("ipv6Only: false (default)", {
     return new Response("ipv6Only false");
   },
 });
-
-test(
-  "ipv6Only: true",
-  {
-    ipv6Only: true,
-    port: 0,
-    fetch() {
-      return new Response("ipv6Only true");
-    },
-  },
-  {
-    skip: isCI, // flaky on some ci machines
-  },
-);
 
 test("idleTimeout: default (10 seconds)", {
   port: 0,

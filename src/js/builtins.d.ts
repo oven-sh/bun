@@ -766,7 +766,7 @@ declare function $ERR_ASYNC_CALLBACK(name): TypeError;
 declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
 declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
-
+declare function $ERR_SSR_RESPONSE_EXPECTED(message: string): Error;
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_IPC_CHANNEL_CLOSED(): Error;

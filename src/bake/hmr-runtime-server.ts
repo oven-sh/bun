@@ -1,10 +1,14 @@
+/// <reference path="../js/builtins.d.ts" />
+
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
-import type { ServerEntryPoint } from "bun:app";
+import type { RouteMetadata, ServerEntryPoint } from "bun:app";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
 // import { AsyncLocalStorage } from "node:async_hooks";
-const { AsyncLocalStorage } = require("node:async_hooks");
+const { AsyncLocalStorage } = require("node:async_hooks") as {} as {
+  AsyncLocalStorage: typeof import("node:async_hooks").AsyncLocalStorage;
+};
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -13,7 +17,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 export type RequestContext = import("bun:app").__internal.RequestContext;
 
 // Create the AsyncLocalStorage instance for propagating response options
-const responseOptionsALS = new AsyncLocalStorage();
+const responseOptionsALS = new AsyncLocalStorage<RequestContext>();
 let asyncLocalStorageWasSet = false;
 
 interface Exports {
@@ -68,7 +72,7 @@ server_exports = {
           mode?: "ssr" | "static";
           default: () => React.JSXElementConstructor<unknown>;
         }>,
-        ...Promise<ServerEntryPoint>[],
+        ...Promise<RouteMetadata["layouts"][number]>[],
       ],
     );
 

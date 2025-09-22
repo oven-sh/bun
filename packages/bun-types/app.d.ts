@@ -522,6 +522,8 @@ declare module "bun:app" {
      */
     readonly params: null | Record<string, string | string[]>;
 
+    readonly request: Request | undefined;
+
     /**
      * A list of js files that the route will need to be interactive.
      */

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
-describe.concurrent("bun init", () => {
+
+(isWindows ? describe : describe.concurrent)("bun init", () => {
   test("bun init works", async () => {
     const temp = tempDirWithFiles("bun-init-works", {});
 
@@ -81,7 +82,7 @@ describe.concurrent("bun init", () => {
         "index.ts": "// mydir/index.ts",
         "README.md": "// mydir/README.md",
         ".gitignore": "// mydir/.gitignore",
-        "package.json": "// mydir/package.json",
+        "package.json": '{ "name": "mydir" }',
         "tsconfig.json": "// mydir/tsconfig.json",
       },
     });

@@ -6,7 +6,10 @@ import path, { join } from "path";
 const tmpbase = tmpdir() + path.sep;
 
 let i = 0;
-const IS_UV_FS_COPYFILE_DISABLED = describe.concurrent("Bun.write", () => {
+const IS_UV_FS_COPYFILE_DISABLED =
+  process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
+
+(isWindows ? describe : describe.concurrent)("Bun.write", () => {
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
   it("Bun.write blob", async () => {

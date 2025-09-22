@@ -39,35 +39,6 @@ describe.concurrent("socket", () => {
     data.mockClear();
   });
 
-  it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
-    const [server, client] = createSocketPair();
-    const open = jest.fn();
-    const close = jest.fn();
-    const data = jest.fn();
-    {
-      const socket = await Bun.connect({
-        fd: server,
-        socket: {
-          open,
-          close,
-          data,
-        },
-      });
-      Bun.gc(true);
-      await Bun.sleep(10);
-      closeSync(client);
-      Bun.gc(true);
-    }
-
-    await Bun.sleep(10);
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(close).toHaveBeenCalledTimes(1);
-    expect(data).toHaveBeenCalledTimes(0);
-    open.mockClear();
-    close.mockClear();
-    data.mockClear();
-  });
-
   it.skipIf(isWindows)(
     "should not crash when a socket from a file descriptor is already closed after opening",
     async () => {
@@ -769,6 +740,35 @@ describe.concurrent("socket", () => {
       expect(rawData.byteLength).toBeGreaterThanOrEqual(1980);
     }
   });
+});
+
+it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
+  const [server, client] = createSocketPair();
+  const open = jest.fn();
+  const close = jest.fn();
+  const data = jest.fn();
+  {
+    const socket = await Bun.connect({
+      fd: server,
+      socket: {
+        open,
+        close,
+        data,
+      },
+    });
+    Bun.gc(true);
+    await Bun.sleep(10);
+    closeSync(client);
+    Bun.gc(true);
+  }
+
+  await Bun.sleep(10);
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(data).toHaveBeenCalledTimes(0);
+  open.mockClear();
+  close.mockClear();
+  data.mockClear();
 });
 
 it("should not leak memory", async () => {

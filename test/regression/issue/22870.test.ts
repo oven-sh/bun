@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Test for issue #22870: WebSocket tls.rejectUnauthorized should take precedence over NODE_TLS_REJECT_UNAUTHORIZED

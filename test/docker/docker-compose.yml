@@ -15,7 +15,7 @@ services:
       - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h  # Effectively disable after startup
+      interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
       start_period: 5s
@@ -44,7 +44,7 @@ services:
       - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h  # Effectively disable after startup
+      interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
       start_period: 5s
@@ -70,7 +70,7 @@ services:
       - /var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 1h  # Effectively disable after startup
+      interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
       start_period: 5s
@@ -89,7 +89,7 @@ services:
       - /var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 1h  # Effectively disable after startup
+      interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
       start_period: 10s
@@ -109,7 +109,7 @@ services:
       - /var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
-      interval: 1h  # Effectively disable after startup
+      interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
       start_period: 10s
@@ -132,7 +132,7 @@ services:
       - /var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
-      interval: 1h  # Effectively disable after startup
+      interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
       start_period: 10s
@@ -187,7 +187,7 @@ services:
       - /data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      interval: 1h  # Effectively disable after startup
+      interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
       start_period: 5s
@@ -203,7 +203,7 @@ services:
     command: wstest -m fuzzingserver -s /config/fuzzingserver.json
     ports:
       - target: 9002
-        published: 0  # Dynamic port
+        published: 0 # Dynamic port
         protocol: tcp
 
 volumes:

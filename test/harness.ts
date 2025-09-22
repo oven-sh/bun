@@ -60,6 +60,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
+  WANTS_LOUD: "0",
 };
 
 const ciEnv = { ...bunEnv };
@@ -909,11 +910,13 @@ export async function describeWithContainer(
     env = {},
     args = [],
     archs,
+    concurrent = false,
   }: {
     image: string;
     env?: Record<string, string>;
     args?: string[];
     archs?: NodeJS.Architecture[];
+    concurrent?: boolean;
   },
   fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
@@ -923,7 +926,7 @@ export async function describeWithContainer(
     return;
   }
 
-  describe(label, () => {
+  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
     // Check if this is one of our docker-compose services
     const services: Record<string, number> = {
       "postgres_plain": 5432,
@@ -932,8 +935,8 @@ export async function describeWithContainer(
       "mysql_plain": 3306,
       "mysql_native_password": 3306,
       "mysql_tls": 3306,
-      "mysql:8": 3306,  // Map mysql:8 to mysql_plain
-      "mysql:9": 3306,  // Map mysql:9 to mysql_native_password
+      "mysql:8": 3306, // Map mysql:8 to mysql_plain
+      "mysql:9": 3306, // Map mysql:9 to mysql_native_password
       "redis_plain": 6379,
       "redis_unified": 6379,
       "minio": 9000,
@@ -968,8 +971,12 @@ export async function describeWithContainer(
 
       // Container descriptor with live getters and ready promise
       const containerDescriptor = {
-        get host() { return _host; },
-        get port() { return _port; },
+        get host() {
+          return _host;
+        },
+        get port() {
+          return _port;
+        },
         ready: readyPromise,
       };
 
@@ -992,7 +999,9 @@ export async function describeWithContainer(
       return;
     }
     // No fallback - if the image isn't in docker-compose, it should fail
-    throw new Error(`Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`);
+    throw new Error(
+      `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
+    );
   });
 }
 

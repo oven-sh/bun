@@ -382,8 +382,10 @@ pub fn isResolvedDependencyDisabled(
     dep_id: DependencyID,
     features: Features,
     meta: *const Package.Meta,
+    cpu: Npm.Architecture,
+    os: Npm.OperatingSystem,
 ) bool {
-    if (meta.isDisabled()) return true;
+    if (meta.isDisabled(cpu, os)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
@@ -2101,6 +2103,7 @@ const stringZ = [:0]const u8;
 
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
+const Npm = @import("./npm.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const TextLockfile = @import("./lockfile/bun.lock.zig");
 const migration = @import("./migration.zig");

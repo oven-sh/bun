@@ -25,7 +25,7 @@ pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
         return globalThis.throw("toBeWithin() requires the second argument to be a number", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     var pass = value.isNumber();
     if (pass) {
@@ -63,7 +63,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

@@ -72,6 +72,8 @@ function ClientRequest(input, options, cb) {
     return new (ClientRequest as any)(input, options, cb);
   }
 
+  let readableStreamController: ReadableStreamDirectController | undefined;
+
   this.write = (chunk, encoding, callback) => {
     if (this.destroyed) return false;
     if ($isCallable(chunk)) {
@@ -89,6 +91,7 @@ function ClientRequest(input, options, cb) {
   };
 
   let writeCount = 0;
+  let isEnd = false;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
 
   const pushChunk = chunk => {
@@ -100,7 +103,6 @@ function ClientRequest(input, options, cb) {
   };
 
   const write_ = (chunk, encoding, callback) => {
-    const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
     const canSkipReEncodingData =
       // UTF-8 string:
       (typeof chunk === "string" && (encoding === "utf-8" || encoding === "utf8" || !encoding)) ||
@@ -113,6 +115,21 @@ function ClientRequest(input, options, cb) {
     bodySize = chunk.length;
     writeCount++;
 
+    if (readableStreamController) {
+      const result = readableStreamController.write(chunk);
+      if ($isPromise(result)) {
+        if (callback) {
+          result.$then(() => callback(), callback);
+        }
+
+        return false;
+      } else if (callback) {
+        callback();
+      }
+
+      return true;
+    }
+
     if (!this[kBodyChunks]) {
       this[kBodyChunks] = [];
       pushChunk(chunk);
@@ -121,20 +138,9 @@ function ClientRequest(input, options, cb) {
       return true;
     }
 
-    // Signal fake backpressure if the body size is > 1024 * 1024
-    // So that code which loops forever until backpressure is signaled
-    // will eventually exit.
-
-    for (let chunk of this[kBodyChunks]) {
-      bodySize += chunk.length;
-      if (bodySize >= MAX_FAKE_BACKPRESSURE_SIZE) {
-        break;
-      }
-    }
     pushChunk(chunk);
-
     if (callback) callback();
-    return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
+    return true;
   };
 
   const oldEnd = this.end;
@@ -153,6 +159,8 @@ function ClientRequest(input, options, cb) {
       callback = undefined;
     }
 
+    isEnd = true;
+
     if (chunk) {
       if (this.finished) {
         emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
@@ -168,6 +176,21 @@ function ClientRequest(input, options, cb) {
           callback($ERR_STREAM_ALREADY_FINISHED("end"));
         }
       }
+    }
+
+    if (readableStreamController) {
+      readableStreamController.flush?.();
+
+      const result = readableStreamController.end?.();
+      readableStreamController = undefined;
+
+      handleResponse?.();
+
+      if (callback) {
+        this.once("finish", callback);
+      }
+
+      return this;
     }
 
     if (callback) {
@@ -327,34 +350,37 @@ function ClientRequest(input, options, cb) {
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
         } else if (isDuplex) {
-          fetchOptions.body = async function* () {
-            while (self[kBodyChunks]?.length > 0) {
-              yield self[kBodyChunks].shift();
-            }
+          fetchOptions.body = new ReadableStream({
+            type: "direct",
 
-            if (self[kBodyChunks]?.length === 0) {
-              self.emit("drain");
-            }
+            pull(controller) {
+              const emitDrain = readableStreamController !== undefined;
+              readableStreamController = controller;
+              const chunks = self[kBodyChunks];
+              self[kBodyChunks] = [];
 
-            while (!self.finished) {
-              yield await new Promise(resolve => {
-                resolveNextChunk = end => {
-                  resolveNextChunk = undefined;
-                  if (end) {
-                    resolve(undefined);
-                  } else {
-                    resolve(self[kBodyChunks].shift());
-                  }
-                };
-              });
-
-              if (self[kBodyChunks]?.length === 0) {
-                self.emit("drain");
+              for (let chunk of chunks) {
+                controller.write(chunk);
               }
-            }
 
-            handleResponse?.();
-          };
+              if (isEnd) {
+                controller.end();
+                handleResponse?.();
+              } else if (emitDrain && !self.finished && chunks.length === 0) {
+                self.emit("drain");
+                return;
+              }
+
+              Promise.$resolve(controller.flush()).then(() => {
+                if (!self.finished && !isEnd) {
+                  self.emit("drain");
+                }
+              });
+            },
+            cancel() {
+              readableStreamController = undefined;
+            },
+          });
         }
       }
 
@@ -590,6 +616,11 @@ function ClientRequest(input, options, cb) {
 
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.finish))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.finish;
+      if (readableStreamController) {
+        readableStreamController.close();
+        readableStreamController = undefined;
+      }
+
       this.emit("finish");
     }
   };

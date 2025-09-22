@@ -371,40 +371,20 @@ pub const Runner = struct {
 
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
-                        switch (_entry.value_ptr.*.data) {
-                            .e_object, .e_array => {
-                                this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
-                                return error.MacroFailed;
-                            },
-                            else => {},
-                        }
                         return _entry.value_ptr.*;
                     }
 
-                    var iter = try jsc.JSArrayIterator.init(value, this.global);
-                    if (iter.len == 0) {
-                        const result = Expr.init(
-                            E.Array,
-                            E.Array{
-                                .items = ExprNodeList.empty,
-                                .was_originally_macro = true,
-                            },
-                            this.caller.loc,
-                        );
-                        _entry.value_ptr.* = result;
-                        return result;
-                    }
-                    var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
-                    var out = Expr.init(
+                    // Reserve a placeholder to break cycles, safe to overwrite later.
+                    _entry.value_ptr.* = Expr.init(
                         E.Array,
-                        E.Array{
-                            .items = ExprNodeList.empty,
-                            .was_originally_macro = true,
-                        },
+                        E.Array{ .items = ExprNodeList.empty, .was_originally_macro = true },
                         this.caller.loc,
                     );
-                    _entry.value_ptr.* = out;
 
+                    var iter = try jsc.JSArrayIterator.init(value, this.global);
+
+                    // Process all array items
+                    var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
                     errdefer this.allocator.free(array);
                     var i: usize = 0;
                     while (try iter.next()) |item| {
@@ -413,24 +393,37 @@ pub const Runner = struct {
                             continue;
                         i += 1;
                     }
-                    out.data.e_array.items = ExprNodeList.fromOwnedSlice(array);
-                    _entry.value_ptr.* = out;
-                    return out;
+
+                    // Create the final expression with all data
+                    const result = Expr.init(
+                        E.Array,
+                        E.Array{
+                            .items = ExprNodeList.fromOwnedSlice(array),
+                            .was_originally_macro = true,
+                        },
+                        this.caller.loc,
+                    );
+
+                    // Store the result in the visited map
+                    // Use put to update even if the hash table was resized during recursion
+                    this.visited.put(this.allocator, value, result) catch unreachable;
+                    return result;
                 },
                 // TODO: optimize this
                 jsc.ConsoleObject.Formatter.Tag.Object => {
                     this.is_top_level = false;
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
-                        switch (_entry.value_ptr.*.data) {
-                            .e_object, .e_array => {
-                                this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
-                                return error.MacroFailed;
-                            },
-                            else => {},
-                        }
                         return _entry.value_ptr.*;
                     }
+
+                    // Reserve a placeholder to break cycles, safe to overwrite later.
+                    _entry.value_ptr.* = Expr.init(
+                        E.Object,
+                        E.Object{ .properties = G.Property.List{}, .was_originally_macro = true },
+                        this.caller.loc,
+                    );
+
                     // SAFETY: tag ensures `value` is an object.
                     const obj = value.getObject() orelse unreachable;
                     var object_iter = try jsc.JSPropertyIterator(.{
@@ -439,18 +432,10 @@ pub const Runner = struct {
                     }).init(this.global, obj);
                     defer object_iter.deinit();
 
-                    const out = _entry.value_ptr;
-                    out.* = Expr.init(
-                        E.Object,
-                        E.Object{
-                            .properties = bun.handleOom(
-                                G.Property.List.initCapacity(this.allocator, object_iter.len),
-                            ),
-                            .was_originally_macro = true,
-                        },
-                        this.caller.loc,
+                    // Build properties list
+                    var properties = bun.handleOom(
+                        G.Property.List.initCapacity(this.allocator, object_iter.len),
                     );
-                    const properties = &out.data.e_object.properties;
                     errdefer properties.clearAndFree(this.allocator);
 
                     while (try object_iter.next()) |prop| {
@@ -468,7 +453,21 @@ pub const Runner = struct {
                             .value = try this.run(object_iter.value),
                         });
                     }
-                    return out.*;
+
+                    // Create the final expression with all data
+                    const result = Expr.init(
+                        E.Object,
+                        E.Object{
+                            .properties = properties,
+                            .was_originally_macro = true,
+                        },
+                        this.caller.loc,
+                    );
+
+                    // Store the result in the visited map
+                    // Use put to update even if the hash table was resized during recursion
+                    this.visited.put(this.allocator, value, result) catch unreachable;
+                    return result;
                 },
 
                 .JSON => {

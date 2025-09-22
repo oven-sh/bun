@@ -2545,7 +2545,6 @@ pub const RuntimeTranspilerStore = struct {
                         "vitest",
                     )) {
                         import_record.path.namespace = "bun";
-                        import_record.tag = .bun_test;
                         import_record.path.text = "test";
                         import_record.is_external_without_side_effects = true;
                         continue;
@@ -2556,10 +2555,6 @@ pub const RuntimeTranspilerStore = struct {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.is_external_without_side_effects = true;
-
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
-                    }
                 }
             }
 
@@ -2640,7 +2635,7 @@ pub const HardcodedModule = enum {
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
-    @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
+    @"bun:test",
     @"bun:wrap",
     @"bun:sqlite",
     @"node:assert",
@@ -2990,7 +2985,7 @@ pub const HardcodedModule = enum {
 
         const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
-            .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
+            .{ "bun:test", .{ .path = "bun:test" } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },

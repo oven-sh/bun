@@ -1209,8 +1209,6 @@ pub const Parser = struct {
                 break :outer;
 
             const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, "bun:test");
-            var import_record: *ImportRecord = &p.import_records.items[import_record_id];
-            import_record.tag = .bun_test;
 
             var declared_symbols = js_ast.DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(p.allocator, items_count);

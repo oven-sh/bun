@@ -3160,7 +3160,6 @@ pub const BundleV2 = struct {
                         "vitest",
                     )) {
                         import_record.path.namespace = "bun";
-                        import_record.tag = .bun_test;
                         import_record.path.text = "test";
                         import_record.is_external_without_side_effects = true;
                         continue;
@@ -3172,10 +3171,6 @@ pub const BundleV2 = struct {
                     import_record.path.namespace = "bun";
                     import_record.source_index = Index.invalid;
                     import_record.is_external_without_side_effects = true;
-
-                    if (strings.eqlComptime(import_record.path.text, "test")) {
-                        import_record.tag = .bun_test;
-                    }
 
                     // don't link bun
                     continue;

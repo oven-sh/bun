@@ -9,7 +9,7 @@ pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
         return globalThis.throwInvalidArguments("toSatisfy() requires 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const predicate = arguments[0];
     predicate.ensureStillAlive();
@@ -57,7 +57,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

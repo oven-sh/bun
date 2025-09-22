@@ -457,7 +457,7 @@ pub const Registry = struct {
                 PackageManifest.Serializer.saveAsync(
                     &package,
                     scope,
-                    package_manager.getTemporaryDirectory(),
+                    package_manager.getTemporaryDirectory().handle,
                     package_manager.getCacheDirectory(),
                 );
             }
@@ -654,8 +654,8 @@ pub const OperatingSystem = enum(u16) {
         else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
     };
 
-    pub fn isMatch(this: OperatingSystem) bool {
-        return (@intFromEnum(this) & @intFromEnum(current)) != 0;
+    pub fn isMatch(this: OperatingSystem, target: OperatingSystem) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
     }
 
     pub inline fn has(this: OperatingSystem, other: u16) bool {
@@ -696,7 +696,7 @@ pub const OperatingSystem = enum(u16) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(operating_system.combine().isMatch());
+        return jsc.JSValue.jsBoolean(operating_system.combine().isMatch(current));
     }
 };
 
@@ -719,6 +719,10 @@ pub const Libc = enum(u8) {
         return (@intFromEnum(this) & other) != 0;
     }
 
+    pub fn isMatch(this: Libc, target: Libc) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
+    }
+
     pub fn negatable(this: Libc) Negatable(Libc) {
         return .{ .added = this, .removed = .none };
     }
@@ -738,7 +742,7 @@ pub const Libc = enum(u8) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(libc.combine().isMatch());
+        return jsc.JSValue.jsBoolean(libc.combine().isMatch(current));
     }
 };
 
@@ -793,8 +797,8 @@ pub const Architecture = enum(u16) {
         return (@intFromEnum(this) & other) != 0;
     }
 
-    pub fn isMatch(this: Architecture) bool {
-        return @intFromEnum(this) & @intFromEnum(current) != 0;
+    pub fn isMatch(this: Architecture, target: Architecture) bool {
+        return @intFromEnum(this) & @intFromEnum(target) != 0;
     }
 
     pub fn negatable(this: Architecture) Negatable(Architecture) {
@@ -813,7 +817,7 @@ pub const Architecture = enum(u16) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(architecture.combine().isMatch());
+        return jsc.JSValue.jsBoolean(architecture.combine().isMatch(current));
     }
 };
 
@@ -1070,7 +1074,7 @@ pub const PackageManifest = struct {
             // This needs many more call sites, doesn't have much impact on this location.
             var realpath_buf: bun.PathBuffer = undefined;
             const path_to_use_for_opening_file = if (Environment.isWindows)
-                bun.path.joinAbsStringBufZ(PackageManager.get().temp_dir_path, &realpath_buf, &.{ PackageManager.get().temp_dir_path, tmp_path }, .auto)
+                bun.path.joinAbsStringBufZ(PackageManager.get().getTemporaryDirectory().path, &realpath_buf, &.{tmp_path}, .auto)
             else
                 tmp_path;
 

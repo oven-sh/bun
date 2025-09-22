@@ -570,14 +570,10 @@ pub const JSValue = enum(i64) {
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
 
     /// Must come from globally-allocated memory if allocator is not null
-    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: ?std.mem.Allocator) JSValue {
+    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8) JSValue {
         jsc.markBinding(@src());
         @setRuntimeSafety(false);
-        if (allocator) |alloc| {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, jsc.array_buffer.MarkedArrayBuffer_deallocator);
-        } else {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
-        }
+        return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, jsc.array_buffer.MarkedArrayBuffer_deallocator);
     }
 
     extern fn JSC__JSValue__createUninitializedUint8Array(globalObject: *JSGlobalObject, len: usize) JSValue;
@@ -2392,6 +2388,11 @@ pub const JSValue = enum(i64) {
         try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
         Output.flush();
     }
+
+    pub fn bind(this: JSValue, globalObject: *JSGlobalObject, bindThisArg: JSValue, name: *const bun.String, length: f64, args: []JSValue) bun.JSError!JSValue {
+        return bun.cpp.Bun__JSValue__bind(this, globalObject, bindThisArg, name, length, args.ptr, args.len);
+    }
+    pub const setPrototypeDirect = bun.cpp.Bun__JSValue__setPrototypeDirect;
 
     pub const JSPropertyNameIterator = struct {
         array: jsc.C.JSPropertyNameArrayRef,

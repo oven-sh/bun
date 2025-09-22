@@ -26,6 +26,7 @@ src/bun.js/bindings/BunJSCEventLoop.cpp
 src/bun.js/bindings/BunObject.cpp
 src/bun.js/bindings/BunPlugin.cpp
 src/bun.js/bindings/BunProcess.cpp
+src/bun.js/bindings/BunProcessReportObjectWindows.cpp
 src/bun.js/bindings/BunString.cpp
 src/bun.js/bindings/BunWorkerGlobalScope.cpp
 src/bun.js/bindings/c-bindings.cpp
@@ -201,6 +202,7 @@ src/bun.js/bindings/ServerRouteList.cpp
 src/bun.js/bindings/spawn.cpp
 src/bun.js/bindings/SQLClient.cpp
 src/bun.js/bindings/sqlite/JSSQLStatement.cpp
+src/bun.js/bindings/StringBuilderBinding.cpp
 src/bun.js/bindings/stripANSI.cpp
 src/bun.js/bindings/Strong.cpp
 src/bun.js/bindings/TextCodec.cpp

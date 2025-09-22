@@ -206,31 +206,26 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Describe {
+  export interface Describe<T extends Readonly<any[]>> {
     (fn: () => void): void;
 
-    (label: DescribeLabel, fn: () => void): void;
+    (label: DescribeLabel, fn: (...args: T) => void): void;
     /**
      * Skips all other tests, except this group of tests.
-     *
-     * @param label the label for the tests
-     * @param fn the function that defines the tests
      */
-    only(label: DescribeLabel, fn: () => void): void;
+    only: Describe<T>;
     /**
      * Skips this group of tests.
-     *
-     * @param label the label for the tests
-     * @param fn the function that defines the tests
      */
-    skip(label: DescribeLabel, fn: () => void): void;
+    skip: Describe<T>;
     /**
      * Marks this group of tests as to be written or to be fixed.
-     *
-     * @param label the label for the tests
-     * @param fn the function that defines the tests
      */
-    todo(label: DescribeLabel, fn?: () => void): void;
+    todo: Describe<T>;
+    /**
+     * Marks this group of tests to be executed concurrently.
+     */
+    concurrent: Describe<T>;
     /**
      * Runs this group of tests, only if `condition` is true.
      *
@@ -238,37 +233,27 @@ declare module "bun:test" {
      *
      * @param condition if these tests should run
      */
-    if(condition: boolean): (label: DescribeLabel, fn: () => void) => void;
+    if(condition: boolean): Describe<T>;
     /**
      * Skips this group of tests, if `condition` is true.
      *
      * @param condition if these tests should be skipped
      */
-    skipIf(condition: boolean): (label: DescribeLabel, fn: () => void) => void;
+    skipIf(condition: boolean): Describe<T>;
     /**
      * Marks this group of tests as to be written or to be fixed, if `condition` is true.
      *
      * @param condition if these tests should be skipped
      */
-    todoIf(condition: boolean): (label: DescribeLabel, fn: () => void) => void;
+    todoIf(condition: boolean): Describe<T>;
     /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<[any, ...any[]]>>(
-      table: readonly T[],
-    ): (label: DescribeLabel, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
-    each<T extends any[]>(
-      table: readonly T[],
-    ): (
-      label: DescribeLabel,
-      fn: (...args: Readonly<T>) => void | Promise<unknown>,
-      options?: number | TestOptions,
-    ) => void;
-    each<T>(
-      table: T[],
-    ): (label: DescribeLabel, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Describe<[...T]>;
+    each<T extends any[]>(table: readonly T[]): Describe<[...T]>;
+    each<T>(table: T[]): Describe<[T]>;
   }
   /**
    * Describes a group of related tests.
@@ -286,7 +271,7 @@ declare module "bun:test" {
    * @param label the label for the tests
    * @param fn the function that defines the tests
    */
-  export const describe: Describe;
+  export const describe: Describe<[]>;
   /**
    * Skips a group of related tests.
    *
@@ -295,7 +280,9 @@ declare module "bun:test" {
    * @param label the label for the tests
    * @param fn the function that defines the tests
    */
-  export const xdescribe: Describe;
+  export const xdescribe: Describe<[]>;
+
+  type HookOptions = number | { timeout?: number };
   /**
    * Runs a function, once, before all the tests.
    *
@@ -312,7 +299,10 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function beforeAll(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  export function beforeAll(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
   /**
    * Runs a function before each test.
    *
@@ -323,7 +313,10 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function beforeEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  export function beforeEach(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
   /**
    * Runs a function, once, after all the tests.
    *
@@ -340,7 +333,10 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function afterAll(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  export function afterAll(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
   /**
    * Runs a function after each test.
    *
@@ -349,7 +345,10 @@ declare module "bun:test" {
    *
    * @param fn the function to run
    */
-  export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  export function afterEach(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
   /**
    * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
    * override this value. The default timeout is 5000ms (5 seconds).
@@ -382,6 +381,11 @@ declare module "bun:test" {
      */
     repeats?: number;
   }
+  type IsTuple<T> = T extends readonly unknown[]
+    ? number extends T["length"]
+      ? false // It's an array with unknown length, not a tuple
+      : true // It's an array with a fixed length (a tuple)
+    : false; // Not an array at all
   /**
    * Runs a test.
    *
@@ -405,10 +409,10 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Test {
+  export interface Test<T extends Readonly<any[]>> {
     (
       label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      fn: (...args: IsTuple<T> extends true ? [...T, (err?: unknown) => void] : T) => void | Promise<unknown>,
       /**
        * - If a `number`, sets the timeout for the test in milliseconds.
        * - If an `object`, sets the options for the test.
@@ -420,28 +424,12 @@ declare module "bun:test" {
     ): void;
     /**
      * Skips all other tests, except this test when run with the `--only` option.
-     *
-     * @param label the label for the test
-     * @param fn the test function
-     * @param options the test timeout or options
      */
-    only(
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ): void;
+    only: Test<T>;
     /**
      * Skips this test.
-     *
-     * @param label the label for the test
-     * @param fn the test function
-     * @param options the test timeout or options
      */
-    skip(
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ): void;
+    skip: Test<T>;
     /**
      * Marks this test as to be written or to be fixed.
      *
@@ -449,16 +437,8 @@ declare module "bun:test" {
      * if the test passes, the test will be marked as `fail` in the results; you will have to
      * remove the `.todo` or check that your test
      * is implemented correctly.
-     *
-     * @param label the label for the test
-     * @param fn the test function
-     * @param options the test timeout or options
      */
-    todo(
-      label: string,
-      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ): void;
+    todo: Test<T>;
     /**
      * Marks this test as failing.
      *
@@ -469,16 +449,12 @@ declare module "bun:test" {
      *
      * `test.failing` is very similar to {@link test.todo} except that it always
      * runs, regardless of the `--todo` flag.
-     *
-     * @param label the label for the test
-     * @param fn the test function
-     * @param options the test timeout or options
      */
-    failing(
-      label: string,
-      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ): void;
+    failing: Test<T>;
+    /**
+     * Runs the test concurrently with other concurrent tests.
+     */
+    concurrent: Test<T>;
     /**
      * Runs this test, if `condition` is true.
      *
@@ -486,51 +462,39 @@ declare module "bun:test" {
      *
      * @param condition if the test should run
      */
-    if(
-      condition: boolean,
-    ): (
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ) => void;
+    if(condition: boolean): Test<T>;
     /**
      * Skips this test, if `condition` is true.
      *
      * @param condition if the test should be skipped
      */
-    skipIf(
-      condition: boolean,
-    ): (
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ) => void;
+    skipIf(condition: boolean): Test<T>;
     /**
      * Marks this test as to be written or to be fixed, if `condition` is true.
      *
      * @param condition if the test should be marked TODO
      */
-    todoIf(
-      condition: boolean,
-    ): (
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ) => void;
+    todoIf(condition: boolean): Test<T>;
+    /**
+     * Marks this test as failing, if `condition` is true.
+     *
+     * @param condition if the test should be marked as failing
+     */
+    failingIf(condition: boolean): Test<T>;
+    /**
+     * Runs the test concurrently with other concurrent tests, if `condition` is true.
+     *
+     * @param condition if the test should run concurrently
+     */
+    concurrentIf(condition: boolean): Test<T>;
     /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<[any, ...any[]]>>(
-      table: readonly T[],
-    ): (label: string, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
-    each<T extends any[]>(
-      table: readonly T[],
-    ): (label: string, fn: (...args: Readonly<T>) => void | Promise<unknown>, options?: number | TestOptions) => void;
-    each<T>(
-      table: T[],
-    ): (label: string, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Test<[...T]>;
+    each<T extends any[]>(table: readonly T[]): Test<[...T]>;
+    each<T>(table: T[]): Test<[T]>;
   }
   /**
    * Runs a test.
@@ -548,7 +512,7 @@ declare module "bun:test" {
    * @param label the label for the test
    * @param fn the test function
    */
-  export const test: Test;
+  export const test: Test<[]>;
   export { test as it, xtest as xit };
 
   /**
@@ -559,7 +523,7 @@ declare module "bun:test" {
    * @param label the label for the test
    * @param fn the test function
    */
-  export const xtest: Test;
+  export const xtest: Test<[]>;
 
   /**
    * Asserts that a value matches some criteria.

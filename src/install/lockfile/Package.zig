@@ -52,8 +52,8 @@ pub const Package = extern struct {
         pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
     };
 
-    pub inline fn isDisabled(this: *const Package) bool {
-        return this.meta.isDisabled();
+    pub inline fn isDisabled(this: *const Package, cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
+        return this.meta.isDisabled(cpu, os);
     }
 
     pub const Alphabetizer = struct {

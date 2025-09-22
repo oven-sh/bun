@@ -32,16 +32,7 @@ pub fn VersionedURLType(comptime SemverIntType: type) type {
             }
             return .{
                 .url = this.url,
-                .version = .{
-                    .major = this.version.major,
-                    .minor = this.version.minor,
-                    .patch = this.version.patch,
-                    ._tag_padding = .{},
-                    .tag = .{
-                        .pre = this.version.tag.pre,
-                        .build = this.version.tag.build,
-                    },
-                },
+                .version = this.version.migrate(),
             };
         }
     };

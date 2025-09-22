@@ -11,6 +11,23 @@ pub fn VersionType(comptime IntType: type) type {
 
         const This = @This();
 
+        pub fn migrate(this: This) VersionType(u64) {
+            if (comptime IntType != u32) {
+                @compileError("unexpected IntType");
+            }
+
+            return .{
+                .major = this.major,
+                .minor = this.minor,
+                .patch = this.patch,
+                ._tag_padding = .{},
+                .tag = .{
+                    .pre = this.tag.pre,
+                    .build = this.tag.build,
+                },
+            };
+        }
+
         /// Assumes that there is only one buffer for all the strings
         pub fn sortGt(ctx: []const u8, lhs: This, rhs: This) bool {
             return orderFn(ctx, lhs, rhs) == .gt;

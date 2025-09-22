@@ -449,11 +449,11 @@ describe("bundler", () => {
         runtime: "classic",
         factory: "React.createElement",
         fragment: "React.Fragment",
-        side_effects: true,
+        sideEffects: true,
       },
       onAfterBundle(api) {
         const file = api.readFile("out.js");
-        // When jsxSideEffects is true: should NOT include /* @__PURE__ */ comments
+        // When sideEffects is true: should NOT include /* @__PURE__ */ comments
         expect(file).not.toContain("/* @__PURE__ */");
         expect(file).toContain("React.createElement");
         expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
@@ -510,11 +510,11 @@ describe("bundler", () => {
       target: "bun",
       jsx: {
         runtime: "automatic",
-        side_effects: true,
+        sideEffects: true,
       },
       onAfterBundle(api) {
         const file = api.readFile("out.js");
-        // When jsxSideEffects is true: should NOT include /* @__PURE__ */ comments
+        // When sideEffects is true: should NOT include /* @__PURE__ */ comments
         expect(file).not.toContain("/* @__PURE__ */");
         expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
           "// @bun
@@ -573,18 +573,19 @@ describe("bundler", () => {
         ...helpers,
       },
       target: "bun",
+      backend: "api",
       jsx: {
         runtime: "classic",
         factory: "React.createElement",
         fragment: "React.Fragment",
-        side_effects: true,
+        sideEffects: true,
       },
       env: {
         NODE_ENV: "production",
       },
       onAfterBundle(api) {
         const file = api.readFile("out.js");
-        // When jsxSideEffects is true in production: should NOT include /* @__PURE__ */ comments
+        // When sideEffects is true in production: should NOT include /* @__PURE__ */ comments
         expect(file).not.toContain("/* @__PURE__ */");
         expect(file).toContain("React.createElement");
         expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
@@ -639,16 +640,18 @@ describe("bundler", () => {
         ...helpers,
       },
       target: "bun",
+      backend: "api",
       jsx: {
         runtime: "automatic",
-        side_effects: true,
+        sideEffects: true,
+        development: false,
       },
       env: {
         NODE_ENV: "production",
       },
       onAfterBundle(api) {
         const file = api.readFile("out.js");
-        // When jsxSideEffects is true in production: should NOT include /* @__PURE__ */ comments
+        // When sideEffects is true in production: should NOT include /* @__PURE__ */ comments
         expect(file).not.toContain("/* @__PURE__ */");
         expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
           "// @bun
@@ -709,13 +712,16 @@ describe("bundler", () => {
     itBundled("jsx/sideEffectsTrueTsconfig", {
       files: {
         "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
-        "/tsconfig.json": /* json */ `{"compilerOptions": {"jsxSideEffects": true}}`,
+        "/tsconfig.json": /* json */ `{"compilerOptions": {}}`,
         ...helpers,
+      },
+      jsx: {
+        sideEffects: true,
       },
       target: "bun",
       onAfterBundle(api) {
         const file = api.readFile("out.js");
-        // When jsxSideEffects is true via tsconfig: should NOT include /* @__PURE__ */ comments
+        // When sideEffects is true via tsconfig: should NOT include /* @__PURE__ */ comments
         expect(file).not.toContain("/* @__PURE__ */");
         expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
           "// @bun
@@ -743,13 +749,19 @@ describe("bundler", () => {
     itBundled("jsx/sideEffectsTrueTsconfigClassic", {
       files: {
         "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
-        "/tsconfig.json": /* json */ `{"compilerOptions": {"jsx": "react", "jsxSideEffects": true}}`,
+        "/tsconfig.json": /* json */ `{"compilerOptions": {"jsx": "react"}}`,
         ...helpers,
+      },
+      jsx: {
+        runtime: "classic",
+        factory: "React.createElement",
+        fragment: "React.Fragment",
+        sideEffects: true,
       },
       target: "bun",
       onAfterBundle(api) {
         const file = api.readFile("out.js");
-        // When jsxSideEffects is true via tsconfig with classic jsx: should NOT include /* @__PURE__ */ comments
+        // When sideEffects is true via tsconfig with classic jsx: should NOT include /* @__PURE__ */ comments
         expect(file).not.toContain("/* @__PURE__ */");
         expect(file).toContain("React.createElement");
         expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
@@ -764,13 +776,17 @@ describe("bundler", () => {
     itBundled("jsx/sideEffectsTrueTsconfigAutomatic", {
       files: {
         "/index.jsx": /* jsx */ `console.log(<a></a>); console.log(<></>);`,
-        "/tsconfig.json": /* json */ `{"compilerOptions": {"jsx": "react-jsx", "jsxSideEffects": true}}`,
+        "/tsconfig.json": /* json */ `{"compilerOptions": {"jsx": "react-jsx"}}`,
         ...helpers,
+      },
+      jsx: {
+        runtime: "automatic",
+        sideEffects: true,
       },
       target: "bun",
       onAfterBundle(api) {
         const file = api.readFile("out.js");
-        // When jsxSideEffects is true via tsconfig with automatic jsx: should NOT include /* @__PURE__ */ comments
+        // When sideEffects is true via tsconfig with automatic jsx: should NOT include /* @__PURE__ */ comments
         expect(file).not.toContain("/* @__PURE__ */");
         expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
           "// @bun

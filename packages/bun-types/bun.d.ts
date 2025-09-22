@@ -1899,6 +1899,18 @@ declare module "bun" {
      */
     tsconfig?: string;
 
+    /**
+     * JSX configuration options
+     */
+    jsx?: {
+      runtime?: "automatic" | "classic";
+      importSource?: string;
+      factory?: string;
+      fragment?: string;
+      sideEffects?: boolean;
+      development?: boolean;
+    };
+
     outdir?: string;
   }
 

@@ -25,6 +25,9 @@
         // "BUN_JSC_validateExceptionChecks": "1",
         // "BUN_JSC_dumpSimulatedThrows": "1",
         // "BUN_JSC_unexpectedExceptionStackTraceLimit": "20",
+        // "BUN_DESTRUCT_VM_ON_EXIT": "1",
+        // "ASAN_OPTIONS": "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1",
+        // "LSAN_OPTIONS": "malloc_context_size=100:print_suppressions=1:suppressions=${workspaceFolder}/test/leaksan.supp",
       },
       "console": "internalConsole",
       "sourceMap": {
@@ -57,11 +60,17 @@
       "name": "bun run [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["${file}"],
-      "cwd": "${fileDirname}",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        // "BUN_JSC_validateExceptionChecks": "1",
+        // "BUN_JSC_dumpSimulatedThrows": "1",
+        // "BUN_JSC_unexpectedExceptionStackTraceLimit": "20",
+        // "BUN_DESTRUCT_VM_ON_EXIT": "1",
+        // "ASAN_OPTIONS": "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1",
+        // "LSAN_OPTIONS": "malloc_context_size=100:print_suppressions=1:suppressions=${workspaceFolder}/test/leaksan.supp",
       },
       "console": "internalConsole",
       "sourceMap": {

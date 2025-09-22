@@ -472,12 +472,6 @@ it("request.url should be based on the Host header", async () => {
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull renders headers, does not call error handler", async () => {
-      let subprocess;
-
-      afterAll(() => {
-        subprocess?.kill();
-      });
-
       const onMessage = mock(async url => {
         const response = await fetch(url);
         expect(response.status).toBe(402);
@@ -486,7 +480,7 @@ describe("streaming", () => {
         subprocess.kill();
       });
 
-      subprocess = Bun.spawn({
+      await using subprocess = Bun.spawn({
         cwd: import.meta.dirname,
         cmd: [bunExe(), "readable-stream-throws.fixture.js"],
         env: bunEnv,
@@ -502,12 +496,6 @@ describe("streaming", () => {
     });
 
     it("throw on pull after writing should not call the error handler", async () => {
-      let subprocess;
-
-      afterAll(() => {
-        subprocess?.kill();
-      });
-
       const onMessage = mock(async href => {
         const url = new URL("write", href);
         const response = await fetch(url);
@@ -517,7 +505,7 @@ describe("streaming", () => {
         subprocess.kill();
       });
 
-      subprocess = Bun.spawn({
+      await using subprocess = Bun.spawn({
         cwd: import.meta.dirname,
         cmd: [bunExe(), "readable-stream-throws.fixture.js"],
         env: bunEnv,
@@ -1561,7 +1549,7 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
 it("should support promise returned from error", async () => {
   const { promise, resolve } = Promise.withResolvers<string>();
 
-  const subprocess = Bun.spawn({
+  await using subprocess = Bun.spawn({
     cwd: import.meta.dirname,
     cmd: [bunExe(), "bun-serve.fixture.js"],
     env: bunEnv,
@@ -1570,10 +1558,6 @@ it("should support promise returned from error", async () => {
     ipc(message) {
       resolve(message);
     },
-  });
-
-  afterAll(() => {
-    subprocess.kill();
   });
 
   const url = new URL(await promise);

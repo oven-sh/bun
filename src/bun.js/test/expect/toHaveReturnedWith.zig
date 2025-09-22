@@ -7,7 +7,7 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
     const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveReturnedWith", "<green>expected<r>");
 
     const expected = callframe.argumentsAsArray(1)[0];
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
     if (!returns.jsType().isArray()) {
@@ -153,8 +153,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 const mock = bun.jsc.Expect.mock;
 
 const Expect = bun.jsc.Expect.Expect;

@@ -39,7 +39,7 @@ declare function $isPromiseRejected(promise: Promise<any>): boolean;
 /** Asserts the input is a promise. Returns `true` if the promise is pending */
 declare function $isPromisePending(promise: Promise<any>): boolean;
 
-declare const IS_BUN_DEVELOPMENT: boolean;
+declare var IS_BUN_DEVELOPMENT: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;

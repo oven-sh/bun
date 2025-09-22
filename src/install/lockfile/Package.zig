@@ -57,8 +57,8 @@ pub fn Package(comptime SemverIntType: type) type {
             pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
         };
 
-        pub inline fn isDisabled(this: *const @This()) bool {
-            return this.meta.isDisabled();
+        pub inline fn isDisabled(this: *const @This(), cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
+            return this.meta.isDisabled(cpu, os);
         }
 
         pub const Alphabetizer = struct {

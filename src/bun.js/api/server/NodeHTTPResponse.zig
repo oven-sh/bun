@@ -556,8 +556,6 @@ fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent, js_
     }
 
     if (event == .abort) {
-        this.ref();
-        defer this.deref();
         this.onDataOrAborted("", true, .abort, js_this);
     }
 }

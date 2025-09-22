@@ -531,14 +531,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (method === "CONNECT") {
           // Handle CONNECT method for HTTP tunneling/proxy
           if (server.listenerCount("connect") > 0) {
-            socket[kEnableStreaming](true);
             // For CONNECT, emit the event and let the handler respond
-            server.emit("connect", http_req, socket, kEmptyBuffer);
-
             // Don't assign the socket to a response for CONNECT
             // The handler should write the raw response
+            socket[kEnableStreaming](true);
             const { promise, resolve } = $newPromiseCapability(Promise);
-            socket.on("close", resolve);
+            socket.once("close", resolve);
+            server.emit("connect", http_req, socket, kEmptyBuffer);
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request

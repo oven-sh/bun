@@ -73,6 +73,7 @@ function ClientRequest(input, options, cb) {
   }
 
   let readableStreamController: ReadableStreamDirectController | undefined;
+  let responseHandled = false;
 
   this.write = (chunk, encoding, callback) => {
     if (this.destroyed) return false;
@@ -182,12 +183,41 @@ function ClientRequest(input, options, cb) {
       readableStreamController.flush?.();
 
       const result = readableStreamController.end?.();
-      readableStreamController = undefined;
 
-      handleResponse?.();
+      // Handle the result which may be a Promise
+      if ($isPromise(result)) {
+        // Register callback before the promise resolves
+        if (callback) {
+          this.once("finish", callback);
+        }
 
-      if (callback) {
-        this.once("finish", callback);
+        result
+          .$then(() => {
+            readableStreamController = undefined;
+            if (!responseHandled && handleResponse) {
+              responseHandled = true;
+              handleResponse();
+            }
+            // Use maybeEmitFinish to ensure proper event ordering
+            process.nextTick(maybeEmitFinish.bind(this));
+          })
+          .$catch((err) => {
+            readableStreamController = undefined;
+            this.emit("error", err);
+          });
+      } else {
+        readableStreamController = undefined;
+        if (!responseHandled && handleResponse) {
+          responseHandled = true;
+          handleResponse();
+        }
+
+        if (callback) {
+          this.once("finish", callback);
+        }
+
+        // Use maybeEmitFinish to ensure proper event ordering
+        process.nextTick(maybeEmitFinish.bind(this));
       }
 
       return this;
@@ -365,7 +395,10 @@ function ClientRequest(input, options, cb) {
 
               if (isEnd) {
                 controller.end();
-                handleResponse?.();
+                if (!responseHandled && handleResponse) {
+                  responseHandled = true;
+                  handleResponse();
+                }
               } else if (emitDrain && !self.finished && chunks.length === 0) {
                 self.emit("drain");
                 return;
@@ -413,6 +446,7 @@ function ClientRequest(input, options, cb) {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
           handleResponse = undefined;
+          responseHandled = false;
 
           const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
           setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
@@ -467,7 +501,10 @@ function ClientRequest(input, options, cb) {
         };
 
         if (!keepOpen) {
-          handleResponse();
+          if (!responseHandled && handleResponse) {
+            responseHandled = true;
+            handleResponse();
+          }
         }
 
         onEnd();
@@ -583,7 +620,10 @@ function ClientRequest(input, options, cb) {
     try {
       startFetch(body);
       onEnd = () => {
-        handleResponse?.();
+        if (!responseHandled && handleResponse) {
+          responseHandled = true;
+          handleResponse();
+        }
       };
     } catch (err) {
       if (!!$debug) globalReportError(err);

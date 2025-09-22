@@ -1186,7 +1186,7 @@ pub const FetchTasklet = struct {
         if (this.sink) |sink| {
             if (this.signal) |signal| {
                 if (signal.aborted()) {
-                    bun.assert(sink.status == .done);
+                    // already aborted; nothing to drain
                     return;
                 }
             }

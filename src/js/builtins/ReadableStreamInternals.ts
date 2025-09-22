@@ -1892,11 +1892,14 @@ export function readableStreamFromAsyncIterator(target, fn) {
       if (!runningAsyncIteratorPromise) {
         const asyncIteratorPromise = runAsyncIterator(controller);
         runningAsyncIteratorPromise = asyncIteratorPromise;
-        const result = await asyncIteratorPromise;
-        if (runningAsyncIteratorPromise === asyncIteratorPromise) {
-          runningAsyncIteratorPromise = undefined;
+        try {
+          const result = await asyncIteratorPromise;
+          return result;
+        } finally {
+          if (runningAsyncIteratorPromise === asyncIteratorPromise) {
+            runningAsyncIteratorPromise = undefined;
+          }
         }
-        return result;
       }
 
       return runningAsyncIteratorPromise;

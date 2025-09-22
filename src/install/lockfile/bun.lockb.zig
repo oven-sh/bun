@@ -253,6 +253,7 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
 
 pub const SerializerLoadResult = struct {
     packages_need_update: bool = false,
+    migrated_from_lockb_v2: bool = false,
 };
 
 pub fn load(
@@ -305,7 +306,9 @@ pub fn load(
     );
 
     lockfile.packages = packages_load_result.list;
+
     res.packages_need_update = packages_load_result.needs_update;
+    res.migrated_from_lockb_v2 = migrate_from_v2;
 
     lockfile.buffers = try Lockfile.Buffers.load(
         stream,

@@ -1,5 +1,5 @@
-import { expiredTls, invalidTls, tls as validTls } from "harness";
-import { describe, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
+import { expiredTls, tls as validTls } from "harness";
 const CERT_LOCALHOST_IP = { ...validTls };
 const CERT_EXPIRED = { ...expiredTls };
 

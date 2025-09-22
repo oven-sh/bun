@@ -201,7 +201,7 @@ function ClientRequest(input, options, cb) {
             // Use maybeEmitFinish to ensure proper event ordering
             process.nextTick(maybeEmitFinish.bind(this));
           })
-          .$catch((err) => {
+          .$catch(err => {
             readableStreamController = undefined;
             this.emit("error", err);
           });

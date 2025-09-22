@@ -190,6 +190,7 @@ private:
     std::atomic<bool> m_hasPendingActivity { true };
 
     explicit WebSocket(ScriptExecutionContext&);
+    explicit WebSocket(ScriptExecutionContext&, std::optional<bool> rejectUnauthorized);
     explicit WebSocket(ScriptExecutionContext&, const String& url);
 
     EventTargetInterface eventTargetInterface() const final;

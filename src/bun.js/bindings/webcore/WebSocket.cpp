@@ -177,13 +177,19 @@ ASCIILiteral WebSocket::subprotocolSeparator()
 }
 
 WebSocket::WebSocket(ScriptExecutionContext& context)
+    : WebSocket(context, std::nullopt)
+{
+}
+
+WebSocket::WebSocket(ScriptExecutionContext& context, std::optional<bool> rejectUnauthorized)
     : ContextDestructionObserver(&context)
     , m_subprotocol(emptyString())
     , m_extensions(emptyString())
 {
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
-    m_rejectUnauthorized = Bun__getTLSRejectUnauthorizedValue() != 0;
+    // Use explicit value if provided, otherwise fall back to environment variable
+    m_rejectUnauthorized = rejectUnauthorized.value_or(Bun__getTLSRejectUnauthorizedValue() != 0);
 }
 
 WebSocket::~WebSocket()
@@ -251,8 +257,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     if (url.isNull())
         return Exception { SyntaxError };
 
-    auto socket = adoptRef(*new WebSocket(context));
-    socket->setRejectUnauthorized(rejectUnauthorized);
+    auto socket = adoptRef(*new WebSocket(context, std::optional<bool>(rejectUnauthorized)));
     // socket->suspendIfNeeded();
 
     auto result = socket->connect(url, protocols, WTFMove(headers));

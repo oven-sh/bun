@@ -1552,9 +1552,18 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    auto function = globalObject->performMicrotaskFunction();
+#if ASSERT_ENABLED
+    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
+    ASSERT_WITH_MESSAGE(!callback.isEmpty(), "Invalid microtask callback");
+#endif
+
+    if (asyncContext.isEmpty()) {
+        asyncContext = JSC::jsUndefined();
+    }
 
     // This is a JSC builtin function
-    lexicalGlobalObject->queueMicrotask(globalObject->performMicrotaskFunction(), callback, asyncContext,
+    lexicalGlobalObject->queueMicrotask(function, callback, asyncContext,
         JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -2225,11 +2234,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
 }
 
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Jest__createTestPreloadObject(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Jest__testPreloadObject(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->lazyPreloadTestModuleObject());
-}
 extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->lazyTestModuleObject());
@@ -2865,14 +2869,6 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
-        });
-
-    m_lazyPreloadTestModuleObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            JSValue result = JSValue::decode(Bun__Jest__createTestPreloadObject(globalObject));
             init.set(result.toObject(globalObject));
         });
 
@@ -4151,6 +4147,12 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 {
     JSFunction* function = globalObject->nativeMicrotaskTrampoline();
 
+#if ASSERT_ENABLED
+    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
+    ASSERT_WITH_MESSAGE(ptr, "Invalid microtask context");
+    ASSERT_WITH_MESSAGE(callback, "Invalid microtask callback");
+#endif
+
     // Do not use JSCell* here because the GC will try to visit it.
     globalObject->queueMicrotask(function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
 }
@@ -4565,10 +4567,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
     } else if (handler == jsFunctionOnLoadObjectResultReject) {
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultReject;
-    } else if (handler == Bun__TestScope__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__onReject;
-    } else if (handler == Bun__TestScope__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__onResolve;
+    } else if (handler == Bun__TestScope__Describe2__bunTestThen) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
+    } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
     } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
     } else if (handler == Bun__BodyValueBufferer__onRejectStream) {

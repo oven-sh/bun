@@ -9,7 +9,7 @@ pub fn toIncludeRepeated(this: *Expect, globalThis: *JSGlobalObject, callFrame: 
         return globalThis.throwInvalidArguments("toIncludeRepeated() requires 2 arguments", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const substring = arguments[0];
     substring.ensureStillAlive();
@@ -105,7 +105,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

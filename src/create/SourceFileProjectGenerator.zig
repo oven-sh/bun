@@ -248,7 +248,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch |err| {
             Output.err(err, "failed to install dependencies", .{});
@@ -361,7 +361,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
         },
     }) catch |err| {
         Output.err(err, "failed to start app", .{});

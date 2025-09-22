@@ -26,7 +26,7 @@ const bigText = Buffer.alloc(1 * 1024 * 1024, "a");
 const smallText = Buffer.alloc(16 * "Hello".length, "Hello");
 const empty = Buffer.alloc(0);
 
-describe("fetch() with streaming", () => {
+describe.concurrent("fetch() with streaming", () => {
   [-1, 0, 20, 50, 100].forEach(timeout => {
     // prettier-ignore
     it.todoIf(timeout === 20 && isWindows)(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {

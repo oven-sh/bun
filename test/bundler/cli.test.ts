@@ -176,6 +176,7 @@ console.log(utils());`,
 
     const { stdout, stderr } = Bun.spawnSync({
       cmd: [path.join(baseDir, "exe.exe")],
+      env: bunEnv,
     });
     expect(stdout.toString()).toContain(path.join(baseDir, "我") + "\n");
     expect(stdout.toString()).toContain(path.join(baseDir, "我", "我.ts") + "\n");

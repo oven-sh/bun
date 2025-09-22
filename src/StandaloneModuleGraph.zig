@@ -518,11 +518,27 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
+    pub const InjectError = struct {
+        message: []const u8,
+
+        pub fn deinit(this: *const @This()) void {
+            bun.default_allocator.free(this.message);
+        }
+    };
+
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.Maybe(bun.FileDescriptor, InjectError) {
         var buf: bun.PathBuffer = undefined;
+
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
-            return bun.invalid_fd;
+            return .{
+                .err = .{
+                    .message = std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "failed to get temporary file name: {s}",
+                        .{@errorName(err)},
+                    ) catch |e| bun.handleOom(e),
+                },
+            };
         });
 
         const cleanup = struct {
@@ -537,159 +553,224 @@ pub const StandaloneModuleGraph = struct {
             }
         }.toClean;
 
-        const cloned_executable_fd: bun.FileDescriptor = brk: {
-            if (comptime Environment.isWindows) {
-                // copy self and then open it for writing
+        const file: bun.sys.File = .{
+            .handle = brk: {
+                if (comptime Environment.isWindows) {
+                    // copy self and then open it for writing
 
-                var in_buf: bun.WPathBuffer = undefined;
-                strings.copyU8IntoU16(&in_buf, self_exe);
-                in_buf[self_exe.len] = 0;
-                const in = in_buf[0..self_exe.len :0];
-                var out_buf: bun.WPathBuffer = undefined;
-                strings.copyU8IntoU16(&out_buf, zname);
-                out_buf[zname.len] = 0;
-                const out = out_buf[0..zname.len :0];
+                    var in_buf: bun.WPathBuffer = undefined;
+                    strings.copyU8IntoU16(&in_buf, self_exe);
+                    in_buf[self_exe.len] = 0;
+                    const in = in_buf[0..self_exe.len :0];
+                    var out_buf: bun.WPathBuffer = undefined;
+                    strings.copyU8IntoU16(&out_buf, zname);
+                    out_buf[zname.len] = 0;
+                    const out = out_buf[0..zname.len :0];
 
-                bun.copyFile(in, out).unwrap() catch |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                    return bun.invalid_fd;
-                };
-                const file = bun.sys.openFileAtWindows(
-                    bun.invalid_fd,
-                    out,
-                    .{
-                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
-                        .disposition = w.FILE_OPEN,
-                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
-                    },
-                ).unwrap() catch |e| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
-                    return bun.invalid_fd;
-                };
-
-                break :brk file;
-            }
-
-            if (comptime Environment.isMac) {
-                // if we're on a mac, use clonefile() if we can
-                // failure is okay, clonefile is just a fast path.
-                if (Syscall.clonefile(self_exe, zname) == .result) {
-                    switch (Syscall.open(zname, bun.O.RDWR | bun.O.CLOEXEC, 0)) {
-                        .result => |res| break :brk res,
-                        .err => {},
-                    }
-                }
-            }
-
-            // otherwise, just copy the file
-
-            const fd = brk2: {
-                var tried_changing_abs_dir = false;
-                for (0..3) |retry| {
-                    switch (Syscall.open(zname, bun.O.CLOEXEC | bun.O.RDWR | bun.O.CREAT, 0)) {
-                        .result => |res| break :brk2 res,
-                        .err => |err| {
-                            if (retry < 2) {
-                                // they may not have write access to the present working directory
-                                //
-                                // but we want to default to it since it's the
-                                // least likely to need to be copied due to
-                                // renameat() across filesystems
-                                //
-                                // so in the event of a failure, we try to
-                                // we retry using the tmp dir
-                                //
-                                // but we only do that once because otherwise it's just silly
-                                if (!tried_changing_abs_dir) {
-                                    tried_changing_abs_dir = true;
-                                    const zname_z = bun.strings.concat(bun.default_allocator, &.{
-                                        bun.fs.FileSystem.instance.fs.tmpdirPath(),
-                                        std.fs.path.sep_str,
-                                        zname,
-                                        &.{0},
-                                    }) catch |e| bun.handleOom(e);
-                                    zname = zname_z[0..zname_z.len -| 1 :0];
-                                    continue;
-                                }
-                                switch (err.getErrno()) {
-                                    // try again
-                                    .PERM, .AGAIN, .BUSY => continue,
-                                    else => break,
-                                }
-
-                                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
-                                // No fd to cleanup yet, just return error
-                                return bun.invalid_fd;
-                            }
+                    bun.copyFile(in, out).unwrap() catch |err| {
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "failed to copy bun executable into temporary file: {s}",
+                                    .{@errorName(err)},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
+                    };
+                    const file = bun.sys.openFileAtWindows(
+                        bun.invalid_fd,
+                        out,
+                        .{
+                            .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
+                            .disposition = w.FILE_OPEN,
+                            .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
                         },
+                    ).unwrap() catch |e| {
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "failed to open temporary file to copy bun into: {}",
+                                    .{e},
+                                ) catch |err| bun.handleOom(err),
+                            },
+                        };
+                    };
+
+                    break :brk file;
+                }
+
+                if (comptime Environment.isMac) {
+                    // if we're on a mac, use clonefile() if we can
+                    // failure is okay, clonefile is just a fast path.
+                    if (Syscall.clonefile(self_exe, zname) == .result) {
+                        switch (Syscall.open(zname, bun.O.RDWR | bun.O.CLOEXEC, 0)) {
+                            .result => |res| break :brk res,
+                            .err => {},
+                        }
                     }
                 }
-                unreachable;
-            };
-            const self_fd: bun.FileDescriptor = brk2: {
-                for (0..3) |retry| {
-                    switch (Syscall.open(self_exe, bun.O.CLOEXEC | bun.O.RDONLY, 0)) {
-                        .result => |res| break :brk2 res,
-                        .err => |err| {
-                            if (retry < 2) {
-                                switch (err.getErrno()) {
-                                    // try again
-                                    .PERM, .AGAIN, .BUSY => continue,
-                                    else => {},
+
+                // otherwise, just copy the file
+
+                const fd = brk2: {
+                    var tried_changing_abs_dir = false;
+                    for (0..3) |retry| {
+                        switch (Syscall.open(zname, bun.O.CLOEXEC | bun.O.RDWR | bun.O.CREAT, 0)) {
+                            .result => |res| break :brk2 res,
+                            .err => |err| {
+                                if (retry < 2) {
+                                    // they may not have write access to the present working directory
+                                    //
+                                    // but we want to default to it since it's the
+                                    // least likely to need to be copied due to
+                                    // renameat() across filesystems
+                                    //
+                                    // so in the event of a failure, we try to
+                                    // we retry using the tmp dir
+                                    //
+                                    // but we only do that once because otherwise it's just silly
+                                    if (!tried_changing_abs_dir) {
+                                        tried_changing_abs_dir = true;
+                                        const zname_z = bun.strings.concat(bun.default_allocator, &.{
+                                            bun.fs.FileSystem.instance.fs.tmpdirPath(),
+                                            std.fs.path.sep_str,
+                                            zname,
+                                            &.{0},
+                                        }) catch |e| bun.handleOom(e);
+                                        zname = zname_z[0..zname_z.len -| 1 :0];
+                                        continue;
+                                    }
+                                    switch (err.getErrno()) {
+                                        // try again
+                                        .PERM, .AGAIN, .BUSY => continue,
+                                        else => break,
+                                    }
+
+                                    return .{
+                                        .err = .{
+                                            .message = std.fmt.allocPrint(
+                                                bun.default_allocator,
+                                                "failed to open temporary file to copy bun into: {}",
+                                                .{err},
+                                            ) catch |e| bun.handleOom(e),
+                                        },
+                                    };
                                 }
-                            }
-
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}", .{err});
-                            cleanup(zname, fd);
-                            return bun.invalid_fd;
-                        },
+                            },
+                        }
                     }
-                }
-                unreachable;
-            };
+                    unreachable;
+                };
+                const self_fd: bun.FileDescriptor = brk2: {
+                    for (0..3) |retry| {
+                        switch (Syscall.open(self_exe, bun.O.CLOEXEC | bun.O.RDONLY, 0)) {
+                            .result => |res| break :brk2 res,
+                            .err => |err| {
+                                if (retry < 2) {
+                                    switch (err.getErrno()) {
+                                        // try again
+                                        .PERM, .AGAIN, .BUSY => continue,
+                                        else => {},
+                                    }
+                                }
 
-            defer self_fd.close();
+                                cleanup(zname, fd);
+                                return .{
+                                    .err = .{
+                                        .message = std.fmt.allocPrint(
+                                            bun.default_allocator,
+                                            "failed to open bun executable to copy from as read-only: {}",
+                                            .{err},
+                                        ) catch |e| bun.handleOom(e),
+                                    },
+                                };
+                            },
+                        }
+                    }
+                    unreachable;
+                };
 
-            bun.copyFile(self_fd, fd).unwrap() catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                cleanup(zname, fd);
-                return bun.invalid_fd;
-            };
+                defer self_fd.close();
 
-            break :brk fd;
+                bun.copyFile(self_fd, fd).unwrap() catch |err| {
+                    cleanup(zname, fd);
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "failed to copy bun executable into temporary file: {s}",
+                                .{@errorName(err)},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
+                };
+
+                break :brk fd;
+            },
         };
+        var needs_cleanup = true;
+        defer {
+            if (needs_cleanup) {
+                cleanup(zname, file.handle);
+            }
+        }
 
         switch (target.os) {
             .mac => {
-                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                const input_result = file.readToEnd(bun.default_allocator);
                 if (input_result.err) |err| {
-                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "reading standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 }
                 var macho_file = bun.macho.MachoFile.init(bun.default_allocator, input_result.bytes.items, bytes.len) catch |err| {
-                    Output.prettyErrorln("Error initializing standalone module graph: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "initializing standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 defer macho_file.deinit();
                 macho_file.writeSection(bytes) catch |err| {
-                    Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "writing standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 input_result.bytes.deinit();
 
-                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                switch (file.setFileOffset(0)) {
                     .err => |err| {
-                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
-                        cleanup(zname, cloned_executable_fd);
-                        return bun.invalid_fd;
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "seeking to start of temporary file: {}",
+                                    .{err},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
                     },
                     else => {},
                 }
 
-                var file = bun.sys.File{ .handle = cloned_executable_fd };
                 const writer = file.writer();
                 const BufferedWriter = std.io.BufferedWriter(512 * 1024, @TypeOf(writer));
                 var buffered_writer = bun.handleOom(bun.default_allocator.create(BufferedWriter));
@@ -697,78 +778,133 @@ pub const StandaloneModuleGraph = struct {
                     .unbuffered_writer = writer,
                 };
                 macho_file.buildAndSign(buffered_writer.writer()) catch |err| {
-                    Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "writing standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 buffered_writer.flush() catch |err| {
-                    Output.prettyErrorln("Error flushing standalone module graph: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "flushing standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 if (comptime !Environment.isWindows) {
-                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = file.fchmod(0o777);
                 }
-                return cloned_executable_fd;
+                needs_cleanup = false;
+                return .{ .result = file.handle };
             },
             .windows => {
-                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                const input_result = file.readToEnd(bun.default_allocator);
                 if (input_result.err) |err| {
-                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "reading standalone module graph: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 }
                 var pe_file = bun.pe.PEFile.init(bun.default_allocator, input_result.bytes.items) catch |err| {
-                    Output.prettyErrorln("Error initializing PE file: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "initializing PE file: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 defer pe_file.deinit();
                 pe_file.addBunSection(bytes) catch |err| {
-                    Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "adding Bun section to PE file: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 input_result.bytes.deinit();
 
-                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                switch (file.setFileOffset(0)) {
                     .err => |err| {
-                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
-                        cleanup(zname, cloned_executable_fd);
-                        return bun.invalid_fd;
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "seeking to start of temporary file: {}",
+                                    .{err},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
                     },
                     else => {},
                 }
 
-                var file = bun.sys.File{ .handle = cloned_executable_fd };
                 const writer = file.writer();
                 pe_file.write(writer) catch |err| {
-                    Output.prettyErrorln("Error writing PE file: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                    return .{
+                        .err = .{
+                            .message = std.fmt.allocPrint(
+                                bun.default_allocator,
+                                "writing PE file: {}",
+                                .{err},
+                            ) catch |e| bun.handleOom(e),
+                        },
+                    };
                 };
                 // Set executable permissions when running on POSIX hosts, even for Windows targets
                 if (comptime !Environment.isWindows) {
-                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = file.fchmod(0o777);
                 }
-                return cloned_executable_fd;
+                needs_cleanup = false;
+                return .{ .result = file.handle };
             },
             else => {
                 var total_byte_count: usize = undefined;
                 if (Environment.isWindows) {
-                    total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(cloned_executable_fd).unwrap() catch |err| {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}", .{err});
-                        cleanup(zname, cloned_executable_fd);
-                        return bun.invalid_fd;
+                    total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(file.handle).unwrap() catch |err| {
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "failed to seek to end of temporary file: {}",
+                                    .{err},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
                     });
                 } else {
                     const seek_position = @as(u64, @intCast(brk: {
-                        const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
+                        const fstat = switch (file.stat()) {
                             .result => |res| res,
                             .err => |err| {
-                                Output.prettyErrorln("{}", .{err});
-                                cleanup(zname, cloned_executable_fd);
-                                return bun.invalid_fd;
+                                return .{
+                                    .err = .{
+                                        .message = std.fmt.allocPrint(
+                                            bun.default_allocator,
+                                            "{}",
+                                            .{err},
+                                        ) catch |e| bun.handleOom(e),
+                                    },
+                                };
                             },
                         };
 
@@ -785,49 +921,59 @@ pub const StandaloneModuleGraph = struct {
                     //  gap (a "hole") return null bytes ('\0') until data is actually
                     //  written into the gap.
                     //
-                    switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
+                    switch (file.setFileOffset(seek_position)) {
                         .err => |err| {
-                            Output.prettyErrorln(
-                                "{}\nwhile seeking to end of temporary file (pos: {d})",
-                                .{
-                                    err,
-                                    seek_position,
+                            return .{
+                                .err = .{
+                                    .message = std.fmt.allocPrint(
+                                        bun.default_allocator,
+                                        "{} while seeking to end of temporary file (pos: {d})",
+                                        .{ err, seek_position },
+                                    ) catch |e| bun.handleOom(e),
                                 },
-                            );
-                            cleanup(zname, cloned_executable_fd);
-                            return bun.invalid_fd;
+                            };
                         },
                         else => {},
                     }
                 }
 
-                var remain = bytes;
-                while (remain.len > 0) {
-                    switch (Syscall.write(cloned_executable_fd, bytes)) {
-                        .result => |written| remain = remain[written..],
-                        .err => |err| {
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
-                            cleanup(zname, cloned_executable_fd);
-                            return bun.invalid_fd;
-                        },
-                    }
+                switch (file.writeAll(bytes)) {
+                    .result => {},
+                    .err => |err| {
+                        return .{
+                            .err = .{
+                                .message = std.fmt.allocPrint(
+                                    bun.default_allocator,
+                                    "failed to write to temporary file: {}",
+                                    .{err},
+                                ) catch |e| bun.handleOom(e),
+                            },
+                        };
+                    },
                 }
 
                 // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
-                _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
+                _ = file.writeAll(std.mem.asBytes(&total_byte_count));
                 if (comptime !Environment.isWindows) {
-                    _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                    _ = file.fchmod(0o777);
                 }
 
-                return cloned_executable_fd;
+                needs_cleanup = false;
+                return .{ .result = file.handle };
             },
         }
 
         if (Environment.isWindows and inject_options.hide_console) {
-            bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
-                Output.err(err, "failed to disable console on executable", .{});
-                cleanup(zname, cloned_executable_fd);
-                return bun.invalid_fd;
+            bun.windows.editWin32BinarySubsystem(.{ .handle = file }, .windows_gui) catch |err| {
+                return .{
+                    .err = .{
+                        .message = std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "failed to disable console on executable: {}",
+                            .{err},
+                        ) catch |e| bun.handleOom(e),
+                    },
+                };
             };
         }
 
@@ -841,9 +987,15 @@ pub const StandaloneModuleGraph = struct {
         {
             var zname_buf: bun.OSPathBuffer = undefined;
             const zname_w = bun.strings.toWPathNormalized(&zname_buf, zname) catch |err| {
-                Output.err(err, "failed to resolve executable path", .{});
-                cleanup(zname, cloned_executable_fd);
-                return bun.invalid_fd;
+                return .{
+                    .err = .{
+                        .message = std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "failed to resolve executable path: {}",
+                            .{err},
+                        ) catch |e| bun.handleOom(e),
+                    },
+                };
             };
 
             // Single call to set all Windows metadata at once
@@ -856,13 +1008,20 @@ pub const StandaloneModuleGraph = struct {
                 inject_options.description,
                 inject_options.copyright,
             ) catch |err| {
-                Output.err(err, "failed to set Windows metadata on executable", .{});
-                cleanup(zname, cloned_executable_fd);
-                return bun.invalid_fd;
+                return .{
+                    .err = .{
+                        .message = std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "failed to set Windows metadata on executable: {}",
+                            .{err},
+                        ) catch |e| bun.handleOom(e),
+                    },
+                };
             };
         }
 
-        return cloned_executable_fd;
+        needs_cleanup = false;
+        return .{ .result = file.handle };
     }
 
     pub const CompileTarget = @import("./compile_target.zig");
@@ -974,12 +1133,17 @@ pub const StandaloneModuleGraph = struct {
             allocator.free(self_exe);
         };
 
-        var fd = inject(
+        var fd = switch (inject(
             bytes,
             self_exe,
             windows_options,
             target,
-        );
+        )) {
+            .result => |result| result,
+            .err => |err| {
+                return CompileResult.fail(err.message);
+            },
+        };
         defer if (fd != bun.invalid_fd) fd.close();
         bun.debugAssert(fd.kind == .system);
 

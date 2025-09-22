@@ -7,6 +7,7 @@
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <wtf/JSONValues.h>
 #include "ErrorStackTrace.h"
 #include "ZigGlobalObject.h"
 
@@ -92,6 +93,15 @@ void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* 
     }
 
     agent->reportTestEnd(testId, status, elapsed);
+}
+
+void Bun__TestReporterAgentReportTestError(Inspector::InspectorTestReporterAgent* agent, int testId, BunString* message, BunString* name, BunString* stack)
+{
+    auto messageStr = message ? message->toWTFString(BunString::ZeroCopy) : String();
+    auto nameStr = name ? name->toWTFString(BunString::ZeroCopy) : String();
+    auto stackStr = stack ? stack->toWTFString(BunString::ZeroCopy) : String();
+
+    agent->reportTestError(testId, messageStr, nameStr, stackStr);
 }
 }
 
@@ -225,6 +235,29 @@ void InspectorTestReporterAgent::reportTestEnd(int testId, Protocol::TestReporte
         return;
 
     m_frontendDispatcher->end(testId, status, elapsed);
+}
+
+void InspectorTestReporterAgent::reportTestError(int testId, const String& message, const String& name, const String& stack)
+{
+    if (!m_enabled || !m_frontendDispatcher)
+        return;
+
+    // The error event isn't part of the official protocol yet, so we emit it as a custom event
+    // This will be replaced once the protocol is regenerated
+    auto errorObject = JSON::Object::create();
+    if (testId > 0)
+        errorObject->setInteger("id"_s, testId);
+    errorObject->setString("message"_s, message);
+    if (!name.isEmpty())
+        errorObject->setString("name"_s, name);
+    if (!stack.isEmpty())
+        errorObject->setString("stack"_s, stack);
+
+    auto paramsObject = JSON::Object::create();
+    paramsObject->setObject("params"_s, WTFMove(errorObject));
+    paramsObject->setString("method"_s, "TestReporter.error"_s);
+
+    m_globalObject.inspectorController().frontendRouter().sendEvent(paramsObject->toJSONString());
 }
 
 } // namespace Inspector

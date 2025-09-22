@@ -3107,6 +3107,35 @@
               "description": "Elapsed time in milliseconds since the test started."
             }
           ]
+        },
+        {
+          "name": "error",
+          "description": "Reports an error that occurred within the context of a test.",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "integer",
+              "description": "Unique identifier of the test where the error occurred.",
+              "optional": true
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "description": "Error message."
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Error name/type.",
+              "optional": true
+            },
+            {
+              "name": "stack",
+              "type": "string",
+              "description": "Error stack trace.",
+              "optional": true
+            }
+          ]
         }
       ]
     }

@@ -318,6 +318,7 @@ pub const TestReporterAgent = struct {
         extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *jsc.CallFrame, testId: c_int, name: *bun.String, item_type: TestType, parentId: c_int) void;
         extern "c" fn Bun__TestReporterAgentReportTestStart(agent: *Handle, testId: c_int) void;
         extern "c" fn Bun__TestReporterAgentReportTestEnd(agent: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void;
+        extern "c" fn Bun__TestReporterAgentReportTestError(agent: *Handle, testId: c_int, message: ?*bun.String, name: ?*bun.String, stack: ?*bun.String) void;
 
         pub fn reportTestFound(this: *Handle, callFrame: *jsc.CallFrame, testId: i32, name: *bun.String, item_type: TestType, parentId: i32) void {
             Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name, item_type, parentId);
@@ -329,6 +330,10 @@ pub const TestReporterAgent = struct {
 
         pub fn reportTestEnd(this: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void {
             Bun__TestReporterAgentReportTestEnd(this, testId, bunTestStatus, elapsed);
+        }
+
+        pub fn reportTestError(this: *Handle, testId: c_int, message: ?*bun.String, name: ?*bun.String, stack: ?*bun.String) void {
+            Bun__TestReporterAgentReportTestError(this, testId, message, name, stack);
         }
     };
     pub export fn Bun__TestReporterAgentEnable(agent: *Handle) void {
@@ -363,6 +368,12 @@ pub const TestReporterAgent = struct {
     pub fn reportTestEnd(this: TestReporterAgent, test_id: i32, bunTestStatus: TestStatus, elapsed: f64) void {
         debug("reportTestEnd", .{});
         this.handle.?.reportTestEnd(test_id, bunTestStatus, elapsed);
+    }
+
+    /// Caller must ensure that it is enabled first.
+    pub fn reportTestError(this: TestReporterAgent, test_id: i32, message: ?*bun.String, name: ?*bun.String, stack: ?*bun.String) void {
+        debug("reportTestError", .{});
+        this.handle.?.reportTestError(test_id, message, name, stack);
     }
 
     pub fn isEnabled(this: TestReporterAgent) bool {

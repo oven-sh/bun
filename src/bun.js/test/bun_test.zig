@@ -620,6 +620,44 @@ pub const BunTest = struct {
         if (handle_status == .hide_error) return; // do not print error, it was already consumed
         if (exception == null) return; // the exception should not be visible (eg m_terminationException)
 
+        // Report error to TestReporter with test ID
+        if (jsc.VirtualMachine.get().debugger) |*debugger| {
+            if (debugger.test_reporter_agent.isEnabled()) {
+                var test_id: i32 = 0;
+
+                // Try to get the test ID from the current execution context
+                if (this.phase == .execution) {
+                    if (user_data.sequence(this)) |sequence| {
+                        if (sequence.test_entry) |test_entry| {
+                            test_id = test_entry.base.test_id_for_debugger;
+                        }
+                    }
+                }
+
+                // Extract error message and name
+                const error_value = exception.?;
+                var message = jsc.ZigString.init("");
+                var name = jsc.ZigString.init("");
+
+                if (error_value.isError()) {
+                    error_value.toZigString(&message, globalThis) catch {};
+                    // Get the error name if available
+                    if (error_value.getTruthy(globalThis, "name") catch null) |name_value| {
+                        name_value.toZigString(&name, globalThis) catch {};
+                    }
+                } else {
+                    error_value.toZigString(&message, globalThis) catch {};
+                }
+
+                var message_str = bun.String.init(message);
+                var name_str = bun.String.init(name);
+                defer message_str.deref();
+                defer name_str.deref();
+
+                debugger.test_reporter_agent.reportTestError(test_id, if (message_str.isEmpty()) null else &message_str, if (name_str.isEmpty()) null else &name_str, null);
+            }
+        }
+
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             this.reporter.?.jest.unhandled_errors_between_tests += 1;
             bun.Output.prettyErrorln(

@@ -381,6 +381,7 @@ test/regression/issue/11664.test.ts
 
 # ASSERTION FAILED: m_cellState == CellState::DefinitelyWhite
 test/js/node/tls/node-tls-upgrade.test.ts
+test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 
 # Bun::NapiExternal::~NapiExternal
 test/v8/v8.test.ts

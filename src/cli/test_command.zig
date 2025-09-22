@@ -1418,7 +1418,8 @@ pub const TestCommand = struct {
                             Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
                         }
                         vm.exit_handler.exit_code = 1;
-                        vm.globalExit();
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                     },
                 };
             }
@@ -1461,7 +1462,8 @@ pub const TestCommand = struct {
                         Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {}", .{bun.fmt.quote(dir_to_scan)});
                     }
                     vm.exit_handler.exit_code = 1;
-                    vm.globalExit();
+                    vm.is_shutting_down = true;
+                    vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                 },
             };
         }
@@ -1711,7 +1713,7 @@ pub const TestCommand = struct {
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             vm.exit_handler.exit_code = 1;
         }
-        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.onExit);
+        vm.is_shutting_down = true;
         vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
     }
 
@@ -1829,7 +1831,8 @@ pub const TestCommand = struct {
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
 
                         vm.exit_handler.exit_code = 1;
-                        vm.globalExit();
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                     }
 
                     return;

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import util from "node:util";
 
 test("util.getSystemErrorMap() returns a Map", () => {

@@ -353,14 +353,15 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
         groupLog.log("runOne: no repeats left; wait for group completion.", .{});
         return .done;
     };
-    sequence.executing = true;
-    if (sequence.active_index == 0) {
-        this.onSequenceStarted(sequence);
-    }
-    this.onEntryStarted(next_item);
 
     if (next_item.callback) |cb| {
         groupLog.log("runSequence queued callback", .{});
+
+        sequence.executing = true;
+        if (sequence.active_index == 0) {
+            this.onSequenceStarted(sequence);
+        }
+        this.onEntryStarted(next_item);
 
         const callback_data: bun_test.BunTest.RefDataValue = .{
             .execution = .{
@@ -392,6 +393,9 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
                 bun.debugAssert(false);
             },
         }
+        // even though it didn't execute, mark it as executing to bypass the assertion
+        sequence.executing = true;
+
         this.advanceSequence(sequence, group);
         return null; // run again
     }
@@ -553,7 +557,10 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
                         .fail_because_expected_has_assertions => .fail,
                         .fail_because_expected_assertion_count => .fail,
                         .pending => .timeout,
-                    }, @floatFromInt(elapsed_ns));
+                    }, switch (sequence.result) {
+                        .skipped_because_label, .skip, .todo => 0,
+                        else => @floatFromInt(elapsed_ns),
+                    });
                 }
             }
         }

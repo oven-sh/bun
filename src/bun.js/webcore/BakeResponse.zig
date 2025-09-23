@@ -136,11 +136,12 @@ fn assertStreamingDisabled(globalThis: *jsc.JSGlobalObject, async_local_storage:
     if (streaming_val.asBoolean()) return globalThis.throwInvalidArguments("\"{s}\" is not available when `export const streaming = true`", .{display_function});
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
+
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const Response = bun.webcore.Response;
+
 const Body = bun.webcore.Body;
-const Blob = jsc.WebCore.Blob;
+const Response = bun.webcore.Response;

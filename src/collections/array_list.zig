@@ -3,7 +3,7 @@
 ///
 /// NOTE: Unlike `std.ArrayList`, this type's `deinit` method calls `deinit` on each of the items.
 pub fn ArrayList(comptime T: type) type {
-    return ArrayList(T, std.mem.Allocator);
+    return ArrayListIn(T, std.mem.Allocator);
 }
 
 /// Managed `ArrayList` using the default allocator. No overhead compared to an unmanaged

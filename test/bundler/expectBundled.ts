@@ -97,7 +97,7 @@ export function testForFile(file: string): BunTestExports {
 
   var testFile = testFiles.get(file);
   if (!testFile) {
-    testFile = (Bun as typeof Bun & { jest: (absoluteSourceFilePath: string) => BunTestExports }).jest(file);
+    testFile = Bun.jest(file);
     testFiles.set(file, testFile);
   }
   return testFile;
@@ -1087,14 +1087,16 @@ function expectBundled(
           define: define ?? {},
           throw: _throw ?? false,
           compile,
-          jsx: jsx ? {
-            runtime: jsx.runtime,
-            importSource: jsx.importSource,
-            factory: jsx.factory,
-            fragment: jsx.fragment,
-            sideEffects: jsx.sideEffects,
-            development: jsx.development,
-          } : undefined,
+          jsx: jsx
+            ? {
+                runtime: jsx.runtime,
+                importSource: jsx.importSource,
+                factory: jsx.factory,
+                fragment: jsx.fragment,
+                sideEffects: jsx.sideEffects,
+                development: jsx.development,
+              }
+            : undefined,
         } as BuildConfig;
 
         if (dotenv) {

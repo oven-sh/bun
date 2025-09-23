@@ -144,7 +144,7 @@ server_exports = {
           }
           ssrManifest[uid] = client;
         } catch (err) {
-          console.log(err);
+          console.error(err);
         }
       }
     }

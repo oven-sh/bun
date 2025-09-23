@@ -16,8 +16,10 @@ function assertReactComponent(Component: unknown): asserts Component is React.JS
 // This function converts the route information into a React component tree.
 function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: readonly string[]) {
   let route = component(meta.pageModule, meta.params, meta.request);
+
   for (const layout of meta.layouts) {
-    const Layout = layout.default;
+    const Layout = layout.default as typeof layout.default & { displayName?: string };
+    Layout.displayName ??= "Layout";
     if (import.meta.env.DEV) assertReactComponent(Layout);
     route = <Layout params={meta.params}>{route}</Layout>;
   }

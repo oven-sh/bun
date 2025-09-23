@@ -294,11 +294,30 @@ pub fn ArrayListAlignedIn(
             self.#unmanaged.appendNTimesAssumeCapacity(value, n);
         }
 
-        /// Note that this creates *shallow* copies of `init_value`.
+        /// If `new_len` is less than the current length, this method will call `deinit` on the
+        /// removed items.
+        ///
+        /// If `new_len` is greater than the current length, note that this creates *shallow* copies
+        /// of `init_value`.
         pub fn resize(self: *Self, init_value: T, new_len: usize) AllocError!void {
             const len = self.items().len;
+            try self.resizeWithoutDeinit(init_value, new_len);
+            if (new_len < len) {
+                bun.memory.deinit(self.items().ptr[new_len..len]);
+            }
+        }
+
+        /// If `new_len` is less than the current length, this method will *not* call `deinit` on
+        /// the removed items.
+        ///
+        /// If `new_len` is greater than the current length, note that this creates *shallow* copies
+        /// of `init_value`.
+        pub fn resizeWithoutDeinit(self: *Self, init_value: T, new_len: usize) AllocError!void {
+            const len = self.items().len;
             try self.#unmanaged.resize(self.getStdAllocator(), new_len);
-            @memset(self.items()[len..], init_value);
+            if (new_len > len) {
+                @memset(self.items()[len..], init_value);
+            }
         }
 
         /// This method `deinit`s the removed items.

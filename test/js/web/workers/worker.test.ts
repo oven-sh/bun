@@ -94,7 +94,7 @@ describe("web worker", () => {
     };
   });
 
-  test("worker-env", done => {
+  test("worker-env without a lot of properties", done => {
     const worker = new Worker(new URL("worker-fixture-env.js", import.meta.url).href, {
       env: {
         // Verify that we use putDirectMayBeIndex instead of putDirect

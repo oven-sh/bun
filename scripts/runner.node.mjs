@@ -422,7 +422,7 @@ async function runTests() {
   const flakyResultsTitles = [];
   const failedResults = [];
   const failedResultsTitles = [];
-  const defaultMaxAttempts = 1 + (parseInt(options["retries"]) || 0);
+  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
@@ -434,23 +434,12 @@ async function runTests() {
    * @returns {Promise<TestResult>}
    */
   const runTest = async (title, fn) => {
-    // suspicious tests are run a minimum number of times, larger than the normal retry count, even
-    // if they pass on the first attempt. we are giving them N chances to fail instead of N chances
-    // to pass.
-    const suspiciousTests = [
-      "test-worker-arraybuffer-zerofill.js",
-      "worker_destruction.test.ts",
-      "worker.test.ts",
-      "test-worker-message-port-transfer-terminate.js",
-      "worker-lifecycle-message-port.test.ts",
-    ];
-    const suspicious = suspiciousTests.some(name => title.includes(name));
-    const maxAttempts = suspicious ? 50 : defaultMaxAttempts;
     const index = ++i;
 
     let result, failure, flaky;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      if (attempt > 1 && !suspicious) {
+    let attempt = 1;
+    for (; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
 
@@ -472,11 +461,7 @@ async function runTests() {
         } else {
           okResults.push(result);
         }
-        if (suspicious) {
-          continue;
-        } else {
-          break;
-        }
+        break;
       }
 
       const color = attempt >= maxAttempts ? "red" : "yellow";

@@ -1349,36 +1349,52 @@ pub const Transpiler = struct {
                 const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
                 _ = bun.base64.encode(encoded, source.contents);
 
-                // Generate JavaScript code directly (without Object.freeze since Turbopack doesn't do it)
-                const js_code = std.fmt.allocPrint(
-                    allocator,
-                    "export default Uint8Array.fromBase64(\"{s}\");",
-                    .{encoded},
-                ) catch unreachable;
+                // Create base64 string argument
+                const base64_string = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                    .data = encoded,
+                }, logger.Loc.Empty);
 
-                // Parse the generated JavaScript
-                var temp_source = source.*;
-                temp_source.contents = js_code;
+                // Create Uint8Array identifier using the special type
+                const uint8array_ident = js_ast.Expr{
+                    .data = .{ .e_uint8array_identifier = {} },
+                    .loc = logger.Loc.Empty,
+                };
 
-                var parser_opts = js_parser.Parser.Options.init(transpiler.options.jsx, .js);
+                // Create Uint8Array.fromBase64 dot access
+                const from_base64 = js_ast.Expr.init(js_ast.E.Dot, js_ast.E.Dot{
+                    .target = uint8array_ident,
+                    .name = "fromBase64",
+                    .name_loc = logger.Loc.Empty,
+                }, logger.Loc.Empty);
+
+                // Create the call expression
+                const args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
+                args[0] = base64_string;
+
+                const uint8array_call = js_ast.Expr.init(js_ast.E.Call, js_ast.E.Call{
+                    .target = from_base64,
+                    .args = bun.collections.BabyList(js_ast.Expr).fromOwnedSlice(args),
+                }, logger.Loc.Empty);
+
+                // Create AST from the expression
+                var parser_opts = js_parser.Parser.Options.init(transpiler.options.jsx, loader);
                 parser_opts.features.allow_runtime = transpiler.options.allow_runtime;
 
-                const parse_result = transpiler.resolver.caches.js.parse(
+                const ast = (js_parser.newLazyExportAST(
                     allocator,
-                    parser_opts,
                     transpiler.options.define,
+                    parser_opts,
                     transpiler.log,
-                    &temp_source,
-                ) catch return null;
+                    uint8array_call,
+                    source,
+                    "",
+                ) catch return null) orelse return null;
 
-                return switch (parse_result orelse return null) {
-                    .ast => |value| ParseResult{
-                        .ast = value,
-                        .source = source.*,
-                        .loader = loader,
-                        .input_fd = input_fd,
-                    },
-                    .cached, .already_bundled => return null,
+                return ParseResult{
+                    .ast = ast,
+                    .source = source.*,
+                    .loader = loader,
+                    .input_fd = input_fd,
                 };
             },
             .wasm => {

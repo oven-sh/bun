@@ -2285,6 +2285,11 @@ fn NewPrinter(
                         p.print("require");
                     }
                 },
+                .e_uint8array_identifier => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+                    p.print("Uint8Array");
+                },
                 .e_require_resolve_call_target => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);

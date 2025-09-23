@@ -588,29 +588,35 @@ fn getAST(
             const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
             _ = bun.base64.encode(encoded, source.contents);
 
-            // Generate JavaScript code directly (without Object.freeze since Turbopack doesn't do it)
-            const js_code = std.fmt.allocPrint(
-                allocator,
-                "export default Uint8Array.fromBase64(\"{s}\");",
-                .{encoded},
-            ) catch unreachable;
+            // Create base64 string argument
+            const base64_string = Expr.init(E.String, E.String{
+                .data = encoded,
+            }, Logger.Loc.Empty);
 
-            // Parse the generated JavaScript
-            var temp_source = source.*;
-            temp_source.contents = js_code;
-
-            const parse_result = try resolver.caches.js.parse(
-                transpiler.allocator,
-                opts,
-                transpiler.options.define,
-                log,
-                &temp_source,
-            );
-
-            return switch (parse_result orelse return error.ParserError) {
-                .ast => |value| JSAst.init(value),
-                .cached, .already_bundled => return error.ParserError,
+            // Create Uint8Array identifier using the special type
+            const uint8array_ident = Expr{
+                .data = .{ .e_uint8array_identifier = {} },
+                .loc = Logger.Loc.Empty,
             };
+
+            // Create Uint8Array.fromBase64 dot access
+            const from_base64 = Expr.init(E.Dot, E.Dot{
+                .target = uint8array_ident,
+                .name = "fromBase64",
+                .name_loc = Logger.Loc.Empty,
+            }, Logger.Loc.Empty);
+
+            // Create the call expression
+            const args = allocator.alloc(Expr, 1) catch unreachable;
+            args[0] = base64_string;
+
+            const uint8array_call = Expr.init(E.Call, E.Call{
+                .target = from_base64,
+                .args = BabyList(Expr).fromOwnedSlice(args),
+            }, Logger.Loc.Empty);
+
+            // Use the call as the export value
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, uint8array_call, source, "")).?);
         },
         .file, .wasm => {
             bun.assert(loader.shouldCopyForBundling());

@@ -130,9 +130,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
         }
     }
 
-    while (true) {
-        if (global.bunVM().isShuttingDown()) break;
-        const task = this.tasks.readItem() orelse break;
+    while (this.tasks.readItem()) |task| {
         log("run {s}", .{@tagName(task.tag())});
         defer counter += 1;
 

@@ -1940,6 +1940,10 @@ pub const JSZstd = struct {
             defer this.deinit();
             defer this.poll.unref(this.vm);
 
+            if (this.vm.isShuttingDown()) {
+                return;
+            }
+
             const globalThis = this.vm.global;
             const promise = this.promise.swap();
 

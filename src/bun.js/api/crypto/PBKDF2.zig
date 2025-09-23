@@ -67,6 +67,10 @@ pub const Job = struct {
         const vm = this.vm;
         defer this.poll.unref(vm);
 
+        if (vm.isShuttingDown()) {
+            return;
+        }
+
         const globalThis = this.vm.global;
         const promise = this.promise.swap();
         if (this.err) |err| {

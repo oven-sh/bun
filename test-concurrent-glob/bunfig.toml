@@ -1,2 +1,0 @@
-[test]
-concurrentTestGlob = "**/concurrent-*.test.ts"

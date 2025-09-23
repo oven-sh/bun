@@ -98,7 +98,7 @@ pub fn ArrayListAlignedIn(
         pub fn deinitShallow(self: *Self) void {
             defer self.* = undefined;
             self.#unmanaged.deinit(self.getStdAllocator());
-            self.#allocator.deinit();
+            bun.memory.deinit(&self.#allocator);
         }
 
         pub fn fromOwnedSlice(allocator_: Allocator, slice: Slice) Self {
@@ -178,7 +178,7 @@ pub fn ArrayListAlignedIn(
         }
 
         pub fn insertAssumeCapacity(self: *Self, i: usize, item: T) void {
-            self.#unmanaged.insertAssumeCapacity(self.getStdAllocator(), i, item);
+            self.#unmanaged.insertAssumeCapacity(i, item);
         }
 
         /// Note that this creates *shallow* copies of `value`.

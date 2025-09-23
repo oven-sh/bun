@@ -279,14 +279,14 @@ fn setCwd_(globalObject: *jsc.JSGlobalObject, to: *jsc.ZigString) bun.JSError!js
     }
 }
 
-// TODO(@190n) this may need to be noreturn
 pub fn exit(globalObject: *jsc.JSGlobalObject, code: u8) callconv(.c) void {
     var vm = globalObject.bunVM();
-    vm.exit_handler.exit_code = code; // TODO(@alii): https://github.com/oven-sh/bun/pull/20213
+    vm.exit_handler.exit_code = code;
     if (vm.worker) |worker| {
-        // TODO(@190n) we may need to use requestTerminate or throwTerminationException
-        // instead to terminate the worker sooner
+        // sets exit_called and requests termination
         worker.exit();
+        // and then fire the trap to immediately interrupt js execution
+        vm.jsc_vm.notifyNeedTermination();
     } else {
         vm.onExit();
         vm.globalExit();

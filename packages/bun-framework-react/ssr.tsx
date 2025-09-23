@@ -10,11 +10,6 @@ import { renderToPipeableStream } from "react-dom/server.node";
 import { createFromNodeStream } from "react-server-dom-bun/client";
 import type { MiniAbortSignal } from "./server.tsx";
 
-// Verify that React 19 is being used.
-if (!React.use) {
-  throw new Error("Bun's React integration requires React 19");
-}
-
 // The `renderToHtml` function not only implements converting the RSC payload
 // into HTML via react-dom, but also streaming the RSC payload via injected
 // script tags.  While the page is streaming, the client is loading the RSC

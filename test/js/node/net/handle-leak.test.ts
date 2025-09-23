@@ -1,8 +1,8 @@
-import * as net from "node:net";
-import { setTimeout } from "node:timers/promises";
 import { expect } from "bun:test";
+import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout } from "node:timers/promises";
 
 const listen_path = join(tmpdir(), "test-net-successful-connection-handle-leak.sock");
 

@@ -136,7 +136,7 @@ describe("transpiler cache", () => {
 
     for (const proc of processes) {
       expect(proc.exitCode).toBe(0);
-      expect(await Bun.readableStreamToText(proc.stdout)).toBe("b\n");
+      expect(await proc.stdout.text()).toBe("b\n");
     }
   }, 99999999);
   test("works if the cache is not user-readable", () => {

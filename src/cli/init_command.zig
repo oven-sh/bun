@@ -1,25 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const CLI = @import("../cli.zig");
-const Fs = @import("../fs.zig");
-const JSON = bun.JSON;
-const js_ast = bun.JSAst;
-const options = @import("../options.zig");
-const initializeStore = @import("./create_command.zig").initializeStore;
-const logger = bun.logger;
-const JSPrinter = bun.js_printer;
-const exists = bun.sys.exists;
-const existsZ = bun.sys.existsZ;
-
 pub const InitCommand = struct {
     pub fn prompt(
         alloc: std.mem.Allocator,
@@ -531,7 +509,7 @@ pub const InitCommand = struct {
             // Find any source file
             var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch break :infer;
             defer dir.close();
-            var it = bun.DirIterator.iterate(dir, .u8);
+            var it = bun.DirIterator.iterate(.fromStdDir(dir), .u8);
             while (try it.next().unwrap()) |file| {
                 if (file.kind != .file) continue;
                 const loader = bun.options.Loader.fromString(std.fs.path.extension(file.name.slice())) orelse
@@ -619,7 +597,7 @@ pub const InitCommand = struct {
                     .blank => template = .blank,
                 }
 
-                try Output.writer().writeAll("\n");
+                Output.print("\n", .{});
                 Output.flush();
             } else {
                 Output.note("package.json already exists, configuring existing project", .{});
@@ -1021,8 +999,8 @@ const Template = enum {
             return false;
         }
 
-        const pathbuffer = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(pathbuffer);
+        const pathbuffer = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuffer);
 
         return bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
     }
@@ -1068,11 +1046,9 @@ const Template = enum {
         // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
         if (@"create CLAUDE.md") {
             // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
-            const end_of_frontmatter = bun.strings.lastIndexOf(agent_rule, "---\n") orelse 0;
+            const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
 
             InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
-            Output.prettyln(" + <r><d>CLAUDE.md<r>", .{});
-            Output.flush();
         }
     }
 
@@ -1097,8 +1073,8 @@ const Template = enum {
 
         if (Environment.isWindows) {
             if (bun.getenvZAnyCase("USER")) |user| {
-                const pathbuf = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(pathbuf);
+                const pathbuf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(pathbuf);
                 const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe", .{user}) catch {
                     return false;
                 };
@@ -1260,3 +1236,27 @@ const Template = enum {
         Output.flush();
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const CLI = @import("../cli.zig");
+const Fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+const initializeStore = @import("./create_command.zig").initializeStore;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const exists = bun.sys.exists;
+const existsZ = bun.sys.existsZ;

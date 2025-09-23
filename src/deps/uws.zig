@@ -1,6 +1,6 @@
 const uws = @This();
 
-pub const us_socket_t = @import("uws/us_socket_t.zig").us_socket_t;
+pub const us_socket_t = @import("./uws/us_socket_t.zig").us_socket_t;
 pub const SocketTLS = @import("./uws/socket.zig").SocketTLS;
 pub const SocketTCP = @import("./uws/socket.zig").SocketTCP;
 pub const InternalSocket = @import("./uws/socket.zig").InternalSocket;
@@ -69,8 +69,9 @@ pub const create_bun_socket_error_t = enum(c_int) {
     load_ca_file,
     invalid_ca_file,
     invalid_ca,
+    invalid_ciphers,
 
-    pub fn toJS(this: create_bun_socket_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: create_bun_socket_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this) {
             .none => brk: {
                 bun.debugAssert(false);
@@ -79,6 +80,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
             .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
             .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
             .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
+            .invalid_ciphers => globalObject.ERR(.BORINGSSL, "Invalid ciphers", .{}).toJS(),
         };
     }
 };
@@ -88,13 +90,13 @@ pub const us_bun_verify_error_t = extern struct {
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 
-    pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         const code = if (this.code == null) "" else this.code[0..bun.len(this.code)];
         const reason = if (this.reason == null) "" else this.reason[0..bun.len(this.reason)];
 
-        const fallback = JSC.SystemError{
-            .code = bun.String.createUTF8(code),
-            .message = bun.String.createUTF8(reason),
+        const fallback = jsc.SystemError{
+            .code = bun.String.cloneUTF8(code),
+            .message = bun.String.cloneUTF8(reason),
         };
 
         return fallback.toErrorInstance(globalObject);
@@ -144,6 +146,14 @@ pub const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
     false => i32,
 };
 
+const c = struct {
+    pub extern fn us_get_default_ciphers() [*:0]const u8;
+};
+
+pub fn get_default_ciphers() [:0]const u8 {
+    return c.us_get_default_ciphers()[0..bun.len(c.us_get_default_ciphers()) :0];
+}
+
 const bun = @import("bun");
 const Environment = bun.Environment;
-const JSC = bun.JSC;
+const jsc = bun.jsc;

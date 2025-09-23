@@ -522,7 +522,7 @@ for await (const chunk of stream) {
 }
 ```
 
-For a more complete discussion of streams in Bun, see [API > Streams](https://bun.sh/docs/api/streams).
+For a more complete discussion of streams in Bun, see [API > Streams](https://bun.com/docs/api/streams).
 
 ## Conversion
 

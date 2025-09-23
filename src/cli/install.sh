@@ -5,7 +5,7 @@ platform=$(uname -ms)
 
 if [[ ${OS:-} = Windows_NT ]]; then
   if [[ $platform != MINGW64* ]]; then
-    powershell -c "irm bun.sh/install.ps1|iex"
+    powershell -c "irm bun.com/install.ps1|iex"
     exit $?
   fi
 fi
@@ -72,6 +72,9 @@ case $platform in
     ;;
 'MINGW64'*)
     target=windows-x64
+    ;;
+'Linux riscv64')
+    error 'Not supported on riscv64'
     ;;
 'Linux x86_64' | *)
     target=linux-x64

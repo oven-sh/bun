@@ -81,6 +81,8 @@ typedef struct BunString {
 
     bool isEmpty() const;
 
+    void appendToBuilder(WTF::StringBuilder& builder) const;
+
 } BunString;
 
 typedef struct ZigErrorType {
@@ -179,6 +181,7 @@ typedef struct ZigStackFrame {
     BunString source_url;
     ZigStackFramePosition position;
     ZigStackFrameCode code_type;
+    bool is_async;
     bool remapped;
 } ZigStackFrame;
 
@@ -189,6 +192,7 @@ typedef struct ZigStackTrace {
     uint8_t source_lines_to_collect;
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
+    uint8_t frames_cap;
     JSC::SourceProvider* referenced_source_provider;
 } ZigStackTrace;
 
@@ -220,18 +224,22 @@ const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
+// Must be kept in sync.
 typedef uint8_t BunLoaderType;
 const BunLoaderType BunLoaderTypeNone = 254;
-const BunLoaderType BunLoaderTypeJSX = 0;
-const BunLoaderType BunLoaderTypeJS = 1;
-const BunLoaderType BunLoaderTypeTS = 2;
-const BunLoaderType BunLoaderTypeTSX = 3;
-const BunLoaderType BunLoaderTypeCSS = 4;
-const BunLoaderType BunLoaderTypeFILE = 5;
-const BunLoaderType BunLoaderTypeJSON = 6;
-const BunLoaderType BunLoaderTypeTOML = 7;
-const BunLoaderType BunLoaderTypeWASM = 8;
-const BunLoaderType BunLoaderTypeNAPI = 9;
+// Must match api/schema.zig Loader enum values
+const BunLoaderType BunLoaderTypeJSX = 1;
+const BunLoaderType BunLoaderTypeJS = 2;
+const BunLoaderType BunLoaderTypeTS = 3;
+const BunLoaderType BunLoaderTypeTSX = 4;
+const BunLoaderType BunLoaderTypeCSS = 5;
+const BunLoaderType BunLoaderTypeFILE = 6;
+const BunLoaderType BunLoaderTypeJSON = 7;
+const BunLoaderType BunLoaderTypeJSONC = 8;
+const BunLoaderType BunLoaderTypeTOML = 9;
+const BunLoaderType BunLoaderTypeWASM = 10;
+const BunLoaderType BunLoaderTypeNAPI = 11;
+const BunLoaderType BunLoaderTypeYAML = 19;
 
 #pragma mark - Stream
 
@@ -368,21 +376,9 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
-// Used in process.versions
-extern "C" const char* Bun__versions_boringssl;
-extern "C" const char* Bun__versions_libarchive;
-extern "C" const char* Bun__versions_mimalloc;
-extern "C" const char* Bun__versions_picohttpparser;
+// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
+// Only keep the ones still exported from Zig
 extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_webkit;
-extern "C" const char* Bun__versions_libdeflate;
-extern "C" const char* Bun__versions_zig;
-extern "C" const char* Bun__versions_zlib;
-extern "C" const char* Bun__versions_tinycc;
-extern "C" const char* Bun__versions_lolhtml;
-extern "C" const char* Bun__versions_c_ares;
-extern "C" const char* Bun__versions_lshpack;
-extern "C" const char* Bun__versions_zstd;
 extern "C" const char* Bun__versions_usockets;
 
 extern "C" const char* Bun__version_sha;
@@ -395,8 +391,8 @@ extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, uns
 extern "C" size_t Bun__encoding__byteLengthLatin1AsUTF8(const unsigned char* ptr, size_t len);
 extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const char16_t* ptr, size_t len);
 
-extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
-extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const char16_t* ptr, size_t len, Encoding encoding);
+extern "C" JSC::EncodedJSValue Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
+extern "C" JSC::EncodedJSValue Bun__encoding__constructFromUTF16(void*, const char16_t* ptr, size_t len, Encoding encoding);
 
 extern "C" void Bun__EventLoop__runCallback1(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1);
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
@@ -404,7 +400,7 @@ extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject* global, JSC::E
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers>
-bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
+bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
 /**
  * @brief `Bun.deepMatch(a, b)`
@@ -445,7 +441,7 @@ bool Bun__deepMatch(
     JSC::JSValue subset,
     std::set<JSC::EncodedJSValue>* seenSubsetProperties,
     JSC::JSGlobalObject* globalObject,
-    JSC::ThrowScope* throwScope,
+    JSC::ThrowScope& throwScope,
     JSC::MarkedArgumentBuffer* gcBuffer,
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
@@ -471,5 +467,19 @@ ALWAYS_INLINE void BunString::deref()
     }
 }
 
+#define CLEAR_IF_EXCEPTION(scope__) scope__.clearException();
+
 #endif // __cplusplus
 #endif // HEADERS_HANDWRITTEN
+
+#if ASSERT_ENABLED
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_CATCH_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
+#else
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
+#endif
+
+#if ASSERT_ENABLED
+#define ASSERT_PENDING_EXCEPTION(globalObject) EXCEPTION_ASSERT(!!DECLARE_CATCH_SCOPE(globalObject->vm()).exception());
+#else
+#define ASSERT_PENDING_EXCEPTION(globalObject) void()
+#endif

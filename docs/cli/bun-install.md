@@ -184,7 +184,7 @@ Peer dependencies are handled similarly to yarn. `bun install` will automaticall
 
 ## Lockfile
 
-`bun.lock` is Bun’s lockfile format. See [our blogpost about the text lockfile](https://bun.sh/blog/bun-lock-text-lockfile).
+`bun.lock` is Bun’s lockfile format. See [our blogpost about the text lockfile](https://bun.com/blog/bun-lock-text-lockfile).
 
 Prior to Bun 1.2, the lockfile was binary and called `bun.lockb`. Old lockfiles can be upgraded to the new format by running `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, and then deleting `bun.lockb`.
 
@@ -230,15 +230,14 @@ $ bun install --backend copyfile
 
 **`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
 
-If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
+If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
 ```bash
 $ rm -rf node_modules
 $ bun install --backend symlink
+$ bun --preserve-symlinks ./my-file.js
 $ node --preserve-symlinks ./my-file.js # https://nodejs.org/api/cli.html#--preserve-symlinks
 ```
-
-Bun's runtime does not currently expose an equivalent of `--preserve-symlinks`, though the code for it does exist.
 
 ## npm registry metadata
 

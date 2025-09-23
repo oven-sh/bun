@@ -1,10 +1,3 @@
-const std = @import("std");
-
-const debug = std.debug;
-const mem = std.mem;
-const process = std.process;
-const testing = std.testing;
-
 /// An example of what methods should be implemented on an arg iterator.
 pub const ExampleArgIterator = struct {
     const Error = error{};
@@ -47,7 +40,6 @@ test "SliceIterator" {
     }
 }
 
-const bun = @import("bun");
 /// An argument iterator which wraps the ArgIterator in ::std.
 /// On windows, this iterator allocates.
 pub const OsIterator = struct {
@@ -346,3 +338,11 @@ test "ShellIterator" {
     testShellIteratorErr("\"a\\", error.QuoteNotClosed);
     testShellIteratorErr("a\\", error.DanglingEscape);
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const debug = std.debug;
+const mem = std.mem;
+const process = std.process;
+const testing = std.testing;

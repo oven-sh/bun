@@ -5,21 +5,124 @@ pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
     };
 }
 
-pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
-    return this.temp_dir_ orelse brk: {
-        this.temp_dir_ = ensureTemporaryDirectory(this);
-        var pathbuf: bun.PathBuffer = undefined;
-        const temp_dir_path = bun.getFdPathZ(.fromStdDir(this.temp_dir_.?), &pathbuf) catch Output.panic("Unable to read temporary directory path", .{});
-        this.temp_dir_path = bun.default_allocator.dupeZ(u8, temp_dir_path) catch bun.outOfMemory();
-        break :brk this.temp_dir_.?;
-    };
+pub inline fn getCacheDirectoryAndAbsPath(this: *PackageManager) struct { FD, bun.AbsPath(.{}) } {
+    const cache_dir = this.getCacheDirectory();
+    return .{ .fromStdDir(cache_dir), .from(this.cache_directory_path) };
 }
+
+pub inline fn getTemporaryDirectory(this: *PackageManager) TemporaryDirectory {
+    return getTemporaryDirectoryOnce.call(.{this});
+}
+
+const TemporaryDirectory = struct {
+    handle: std.fs.Dir,
+    path: [:0]const u8,
+    name: []const u8,
+};
+
+var getTemporaryDirectoryOnce = bun.once(struct {
+    // We need a temporary directory that can be rename()
+    // This is important for extracting files.
+    //
+    // However, we want it to be reused! Otherwise a cache is silly.
+    //   Error RenameAcrossMountPoints moving react-is to cache dir:
+    pub fn run(manager: *PackageManager) TemporaryDirectory {
+        var cache_directory = manager.getCacheDirectory();
+        // The chosen tempdir must be on the same filesystem as the cache directory
+        // This makes renameat() work
+        const temp_dir_name = Fs.FileSystem.RealFS.getDefaultTempDir();
+
+        var tried_dot_tmp = false;
+        var tempdir: std.fs.Dir = bun.MakePath.makeOpenPath(std.fs.cwd(), temp_dir_name, .{}) catch brk: {
+            tried_dot_tmp = true;
+            break :brk bun.MakePath.makeOpenPath(cache_directory, bun.pathLiteral(".tmp"), .{}) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
+                Global.crash();
+            };
+        };
+        var tmpbuf: bun.PathBuffer = undefined;
+        const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.fastRandom()) catch unreachable;
+        var timer: std.time.Timer = if (manager.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
+        brk: while (true) {
+            var file = tempdir.createFileZ(tmpname, .{ .truncate = true }) catch |err2| {
+                if (!tried_dot_tmp) {
+                    tried_dot_tmp = true;
+
+                    tempdir = bun.MakePath.makeOpenPath(cache_directory, bun.pathLiteral(".tmp"), .{}) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
+                        Global.crash();
+                    };
+
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<r><yellow>warn<r>: bun is unable to access tempdir: {s}, using fallback", .{@errorName(err2)});
+                    }
+
+                    continue :brk;
+                }
+                Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
+                    @errorName(err2),
+                });
+                Global.crash();
+            };
+            file.close();
+
+            std.posix.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
+                if (!tried_dot_tmp) {
+                    tried_dot_tmp = true;
+                    tempdir = cache_directory.makeOpenPath(".tmp", .{}) catch |err2| {
+                        Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
+                        Global.crash();
+                    };
+
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<r><d>info<r>: cannot move files from tempdir: {s}, using fallback", .{@errorName(err)});
+                    }
+
+                    continue :brk;
+                }
+
+                Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
+                    @errorName(err),
+                });
+                Global.crash();
+            };
+            cache_directory.deleteFileZ(tmpname) catch {};
+            break;
+        }
+        if (tried_dot_tmp) {
+            using_fallback_temp_dir = true;
+        }
+        if (manager.options.log_level != .silent) {
+            const elapsed = timer.read();
+            if (elapsed > std.time.ns_per_ms * 100) {
+                var path_buf: bun.PathBuffer = undefined;
+                const cache_dir_path = bun.getFdPath(.fromStdDir(cache_directory), &path_buf) catch "it";
+                Output.prettyErrorln(
+                    "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
+                    .{cache_dir_path},
+                );
+            }
+        }
+
+        var buf: bun.PathBuffer = undefined;
+        const temp_dir_path = bun.getFdPathZ(.fromStdDir(tempdir), &buf) catch |err| {
+            Output.err(err, "Failed to read temporary directory path: '{s}'", .{temp_dir_name});
+            Global.exit(1);
+        };
+
+        return .{
+            .handle = tempdir,
+            .name = temp_dir_name,
+            .path = bun.handleOom(bun.default_allocator.dupeZ(u8, temp_dir_path)),
+        };
+    }
+}.run);
 
 noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
     loop: while (true) {
         if (this.options.enable.cache) {
             const cache_dir = fetchCacheDirectoryPath(this.env, &this.options);
-            this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
+            this.cache_directory_path = bun.handleOom(this.allocator.dupeZ(u8, cache_dir.path));
 
             return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
                 this.options.enable.cache = false;
@@ -35,7 +138,7 @@ noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
                 ".cache",
             },
             .auto,
-        )) catch bun.outOfMemory();
+        )) catch |err| bun.handleOom(err);
 
         return std.fs.cwd().makeOpenPath("node_modules/.cache", .{}) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bun is unable to write files: {s}", .{@errorName(err)});
@@ -43,92 +146,6 @@ noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
         };
     }
     unreachable;
-}
-
-// We need a temporary directory that can be rename()
-// This is important for extracting files.
-//
-// However, we want it to be reused! Otherwise a cache is silly.
-//   Error RenameAcrossMountPoints moving react-is to cache dir:
-noinline fn ensureTemporaryDirectory(this: *PackageManager) std.fs.Dir {
-    var cache_directory = this.getCacheDirectory();
-    // The chosen tempdir must be on the same filesystem as the cache directory
-    // This makes renameat() work
-    this.temp_dir_name = Fs.FileSystem.RealFS.getDefaultTempDir();
-
-    var tried_dot_tmp = false;
-    var tempdir: std.fs.Dir = bun.MakePath.makeOpenPath(std.fs.cwd(), this.temp_dir_name, .{}) catch brk: {
-        tried_dot_tmp = true;
-        break :brk bun.MakePath.makeOpenPath(cache_directory, bun.pathLiteral(".tmp"), .{}) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
-            Global.crash();
-        };
-    };
-    var tmpbuf: bun.PathBuffer = undefined;
-    const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.fastRandom()) catch unreachable;
-    var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
-    brk: while (true) {
-        var file = tempdir.createFileZ(tmpname, .{ .truncate = true }) catch |err2| {
-            if (!tried_dot_tmp) {
-                tried_dot_tmp = true;
-
-                tempdir = bun.MakePath.makeOpenPath(cache_directory, bun.pathLiteral(".tmp"), .{}) catch |err| {
-                    Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
-                    Global.crash();
-                };
-
-                if (PackageManager.verbose_install) {
-                    Output.prettyErrorln("<r><yellow>warn<r>: bun is unable to access tempdir: {s}, using fallback", .{@errorName(err2)});
-                }
-
-                continue :brk;
-            }
-            Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
-                @errorName(err2),
-            });
-            Global.crash();
-        };
-        file.close();
-
-        std.posix.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
-            if (!tried_dot_tmp) {
-                tried_dot_tmp = true;
-                tempdir = cache_directory.makeOpenPath(".tmp", .{}) catch |err2| {
-                    Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
-                    Global.crash();
-                };
-
-                if (PackageManager.verbose_install) {
-                    Output.prettyErrorln("<r><d>info<r>: cannot move files from tempdir: {s}, using fallback", .{@errorName(err)});
-                }
-
-                continue :brk;
-            }
-
-            Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
-                @errorName(err),
-            });
-            Global.crash();
-        };
-        cache_directory.deleteFileZ(tmpname) catch {};
-        break;
-    }
-    if (tried_dot_tmp) {
-        using_fallback_temp_dir = true;
-    }
-    if (this.options.log_level != .silent) {
-        const elapsed = timer.read();
-        if (elapsed > std.time.ns_per_ms * 100) {
-            var path_buf: bun.PathBuffer = undefined;
-            const cache_dir_path = bun.getFdPath(.fromStdDir(cache_directory), &path_buf) catch "it";
-            Output.prettyErrorln(
-                "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
-                .{cache_dir_path},
-            );
-        }
-    }
-
-    return tempdir;
 }
 
 const CacheDir = struct { path: string, is_node_modules: bool };
@@ -356,21 +373,41 @@ pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
     manager.options.bin_path = path.ptr[0..path.len :0];
 }
 
-pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
+pub fn globalLinkDir(this: *PackageManager) std.fs.Dir {
     return this.global_link_dir orelse brk: {
-        var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
+        var global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch |err| switch (err) {
+            error.@"No global directory found" => {
+                Output.errGeneric("failed to find a global directory for package caching and global link directories", .{});
+                Global.exit(1);
+            },
+            else => {
+                Output.err(err, "failed to open the global directory", .{});
+                Global.exit(1);
+            },
+        };
         this.global_dir = global_dir;
-        this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{});
+        this.global_link_dir = global_dir.makeOpenPath("node_modules", .{}) catch |err| {
+            Output.err(err, "failed to open global link dir node_modules at '{}'", .{FD.fromStdDir(global_dir)});
+            Global.exit(1);
+        };
         var buf: bun.PathBuffer = undefined;
-        const _path = try bun.getFdPath(.fromStdDir(this.global_link_dir.?), &buf);
-        this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
+        const _path = bun.getFdPath(.fromStdDir(this.global_link_dir.?), &buf) catch |err| {
+            Output.err(err, "failed to get the full path of the global directory", .{});
+            Global.exit(1);
+        };
+        this.global_link_dir_path = bun.handleOom(Fs.FileSystem.DirnameStore.instance.append([]const u8, _path));
         break :brk this.global_link_dir.?;
     };
 }
 
-pub fn globalLinkDirPath(this: *PackageManager) ![]const u8 {
-    _ = try this.globalLinkDir();
+pub fn globalLinkDirPath(this: *PackageManager) []const u8 {
+    _ = this.globalLinkDir();
     return this.global_link_dir_path;
+}
+
+pub fn globalLinkDirAndPath(this: *PackageManager) struct { std.fs.Dir, []const u8 } {
+    const dir = this.globalLinkDir();
+    return .{ dir, this.global_link_dir_path };
 }
 
 pub fn pathForCachedNPMPath(
@@ -492,14 +529,7 @@ pub fn computeCacheDirAndSubpath(
             cache_dir = std.fs.cwd();
         },
         .symlink => {
-            const directory = manager.globalLinkDir() catch |err| {
-                const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
-                const args = .{ name, @errorName(err) };
-
-                Output.prettyErrorln(fmt, args);
-
-                Global.exit(1);
-            };
+            const directory = manager.globalLinkDir();
 
             const folder = resolution.value.symlink.slice(buf);
 
@@ -507,7 +537,7 @@ pub fn computeCacheDirAndSubpath(
                 cache_dir_subpath = ".";
                 cache_dir = std.fs.cwd();
             } else {
-                const global_link_dir = manager.globalLinkDirPath() catch unreachable;
+                const global_link_dir = manager.globalLinkDirPath();
                 var ptr = folder_path_buf;
                 var remain: []u8 = folder_path_buf[0..];
                 @memcpy(ptr[0..global_link_dir.len], global_link_dir);
@@ -719,93 +749,10 @@ const PatchHashFmt = struct {
     }
 };
 
-pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
-    if (this.node_gyp_tempdir_name.len > 0) return;
-
-    const tempdir = this.getTemporaryDirectory();
-    var path_buf: bun.PathBuffer = undefined;
-    const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
-
-    // used later for adding to path for scripts
-    this.node_gyp_tempdir_name = try this.allocator.dupe(u8, node_gyp_tempdir_name);
-
-    var node_gyp_tempdir = tempdir.makeOpenPath(this.node_gyp_tempdir_name, .{}) catch |err| {
-        if (err == error.EEXIST) {
-            // it should not exist
-            Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
-            Global.crash();
-        }
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
-        Global.crash();
-    };
-    defer node_gyp_tempdir.close();
-
-    const file_name = switch (Environment.os) {
-        else => "node-gyp",
-        .windows => "node-gyp.cmd",
-    };
-    const mode = switch (Environment.os) {
-        else => 0o755,
-        .windows => 0, // windows does not have an executable bit
-    };
-
-    var node_gyp_file = node_gyp_tempdir.createFile(file_name, .{ .mode = mode }) catch |err| {
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
-        Global.crash();
-    };
-    defer node_gyp_file.close();
-
-    const content = switch (Environment.os) {
-        .windows =>
-        \\if not defined npm_config_node_gyp (
-        \\  bun x --silent node-gyp %*
-        \\) else (
-        \\  node "%npm_config_node_gyp%" %*
-        \\)
-        \\
-        ,
-        else =>
-        \\#!/bin/sh
-        \\if [ "x$npm_config_node_gyp" = "x" ]; then
-        \\  bun x --silent node-gyp $@
-        \\else
-        \\  "$npm_config_node_gyp" $@
-        \\fi
-        \\
-        ,
-    };
-
-    node_gyp_file.writeAll(content) catch |err| {
-        Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
-        Global.crash();
-    };
-
-    // Add our node-gyp tempdir to the path
-    const existing_path = this.env.get("PATH") orelse "";
-    var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + this.temp_dir_name.len + 1 + this.node_gyp_tempdir_name.len);
-    try PATH.appendSlice(existing_path);
-    if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
-        try PATH.append(std.fs.path.delimiter);
-    try PATH.appendSlice(strings.withoutTrailingSlash(this.temp_dir_name));
-    try PATH.append(std.fs.path.sep);
-    try PATH.appendSlice(this.node_gyp_tempdir_name);
-    try this.env.map.put("PATH", PATH.items);
-
-    const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
-        strings.withoutTrailingSlash(this.temp_dir_name),
-        std.fs.path.sep_str,
-        strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
-        std.fs.path.sep_str,
-        file_name,
-    });
-
-    const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
-    try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
-}
-
 var using_fallback_temp_dir: bool = false;
 
-// @sortImports
+const string = []const u8;
+const stringZ = [:0]const u8;
 
 const std = @import("std");
 
@@ -819,10 +766,7 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 const File = bun.sys.File;
 
 const Semver = bun.Semver;

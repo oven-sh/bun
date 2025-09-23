@@ -232,7 +232,7 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
       });
 
       await process.exited;
-      const out = await new Response(process.stdout).text();
+      const out = await process.stdout.text();
       expect(process.exitCode).toBe(0);
       // if this fails, there will be a nicer error than printing out the entire string
       expect((out.match(/\n/g) ?? []).length).toBe(5000);

@@ -43,7 +43,7 @@ const addrSplitRE = /(^.+?)(?::(\d+))?$/;
 
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
-    return Promise.reject(withTranslatedError(error));
+    return Promise.$reject(withTranslatedError(error));
   });
 }
 
@@ -66,14 +66,14 @@ function setServers(servers) {
 }
 
 const getRuntimeDefaultResultOrderOption = $newZigFunction(
-  "dns_resolver.zig",
-  "DNSResolver.getRuntimeDefaultResultOrderOption",
+  "bun.js/api/bun/dns.zig",
+  "Resolver.getRuntimeDefaultResultOrderOption",
   0,
 );
 
 function newResolver(options) {
   if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction("dns_resolver.zig", "DNSResolver.newResolver", 1);
+    newResolver.zig = $newZigFunction("bun.js/api/bun/dns.zig", "Resolver.newResolver", 1);
   }
   return newResolver.zig(options);
 }
@@ -736,7 +736,7 @@ const promises = {
 
     if (!hostname) {
       invalidHostname(hostname);
-      return Promise.resolve(
+      return Promise.$resolve(
         options.all
           ? []
           : {
@@ -749,7 +749,7 @@ const promises = {
     const family = isIP(hostname);
     if (family) {
       const obj = { address: hostname, family };
-      return Promise.resolve(options.all ? [obj] : obj);
+      return Promise.$resolve(options.all ? [obj] : obj);
     }
 
     if (options.all) {
@@ -774,7 +774,7 @@ const promises = {
       if (err.name === "TypeError" || err.name === "RangeError") {
         throw err;
       }
-      return Promise.reject(withTranslatedError(err));
+      return Promise.$reject(withTranslatedError(err));
     }
   },
 

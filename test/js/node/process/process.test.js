@@ -1,8 +1,8 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMusl, isWindows, tmpdirSync } from "harness";
+import { writeFileSync } from "fs";
+import { bunEnv, bunExe, isMacOS, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 expect.extend({
@@ -267,36 +267,25 @@ it("process.umask()", () => {
   expect(process.umask()).toBe(orig);
 });
 
-const generated_versions_list = join(import.meta.dir, "../../../../src/generated_versions_list.zig");
-const versions = existsSync(generated_versions_list);
-it.skipIf(!versions)("process.versions", () => {
-  // Generate a list of all the versions in the versions object
-  // example:
-  // pub const boringssl = "b275c5ce1c88bc06f5a967026d3c0ce1df2be815";
-  // pub const libarchive = "dc321febde83dd0f31158e1be61a7aedda65e7a2";
-  // pub const mimalloc = "3c7079967a269027e438a2aac83197076d9fe09d";
-  // pub const picohttpparser = "066d2b1e9ab820703db0837a7255d92d30f0c9f5";
-  // pub const webkit = "60d11703a533fd694cd1d6ddda04813eecb5d69f";
-  // pub const zlib = "885674026394870b7e7a05b7bf1ec5eb7bd8a9c0";
-  // pub const tinycc = "2d3ad9e0d32194ad7fd867b66ebe218dcc8cb5cd";
-  // pub const lolhtml = "2eed349dcdfa4ff5c19fe7c6e501cfd687601033";
-  // pub const c_ares = "0e7a5dee0fbb04080750cf6eabbe89d8bae87faa";
-  const versions = Object.fromEntries(
-    readFileSync(generated_versions_list, "utf8")
-      .split("\n")
-      .filter(line => line.startsWith("pub const") && !line.includes("zig") && line.includes(' = "'))
-      .map(line => line.split(" = "))
-      .map(([name, hash]) => [name.slice(9).trim(), hash.slice(1, -2)]),
-  );
-  versions.ares = versions.c_ares;
-  delete versions.c_ares;
+it("process.versions", () => {
+  // Expected dependency versions (from CMake-generated header)
+  const expectedVersions = {
+    boringssl: "29a2cd359458c9384694b75456026e4b57e3e567",
+    libarchive: "898dc8319355b7e985f68a9819f182aaed61b53a",
+    mimalloc: "4c283af60cdae205df5a872530c77e2a6a307d43",
+    picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
+    zlib: "886098f3f339617b4243b286f5ed364b9989e245",
+    tinycc: "ab631362d839333660a265d3084d8ff060b96753",
+    lolhtml: "8d4c273ded322193d017042d1f48df2766b0f88b",
+    ares: "d1722e6e8acaf10eb73fa995798a9cd421d9f85e",
+    libdeflate: "dc76454a39e7e83b68c3704b6e3784654f8d5ac5",
+    zstd: "794ea1b0afca0f020f4e57b6732332231fb23c70",
+    lshpack: "3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0",
+  };
 
-  // Handled by BUN_WEBKIT_VERSION #define
-  delete versions.webkit;
-
-  for (const name in versions) {
+  for (const [name, expectedHash] of Object.entries(expectedVersions)) {
     expect(process.versions).toHaveProperty(name);
-    expect(process.versions[name]).toBe(versions[name]);
+    expect(process.versions[name]).toBe(expectedHash);
   }
 
   expect(process.versions).toHaveProperty("usockets");
@@ -765,7 +754,7 @@ it("aborts when the uncaughtException handler throws", async () => {
     stderr: "pipe",
   });
   expect(await proc.exited).toBe(7);
-  expect(await new Response(proc.stderr).text()).toContain("bar");
+  expect(await proc.stderr.text()).toContain("bar");
 });
 
 it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
@@ -773,7 +762,7 @@ it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
     stderr: "pipe",
   });
   expect(await proc.exited).toBe(1);
-  expect(await new Response(proc.stderr).text()).toContain("bar");
+  expect(await proc.stderr.text()).toContain("bar");
 });
 
 it("process.hasUncaughtExceptionCaptureCallback", () => {
@@ -1134,7 +1123,7 @@ it("process.versions", () => {
   expect(process.versions.modules).toEqual("137");
 });
 
-it.todoIf(isMacOS || isMusl)("should be the node version on the host that we expect", async () => {
+it.todoIf(isMacOS)("should be the node version on the host that we expect", async () => {
   const subprocess = Bun.spawn({
     cmd: ["node", "--version"],
     stdout: "pipe",

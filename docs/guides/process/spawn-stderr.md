@@ -2,7 +2,7 @@
 name: Read stderr from a child process
 ---
 
-When using [`Bun.spawn()`](https://bun.sh/docs/api/spawn), the child process inherits the `stderr` of the spawning process. If instead you'd prefer to read and handle `stderr`, set the `stderr` option to `"pipe"`.
+When using [`Bun.spawn()`](https://bun.com/docs/api/spawn), the child process inherits the `stderr` of the spawning process. If instead you'd prefer to read and handle `stderr`, set the `stderr` option to `"pipe"`.
 
 ```ts
 const proc = Bun.spawn(["echo", "hello"], {
@@ -28,4 +28,4 @@ if (errors) {
 
 ---
 
-See [Docs > API > Child processes](https://bun.sh/docs/api/spawn) for complete documentation.
+See [Docs > API > Child processes](https://bun.com/docs/api/spawn) for complete documentation.

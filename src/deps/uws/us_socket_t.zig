@@ -1,10 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const uws = @import("../uws.zig");
-
-const SocketContext = uws.SocketContext;
-
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
 const max_i32 = std.math.maxInt(i32);
 
 /// Zig bindings for `us_socket_t`
@@ -233,3 +227,9 @@ pub const c = struct {
     pub extern fn us_socket_get_error(ssl: i32, s: *uws.us_socket_t) c_int;
     pub extern fn us_socket_is_established(ssl: i32, s: *uws.us_socket_t) i32;
 };
+
+const bun = @import("bun");
+const std = @import("std");
+
+const uws = @import("../uws.zig");
+const SocketContext = uws.SocketContext;

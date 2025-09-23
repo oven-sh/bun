@@ -18,10 +18,20 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
+#include <stdio.h>
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
+
+#if __has_include("wtf/Platform.h")
 #include "wtf/Platform.h"
+#elif !defined(ASSERT_ENABLED)
+#if defined(BUN_DEBUG) || defined(__has_feature) && __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
+#define ASSERT_ENABLED 1
+#else 
+#define ASSERT_ENABLED 0
+#endif
+#endif
 
 #if ASSERT_ENABLED
 extern const size_t Bun__lock__size;
@@ -29,11 +39,31 @@ extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t l
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 #endif
 
+extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
+
+void sweep_timer_cb(struct us_internal_callback_t *cb);
+
+void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_timer_count++;
+    if (loop->data.sweep_timer_count == 1) {
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
+        Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
+    }
+}
+
+void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
+    loop->data.sweep_timer_count--;
+    if (loop->data.sweep_timer_count == 0) {
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, 0, 0);
+    }
+}
+
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
+    loop->data.sweep_timer_count = 0;
     loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
     loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
     loop->data.pre_cb = pre_cb;
@@ -161,7 +191,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         if (s->next) s->next->prev = 0;
         s->next = 0;
 
-        us_internal_socket_context_link_socket(s->context, s);
+        us_internal_socket_context_link_socket(0, s->context, s);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;
@@ -318,7 +348,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
 
-                        us_internal_socket_context_link_socket(listen_socket->s.context, s);
+                        us_internal_socket_context_link_socket(0, listen_socket->s.context, s);
 
                         listen_socket->s.context->on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
 
@@ -342,7 +372,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
                 loop->data.last_write_failed = 0;
-                
+
                 s = s->context->on_writable(s);
 
                 if (!s || us_socket_is_closed(0, s)) {
@@ -547,9 +577,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     }
 }
 
-/* Integration only requires the timer to be set up */
+/* Integration only requires the timer to be set up, but not automatically enabled */
 void us_loop_integrate(struct us_loop_t *loop) {
-    us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, LIBUS_TIMEOUT_GRANULARITY * 1000, LIBUS_TIMEOUT_GRANULARITY * 1000);
+    /* Timer is now controlled dynamically by socket count, not enabled automatically */
 }
 
 void *us_loop_ext(struct us_loop_t *loop) {

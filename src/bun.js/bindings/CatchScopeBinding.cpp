@@ -2,6 +2,17 @@
 
 using JSC::CatchScope;
 
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+#define ExpectedCatchScopeSize 56
+#define ExpectedCatchScopeAlignment 8
+#else
+#define ExpectedCatchScopeSize 8
+#define ExpectedCatchScopeAlignment 8
+#endif
+
+static_assert(sizeof(CatchScope) == ExpectedCatchScopeSize, "CatchScope.zig assumes CatchScope is 56 bytes");
+static_assert(alignof(CatchScope) == ExpectedCatchScopeAlignment, "CatchScope.zig assumes CatchScope is 8-byte aligned");
+
 extern "C" void CatchScope__construct(
     void* ptr,
     JSC::JSGlobalObject* globalObject,
@@ -42,6 +53,13 @@ extern "C" JSC::Exception* CatchScope__exceptionIncludingTraps(void* ptr)
     // thread)
     RETURN_IF_EXCEPTION(*scope, scope->exception());
     return nullptr;
+}
+
+extern "C" void CatchScope__clearException(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(CatchScope) == 0);
+    auto* scope = static_cast<CatchScope*>(ptr);
+    scope->clearException();
 }
 
 extern "C" void CatchScope__destruct(void* ptr)

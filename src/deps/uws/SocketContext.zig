@@ -280,14 +280,17 @@ pub const c = struct {
     pub extern fn create_ssl_context_from_bun_options(options: SocketContext.BunSocketContextOptions, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;
 };
 
-const bun = @import("bun");
-const uws = bun.uws;
-const Loop = uws.Loop;
-const us_socket_t = uws.us_socket_t;
-const us_bun_verify_error_t = uws.us_bun_verify_error_t;
-const create_bun_socket_error_t = uws.create_bun_socket_error_t;
-const ListenSocket = uws.ListenSocket;
-const debug = bun.Output.scoped(.uws, false);
+const debug = bun.Output.scoped(.uws, .visible);
+
 const std = @import("std");
-const ConnectingSocket = uws.ConnectingSocket;
+
+const bun = @import("bun");
 const BoringSSL = bun.BoringSSL.c;
+
+const uws = bun.uws;
+const ConnectingSocket = uws.ConnectingSocket;
+const ListenSocket = uws.ListenSocket;
+const Loop = uws.Loop;
+const create_bun_socket_error_t = uws.create_bun_socket_error_t;
+const us_bun_verify_error_t = uws.us_bun_verify_error_t;
+const us_socket_t = uws.us_socket_t;

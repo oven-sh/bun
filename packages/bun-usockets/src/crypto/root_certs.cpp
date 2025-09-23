@@ -5,6 +5,7 @@
 #include "./internal/internal.h"
 #include <atomic>
 #include <string.h>
+#include "./default_ciphers.h"
 static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 
 extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
@@ -183,4 +184,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   }
 
   return store;
+}
+extern "C" const char *us_get_default_ciphers() {
+  return DEFAULT_CIPHER_LIST;
 }

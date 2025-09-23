@@ -7,64 +7,66 @@ data: Data,
 status: Status = Status.waiting,
 threadpool_task: ThreadPool.Task = ThreadPool.Task{ .callback = &callback },
 log: logger.Log,
-id: u64,
+id: Id,
 err: ?anyerror = null,
 package_manager: *PackageManager,
 apply_patch_task: ?*PatchTask = null,
 next: ?*Task = null,
 
 /// An ID that lets us register a callback without keeping the same pointer around
-pub fn NewID(comptime Hasher: type, comptime IDType: type) type {
-    return struct {
-        pub const Type = IDType;
-        pub fn forNPMPackage(package_name: string, package_version: Semver.Version) IDType {
-            var hasher = Hasher.init(0);
-            hasher.update("npm-package:");
-            hasher.update(package_name);
-            hasher.update("@");
-            hasher.update(std.mem.asBytes(&package_version));
-            return hasher.final();
-        }
+pub const Id = enum(u64) {
+    _,
 
-        pub fn forBinLink(package_id: PackageID) IDType {
-            var hasher = Hasher.init(0);
-            hasher.update("bin-link:");
-            hasher.update(std.mem.asBytes(&package_id));
-            return hasher.final();
-        }
+    pub fn get(this: @This()) u64 {
+        return @intFromEnum(this);
+    }
 
-        pub fn forManifest(name: string) IDType {
-            var hasher = Hasher.init(0);
-            hasher.update("manifest:");
-            hasher.update(name);
-            return hasher.final();
-        }
+    pub fn forNPMPackage(package_name: string, package_version: Semver.Version) Id {
+        var hasher = bun.Wyhash11.init(0);
+        hasher.update("npm-package:");
+        hasher.update(package_name);
+        hasher.update("@");
+        hasher.update(std.mem.asBytes(&package_version));
+        return @enumFromInt(hasher.final());
+    }
 
-        pub fn forTarball(url: string) IDType {
-            var hasher = Hasher.init(0);
-            hasher.update("tarball:");
-            hasher.update(url);
-            return hasher.final();
-        }
+    pub fn forBinLink(package_id: PackageID) Id {
+        var hasher = bun.Wyhash11.init(0);
+        hasher.update("bin-link:");
+        hasher.update(std.mem.asBytes(&package_id));
+        return @enumFromInt(hasher.final());
+    }
 
-        // These cannot change:
-        // We persist them to the filesystem.
-        pub fn forGitClone(url: string) IDType {
-            var hasher = Hasher.init(0);
-            hasher.update(url);
-            return @as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
-        }
+    pub fn forManifest(name: string) Id {
+        var hasher = bun.Wyhash11.init(0);
+        hasher.update("manifest:");
+        hasher.update(name);
+        return @enumFromInt(hasher.final());
+    }
 
-        pub fn forGitCheckout(url: string, resolved: string) IDType {
-            var hasher = Hasher.init(0);
-            hasher.update(url);
-            hasher.update("@");
-            hasher.update(resolved);
-            return @as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
-        }
-    };
-}
-pub const Id = NewID(bun.Wyhash11, u64);
+    pub fn forTarball(url: string) Id {
+        var hasher = bun.Wyhash11.init(0);
+        hasher.update("tarball:");
+        hasher.update(url);
+        return @enumFromInt(hasher.final());
+    }
+
+    // These cannot change:
+    // We persist them to the filesystem.
+    pub fn forGitClone(url: string) Id {
+        var hasher = bun.Wyhash11.init(0);
+        hasher.update(url);
+        return @enumFromInt(@as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
+    }
+
+    pub fn forGitCheckout(url: string, resolved: string) Id {
+        var hasher = bun.Wyhash11.init(0);
+        hasher.update(url);
+        hasher.update("@");
+        hasher.update(resolved);
+        return @enumFromInt(@as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
+    }
+};
 
 pub fn callback(task: *ThreadPool.Task) void {
     Output.Source.configureThread();
@@ -76,7 +78,7 @@ pub fn callback(task: *ThreadPool.Task) void {
         if (this.status == .success) {
             if (this.apply_patch_task) |pt| {
                 defer pt.deinit();
-                pt.apply() catch bun.outOfMemory();
+                bun.handleOom(pt.apply());
                 if (pt.callback.apply.logger.errors > 0) {
                     defer pt.callback.apply.logger.deinit();
                     // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
@@ -92,17 +94,15 @@ pub fn callback(task: *ThreadPool.Task) void {
         .package_manifest => {
             const allocator = bun.default_allocator;
             var manifest = &this.request.package_manifest;
-            const body = manifest.network.response_buffer.move();
 
-            defer {
-                bun.default_allocator.free(body);
-            }
+            const body = &manifest.network.response_buffer;
+            defer body.deinit();
 
             const package_manifest = Npm.Registry.getPackageMetadata(
                 allocator,
                 manager.scopeForPackageName(manifest.name.slice()),
                 (manifest.network.response.metadata orelse @panic("Assertion failure: Expected metadata to be set")).response,
-                body,
+                body.slice(),
                 &this.log,
                 manifest.name.slice(),
                 manifest.network.callback.package_manifest.loaded_manifest,
@@ -133,15 +133,12 @@ pub fn callback(task: *ThreadPool.Task) void {
             }
         },
         .extract => {
-            const bytes = this.request.extract.network.response_buffer.move();
-
-            defer {
-                bun.default_allocator.free(bytes);
-            }
+            const buffer = &this.request.extract.network.response_buffer;
+            defer buffer.deinit();
 
             const result = this.request.extract.tarball.run(
                 &this.log,
-                bytes,
+                buffer.slice(),
             ) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -349,25 +346,11 @@ pub const Request = union {
     },
 };
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
-const bun = @import("bun");
-const DotEnv = bun.DotEnv;
-const Output = bun.Output;
-const Path = bun.path;
-const Semver = bun.Semver;
-const ThreadPool = bun.ThreadPool;
-const logger = bun.logger;
-const string = bun.string;
-const strings = bun.strings;
-const File = bun.sys.File;
-
-const Fs = bun.fs;
-const FileSystem = Fs.FileSystem;
-
-const install = @import("install.zig");
+const install = @import("./install.zig");
 const DependencyID = install.DependencyID;
 const ExtractData = install.ExtractData;
 const ExtractTarball = install.ExtractTarball;
@@ -380,3 +363,16 @@ const Repository = install.Repository;
 const Resolution = install.Resolution;
 const Task = install.Task;
 const invalid_package_id = install.invalid_package_id;
+
+const bun = @import("bun");
+const DotEnv = bun.DotEnv;
+const Output = bun.Output;
+const Path = bun.path;
+const Semver = bun.Semver;
+const ThreadPool = bun.ThreadPool;
+const logger = bun.logger;
+const strings = bun.strings;
+const File = bun.sys.File;
+
+const Fs = bun.fs;
+const FileSystem = Fs.FileSystem;

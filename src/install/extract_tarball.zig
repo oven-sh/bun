@@ -1,21 +1,3 @@
-const bun = @import("bun");
-const default_allocator = bun.default_allocator;
-const logger = bun.logger;
-const Output = bun.Output;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Install = @import("./install.zig");
-const DependencyID = Install.DependencyID;
-const PackageManager = Install.PackageManager;
-const Integrity = @import("./integrity.zig").Integrity;
-const Npm = @import("./npm.zig");
-const Resolution = @import("./resolution.zig").Resolution;
-const Semver = bun.Semver;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const Environment = bun.Environment;
-const OOM = bun.OOM;
-
 const ExtractTarball = @This();
 
 name: strings.StringOrTinyString,
@@ -138,7 +120,17 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     };
     const basename = brk: {
         var tmp = name;
-        if (tmp[0] == '@') {
+
+        // Handle URLs - extract just the filename from the URL
+        if (strings.hasPrefixComptime(tmp, "https://") or strings.hasPrefixComptime(tmp, "http://")) {
+            tmp = std.fs.path.basename(tmp);
+            // Remove .tgz or .tar.gz extension if present
+            if (strings.endsWithComptime(tmp, ".tgz")) {
+                tmp = tmp[0 .. tmp.len - 4];
+            } else if (strings.endsWithComptime(tmp, ".tar.gz")) {
+                tmp = tmp[0 .. tmp.len - 7];
+            }
+        } else if (tmp[0] == '@') {
             if (strings.indexOfChar(tmp, '/')) |i| {
                 tmp = tmp[i + 1 ..];
             }
@@ -215,7 +207,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         if (needs_to_decompress) {
             zlib_pool.data.list.clearRetainingCapacity();
             var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
-            zlib_entry.readAll() catch |err| {
+            zlib_entry.readAll(true) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
@@ -552,3 +544,24 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         },
     };
 }
+
+const string = []const u8;
+
+const Npm = @import("./npm.zig");
+const std = @import("std");
+const FileSystem = @import("../fs.zig").FileSystem;
+const Integrity = @import("./integrity.zig").Integrity;
+const Resolution = @import("./resolution.zig").Resolution;
+
+const Install = @import("./install.zig");
+const DependencyID = Install.DependencyID;
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Semver = bun.Semver;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;

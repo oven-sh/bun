@@ -72,12 +72,14 @@ macro(find_llvm_command variable command)
     )
   endif()
 
+  math(EXPR LLVM_VERSION_NEXT_MAJOR "${LLVM_VERSION_MAJOR} + 1")
+
   find_command(
     VARIABLE ${variable}
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION >=${LLVM_VERSION_MAJOR}.1.0
+    VERSION ">=${LLVM_VERSION_MAJOR}.1.0 <${LLVM_VERSION_NEXT_MAJOR}.0.0"
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()

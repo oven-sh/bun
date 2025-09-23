@@ -1,5 +1,6 @@
 //! A generic wrapper for the HTTP(s) Server`RequestContext`s.
 //! Only really exists because of `NewServer()` and `NewRequestContext()` generics.
+
 const AnyRequestContext = @This();
 
 pub const Pointer = bun.TaggedPointerUnion(.{
@@ -66,7 +67,7 @@ pub fn setTimeout(self: AnyRequestContext, seconds: c_uint) bool {
     return false;
 }
 
-pub fn setCookies(self: AnyRequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+pub fn setCookies(self: AnyRequestContext, cookie_map: ?*jsc.WebCore.CookieMap) void {
     if (self.tagged_pointer.isNull()) {
         return;
     }
@@ -198,6 +199,28 @@ pub fn getRequest(self: AnyRequestContext) ?*uws.Request {
     }
 }
 
+pub fn onAbort(self: AnyRequestContext, response: uws.AnyResponse) void {
+    if (self.tagged_pointer.isNull()) {
+        return;
+    }
+
+    switch (self.tagged_pointer.tag()) {
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+            self.tagged_pointer.as(HTTPServer.RequestContext).onAbort(response.TCP);
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+            self.tagged_pointer.as(HTTPSServer.RequestContext).onAbort(response.SSL);
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+            self.tagged_pointer.as(DebugHTTPServer.RequestContext).onAbort(response.TCP);
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).onAbort(response.SSL);
+        },
+        else => @panic("Unexpected AnyRequestContext tag"),
+    }
+}
+
 pub fn deref(self: AnyRequestContext) void {
     if (self.tagged_pointer.isNull()) {
         return;
@@ -221,9 +244,10 @@ pub fn deref(self: AnyRequestContext) void {
 }
 
 const bun = @import("bun");
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const uws = bun.uws;
-const HTTPServer = @import("../server.zig").HTTPServer;
-const HTTPSServer = @import("../server.zig").HTTPSServer;
-const DebugHTTPServer = @import("../server.zig").DebugHTTPServer;
-const DebugHTTPSServer = @import("../server.zig").DebugHTTPSServer;
+
+const DebugHTTPSServer = bun.api.DebugHTTPSServer;
+const DebugHTTPServer = bun.api.DebugHTTPServer;
+const HTTPSServer = bun.api.HTTPSServer;
+const HTTPServer = bun.api.HTTPServer;

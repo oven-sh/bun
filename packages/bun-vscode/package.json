@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.25",
+  "version": "0.0.29",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -71,7 +71,7 @@
         },
         "bun.test.filePattern": {
           "type": "string",
-          "default": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts}",
+          "default": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}",
           "description": "Glob pattern to find test files"
         },
         "bun.test.customFlag": {
@@ -81,8 +81,14 @@
         },
         "bun.test.customScript": {
           "type": "string",
-          "default": "",
+          "default": "bun test",
           "description": "Custom script to use instead of `bun test`, for example script from `package.json`"
+        },
+        "bun.test.enable": {
+          "type": "boolean",
+          "description": "If the test explorer should be enabled and integrated with your editor",
+          "scope": "window",
+          "default": true
         }
       }
     },
@@ -277,6 +283,14 @@
                 "type": "boolean",
                 "description": "If the debugger should stop on the first line of the program.",
                 "default": false
+              },
+              "localRoot": {
+                "type": "string",
+                "description": "The local path that maps to \"remoteRoot\" when attaching to a remote Bun process."
+              },
+              "remoteRoot": {
+                "type": "string",
+                "description": "The remote path to the code when attaching. File paths reported by Bun that start with this path will be mapped back to 'localRoot'."
               }
             }
           }
@@ -353,7 +367,7 @@
     "color": "#3B3738",
     "theme": "dark"
   },
-  "homepage": "https://bun.sh/",
+  "homepage": "https://bun.com/",
   "icon": "assets/icon.png",
   "keywords": [
     "bun",

@@ -9,6 +9,7 @@ Plugins can register callbacks to be run at various points in the lifecycle of a
 - [`onStart()`](#onstart): Run once the bundler has started a bundle
 - [`onResolve()`](#onresolve): Run before a module is resolved
 - [`onLoad()`](#onload): Run before a module is loaded.
+- [`onEnd()`](#onend): Run after the bundle has completed
 - [`onBeforeParse()`](#onbeforeparse): Run zero-copy native addons in the parser thread before a file is parsed.
 
 ### Reference
@@ -18,6 +19,7 @@ A rough overview of the types (please refer to Bun's `bun.d.ts` for the full typ
 ```ts
 type PluginBuilder = {
   onStart(callback: () => void): void;
+  onEnd(callback: (result: BuildOutput) => void | Promise<void>): void;
   onResolve: (
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string; importer: string }) => {
@@ -285,13 +287,60 @@ plugin({
 
 Note that the `.defer()` function currently has the limitation that it can only be called once per `onLoad` callback.
 
+### `onEnd`
+
+```ts
+onEnd(callback: (result: BuildOutput) => void | Promise<void>): void;
+```
+
+Registers a callback to be run when the bundler completes a bundle (whether successful or not).
+
+The callback receives the `BuildOutput` object containing:
+
+- `success`: boolean indicating if the build succeeded
+- `outputs`: array of generated build artifacts
+- `logs`: array of build messages (warnings, errors, etc.)
+
+This is useful for post-processing, cleanup, notifications, or custom error handling.
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  plugins: [
+    {
+      name: "onEnd example",
+      setup(build) {
+        build.onEnd(result => {
+          if (result.success) {
+            console.log(
+              `✅ Build succeeded with ${result.outputs.length} outputs`,
+            );
+          } else {
+            console.error(`❌ Build failed with ${result.logs.length} errors`);
+          }
+        });
+      },
+    },
+  ],
+});
+```
+
+The `onEnd` callbacks are called:
+
+- **Before** the build promise resolves or rejects
+- **After** all bundling is complete
+- **In the order** they were registered
+
+Multiple plugins can register `onEnd` callbacks, and they will all be called sequentially. If an `onEnd` callback returns a promise, the build will wait for it to resolve before continuing.
+
 ## Native plugins
 
 One of the reasons why Bun's bundler is so fast is that it is written in native code and leverages multi-threading to load and parse modules in parallel.
 
 However, one limitation of plugins written in JavaScript is that JavaScript itself is single-threaded.
 
-Native plugins are written as [NAPI](https://bun.sh/docs/api/node-api) modules and can be run on multiple threads. This allows native plugins to run much faster than JavaScript plugins.
+Native plugins are written as [NAPI](https://bun.com/docs/api/node-api) modules and can be run on multiple threads. This allows native plugins to run much faster than JavaScript plugins.
 
 In addition, native plugins can skip unnecessary work such as the UTF-8 -> UTF-16 conversion needed to pass strings to JavaScript.
 

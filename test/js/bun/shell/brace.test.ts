@@ -26,4 +26,32 @@ describe("$.braces", () => {
     const result = $.braces(`echo {123,{456,789},abc}`);
     expect(result).toEqual(["echo 123", "echo 456", "echo 789", "echo abc"]);
   });
+
+  test("very deeply nested", () => {
+    const result = $.braces(`{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`);
+    expect(result).toEqual([
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+    ]);
+  });
+
+  test("unicode", () => {
+    const result = $.braces(`lol {😂,🫵,🤣}`);
+    expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
+  });
 });

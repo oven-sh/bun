@@ -1,8 +1,10 @@
+const TextEncoderStreamEncoder = @This();
+
 pending_lead_surrogate: ?u16 = null,
 
-const log = Output.scoped(.TextEncoderStreamEncoder, false);
+const log = Output.scoped(.TextEncoderStreamEncoder, .visible);
 
-pub const js = JSC.Codegen.JSTextEncoderStreamEncoder;
+pub const js = jsc.Codegen.JSTextEncoderStreamEncoder;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
@@ -13,11 +15,11 @@ pub fn finalize(this: *TextEncoderStreamEncoder) void {
     bun.destroy(this);
 }
 
-pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*TextEncoderStreamEncoder {
+pub fn constructor(_: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*TextEncoderStreamEncoder {
     return TextEncoderStreamEncoder.new(.{});
 }
 
-pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
     const arguments = callFrame.arguments_old(1).slice();
     if (arguments.len == 0) {
         return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
@@ -32,7 +34,7 @@ pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject
     return this.encodeLatin1(globalObject, str.slice());
 }
 
-pub fn encodeWithoutTypeChecks(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, input: *JSC.JSString) JSValue {
+pub fn encodeWithoutTypeChecks(this: *TextEncoderStreamEncoder, globalObject: *jsc.JSGlobalObject, input: *jsc.JSString) JSValue {
     const str = input.getZigString(globalObject);
 
     if (str.is16Bit()) {
@@ -95,7 +97,7 @@ fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, 
         bun.debugAssert(buffer.items.len == (bun.simdutf.length.utf8.from.latin1(input) + prepend_replacement_len));
     }
 
-    return JSC.JSUint8Array.fromBytes(globalObject, buffer.items);
+    return jsc.JSUint8Array.fromBytes(globalObject, buffer.items);
 }
 
 fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u16) JSValue {
@@ -172,16 +174,16 @@ fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, i
                 if (buf.items.len == 0) return JSUint8Array.createEmpty(globalObject);
             }
 
-            return JSC.JSUint8Array.fromBytes(globalObject, buf.items);
+            return jsc.JSUint8Array.fromBytes(globalObject, buf.items);
         },
         .success => {
             buf.items.len += result.count;
-            return JSC.JSUint8Array.fromBytes(globalObject, buf.items);
+            return jsc.JSUint8Array.fromBytes(globalObject, buf.items);
         },
     }
 }
 
-pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
+pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     return flushBody(this, globalObject);
 }
 
@@ -196,14 +198,14 @@ fn flushBody(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject) JSV
         JSUint8Array.fromBytesCopy(globalObject, &.{ 0xef, 0xbf, 0xbd });
 }
 
-const TextEncoderStreamEncoder = @This();
-
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
+const Environment = bun.Environment;
 const Output = bun.Output;
 const strings = bun.strings;
-const JSUint8Array = JSC.JSUint8Array;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const Environment = bun.Environment;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSUint8Array = jsc.JSUint8Array;
+const JSValue = jsc.JSValue;

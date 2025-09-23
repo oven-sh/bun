@@ -46,7 +46,7 @@ pub const Yield = union(enum) {
     ///       it is only used in 2 places. we might need to implement signals
     ///       first tho.
     on_io_writer_chunk: struct {
-        err: ?JSC.SystemError,
+        err: ?jsc.SystemError,
         written: usize,
         /// This type is actually `IOWriterChildPtr`, but because
         /// of an annoying cyclic Zig compile error we're doing this
@@ -76,7 +76,7 @@ pub const Yield = union(enum) {
         bun.debugAssert(_dbg_catch_exec_within_exec <= MAX_DEPTH);
         if (comptime Environment.isDebug) _dbg_catch_exec_within_exec += 1;
         defer {
-            if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
+            if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec - 1 });
             if (comptime Environment.isDebug) _dbg_catch_exec_within_exec -= 1;
         }
 
@@ -93,7 +93,7 @@ pub const Yield = union(enum) {
         // there can be nested pipelines, so we need a stack.
         var sfb = std.heap.stackFallback(@sizeOf(*Pipeline) * 4, bun.default_allocator);
         const alloc = sfb.get();
-        var pipeline_stack = std.ArrayList(*Pipeline).initCapacity(alloc, 4) catch bun.outOfMemory();
+        var pipeline_stack = bun.handleOom(std.ArrayList(*Pipeline).initCapacity(alloc, 4));
         defer pipeline_stack.deinit();
 
         // Note that we're using labelled switch statements but _not_
@@ -101,7 +101,15 @@ pub const Yield = union(enum) {
         // execution. Don't touch it.
         state: switch (this) {
             .pipeline => |x| {
-                pipeline_stack.append(x) catch bun.outOfMemory();
+                if (x.state == .done) {
+                    // remove it from the pipeline stack as calling `.next()` will now deinit it
+                    if (std.mem.indexOfScalar(*Pipeline, pipeline_stack.items, x)) |idx| {
+                        _ = pipeline_stack.orderedRemove(idx);
+                    }
+                    continue :state x.next();
+                }
+                bun.assert_eql(std.mem.indexOfScalar(*Pipeline, pipeline_stack.items, x), null);
+                bun.handleOom(pipeline_stack.append(x));
                 continue :state x.next();
             },
             .cmd => |x| continue :state x.next(),
@@ -141,24 +149,24 @@ pub const Yield = union(enum) {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
+const jsc = bun.jsc;
 const shell = bun.shell;
+const log = bun.shell.interpret.log;
 
 const Interpreter = bun.shell.Interpreter;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-const IOWriter = bun.shell.Interpreter.IOWriter;
-const IOWriterChildPtr = IOWriter.IOWriterChildPtr;
-
 const Assigns = bun.shell.Interpreter.Assigns;
-const Script = bun.shell.Interpreter.Script;
-const Subshell = bun.shell.Interpreter.Subshell;
 const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
 const CondExpr = bun.shell.Interpreter.CondExpr;
 const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const Script = bun.shell.Interpreter.Script;
+const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
 
-const JSC = bun.JSC;
+const IOWriter = bun.shell.Interpreter.IOWriter;
+const IOWriterChildPtr = IOWriter.IOWriterChildPtr;

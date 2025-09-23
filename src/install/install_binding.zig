@@ -1,24 +1,16 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const logger = bun.logger;
-const Path = bun.path;
-const string = bun.string;
-const Lockfile = bun.install.Lockfile;
-
 pub const bun_install_js_bindings = struct {
-    const JSValue = JSC.JSValue;
-    const ZigString = JSC.ZigString;
-    const JSGlobalObject = JSC.JSGlobalObject;
+    const JSValue = jsc.JSValue;
+    const ZigString = jsc.ZigString;
+    const JSGlobalObject = jsc.JSGlobalObject;
 
     pub fn generate(global: *JSGlobalObject) JSValue {
         const obj = JSValue.createEmptyObject(global, 2);
         const parseLockfile = ZigString.static("parseLockfile");
-        obj.put(global, parseLockfile, JSC.createCallback(global, parseLockfile, 1, jsParseLockfile));
+        obj.put(global, parseLockfile, jsc.createCallback(global, parseLockfile, 1, jsParseLockfile));
         return obj;
     }
 
-    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         var log = logger.Log.init(allocator);
         defer log.deinit();
@@ -76,9 +68,19 @@ pub const bun_install_js_bindings = struct {
             return globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
+        var str = bun.String.cloneUTF8(buffer.list.items);
         defer str.deref();
 
         return str.toJSByParseJSON(globalObject);
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Path = bun.path;
+const jsc = bun.jsc;
+const logger = bun.logger;
+const Lockfile = bun.install.Lockfile;

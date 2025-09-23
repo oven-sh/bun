@@ -8,7 +8,7 @@ import process from "process";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const COMMON_CERT = { ...tls };
 
-describe("WebSocket", () => {
+describe.concurrent("WebSocket", () => {
   it("should connect", async () => {
     using server = Bun.serve({
       port: 0,
@@ -131,15 +131,19 @@ describe("WebSocket", () => {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
+        let errorFired = false;
         client.onopen = () => {
           client.send("Hello from client!");
         };
         client.onmessage = e => {
           messages.push(e.data);
         };
-        client.onerror = reject;
+        client.onerror = e => {
+          errorFired = true;
+          // Don't reject, we expect both error and close events
+        };
         client.onclose = e => {
-          resolve({ result: e, messages });
+          resolve({ result: e, messages, errorFired });
         };
         return promise;
       }
@@ -147,7 +151,8 @@ describe("WebSocket", () => {
       {
         // by default rejectUnauthorized is true
         const client = new WebSocket(url);
-        const { result, messages } = await testClient(client);
+        const { result, messages, errorFired } = await testClient(client);
+        expect(errorFired).toBe(true); // Error event should fire
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
         expect(result.reason).toBe("TLS handshake failed");
@@ -156,7 +161,8 @@ describe("WebSocket", () => {
       {
         // just in case we change the default to true and test
         const client = new WebSocket(url, { tls: { rejectUnauthorized: true } });
-        const { result, messages } = await testClient(client);
+        const { result, messages, errorFired } = await testClient(client);
+        expect(errorFired).toBe(true); // Error event should fire
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
         expect(result.reason).toBe("TLS handshake failed");
@@ -248,22 +254,27 @@ describe("WebSocket", () => {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
+        let errorFired = false;
         client.onopen = () => {
           client.send("Hello from client!");
         };
         client.onmessage = e => {
           messages.push(e.data);
         };
-        client.onerror = reject;
+        client.onerror = e => {
+          errorFired = true;
+          // Don't reject, we expect both error and close events
+        };
         client.onclose = e => {
-          resolve({ result: e, messages });
+          resolve({ result: e, messages, errorFired });
         };
         return promise;
       }
       const url = `wss://localhost:${server.address.port}`;
       {
         const client = new WebSocket(url);
-        const { result, messages } = await testClient(client);
+        const { result, messages, errorFired } = await testClient(client);
+        expect(errorFired).toBe(true); // Error event should fire
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
         expect(result.reason).toBe("TLS handshake failed");
@@ -476,7 +487,8 @@ describe("WebSocket", () => {
     const ws = new WebSocket(url, {});
     ws.onopen = () => reject(new Error("should not be called"));
     ws.onmessage = () => reject(new Error("should not be called"));
-    ws.onerror = () => {
+    ws.onerror = event => {
+      expect(event.error).toBeInstanceOf(Error);
       resolve();
     };
     ws.onclose = () => resolve2();
@@ -492,7 +504,8 @@ describe("WebSocket", () => {
     const ws = new WebSocket(url, {});
     ws.onopen = () => reject(new Error("should not be called"));
     ws.onmessage = () => reject(new Error("should not be called"));
-    ws.onerror = () => {
+    ws.onerror = event => {
+      expect(event.error).toBeInstanceOf(Error);
       resolve();
     };
     ws.onclose = () => resolve2();
@@ -683,8 +696,8 @@ describe("WebSocket", () => {
   });
 });
 
-describe("websocket in subprocess", () => {
-  it("should exit", async () => {
+describe.concurrent("websocket in subprocess", () => {
+  it.concurrent("should exit", async () => {
     let messageReceived = false;
     using server = Bun.serve({
       port: 0,
@@ -706,11 +719,11 @@ describe("websocket in subprocess", () => {
         close(ws) {},
       },
     });
-    const subprocess = Bun.spawn({
+    await using subprocess = Bun.spawn({
       cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
-      stderr: "pipe",
-      stdin: "pipe",
-      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "inherit",
+      stdout: "inherit",
       env: bunEnv,
     });
 
@@ -719,11 +732,11 @@ describe("websocket in subprocess", () => {
   });
 
   it("should exit after killed", async () => {
-    const subprocess = Bun.spawn({
+    await using subprocess = Bun.spawn({
       cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", TEST_WEBSOCKET_HOST],
-      stderr: "pipe",
-      stdin: "pipe",
-      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "inherit",
+      stdout: "inherit",
       env: bunEnv,
     });
 
@@ -735,11 +748,11 @@ describe("websocket in subprocess", () => {
   });
 
   it("should exit with invalid url", async () => {
-    const subprocess = Bun.spawn({
+    await using subprocess = Bun.spawn({
       cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", "invalid url"],
-      stderr: "pipe",
-      stdin: "pipe",
-      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "inherit",
+      stdout: "inherit",
       env: bunEnv,
     });
 
@@ -772,11 +785,11 @@ describe("websocket in subprocess", () => {
         close(ws) {},
       },
     });
-    const subprocess = Bun.spawn({
+    await using subprocess = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "websocket-subprocess.ts"), server.url.href],
-      stderr: "pipe",
-      stdin: "pipe",
-      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "inherit",
+      stdout: "inherit",
       env: bunEnv,
     });
 
@@ -805,7 +818,7 @@ describe("websocket in subprocess", () => {
       },
     });
 
-    const subprocess = Bun.spawn({
+    await using subprocess = Bun.spawn({
       cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
       stderr: "inherit",
       stdin: "inherit",
@@ -818,7 +831,7 @@ describe("websocket in subprocess", () => {
   });
 });
 
-it("#16995", async () => {
+it.concurrent("#16995", async () => {
   const publicAddress = new URL("https://1.1.1.1:3000");
   for (let i = 0; i < 4096; i++) {
     const socket = new WebSocket(publicAddress.toString());

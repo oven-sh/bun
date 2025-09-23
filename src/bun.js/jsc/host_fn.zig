@@ -16,18 +16,7 @@ pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type {
 pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
     return struct {
         pub fn function(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            if (Environment.allow_assert and Environment.is_canary) {
-                const value = functionToWrap(globalThis, callframe) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(globalThis, value, functionToWrap);
-                return value;
-            }
-            return @call(.always_inline, functionToWrap, .{ globalThis, callframe }) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
+            return toJSHostFnResult(globalThis, functionToWrap(globalThis, callframe));
         }
     }.function;
 }
@@ -35,16 +24,23 @@ pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
 pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHostFnZigWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
     return struct {
         pub fn function(ctx: *ContextType, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(globalThis, value, Function);
-            }
-            return value;
+            return toJSHostFnResult(globalThis, Function(ctx, globalThis, callframe));
         }
     }.function;
+}
+pub fn toJSHostFnResult(globalThis: *JSGlobalObject, result: bun.JSError!JSValue) JSValue {
+    if (Environment.allow_assert and Environment.is_canary) {
+        const value = result catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+        };
+        debugExceptionAssertion(globalThis, value, "_unknown_".*);
+        return value;
+    }
+    return result catch |err| switch (err) {
+        error.JSError => .zero,
+        error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+    };
 }
 
 fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime func: anytype) void {
@@ -120,6 +116,7 @@ pub fn fromJSHostCall(
     defer scope.deinit();
 
     const value = @call(.auto, function, args);
+    if (@TypeOf(value) != JSValue) @compileError("fromJSHostCall only supports JSValue");
     scope.assertExceptionPresenceMatches(value == .zero);
     return if (value == .zero) error.JSError else value;
 }
@@ -236,6 +233,20 @@ fn checkWrapParams(comptime func: anytype, comptime N: u8) []const std.builtin.T
         @compileError("first arg must be *JSGlobalObject");
     }
     return params;
+}
+
+/// Uses .SysV callconv on Windows. Use to satisfy SYSV_ABI requirement in JSC APIs.
+/// Otherwise (when the C++ counterpart has no explicit calling convention) use wrap4.
+pub fn wrap4v(comptime func: anytype) @"return": {
+    const p = checkWrapParams(func, 4);
+    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?) callconv(jsc.conv) JSValue;
+} {
+    const p = @typeInfo(@TypeOf(func)).@"fn".params;
+    return struct {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(jsc.conv) JSValue {
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3 });
+        }
+    }.wrapped;
 }
 
 const private = struct {
@@ -615,7 +626,7 @@ pub fn wrapInstanceMethod(
 
                         args[i] = try string_value.getZigString(globalThis);
                     },
-                    ?jsc.Cloudflare.ContentOptions => {
+                    ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
                             if (try content_arg.get(globalThis, "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
@@ -768,7 +779,7 @@ pub fn wrapStaticMethod(
 
                         args[i] = try string_value.getZigString(globalThis);
                     },
-                    ?jsc.Cloudflare.ContentOptions => {
+                    ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
                             if (try content_arg.get(globalThis, "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
@@ -816,12 +827,15 @@ pub fn wrapStaticMethod(
     }.method;
 }
 
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const CallFrame = jsc.CallFrame;
-const ZigString = jsc.ZigString;
-const std = @import("std");
 const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

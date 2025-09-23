@@ -1,0 +1,41 @@
+{
+	"name": "has-peer",
+	"versions": {
+		"1.0.0": {
+			"name": "has-peer",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"peer-no-deps": "^1.0.0"
+			},
+			"_id": "has-peer@1.0.0",
+			"_nodeVersion": "23.10.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-Q7Sg8KeLCUYEurarnoM/c31svn1IvmwYtkZ7DQdzJg4qzONeXs5u/q32iguDmzGS330ch/GnTiwnUVdhIuB8cQ==",
+				"shasum": "e0a4f8b2812eec8eada2aef68b71cdf572236702",
+				"tarball": "http://localhost:4873/has-peer/-/has-peer-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-06-08T19:49:59.426Z",
+		"created": "2025-06-08T19:49:59.426Z",
+		"1.0.0": "2025-06-08T19:49:59.426Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"has-peer-1.0.0.tgz": {
+			"shasum": "e0a4f8b2812eec8eada2aef68b71cdf572236702",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "has-peer",
+	"readme": "ERROR: No README data found!"
+}

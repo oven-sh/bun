@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const js_ast = bun.JSAst;
-const OOM = bun.OOM;
-
 pub const Reader = struct {
     const Self = @This();
     pub const ReadError = error{EOF};
@@ -325,25 +320,29 @@ pub fn Writer(comptime WritableStream: type) type {
 pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
-pub const Api = struct {
+pub const api = struct {
     pub const Loader = enum(u8) {
-        _none,
-        jsx,
-        js,
-        ts,
-        tsx,
-        css,
-        file,
-        json,
-        toml,
-        wasm,
-        napi,
-        base64,
-        dataurl,
-        text,
-        sqlite,
-        html,
-        bytes,
+        _none = 255,
+        jsx = 1,
+        js = 2,
+        ts = 3,
+        tsx = 4,
+        css = 5,
+        file = 6,
+        json = 7,
+        jsonc = 8,
+        toml = 9,
+        wasm = 10,
+        napi = 11,
+        base64 = 12,
+        dataurl = 13,
+        text = 14,
+        bunsh = 15,
+        sqlite = 16,
+        sqlite_embedded = 17,
+        html = 18,
+        yaml = 19,
+        bytes = 20,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -427,7 +426,7 @@ pub const Api = struct {
         }
     };
 
-    pub const StackFramePosition = bun.JSC.ZigStackFramePosition;
+    pub const StackFramePosition = bun.jsc.ZigStackFramePosition;
 
     pub const SourceLine = struct {
         /// line
@@ -801,6 +800,9 @@ pub const Api = struct {
         /// import_source
         import_source: []const u8,
 
+        /// side_effects
+        side_effects: bool = false,
+
         pub fn decode(reader: anytype) anyerror!Jsx {
             var this = std.mem.zeroes(Jsx);
 
@@ -809,6 +811,7 @@ pub const Api = struct {
             this.fragment = try reader.readValue([]const u8);
             this.development = try reader.readValue(bool);
             this.import_source = try reader.readValue([]const u8);
+            this.side_effects = try reader.readValue(bool);
             return this;
         }
 
@@ -818,6 +821,7 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.fragment), this.fragment);
             try writer.writeInt(@as(u8, @intFromBool(this.development)));
             try writer.writeValue(@TypeOf(this.import_source), this.import_source);
+            try writer.writeInt(@as(u8, @intFromBool(this.side_effects)));
         }
     };
 
@@ -1957,6 +1961,27 @@ pub const Api = struct {
 
         _,
 
+        pub fn fromJS(global: *bun.jsc.JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!?SourceMapMode {
+            if (value.isString()) {
+                const str = try value.toSliceOrNull(global);
+                defer str.deinit();
+                const utf8 = str.slice();
+                if (bun.strings.eqlComptime(utf8, "none")) {
+                    return .none;
+                }
+                if (bun.strings.eqlComptime(utf8, "inline")) {
+                    return .@"inline";
+                }
+                if (bun.strings.eqlComptime(utf8, "external")) {
+                    return .external;
+                }
+                if (bun.strings.eqlComptime(utf8, "linked")) {
+                    return .linked;
+                }
+            }
+            return null;
+        }
+
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));
         }
@@ -2801,7 +2826,7 @@ pub const Api = struct {
         token: []const u8,
 
         pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
-            const buf = allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len) catch bun.outOfMemory();
+            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len));
 
             var out: NpmRegistry = .{
                 .url = "",
@@ -2860,13 +2885,13 @@ pub const Api = struct {
                 }
             }
 
-            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!Api.NpmRegistry {
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!api.NpmRegistry {
                 return try this.parseRegistryURLStringImpl(str.data);
             }
 
-            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!Api.NpmRegistry {
+            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!api.NpmRegistry {
                 const url = bun.URL.parse(str);
-                var registry = std.mem.zeroes(Api.NpmRegistry);
+                var registry = std.mem.zeroes(api.NpmRegistry);
 
                 // Token
                 if (url.username.len == 0 and url.password.len > 0) {
@@ -2885,8 +2910,8 @@ pub const Api = struct {
                 return registry;
             }
 
-            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
-                var registry = std.mem.zeroes(Api.NpmRegistry);
+            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !api.NpmRegistry {
+                var registry = std.mem.zeroes(api.NpmRegistry);
 
                 if (obj.get("url")) |url| {
                     try this.expectString(url);
@@ -2913,7 +2938,7 @@ pub const Api = struct {
                 return registry;
             }
 
-            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !api.NpmRegistry {
                 switch (expr.data) {
                     .e_string => |str| {
                         return this.parseRegistryURLString(str);
@@ -2923,7 +2948,7 @@ pub const Api = struct {
                     },
                     else => {
                         try this.addError(expr.loc, "Expected registry to be a URL string or an object");
-                        return std.mem.zeroes(Api.NpmRegistry);
+                        return std.mem.zeroes(api.NpmRegistry);
                     },
                 }
             }
@@ -3023,6 +3048,10 @@ pub const Api = struct {
         ignore_scripts: ?bool = null,
 
         link_workspace_packages: ?bool = null,
+
+        node_linker: ?bun.install.PackageManager.Options.NodeLinker = null,
+
+        security_scanner: ?[]const u8 = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
@@ -3348,3 +3377,9 @@ pub const Api = struct {
         }
     };
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const js_ast = bun.ast;

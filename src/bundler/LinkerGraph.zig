@@ -1,6 +1,6 @@
 pub const LinkerGraph = @This();
 
-const debug = Output.scoped(.LinkerGraph, false);
+const debug = Output.scoped(.LinkerGraph, .visible);
 
 files: File.List = .{},
 files_live: BitSet = undefined,
@@ -59,15 +59,16 @@ pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kin
     ref.tag = .symbol;
 
     // TODO: will this crash on resize due to using threadlocal mimalloc heap?
-    source_symbols.push(
+    source_symbols.append(
         this.allocator,
         .{
             .kind = kind,
             .original_name = original_name,
         },
-    ) catch unreachable;
+    ) catch |err| bun.handleOom(err);
 
-    this.ast.items(.module_scope)[source_index].generated.push(this.allocator, ref) catch unreachable;
+    this.ast.items(.module_scope)[source_index].generated.append(this.allocator, ref) catch |err|
+        bun.handleOom(err);
     return ref;
 }
 
@@ -98,7 +99,7 @@ pub fn addPartToFile(
 ) !u32 {
     var parts: *Part.List = &graph.ast.items(.parts)[id];
     const part_id = @as(u32, @truncate(parts.len));
-    try parts.push(graph.allocator, part);
+    try parts.append(graph.allocator, part);
     var top_level_symbol_to_parts_overlay: ?*TopLevelSymbolToParts = null;
 
     const Iterator = struct {
@@ -127,12 +128,12 @@ pub fn addPartToFile(
                     list.appendSliceAssumeCapacity(original_parts.slice());
                     list.appendAssumeCapacity(self.part_id);
 
-                    entry.value_ptr.* = .init(list.items);
+                    entry.value_ptr.* = .fromOwnedSlice(list.items);
                 } else {
-                    entry.value_ptr.* = BabyList(u32).fromSlice(self.graph.allocator, &.{self.part_id}) catch bun.outOfMemory();
+                    entry.value_ptr.* = BabyList(u32).fromSlice(self.graph.allocator, &.{self.part_id}) catch |err| bun.handleOom(err);
                 }
             } else {
-                entry.value_ptr.push(self.graph.allocator, self.part_id) catch unreachable;
+                bun.handleOom(entry.value_ptr.append(self.graph.allocator, self.part_id));
             }
         }
     };
@@ -144,7 +145,7 @@ pub fn addPartToFile(
         .top_level_symbol_to_parts_overlay = &top_level_symbol_to_parts_overlay,
     };
 
-    js_ast.DeclaredSymbol.forEachTopLevelSymbol(&parts.ptr[part_id].declared_symbols, &ctx, Iterator.next);
+    js_ast.DeclaredSymbol.forEachTopLevelSymbol(&parts.mut(part_id).declared_symbols, &ctx, Iterator.next);
 
     return part_id;
 }
@@ -227,6 +228,7 @@ pub fn load(
     sources: []const Logger.Source,
     server_component_boundaries: ServerComponentBoundary.List,
     dynamic_import_entry_points: []const Index.Int,
+    entry_point_original_names: *const IndexStringMap,
 ) !void {
     const scb = server_component_boundaries.slice();
     try this.files.setCapacity(this.allocator, sources.len);
@@ -262,7 +264,14 @@ pub fn load(
                 bun.assert(source.index.get() == i.get());
             }
             entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
-            path_string.* = bun.PathString.init(source.path.text);
+
+            // Check if this entry point has an original name (from virtual entry resolution)
+            if (entry_point_original_names.get(i.get())) |original_name| {
+                path_string.* = bun.PathString.init(original_name);
+            } else {
+                path_string.* = bun.PathString.init(source.path.text);
+            }
+
             source_index.* = source.index.get();
         }
 
@@ -311,13 +320,12 @@ pub fn load(
             for (this.reachable_files) |source_id| {
                 for (import_records_list[source_id.get()].slice()) |*import_record| {
                     if (import_record.source_index.isValid() and this.is_scb_bitset.isSet(import_record.source_index.get())) {
-                        import_record.source_index = Index.init(
-                            scb.getReferenceSourceIndex(import_record.source_index.get()) orelse
-                                // If this gets hit, might be fine to switch this to `orelse continue`
-                                // not confident in this assertion
-                                Output.panic("Missing SCB boundary for file #{d}", .{import_record.source_index.get()}),
-                        );
-                        bun.assert(import_record.source_index.isValid()); // did not generate
+                        // Only rewrite if this is an original SCB file, not a reference file
+                        if (scb.getReferenceSourceIndex(import_record.source_index.get())) |ref_index| {
+                            import_record.source_index = Index.init(ref_index);
+                            bun.assert(import_record.source_index.isValid()); // did not generate
+                        }
+                        // If it's already a reference file, leave it as-is
                     }
                 }
             }
@@ -345,10 +353,12 @@ pub fn load(
     }
 
     {
-        var input_symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
-        var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch bun.outOfMemory();
+        var input_symbols = js_ast.Symbol.Map.initList(
+            js_ast.Symbol.NestedList.fromBorrowedSliceDangerous(this.ast.items(.symbols)),
+        );
+        var symbols = bun.handleOom(input_symbols.symbols_for_source.clone(this.allocator));
         for (symbols.slice(), input_symbols.symbols_for_source.slice()) |*dest, src| {
-            dest.* = src.clone(this.allocator) catch bun.outOfMemory();
+            dest.* = bun.handleOom(src.clone(this.allocator));
         }
         this.symbols = js_ast.Symbol.Map.initList(symbols);
     }
@@ -405,6 +415,26 @@ pub fn load(
     }
 }
 
+/// Transfers ownership of the AST to the graph allocator.
+/// This is valid only if all allocators are `MimallocArena`s.
+pub fn takeAstOwnership(this: *LinkerGraph) void {
+    const ast = this.ast.slice();
+    const heap: bun.allocators.MimallocArena.Borrowed = .downcast(this.allocator);
+    if (comptime !bun.collections.baby_list.safety_checks) return;
+    for (ast.items(.import_records)) |*import_records| {
+        import_records.transferOwnership(heap);
+    }
+    for (ast.items(.parts)) |*parts| {
+        parts.transferOwnership(heap);
+        for (parts.slice()) |*part| {
+            part.dependencies.transferOwnership(heap);
+        }
+    }
+    for (ast.items(.symbols)) |*symbols| {
+        symbols.transferOwnership(heap);
+    }
+}
+
 pub const File = struct {
     entry_bits: AutoBitSet = undefined,
 
@@ -429,7 +459,7 @@ pub const File = struct {
     entry_point_chunk_index: u32 = std.math.maxInt(u32),
 
     line_offset_table: bun.sourcemap.LineOffsetTable.List = .empty,
-    quoted_source_contents: string = "",
+    quoted_source_contents: Owned(?[]u8) = .initNull(),
 
     pub fn isEntryPoint(this: *const File) bool {
         return this.entry_point_kind.isEntryPoint();
@@ -442,26 +472,94 @@ pub const File = struct {
     pub const List = MultiArrayList(File);
 };
 
-const bun = @import("bun");
-const Environment = bun.Environment;
-const std = @import("std");
-const string = bun.string;
-const Output = bun.Output;
-const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
-const BabyList = bun.BabyList;
+pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
+    const State = struct {
+        visited: bun.collections.AutoBitSet,
+        import_records: []const ImportRecord.List,
+        flags: []JSMeta.Flags,
 
-const Logger = bun.bundle_v2.Logger;
-const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;
-const Index = bun.bundle_v2.Index;
-const Part = bun.bundle_v2.Part;
-const Ref = bun.bundle_v2.Ref;
-const EntryPoint = bun.bundle_v2.EntryPoint;
-const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
+        pub fn visitAll(self: *@This()) void {
+            for (0..self.import_records.len) |i| {
+                self.visit(i);
+            }
+        }
+
+        fn visit(self: *@This(), index: usize) void {
+            if (self.visited.isSet(index)) return;
+            self.visited.set(index);
+            if (self.flags[index].is_async_or_has_async_dependency) return;
+
+            for (self.import_records[index].sliceConst()) |*import_record| {
+                switch (import_record.kind) {
+                    .stmt => {},
+
+                    // Any use of `import()` that makes the parent async will necessarily use
+                    // top-level await, so this will have already been detected by `validateTLA`,
+                    // and `is_async_or_has_async_dependency` will already be true.
+                    //
+                    // We don't want to process these imports here because `import()` can appear in
+                    // non-top-level contexts (like inside an async function) or in contexts that
+                    // don't use `await`, which don't necessarily make the parent module async.
+                    .dynamic => continue,
+
+                    // `require()` cannot import async modules.
+                    .require, .require_resolve => continue,
+
+                    // Entry points; not imports from JS
+                    .entry_point_run, .entry_point_build => continue,
+                    // CSS imports
+                    .at, .at_conditional, .url, .composes => continue,
+                    // Other non-JS imports
+                    .html_manifest, .internal => continue,
+                }
+
+                const import_index: usize = import_record.source_index.get();
+                if (import_index >= self.import_records.len) continue;
+                self.visit(import_index);
+
+                if (self.flags[import_index].is_async_or_has_async_dependency) {
+                    self.flags[index].is_async_or_has_async_dependency = true;
+                    break;
+                }
+            }
+        }
+    };
+
+    var state: State = .{
+        .visited = try .initEmpty(bun.default_allocator, this.ast.len),
+        .import_records = this.ast.items(.import_records),
+        .flags = this.meta.items(.flags),
+    };
+    defer state.visited.deinit(bun.default_allocator);
+    state.visitAll();
+}
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const Environment = bun.Environment;
+const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
+const Output = bun.Output;
+const Owned = bun.ptr.Owned;
+
+const js_ast = bun.ast;
+const Symbol = js_ast.Symbol;
+
+const AutoBitSet = bun.bit_set.AutoBitSet;
+const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
+
+const EntryPoint = bun.bundle_v2.EntryPoint;
+const Index = bun.bundle_v2.Index;
+const IndexStringMap = bun.bundle_v2.IndexStringMap;
 const JSAst = bun.bundle_v2.JSAst;
 const JSMeta = bun.bundle_v2.JSMeta;
-const js_ast = @import("../js_ast.zig");
-const Symbol = @import("../js_ast.zig").Symbol;
-const ImportRecord = bun.ImportRecord;
+const Logger = bun.bundle_v2.Logger;
+const Part = bun.bundle_v2.Part;
+const Ref = bun.bundle_v2.Ref;
 const ResolvedExports = bun.bundle_v2.ResolvedExports;
-const AutoBitSet = bun.bit_set.AutoBitSet;
+const ServerComponentBoundary = bun.bundle_v2.ServerComponentBoundary;
+const TopLevelSymbolToParts = bun.bundle_v2.TopLevelSymbolToParts;

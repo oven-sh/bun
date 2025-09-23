@@ -7,6 +7,17 @@ import { itBundled } from "./expectBundled";
 describe("bundler", async () => {
   for (let target of ["bun", "node"] as const) {
     describe(`${target} loader`, async () => {
+      itBundled("bun/loader-yaml-file", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import hello from './hello.notyaml' with {type: "yaml"};
+        console.write(JSON.stringify(hello));
+      `,
+          "/hello.notyaml": `hello: world`,
+        },
+        run: { stdout: '{"hello":"world"}' },
+      });
       itBundled("bun/loader-text-file", {
         target,
         outfile: "",

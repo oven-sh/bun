@@ -10,12 +10,13 @@
   },
   "files": [
     "./*.d.ts",
-    "docs/**/*.md",
-    "docs/*.md",
-    "CLAUDE.md",
-    "README.md"
+    "./vendor/**/*.d.ts",
+    "./docs/**/*.md",
+    "./docs/*.md",
+    "./CLAUDE.md",
+    "./README.md"
   ],
-  "homepage": "https://bun.sh",
+  "homepage": "https://bun.com",
   "dependencies": {
     "@types/node": "*"
   },
@@ -23,8 +24,7 @@
     "@types/react": "^19"
   },
   "devDependencies": {
-    "@types/react": "^19",
-    "typescript": "^5.0.2"
+    "@types/react": "^19"
   },
   "scripts": {
     "prebuild": "echo $(pwd)",

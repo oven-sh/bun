@@ -12,7 +12,7 @@ beforeEach(() => {
   packageDir = tmpdirSync();
 });
 
-async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+async function packExpectError(cwd: string, env: NodeJS.Dict<string>, ...args: string[]) {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "pack", ...args],
     cwd,
@@ -22,10 +22,10 @@ async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: str
     env,
   });
 
-  const err = await Bun.readableStreamToText(stderr);
+  const err = await stderr.text();
   expect(err).not.toContain("panic:");
 
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   const exitCode = await exited;
   expect(exitCode).toBeGreaterThan(0);
@@ -393,6 +393,35 @@ describe("flags", () => {
     ]);
 
     expect(results).toEqual([true, true, false, true, false]);
+  });
+
+  test("--quiet", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-quiet-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv, "--quiet");
+
+    // Should not contain verbose output
+    expect(out).not.toContain("Total files:");
+    expect(out).not.toContain("Shasum:");
+    expect(out).not.toContain("Integrity:");
+    expect(out).not.toContain("Unpacked size:");
+    expect(out).not.toContain("Packed size:");
+    expect(out).not.toContain("bun pack v");
+
+    // Should only contain the tarball name
+    expect(out.trim()).toBe("pack-quiet-test-1.1.1.tgz");
+
+    // Should still create the tarball
+    expect(await exists(join(packageDir, "pack-quiet-test-1.1.1.tgz"))).toBeTrue();
   });
 });
 
@@ -762,7 +791,7 @@ describe("bundledDependnecies", () => {
       env: bunEnv,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).toContain("error:");
     expect(err).toContain("to be a boolean or an array of strings");
     expect(err).not.toContain("warning:");

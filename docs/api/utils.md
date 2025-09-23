@@ -234,7 +234,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](https://bun.sh/docs/runtime/bunfig).
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](https://bun.com/docs/runtime/bunfig).
 
 ```toml-diff#bunfig.toml
 + [debug]
@@ -704,7 +704,7 @@ Bun.nanoseconds();
 Bun implements a set of convenience functions for asynchronously consuming the body of a `ReadableStream` and converting it to various binary formats.
 
 ```ts
-const stream = (await fetch("https://bun.sh")).body;
+const stream = (await fetch("https://bun.com")).body;
 stream; // => ReadableStream
 
 await Bun.readableStreamToArrayBuffer(stream);
@@ -772,6 +772,65 @@ console.log(obj); // => { foo: "bar" }
 
 Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) and [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) serialize and deserialize the same way. This exposes the underlying [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) to JavaScript as an ArrayBuffer.
 
+## `Bun.stripANSI()` ~6-57x faster `strip-ansi` alternative
+
+`Bun.stripANSI(text: string): string`
+
+Strip ANSI escape codes from a string. This is useful for removing colors and formatting from terminal output.
+
+```ts
+const coloredText = "\u001b[31mHello\u001b[0m \u001b[32mWorld\u001b[0m";
+const plainText = Bun.stripANSI(coloredText);
+console.log(plainText); // => "Hello World"
+
+// Works with various ANSI codes
+const formatted = "\u001b[1m\u001b[4mBold and underlined\u001b[0m";
+console.log(Bun.stripANSI(formatted)); // => "Bold and underlined"
+```
+
+`Bun.stripANSI` is significantly faster than the popular [`strip-ansi`](https://www.npmjs.com/package/strip-ansi) npm package:
+
+```js
+> bun bench/snippets/strip-ansi.mjs
+cpu: Apple M3 Max
+runtime: bun 1.2.21 (arm64-darwin)
+
+benchmark                               avg (min … max) p75 / p99
+------------------------------------------------------- ----------
+Bun.stripANSI      11 chars no-ansi        8.13 ns/iter   8.27 ns
+                                   (7.45 ns … 33.59 ns)  10.29 ns
+
+Bun.stripANSI      13 chars ansi          51.68 ns/iter  52.51 ns
+                                 (46.16 ns … 113.71 ns)  57.71 ns
+
+Bun.stripANSI  16,384 chars long-no-ansi 298.39 ns/iter 305.44 ns
+                                (281.50 ns … 331.65 ns) 320.70 ns
+
+Bun.stripANSI 212,992 chars long-ansi    227.65 µs/iter 234.50 µs
+                                (216.46 µs … 401.92 µs) 262.25 µs
+```
+
+```js
+> node bench/snippets/strip-ansi.mjs
+cpu: Apple M3 Max
+runtime: node 24.6.0 (arm64-darwin)
+
+benchmark                                avg (min … max) p75 / p99
+-------------------------------------------------------- ---------
+npm/strip-ansi      11 chars no-ansi      466.79 ns/iter 468.67 ns
+                                 (454.08 ns … 570.67 ns) 543.67 ns
+
+npm/strip-ansi      13 chars ansi         546.77 ns/iter 550.23 ns
+                                 (532.74 ns … 651.08 ns) 590.35 ns
+
+npm/strip-ansi  16,384 chars long-no-ansi   4.85 µs/iter   4.89 µs
+                                     (4.71 µs … 5.00 µs)   4.98 µs
+
+npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
+                                     (1.27 ms … 1.73 ms)   1.49 ms
+
+```
+
 ## `estimateShallowMemoryUsageOf` in `bun:jsc`
 
 The `estimateShallowMemoryUsageOf` function returns a best-effort estimate of the memory usage of an object in bytes, excluding the memory usage of properties or other objects it references. For accurate per-object memory usage, use `Bun.generateHeapSnapshot`.
@@ -787,7 +846,7 @@ const buffer = Buffer.alloc(1024 * 1024);
 estimateShallowMemoryUsageOf(buffer);
 // => 1048624
 
-const req = new Request("https://bun.sh");
+const req = new Request("https://bun.com");
 estimateShallowMemoryUsageOf(req);
 // => 167
 

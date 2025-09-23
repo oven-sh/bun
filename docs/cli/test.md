@@ -17,7 +17,7 @@ Bun aims for compatibility with Jest, but not everything is implemented. To trac
 $ bun test
 ```
 
-Tests are written in JavaScript or TypeScript with a Jest-like API. Refer to [Writing tests](https://bun.sh/docs/test/writing) for full documentation.
+Tests are written in JavaScript or TypeScript with a Jest-like API. Refer to [Writing tests](https://bun.com/docs/test/writing) for full documentation.
 
 ```ts#math.test.ts
 import { expect, test } from "bun:test";
@@ -53,7 +53,7 @@ To run a specific file in the test runner, make sure the path starts with `./` o
 $ bun test ./test/specific-file.test.ts
 ```
 
-The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](https://bun.sh/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
+The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](https://bun.com/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
 
 ## CI/CD integration
 
@@ -154,11 +154,11 @@ These hooks can be defined inside test files, or in a separate file that is prel
 $ bun test --preload ./setup.ts
 ```
 
-See [Test > Lifecycle](https://bun.sh/docs/test/lifecycle) for complete documentation.
+See [Test > Lifecycle](https://bun.com/docs/test/lifecycle) for complete documentation.
 
 ## Mocks
 
-Create mock functions with the `mock` function. Mocks are automatically reset between tests.
+Create mock functions with the `mock` function.
 
 ```ts
 import { test, expect, mock } from "bun:test";
@@ -182,7 +182,7 @@ Alternatively, you can use `jest.fn()`, it behaves identically.
 + const random = jest.fn(() => Math.random());
 ```
 
-See [Test > Mocks](https://bun.sh/docs/test/mocks) for complete documentation.
+See [Test > Mocks](https://bun.com/docs/test/mocks) for complete documentation.
 
 ## Snapshot testing
 
@@ -203,7 +203,7 @@ To update snapshots, use the `--update-snapshots` flag.
 $ bun test --update-snapshots
 ```
 
-See [Test > Snapshots](https://bun.sh/docs/test/snapshots) for complete documentation.
+See [Test > Snapshots](https://bun.com/docs/test/snapshots) for complete documentation.
 
 ## UI & DOM testing
 
@@ -213,7 +213,7 @@ Bun is compatible with popular UI testing libraries:
 - [DOM Testing Library](https://testing-library.com/docs/dom-testing-library/intro/)
 - [React Testing Library](https://testing-library.com/docs/react-testing-library/intro)
 
-See [Test > DOM Testing](https://bun.sh/docs/test/dom) for complete documentation.
+See [Test > DOM Testing](https://bun.com/docs/test/dom) for complete documentation.
 
 ## Performance
 
@@ -247,5 +247,34 @@ $ bun test foo
 ```
 
 Any test file in the directory with an _absolute path_ that contains one of the targets will run. Glob patterns are not yet supported. -->
+
+## AI Agent Integration
+
+When using Bun's test runner with AI coding assistants, you can enable quieter output to improve readability and reduce context noise. This feature minimizes test output verbosity while preserving essential failure information.
+
+### Environment Variables
+
+Set any of the following environment variables to enable AI-friendly output:
+
+- `CLAUDECODE=1` - For Claude Code
+- `REPL_ID=1` - For Replit
+- `AGENT=1` - Generic AI agent flag
+
+### Behavior
+
+When an AI agent environment is detected:
+
+- Only test failures are displayed in detail
+- Passing, skipped, and todo test indicators are hidden
+- Summary statistics remain intact
+
+```bash
+# Example: Enable quiet output for Claude Code
+$ CLAUDECODE=1 bun test
+
+# Still shows failures and summary, but hides verbose passing test output
+```
+
+This feature is particularly useful in AI-assisted development workflows where reduced output verbosity improves context efficiency while maintaining visibility into test failures.
 
 {% bunCLIUsage command="test" /%}

@@ -45,4 +45,4 @@ print = "yarn"
 
 Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. Existing binary `bun.lockb` lockfiles can be migrated to the new format by running `bun install --save-text-lockfile --frozen-lockfile --lockfile-only` and deleting `bun.lockb`.
 
-More information about the new lockfile format can be found on [our blogpost](https://bun.sh/blog/bun-lock-text-lockfile).
+More information about the new lockfile format can be found on [our blogpost](https://bun.com/blog/bun-lock-text-lockfile).

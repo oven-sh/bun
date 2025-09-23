@@ -1,7 +1,8 @@
+/// Called from isolated_install.zig on the main thread.
 pub fn runTasks(
     manager: *PackageManager,
-    comptime ExtractCompletionContext: type,
-    extract_ctx: ExtractCompletionContext,
+    comptime Ctx: type,
+    extract_ctx: Ctx,
     comptime callbacks: anytype,
     install_peer: bool,
     log_level: Options.LogLevel,
@@ -33,7 +34,7 @@ pub fn runTasks(
     var patch_tasks_iter = patch_tasks_batch.iterator();
     while (patch_tasks_iter.next()) |ptask| {
         if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-        _ = manager.decrementPendingTasks();
+        manager.decrementPendingTasks();
         defer ptask.deinit();
         try ptask.runFromMainThread(manager, log_level);
         if (ptask.callback == .apply) {
@@ -42,7 +43,7 @@ pub fn runTasks(
                     if (ptask.callback.apply.task_id) |task_id| {
                         _ = task_id; // autofix
 
-                    } else if (ExtractCompletionContext == *PackageInstaller) {
+                    } else if (Ctx == *PackageInstaller) {
                         if (ptask.callback.apply.install_context) |*ctx| {
                             var installer: *PackageInstaller = extract_ctx;
                             const path = ctx.path;
@@ -64,6 +65,62 @@ pub fn runTasks(
                         }
                     }
                 }
+            } else {
+                // Patch application failed - propagate error to cause install failure
+                return error.InstallFailed;
+            }
+        }
+    }
+
+    if (Ctx == *Store.Installer) {
+        const installer: *Store.Installer = extract_ctx;
+        const batch = installer.task_queue.popBatch();
+        var iter = batch.iterator();
+        while (iter.next()) |task| {
+            switch (task.result) {
+                .none => {
+                    if (comptime Environment.ci_assert) {
+                        bun.assertWithLocation(false, @src());
+                    }
+                    installer.onTaskComplete(task.entry_id, .success);
+                },
+                .err => |err| {
+                    installer.onTaskFail(task.entry_id, err);
+                },
+                .blocked => {
+                    installer.onTaskBlocked(task.entry_id);
+                },
+                .run_scripts => |list| {
+                    const entries = installer.store.entries.slice();
+
+                    const node_id = entries.items(.node_id)[task.entry_id.get()];
+                    const dep_id = installer.store.nodes.items(.dep_id)[node_id.get()];
+                    const dep = installer.lockfile.buffers.dependencies.items[dep_id];
+                    installer.manager.spawnPackageLifecycleScripts(
+                        installer.command_ctx,
+                        list.*,
+                        dep.behavior.optional,
+                        false,
+                        .{
+                            .entry_id = task.entry_id,
+                            .installer = installer,
+                        },
+                    ) catch |err| {
+                        // .monotonic is okay for the same reason as `.done`: we popped this
+                        // task from the `UnboundedQueue`, and the task is no longer running.
+                        entries.items(.step)[task.entry_id.get()].store(.done, .monotonic);
+                        installer.onTaskFail(task.entry_id, .{ .run_scripts = err });
+                    };
+                },
+                .done => {
+                    if (comptime Environment.ci_assert) {
+                        // .monotonic is okay because we should have already synchronized with the
+                        // completed task thread by virtue of popping from the `UnboundedQueue`.
+                        const step = installer.store.entries.items(.step)[task.entry_id.get()].load(.monotonic);
+                        bun.assertWithLocation(step == .done, @src());
+                    }
+                    installer.onTaskComplete(task.entry_id, .success);
+                },
             }
         }
     }
@@ -72,7 +129,7 @@ pub fn runTasks(
     var network_tasks_iter = network_tasks_batch.iterator();
     while (network_tasks_iter.next()) |task| {
         if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-        _ = manager.decrementPendingTasks();
+        manager.decrementPendingTasks();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
 
@@ -137,7 +194,7 @@ pub fn runTasks(
                                 manager.allocator,
                                 fmt,
                                 .{ @errorName(err), name.slice() },
-                            ) catch bun.outOfMemory();
+                            ) catch |e| bun.handleOom(e);
                         } else {
                             manager.log.addWarningFmt(
                                 null,
@@ -145,7 +202,7 @@ pub fn runTasks(
                                 manager.allocator,
                                 fmt,
                                 .{ @errorName(err), name.slice() },
-                            ) catch bun.outOfMemory();
+                            ) catch |e| bun.handleOom(e);
                         }
 
                         if (manager.subcommand != .remove) {
@@ -193,7 +250,7 @@ pub fn runTasks(
                             manager.allocator,
                             "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                             .{ metadata.url, response.status_code },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -201,7 +258,7 @@ pub fn runTasks(
                             manager.allocator,
                             "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
                             .{ metadata.url, response.status_code },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
                     if (manager.subcommand != .remove) {
                         for (manager.update_requests) |*request| {
@@ -240,7 +297,7 @@ pub fn runTasks(
                             Npm.PackageManifest.Serializer.saveAsync(
                                 &entry.value_ptr.manifest,
                                 manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory(),
+                                manager.getTemporaryDirectory().handle,
                                 manager.getCacheDirectory(),
                             );
                         }
@@ -256,7 +313,7 @@ pub fn runTasks(
 
                         try manager.processDependencyList(
                             dependency_list,
-                            ExtractCompletionContext,
+                            Ctx,
                             extract_ctx,
                             callbacks,
                             install_peer,
@@ -333,7 +390,7 @@ pub fn runTasks(
                                 extract.name.slice(),
                                 extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -345,7 +402,7 @@ pub fn runTasks(
                                 extract.name.slice(),
                                 extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     }
                     if (manager.subcommand != .remove) {
                         for (manager.update_requests) |*request| {
@@ -397,7 +454,7 @@ pub fn runTasks(
                                 metadata.url,
                                 response.status_code,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -408,7 +465,7 @@ pub fn runTasks(
                                 metadata.url,
                                 response.status_code,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
                     if (manager.subcommand != .remove) {
                         for (manager.update_requests) |*request| {
@@ -449,7 +506,7 @@ pub fn runTasks(
     while (resolve_tasks_iter.next()) |task| {
         if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
         defer manager.preallocated_resolve_tasks.put(task);
-        _ = manager.decrementPendingTasks();
+        manager.decrementPendingTasks();
 
         if (task.log.msgs.items.len > 0) {
             try task.log.print(Output.errorWriter());
@@ -483,7 +540,7 @@ pub fn runTasks(
                                 @errorName(err),
                                 name.slice(),
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     }
 
                     continue;
@@ -500,7 +557,7 @@ pub fn runTasks(
                 const dependency_list = dependency_list_entry.value_ptr.*;
                 dependency_list_entry.value_ptr.* = .{};
 
-                try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
 
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {
@@ -553,22 +610,34 @@ pub fn runTasks(
                                 @errorName(err),
                                 alias,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     }
                     continue;
                 }
 
                 manager.extracted_count += 1;
-                bun.Analytics.Features.extracted_packages += 1;
+                bun.analytics.Features.extracted_packages += 1;
 
-                if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
-                    extract_ctx.fixCachedLockfilePackageSlices();
-                    callbacks.onExtract(
-                        extract_ctx,
-                        dependency_id,
-                        &task.data.extract,
-                        log_level,
-                    );
+                if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    switch (Ctx) {
+                        *PackageInstaller => {
+                            extract_ctx.fixCachedLockfilePackageSlices();
+                            callbacks.onExtract(
+                                extract_ctx,
+                                task.id,
+                                dependency_id,
+                                &task.data.extract,
+                                log_level,
+                            );
+                        },
+                        *Store.Installer => {
+                            callbacks.onExtract(
+                                extract_ctx,
+                                task.id,
+                            );
+                        },
+                        else => @compileError("unexpected context type"),
+                    }
                 } else if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
                     // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                     // We need to make sure we resolve the dependencies first before calling the onExtract callback
@@ -626,11 +695,6 @@ pub fn runTasks(
 
                 manager.setPreinstallState(package_id, manager.lockfile, .done);
 
-                if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext != *PackageInstaller) {
-                    // handled *PackageInstaller above
-                    callbacks.onExtract(extract_ctx, dependency_id, &task.data.extract, log_level);
-                }
-
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {
                         manager.setNodeName(manager.downloads_node.?, alias, ProgressStrings.extract_emoji, true);
@@ -666,12 +730,12 @@ pub fn runTasks(
                                 @errorName(err),
                                 name,
                             },
-                        ) catch bun.outOfMemory();
+                        ) catch |e| bun.handleOom(e);
                     }
                     continue;
                 }
 
-                if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                if (comptime @TypeOf(callbacks.onExtract) != void and Ctx == *PackageInstaller) {
                     // Installing!
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
@@ -712,7 +776,7 @@ pub fn runTasks(
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                    try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
                 }
 
                 if (log_level.showProgress()) {
@@ -740,25 +804,37 @@ pub fn runTasks(
                             @errorName(err),
                             alias.slice(),
                         },
-                    ) catch bun.outOfMemory();
+                    ) catch |e| bun.handleOom(e);
 
                     continue;
                 }
 
-                if (comptime @TypeOf(callbacks.onExtract) != void and ExtractCompletionContext == *PackageInstaller) {
+                if (comptime @TypeOf(callbacks.onExtract) != void) {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies
+                    switch (Ctx) {
+                        *PackageInstaller => {
 
-                    // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
-                    // keeping just in case for now
-                    extract_ctx.fixCachedLockfilePackageSlices();
+                            // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
+                            // keeping just in case for now
+                            extract_ctx.fixCachedLockfilePackageSlices();
 
-                    callbacks.onExtract(
-                        extract_ctx,
-                        git_checkout.dependency_id,
-                        &task.data.git_checkout,
-                        log_level,
-                    );
+                            callbacks.onExtract(
+                                extract_ctx,
+                                task.id,
+                                git_checkout.dependency_id,
+                                &task.data.git_checkout,
+                                log_level,
+                            );
+                        },
+                        *Store.Installer => {
+                            callbacks.onExtract(
+                                extract_ctx,
+                                task.id,
+                            );
+                        },
+                        else => @compileError("unexpected context type"),
+                    }
                 } else if (manager.processExtractedTarballPackage(
                     &package_id,
                     git_checkout.dependency_id,
@@ -795,13 +871,8 @@ pub fn runTasks(
                         }
                     }
 
-                    if (comptime @TypeOf(callbacks.onExtract) != void) {
-                        callbacks.onExtract(
-                            extract_ctx,
-                            git_checkout.dependency_id,
-                            &task.data.git_checkout,
-                            log_level,
-                        );
+                    if (@TypeOf(callbacks.onExtract) != void) {
+                        @compileError("ctx should be void");
                     }
                 }
 
@@ -817,16 +888,19 @@ pub fn runTasks(
 }
 
 pub inline fn pendingTaskCount(manager: *const PackageManager) u32 {
-    return manager.pending_tasks.load(.monotonic);
+    return manager.pending_tasks.load(.acquire);
 }
 
-pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) u32 {
+pub inline fn incrementPendingTasks(manager: *PackageManager, count: u32) void {
     manager.total_tasks += count;
-    return manager.pending_tasks.fetchAdd(count, .monotonic);
+    // .monotonic is okay because the start of a task doesn't carry any side effects that other
+    // threads depend on (but finishing a task does). Note that this method should usually be called
+    // before the task is actually spawned.
+    _ = manager.pending_tasks.fetchAdd(count, .monotonic);
 }
 
-pub inline fn decrementPendingTasks(manager: *PackageManager) u32 {
-    return manager.pending_tasks.fetchSub(1, .monotonic);
+pub inline fn decrementPendingTasks(manager: *PackageManager) void {
+    _ = manager.pending_tasks.fetchSub(1, .release);
 }
 
 pub fn flushNetworkQueue(this: *PackageManager) void {
@@ -880,7 +954,7 @@ pub fn flushDependencyQueue(this: *PackageManager) void {
 pub fn scheduleTasks(manager: *PackageManager) usize {
     const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len + manager.patch_apply_batch.len + manager.patch_calc_hash_batch.len;
 
-    _ = manager.incrementPendingTasks(@truncate(count));
+    manager.incrementPendingTasks(@intCast(count));
     manager.thread_pool.schedule(manager.patch_apply_batch);
     manager.thread_pool.schedule(manager.patch_calc_hash_batch);
     manager.thread_pool.schedule(manager.task_batch);
@@ -934,8 +1008,8 @@ pub fn allocGitHubURL(this: *const PackageManager, repository: *const Repository
     ) catch unreachable;
 }
 
-pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: bool) bool {
-    const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
+pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: Task.Id, is_required: bool) bool {
+    const gpe = bun.handleOom(this.network_dedupe_map.getOrPut(task_id));
 
     // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
     gpe.value_ptr.is_required = if (!gpe.found_existing)
@@ -946,13 +1020,13 @@ pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: b
     return gpe.found_existing;
 }
 
-pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: u64) bool {
+pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: Task.Id) bool {
     return (this.network_dedupe_map.get(task_id) orelse return true).is_required;
 }
 
 pub fn generateNetworkTaskForTarball(
     this: *PackageManager,
-    task_id: u64,
+    task_id: Task.Id,
     url: string,
     is_required: bool,
     dependency_id: DependencyID,
@@ -989,17 +1063,17 @@ pub fn generateNetworkTaskForTarball(
                 this.lockfile.str(&package.name),
                 *FileSystem.FilenameStore,
                 FileSystem.FilenameStore.instance,
-            ) catch bun.outOfMemory(),
+            ) catch |err| bun.handleOom(err),
             .resolution = package.resolution,
             .cache_dir = this.getCacheDirectory(),
-            .temp_dir = this.getTemporaryDirectory(),
+            .temp_dir = this.getTemporaryDirectory().handle,
             .dependency_id = dependency_id,
             .integrity = package.meta.integrity,
             .url = strings.StringOrTinyString.initAppendIfNeeded(
                 url,
                 *FileSystem.FilenameStore,
                 FileSystem.FilenameStore.instance,
-            ) catch bun.outOfMemory(),
+            ) catch |err| bun.handleOom(err),
         },
         scope,
         authorization,
@@ -1008,7 +1082,7 @@ pub fn generateNetworkTaskForTarball(
     return network_task;
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -1018,7 +1092,6 @@ const Output = bun.Output;
 const ThreadPool = bun.ThreadPool;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
-const string = bun.string;
 const strings = bun.strings;
 
 const Fs = bun.fs;
@@ -1035,6 +1108,7 @@ const PackageID = bun.install.PackageID;
 const PackageManifestError = bun.install.PackageManifestError;
 const PatchTask = bun.install.PatchTask;
 const Repository = bun.install.Repository;
+const Store = bun.install.Store;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
 

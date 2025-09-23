@@ -1,18 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const C = @import("std").zig.c_builtins;
-const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
-const time_t = C.time_t;
-const va_list = C.va_list;
-const struct_timeval = C.struct_timeval;
-const DEFINE_NAMED_STACK_OF = C.DEFINE_NAMED_STACK_OF;
-const struct_timespec = C.struct_timespec;
-const NULL = C.NULL;
-const DECLARE_ASN1_FUNCTIONS_name = C.DECLARE_ASN1_FUNCTIONS_name;
-const DECLARE_ASN1_ALLOC_FUNCTIONS_name = C.DECLARE_ASN1_ALLOC_FUNCTIONS_name;
-const timercmp = C.timercmp;
-const struct_tm = C.struct_tm;
-const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+const pthread_rwlock_t = if (bun.Environment.isPosix) std.c.pthread_rwlock_t else *anyopaque;
 /// `isize` alias. Kept for clarity.
 ///
 /// Docs from OpenSSL:
@@ -355,16 +341,23 @@ pub const struct_evp_pkey_ctx_st = opaque {};
 pub const EVP_PKEY_CTX = struct_evp_pkey_ctx_st;
 pub const struct_evp_md_pctx_ops = opaque {};
 pub const struct_env_md_ctx_st = extern struct {
+    // md_data contains the hash-specific context
+    md_data: extern union {
+        data: [208]u8,
+        alignment: u64,
+    },
+    // digest is the underlying digest function, or NULL if not set
     digest: ?*const EVP_MD,
-    md_data: ?*anyopaque,
+    // pctx is an opaque pointer to additional context
     pctx: ?*EVP_PKEY_CTX,
+    // pctx_ops points to a vtable that contains functions to manipulate pctx
     pctx_ops: ?*const struct_evp_md_pctx_ops,
 };
 pub const EVP_MD_CTX = struct_env_md_ctx_st;
 pub const struct_evp_aead_st = opaque {};
 pub const EVP_AEAD = struct_evp_aead_st;
 pub const union_evp_aead_ctx_st_state = extern union {
-    @"opaque": [580]u8,
+    @"opaque": [560]u8,
     alignment: u64,
 };
 pub const struct_evp_aead_ctx_st = extern struct {
@@ -449,11 +442,11 @@ pub const struct_sha256_state_st = extern struct {
 pub const SHA256_CTX = struct_sha256_state_st;
 pub const struct_sha512_state_st = extern struct {
     h: [8]u64,
-    Nl: u64,
-    Nh: u64,
+    num: u16,
+    md_len: u16,
+    bytes_so_far_high: u32,
+    bytes_so_far_low: u64,
     p: [128]u8,
-    num: c_uint,
-    md_len: c_uint,
 };
 pub const SHA512_CTX = struct_sha512_state_st;
 const struct_unnamed_5 = extern struct {
@@ -19280,3 +19273,19 @@ pub fn getError(this: *SSL, rc: c_int) SSL.Error!u32 {
         else => @as(u32, @intCast(rc)),
     };
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const C = @import("std").zig.c_builtins;
+const DECLARE_ASN1_ALLOC_FUNCTIONS_name = C.DECLARE_ASN1_ALLOC_FUNCTIONS_name;
+const DECLARE_ASN1_FUNCTIONS_name = C.DECLARE_ASN1_FUNCTIONS_name;
+const DEFINE_NAMED_STACK_OF = C.DEFINE_NAMED_STACK_OF;
+const NULL = C.NULL;
+const enum_ssl_verify_result_t = C.enum_ssl_verify_result_t;
+const struct_timespec = C.struct_timespec;
+const struct_timeval = C.struct_timeval;
+const struct_tm = C.struct_tm;
+const time_t = C.time_t;
+const timercmp = C.timercmp;
+const va_list = C.va_list;

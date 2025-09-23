@@ -13,23 +13,55 @@ on:
 jobs:
   claude:
     if: |
+      github.repository == 'oven-sh/bun' &&
+      (
+        (github.event_name == 'issue_comment' && (github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'COLLABORATOR')) ||
+        (github.event_name == 'pull_request_review_comment' && (github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'COLLABORATOR')) ||
+        (github.event_name == 'pull_request_review' && (github.event.review.author_association == 'MEMBER' || github.event.review.author_association == 'OWNER' || github.event.review.author_association == 'COLLABORATOR')) ||
+        (github.event_name == 'issues' && (github.event.issue.author_association == 'MEMBER' || github.event.issue.author_association == 'OWNER' || github.event.issue.author_association == 'COLLABORATOR'))
+      ) &&
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
-    runs-on: ubuntu-latest
+    runs-on: claude
+    env:
+      IS_SANDBOX: 1
+    container:
+      image: localhost:5000/claude-bun:latest
+      options: --privileged --user 1000:1000
     permissions:
       contents: read
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
+        working-directory: /workspace/bun
+        run: |
+          git config --global user.email "claude-bot@bun.sh" && \
+          git config --global user.name "Claude Bot" && \
+          git config --global url."git@github.com:".insteadOf "https://github.com/" && \
+          git config --global url."git@github.com:".insteadOf "http://github.com/" && \
+          git config --global --add safe.directory /workspace/bun && \
+          git config --global push.default current && \
+          git config --global pull.rebase true && \
+          git config --global init.defaultBranch main && \
+          git config --global core.editor "vim" && \
+          git config --global color.ui auto && \
+          git config --global fetch.prune true && \
+          git config --global diff.colorMoved zebra && \
+          git config --global merge.conflictStyle diff3 && \
+          git config --global rerere.enabled true && \
+          git config --global core.autocrlf input
+          git fetch origin ${{ github.event.pull_request.head.sha }}
+          git checkout ${{ github.event.pull_request.head.ref }}
+          git reset --hard origin/${{ github.event.pull_request.head.ref }}
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@beta
+        # TODO: switch this out once they merge their v1
+        uses: km-anthropic/claude-code-action@v1-dev
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-
+          timeout_minutes: "180"
+          claude_args: |
+            --dangerously-skip-permissions
+            --system-prompt "You are working on the Bun codebase"
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

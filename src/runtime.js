@@ -18,14 +18,16 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 export var __base64ToUint8Array =
   /* @__PURE__ */
   (() => {
-    const decoder = Uint8Array.fromBase64 || (base64 => {
-      const binaryString = atob(base64);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      return bytes;
-    });
+    const decoder =
+      Uint8Array.fromBase64 ||
+      (base64 => {
+        const binaryString = atob(base64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes;
+      });
 
     return base64 => {
       const bytes = decoder(base64);

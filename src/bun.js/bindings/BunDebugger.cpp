@@ -382,6 +382,31 @@ public:
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
+    void flushPendingMessages()
+    {
+        // Process any pending messages to debugger thread
+        {
+            Locker<Lock> locker(debuggerThreadMessagesLock);
+            if (!debuggerThreadMessages.isEmpty()) {
+                auto* context = debuggerScriptExecutionContext;
+                if (context) {
+                    receiveMessagesOnDebuggerThread(*context, reinterpret_cast<Zig::GlobalObject*>(context->jsGlobalObject()));
+                }
+            }
+        }
+
+        // Process any pending messages back to inspector thread
+        {
+            Locker<Lock> locker(jsThreadMessagesLock);
+            if (!jsThreadMessages.isEmpty()) {
+                auto* context = ScriptExecutionContext::getScriptExecutionContext(scriptExecutionContextIdentifier);
+                if (context) {
+                    receiveMessagesOnInspectorThread(*context, reinterpret_cast<Zig::GlobalObject*>(context->jsGlobalObject()), false);
+                }
+            }
+        }
+    }
+
     WTF::Lock jsWaitForMessageFromInspectorLock;
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
@@ -540,6 +565,31 @@ extern "C" void BunDebugger__willHotReload()
             }
         }
     });
+}
+
+extern "C" void BunDebugger__flushPendingMessages(JSGlobalObject* globalObject)
+{
+    if (!globalObject || !inspectorConnections) {
+        return;
+    }
+
+    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (!zigGlobalObject) {
+        return;
+    }
+
+    auto* context = zigGlobalObject->scriptExecutionContext();
+    if (!context) {
+        return;
+    }
+
+    Locker<Lock> locker(inspectorConnectionsLock);
+    auto connections = inspectorConnections->get(context->identifier());
+    for (auto* connection : connections) {
+        if (connection->status == ConnectionStatus::Connected) {
+            connection->flushPendingMessages();
+        }
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))

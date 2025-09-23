@@ -5,6 +5,8 @@ pub fn cloneActiveStrong() ?BunTestPtr {
 
 pub const DoneCallback = @import("./DoneCallback.zig");
 
+extern "c" fn BunDebugger__flushPendingMessages(*jsc.JSGlobalObject) void;
+
 pub const js_fns = struct {
     pub const Signature = union(enum) {
         scope_functions: *const ScopeFunctions,
@@ -496,7 +498,7 @@ pub const BunTest = struct {
         }
     }
 
-    fn _advance(this: *BunTest, _: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
+    fn _advance(this: *BunTest, globalThis: *jsc.JSGlobalObject) bun.JSError!enum { cont, exit } {
         group.begin(@src());
         defer group.end();
         group.log("advance from {s}", .{@tagName(this.phase)});
@@ -523,6 +525,24 @@ pub const BunTest = struct {
             },
             .execution => {
                 this.in_run_loop = false;
+
+                // When the test reporter is enabled (VSCode extension), ensure all
+                // test events are sent before the process exits.
+                // This only happens when the debugger is connected AND the TestReporter domain is enabled.
+                const vm = globalThis.bunVM();
+                if (vm.debugger) |*debugger| {
+                    // Only flush if TestReporter is actually enabled (i.e., VSCode extension connected)
+                    if (debugger.test_reporter_agent.isEnabled()) {
+                        // Flush all pending inspector messages synchronously
+                        // This ensures messages are actually sent before we exit
+                        BunDebugger__flushPendingMessages(globalThis);
+
+                        // Process the event loop once to handle the flushed messages
+                        vm.eventLoop().tick();
+                        vm.drainMicrotasks();
+                    }
+                }
+
                 this.phase = .done;
 
                 return .exit;

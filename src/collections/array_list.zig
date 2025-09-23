@@ -208,7 +208,7 @@ pub fn ArrayListAlignedIn(
             len: usize,
             new_items: []const T,
         ) AllocError!void {
-            bun.memory.deinit(self.items()[start..start + len]);
+            bun.memory.deinit(self.items()[start .. start + len]);
             return self.replaceRangeShallow(start, len, new_items);
         }
 
@@ -231,7 +231,7 @@ pub fn ArrayListAlignedIn(
             len: usize,
             new_items: []const T,
         ) void {
-            for (self.items()[start..start + len]) |*item| {
+            for (self.items()[start .. start + len]) |*item| {
                 bun.memory.deinit(item);
             }
             self.replaceRangeAssumeCapacityShallow(start, len, new_items);

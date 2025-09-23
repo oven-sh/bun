@@ -18,7 +18,7 @@ pub fn toJSForSSR(this: *Response, globalObject: *JSGlobalObject, kind: SSRKind)
     return BakeResponse__createForSSR(globalObject, this, @intFromEnum(kind));
 }
 
-pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) callconv(jsc.conv) ?*anyopaque {
+pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, bake_ssr_has_jsx: *c_int) callconv(jsc.conv) ?*anyopaque {
     return @as(*Response, constructor(globalObject, callFrame, bake_ssr_has_jsx) catch |err| switch (err) {
         error.JSError => return null,
         error.OutOfMemory => {

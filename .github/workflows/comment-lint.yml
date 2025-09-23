@@ -9,6 +9,7 @@ on:
 
 env:
   LLVM_VERSION_MAJOR: "19"
+  LLVM_VERSION: "19.1.7"
 
 jobs:
   comment-lint:
@@ -23,7 +24,6 @@ jobs:
         id: env
         shell: bash
         run: |
-          sudo apt-get remove -qq clang
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update -qq
@@ -32,7 +32,7 @@ jobs:
           # Copy to outputs
           {
             echo 'text_output<<EOF'
-            bun run clang-tidy:check
+            bun run clang-tidy:check -DLLVM_VERSION=${{ env.LLVM_VERSION }}
             echo EOF
           } >> "$GITHUB_OUTPUT"
 

@@ -880,9 +880,7 @@ pub const Command = struct {
                     }
 
                     if (found_file) |app_file| {
-                        // Found the app config file, run it
                         bun.bake.printWarning();
-                        Output.prettyln("<green>Starting dev server...<r>", .{});
                         Output.flush();
 
                         // Update positionals to include the app file

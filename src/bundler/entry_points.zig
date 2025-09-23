@@ -160,6 +160,7 @@ pub const ServerEntryPoint = struct {
     ) !void {
         const code = brk: {
             if (is_hot_reload_enabled) {
+                // Started development server
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\// @bun

@@ -925,7 +925,19 @@ pub fn parse(
     const root = bun.interchange.yaml.YAML.parse(source, &log, arena.allocator()) catch |err| return switch (err) {
         error.OutOfMemory => |oom| oom,
         error.StackOverflow => global.throwStackOverflow(),
-        else => global.throwValue(try log.toJS(global, bun.default_allocator, "Failed to parse YAML")),
+        else => {
+            // Throw a SyntaxError instead of BuildMessage to match JSON.parse behavior
+            if (log.msgs.items.len > 0) {
+                const first_msg = log.msgs.items[0];
+                const error_text = first_msg.data.text;
+                var message_buf: [4096]u8 = undefined;
+                const message = std.fmt.bufPrint(&message_buf, "YAML Parse error: {s}", .{error_text}) catch "YAML Parse error";
+                var str = ZigString.initUTF8(message);
+                return global.throwValue(str.toSyntaxErrorInstance(global));
+            }
+            var str = ZigString.static("Failed to parse YAML");
+            return global.throwValue(str.toSyntaxErrorInstance(global));
+        },
     };
 
     var ctx: ParserCtx = .{

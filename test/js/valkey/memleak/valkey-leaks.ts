@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { heapStats } from "bun:jsc";
 import { ConnectionType, createClient, isEnabled } from "../test-utils";
-import { numeric } from "harness";
+import * as numeric from "_util/numeric";
 
 const gc = globalThis.gc || globalThis.Bun?.gc || (() => {});
 

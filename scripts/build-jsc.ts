@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "child_process";
-import { existsSync, mkdirSync, rm, rmSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { arch, platform } from "os";
 import { join, resolve } from "path";
 

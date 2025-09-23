@@ -4103,10 +4103,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
-    if (value.getOwnPropertySlot(globalObject, property, slot)) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, property)));
-    }
-    RELEASE_AND_RETURN(scope, {});
+    bool hasSlot = value.getOwnPropertySlot(globalObject, property, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasSlot) return {};
+    auto slotValue = slot.getValue(globalObject, property);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(slotValue);
 }
 
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
@@ -4889,6 +4891,10 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (stackValue) {
+            // Prevent infinite recursion if stack property is the error object itself
+            if (stackValue == val) {
+                return;
+            }
             if (stackValue.isString()) {
                 WTF::String stack = stackValue.toWTFString(global);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]] {

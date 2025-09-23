@@ -634,27 +634,36 @@ pub const BunTest = struct {
                     }
                 }
 
-                // Extract error message and name
+                // Extract error message safely
                 const error_value = exception.?;
-                var message = jsc.ZigString.init("");
-                var name = jsc.ZigString.init("");
 
-                if (error_value.isError()) {
-                    error_value.toZigString(&message, globalThis) catch {};
-                    // Get the error name if available
-                    if (error_value.getTruthy(globalThis, "name") catch null) |name_value| {
-                        name_value.toZigString(&name, globalThis) catch {};
+                // Try to get the message property first
+                var message_str = bun.String.empty;
+                defer message_str.deref();
+
+                if (error_value.getTruthy(globalThis, "message") catch null) |msg_val| {
+                    var msg_zig = jsc.ZigString.init("");
+                    msg_val.toZigString(&msg_zig, globalThis) catch {};
+                    if (msg_zig.len > 0) {
+                        message_str = bun.String.init(msg_zig);
                     }
-                } else {
-                    error_value.toZigString(&message, globalThis) catch {};
                 }
 
-                var message_str = bun.String.init(message);
-                var name_str = bun.String.init(name);
-                defer message_str.deref();
-                defer name_str.deref();
+                // If no message property, convert the whole error to string
+                if (message_str.isEmpty()) {
+                    var error_zig = jsc.ZigString.init("");
+                    error_value.toZigString(&error_zig, globalThis) catch {};
+                    if (error_zig.len > 0) {
+                        message_str = bun.String.init(error_zig);
+                    }
+                }
 
-                debugger.test_reporter_agent.reportTestError(test_id, if (message_str.isEmpty()) null else &message_str, if (name_str.isEmpty()) null else &name_str, null);
+                debugger.test_reporter_agent.reportTestError(
+                    test_id,
+                    if (message_str.isEmpty()) null else &message_str,
+                    null,
+                    null
+                );
             }
         }
 

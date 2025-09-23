@@ -571,6 +571,33 @@ pub const JunitReporter = struct {
     }
 };
 
+fn parseFileLineArg(arg: []const u8) ?struct { file_pattern: []const u8, line_num: u32 } {
+    const colon_index = strings.lastIndexOfChar(arg, ':') orelse return null;
+    const after_colon = arg[colon_index + 1 ..];
+    const before_colon = arg[0..colon_index];
+    if (before_colon.len == 0) return null;
+
+    const line_num = std.fmt.parseInt(u32, after_colon, 10) catch return null;
+    if (line_num == 0) return null;
+
+    // Check for file.ts:5:10 syntax (column specified)
+    if (strings.lastIndexOfChar(before_colon, ':')) |second_last_colon_index| {
+        if (std.fmt.parseInt(u32, before_colon[second_last_colon_index + 1 ..], 10) catch null) |line_num_2| {
+            if (line_num_2 == 0) return null;
+            // Use the first line number (ignore column)
+            return .{
+                .file_pattern = arg[0..second_last_colon_index],
+                .line_num = line_num_2,
+            };
+        }
+    }
+
+    return .{
+        .file_pattern = before_colon,
+        .line_num = line_num,
+    };
+}
+
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     last_dot: u32 = 0,
@@ -1395,31 +1422,58 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
+
+        // Collect line filters
+        var line_filters = std.ArrayList(struct { path: []const u8, line: u32 }).init(ctx.allocator);
+        defer line_filters.deinit();
+
         const has_relative_path = for (ctx.positionals) |arg| {
-            if (std.fs.path.isAbsolute(arg) or
-                strings.startsWith(arg, "./") or
-                strings.startsWith(arg, "../") or
-                (Environment.isWindows and (strings.startsWith(arg, ".\\") or
-                    strings.startsWith(arg, "..\\")))) break true;
+            // Check if it's a file path or file:line path
+            const file_part = if (parseFileLineArg(arg)) |parsed| parsed.file_pattern else arg;
+            if (std.fs.path.isAbsolute(file_part) or
+                strings.startsWith(file_part, "./") or
+                strings.startsWith(file_part, "../") or
+                (Environment.isWindows and (strings.startsWith(file_part, ".\\") or
+                    strings.startsWith(file_part, "..\\")))) break true;
         } else false;
         if (has_relative_path) {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
             const file_or_dirnames = ctx.positionals[1..];
             for (file_or_dirnames) |arg| {
-                scanner.scan(arg) catch |err| switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
-                    // don't error if multiple are passed; one might fail
-                    // but the others may not
-                    error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                        if (Output.isAIAgent()) {
-                            Output.prettyErrorln("Test filter <b>{}<r> had no matches in --cwd={}", .{ bun.fmt.quote(arg), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
-                        } else {
-                            Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
-                        }
-                        Global.exit(1);
-                    },
-                };
+                // Parse file:line syntax if present
+                if (parseFileLineArg(arg)) |parsed| {
+                    scanner.scan(parsed.file_pattern) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        error.DoesNotExist => if (file_or_dirnames.len == 1) {
+                            if (Output.isAIAgent()) {
+                                Output.prettyErrorln("Test file <b>{}<r> had no matches in --cwd={}", .{ bun.fmt.quote(parsed.file_pattern), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
+                            } else {
+                                Output.prettyErrorln("Test file <b>{}<r> had no matches", .{bun.fmt.quote(parsed.file_pattern)});
+                            }
+                            Global.exit(1);
+                        },
+                    };
+                    // Store the line filter to pass to the test runner
+                    line_filters.append(.{
+                        .path = parsed.file_pattern,
+                        .line = parsed.line_num,
+                    }) catch bun.outOfMemory();
+                } else {
+                    scanner.scan(arg) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        // don't error if multiple are passed; one might fail
+                        // but the others may not
+                        error.DoesNotExist => if (file_or_dirnames.len == 1) {
+                            if (Output.isAIAgent()) {
+                                Output.prettyErrorln("Test filter <b>{}<r> had no matches in --cwd={}", .{ bun.fmt.quote(arg), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
+                            } else {
+                                Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                            }
+                            Global.exit(1);
+                        },
+                    };
+                }
             }
         } else {
             // Treat arguments as filters and scan the codebase
@@ -1475,6 +1529,17 @@ pub const TestCommand = struct {
                 .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
                 .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
                 else => {},
+            }
+
+            // Add line filters to the test runner
+            for (line_filters.items) |filter| {
+                // Convert relative paths to absolute paths
+                const abs_path = if (std.fs.path.isAbsolute(filter.path))
+                    filter.path
+                else
+                    resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, filter.path);
+
+                reporter.jest.addLineFilter(abs_path, filter.line) catch bun.outOfMemory();
             }
 
             runAllTests(reporter, vm, test_files, ctx.allocator);

@@ -2147,7 +2147,6 @@ pub fn Package(comptime SemverIntType: type) type {
                     try loadFields(stream, List, &list, &needs_update);
                 }
 
-
                 return .{
                     .list = list,
                     .needs_update = needs_update,

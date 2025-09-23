@@ -125,7 +125,9 @@ YAML.stringify(value, replacer?, space?)
 
 - `value`: The value to convert to YAML
 - `replacer`: Currently only `null` or `undefined` (function replacers not yet supported)
-- `space`: Number of spaces for indentation (e.g., `2`) or a string to use for indentation
+- `space`: Number of spaces for indentation (e.g., `2`) or a string to use for indentation. **Without this parameter, outputs flow-style (single-line) YAML**
+
+#### Basic Usage
 
 ```ts
 import { YAML } from "bun";
@@ -133,19 +135,36 @@ import { YAML } from "bun";
 const data = {
   name: "John Doe",
   age: 30,
-  email: "john@example.com",
-  hobbies: ["reading", "coding", "hiking"],
+  hobbies: ["reading", "coding"],
 };
 
-const yamlString = YAML.stringify(data, null, 2);
-console.log(yamlString);
+// Without space - outputs flow-style (single-line) YAML
+console.log(YAML.stringify(data));
+// {name: John Doe,age: 30,hobbies: [reading,coding]}
+
+// With space=2 - outputs block-style (multi-line) YAML
+console.log(YAML.stringify(data, null, 2));
 // name: John Doe
 // age: 30
-// email: john@example.com
 // hobbies:
 //   - reading
 //   - coding
-//   - hiking
+```
+
+#### Output Styles
+
+```ts
+const arr = [1, 2, 3];
+
+// Flow style (single-line) - default
+console.log(YAML.stringify(arr));
+// [1,2,3]
+
+// Block style (multi-line) - with indentation
+console.log(YAML.stringify(arr, null, 2));
+// - 1
+// - 2
+// - 3
 ```
 
 #### String Quoting

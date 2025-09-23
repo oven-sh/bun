@@ -91,6 +91,7 @@ declare module "bun:test" {
   export namespace jest {
     function restoreAllMocks(): void;
     function clearAllMocks(): void;
+    function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
@@ -180,6 +181,9 @@ declare module "bun:test" {
      * Clear all mock state (calls, results, etc.) without restoring original implementation
      */
     clearAllMocks: typeof jest.clearAllMocks;
+    resetAllMocks: typeof jest.resetAllMocks;
+    useFakeTimers: typeof jest.useFakeTimers;
+    useRealTimers: typeof jest.useRealTimers;
   };
 
   interface FunctionLike {
@@ -423,7 +427,7 @@ declare module "bun:test" {
       options?: number | TestOptions,
     ): void;
     /**
-     * Skips all other tests, except this test when run with the `--only` option.
+     * Skips all other tests, except this test.
      */
     only: Test<T>;
     /**

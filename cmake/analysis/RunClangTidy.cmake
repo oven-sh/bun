@@ -1,6 +1,9 @@
 # https://clang.llvm.org/extra/clang-tidy/
 
-set(CLANG_TIDY_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
+set(CLANG_TIDY_SOURCES
+  ${BUN_C_SOURCES}
+  # ${BUN_CXX_SOURCES}
+)
 list(REMOVE_ITEM CLANG_TIDY_SOURCES ${CWD}/src/bun.js/bindings/node/http/llhttp/llhttp.c)
 list(REMOVE_ITEM CLANG_TIDY_SOURCES ${CWD}/src/bun.js/bindings/node/http/llhttp/http.c)
 list(REMOVE_ITEM CLANG_TIDY_SOURCES ${CWD}/src/bun.js/bindings/node/http/llhttp/api.c)

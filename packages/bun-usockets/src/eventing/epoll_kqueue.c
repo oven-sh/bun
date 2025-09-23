@@ -44,7 +44,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].data.ptr
 #define SET_READY_POLL(loop, index, poll) loop->ready_polls[index].data.ptr = (void*)poll
 #else
-#define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].udata
+#define GET_READY_POLL(loop, index) (struct us_poll_t *) (loop)->ready_polls[index].udata
 #define SET_READY_POLL(loop, index, poll) loop->ready_polls[index].udata = (uint64_t)poll
 #endif
 
@@ -264,7 +264,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     us_internal_loop_pre(loop);
 
 
-    if (loop->data.jsc_vm) 
+    if (loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* Fetch ready polls */
@@ -336,7 +336,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 
             // if new events does not contain the ready events of this poll then remove (no we filter that out later on)
             SET_READY_POLL(loop, i, new_poll);
-            
+
             num_entries_possibly_remaining--;
         }
     }
@@ -379,7 +379,7 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int ext_size) {
     int events = us_poll_events(p);
-    
+
 
     struct us_poll_t *new_p = us_realloc(p, sizeof(struct us_poll_t) + ext_size);
     if (p != new_p) {
@@ -391,6 +391,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
         /* Forcefully update poll by resetting them with new_p as user data */
         kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
 #endif      /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
+        // NOLINTNEXTLINE(clang-analyzer-unix.Malloc)
         us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
     }
 

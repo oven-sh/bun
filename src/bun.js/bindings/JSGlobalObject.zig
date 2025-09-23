@@ -33,11 +33,11 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(err);
     }
 
-    pub const requestTermination = JSGlobalObject__requestTermination;
-    pub const clearTerminationException = JSGlobalObject__clearTerminationException;
+    pub const requestTermination = bun.cpp.JSGlobalObject__requestTermination;
+    pub const clearTerminationException = bun.cpp.JSGlobalObject__clearTerminationException;
 
     pub fn setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool {
-        return JSGlobalObject__setTimeZone(this, timeZone);
+        return bun.cpp.JSGlobalObject__setTimeZone(this, timeZone);
     }
 
     pub inline fn toJSValue(globalThis: *JSGlobalObject) JSValue {
@@ -230,12 +230,10 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createNotEnoughArguments(name_, expected, got));
     }
 
-    extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
     pub fn reload(this: *jsc.JSGlobalObject) void {
         this.vm().drainMicrotasks();
         this.vm().collectAsync();
-
-        JSC__JSGlobalObject__reload(this);
+        bun.cpp.JSC__JSGlobalObject__reload(this);
     }
 
     pub const BunPluginTarget = enum(u8) {
@@ -243,19 +241,17 @@ pub const JSGlobalObject = opaque {
         node = 1,
         browser = 2,
     };
-    extern fn Bun__runOnLoadPlugins(*jsc.JSGlobalObject, ?*const bun.String, *const bun.String, BunPluginTarget) JSValue;
-    extern fn Bun__runOnResolvePlugins(*jsc.JSGlobalObject, ?*const bun.String, *const bun.String, *const String, BunPluginTarget) JSValue;
 
     pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         jsc.markBinding(@src());
-        const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnLoadPlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, target });
+        const result = try bun.jsc.fromJSHostCall(this, @src(), bun.cpp.Bun__runOnLoadPlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, target });
         if (result.isUndefinedOrNull()) return null;
         return result;
     }
 
     pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, source: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         jsc.markBinding(@src());
-        const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnResolvePlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target });
+        const result = try bun.jsc.fromJSHostCall(this, @src(), bun.cpp.Bun__runOnResolvePlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, &source, target });
         if (result.isUndefinedOrNull()) return null;
         return result;
     }
@@ -601,42 +597,19 @@ pub const JSGlobalObject = opaque {
         return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch @panic("unreachable");
     }
 
-    extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToBytes(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToBlob(*JSGlobalObject, JSValue) JSValue;
+    pub const readableStreamToArrayBuffer = bun.cpp.ZigGlobalObject__readableStreamToArrayBuffer;
 
-    pub fn readableStreamToArrayBuffer(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToArrayBuffer(this, value);
-    }
+    pub const readableStreamToBytes = bun.cpp.ZigGlobalObject__readableStreamToBytes;
 
-    pub fn readableStreamToBytes(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToBytes(this, value);
-    }
+    pub const readableStreamToText = bun.cpp.ZigGlobalObject__readableStreamToText;
 
-    pub fn readableStreamToText(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToText(this, value);
-    }
+    pub const readableStreamToJSON = bun.cpp.ZigGlobalObject__readableStreamToJSON;
 
-    pub fn readableStreamToJSON(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToJSON(this, value);
-    }
+    pub const readableStreamToBlob = bun.cpp.ZigGlobalObject__readableStreamToBlob;
 
-    pub fn readableStreamToBlob(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToBlob(this, value);
-    }
+    pub const readableStreamToFormData = bun.cpp.ZigGlobalObject__readableStreamToFormData;
 
-    pub fn readableStreamToFormData(this: *JSGlobalObject, value: JSValue, content_type: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
-    }
-
-    extern fn ZigGlobalObject__makeNapiEnvForFFI(*JSGlobalObject) *napi.NapiEnv;
-
-    pub fn makeNapiEnvForFFI(this: *JSGlobalObject) *napi.NapiEnv {
-        return ZigGlobalObject__makeNapiEnvForFFI(this);
-    }
+    pub const makeNapiEnvForFFI = bun.cpp.ZigGlobalObject__makeNapiEnvForFFI;
 
     pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
         if (bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
@@ -798,13 +771,9 @@ pub const JSGlobalObject = opaque {
     extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const ZigString) void;
     extern fn JSGlobalObject__clearException(*JSGlobalObject) void;
     extern fn JSGlobalObject__clearExceptionExceptTermination(*JSGlobalObject) bool;
-    extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
     extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
-    extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
-    extern fn JSGlobalObject__requestTermination(this: *JSGlobalObject) void;
 
-    extern fn Zig__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
     pub fn create(
         v: *jsc.VirtualMachine,
         console: *anyopaque,
@@ -817,7 +786,7 @@ pub const JSGlobalObject = opaque {
         defer trace.end();
 
         v.eventLoop().ensureWaker();
-        const global = Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
+        const global = bun.cpp.Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr).?;
 
         // JSC might mess with the stack size.
         bun.StackCheck.configureThread();
@@ -825,15 +794,9 @@ pub const JSGlobalObject = opaque {
         return global;
     }
 
-    extern fn Zig__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;
-    pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
-        return Zig__GlobalObject__getModuleRegistryMap(global);
-    }
+    pub const getModuleRegistryMap = bun.cpp.Zig__GlobalObject__getModuleRegistryMap;
 
-    extern fn Zig__GlobalObject__resetModuleRegistryMap(*JSGlobalObject, *anyopaque) bool;
-    pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *anyopaque) bool {
-        return Zig__GlobalObject__resetModuleRegistryMap(global, map);
-    }
+    pub const resetModuleRegistryMap = bun.cpp.Zig__GlobalObject__resetModuleRegistryMap;
 
     pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         jsc.markBinding(@src());

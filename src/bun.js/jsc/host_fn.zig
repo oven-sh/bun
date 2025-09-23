@@ -69,10 +69,7 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
 pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!void) bool {
     value catch |err| switch (err) {
         error.JSError => return false,
-        error.OutOfMemory => {
-            _ = globalThis.throwOutOfMemoryValue();
-            return false;
-        },
+        error.OutOfMemory => globalThis.throwOutOfMemory() catch return false,
     };
     return true;
 }

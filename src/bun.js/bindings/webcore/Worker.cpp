@@ -465,7 +465,7 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
         ScriptExecutionContext::postTaskTo(contextIdentifier, callback());
 }
 
-extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
+extern "C" [[ZIG_EXPORT(nothrow)]] void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, WebCore::Worker* worker, int32_t exitCode)
 {
     worker->dispatchExit(exitCode);
     // no longer referenced by Zig
@@ -494,17 +494,17 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
     }
 }
-extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void WebWorker__dispatchOnline(WebCore::Worker* worker, Zig::GlobalObject* globalObject)
 {
     worker->dispatchOnline(globalObject);
 }
 
-extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void WebWorker__fireEarlyMessages(WebCore::Worker* worker, Zig::GlobalObject* globalObject)
 {
     worker->fireEarlyMessages(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
+extern "C" [[ZIG_EXPORT(nothrow)]] void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WebCore::Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;

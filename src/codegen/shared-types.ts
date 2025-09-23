@@ -55,6 +55,12 @@ export const sharedTypes: Record<string, string> = {
   "JSC::CustomGetterSetter": "bun.jsc.CustomGetterSetter",
   "JSC::SourceProvider": "bun.jsc.SourceProvider",
   "JSC::CallFrame": "bun.jsc.CallFrame",
+  "VirtualMachine": "bun.jsc.VM",
+  "BunPluginTarget": "bun.jsc.JSGlobalObject.BunPluginTarget",
+  "napi_env": "*bun.api.napi.NapiEnv",
+  "SourceProvider": "bun.sourcemap.SourceProviderMap",
+  "WebCore::ExceptionCode": "bun.jsc.WebCore.DOMExceptionCode",
+  "WebCore::Worker": "anyopaque",
 };
 
 export const bannedTypes: Record<string, string> = {

@@ -24,10 +24,8 @@ pub const ZigException = extern struct {
 
     browser_url: String = .empty,
 
-    pub extern fn ZigException__collectSourceLines(jsValue: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
-
     pub fn collectSourceLines(this: *ZigException, value: JSValue, global: *JSGlobalObject) void {
-        ZigException__collectSourceLines(value, global, this);
+        bun.cpp.ZigException__collectSourceLines(value, global, this);
     }
 
     pub fn deinit(this: *ZigException) void {

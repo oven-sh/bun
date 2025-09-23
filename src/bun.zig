@@ -2669,12 +2669,12 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 /// - Additional assertions when freeing memory.
 ///
 /// On macOS, you can use `Bun.unsafe.mimallocDump()` to dump the heap.
-pub inline fn new(comptime T: type, init: T) *T {
+pub fn new(comptime T: type, init: T) *T {
     return handleOom(tryNew(T, init));
 }
 
 /// Error-returning version of `new`.
-pub inline fn tryNew(comptime T: type, init: T) OOM!*T {
+pub fn tryNew(comptime T: type, init: T) OOM!*T {
     const pointer = if (heap_breakdown.enabled)
         try heap_breakdown.getZoneT(T).tryCreate(T, init)
     else pointer: {
@@ -2696,7 +2696,7 @@ pub inline fn tryNew(comptime T: type, init: T) OOM!*T {
 /// Destruction performs additional safety checks:
 /// - Generic assertions can be added to T.assertBeforeDestroy()
 /// - Automatic integration with `RefCount`
-pub inline fn destroy(pointer: anytype) void {
+pub fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
@@ -2718,7 +2718,7 @@ pub inline fn destroy(pointer: anytype) void {
     }
 }
 
-pub inline fn dupe(comptime T: type, t: *T) *T {
+pub fn dupe(comptime T: type, t: *T) *T {
     return new(T, t.*);
 }
 

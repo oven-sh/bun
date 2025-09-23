@@ -3177,9 +3177,7 @@ extern fn Bun__addInspector(bool, *anyopaque, *jsc.JSGlobalObject) void;
 pub export fn Server__setIdleTimeout(server: jsc.JSValue, seconds: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
     Server__setIdleTimeout_(server, seconds, globalThis) catch |err| switch (err) {
         error.JSError => {},
-        error.OutOfMemory => {
-            _ = globalThis.throwOutOfMemoryValue();
-        },
+        error.OutOfMemory => globalThis.throwOutOfMemory() catch {},
     };
 }
 

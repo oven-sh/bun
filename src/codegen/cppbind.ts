@@ -667,7 +667,7 @@ function generateZigFn(
       );
     }
     resultBindings.push(
-      `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
+      `    pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
       `        if (comptime Environment.ci_assert) {`,
       `            var scope: jsc.CatchScope = undefined;`,
       `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,
@@ -699,7 +699,7 @@ function generateZigFn(
     }
   } else assertNever(fn.tag);
   resultBindings.push(
-    `    pub inline fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
+    `    pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) bun.JSError!${returnType} {`,
     `        if (comptime Environment.ci_assert) {`,
     `            var scope: jsc.ExceptionValidationScope = undefined;`,
     `            scope.init(${formatZigName(globalThisArg.name)}, @src());`,

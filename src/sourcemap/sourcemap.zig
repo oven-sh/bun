@@ -1182,8 +1182,8 @@ pub fn getSourceMapImpl(
 ///
 /// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
 pub const SourceProviderMap = opaque {
-    extern fn ZigSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
-    pub const getSourceSlice = ZigSourceProvider__getSourceSlice;
+    pub const getSourceSlice = bun.cpp.ZigSourceProvider__getSourceSlice;
+
     pub fn toSourceContentPtr(this: *SourceProviderMap) ParsedSourceMap.SourceContentPtr {
         return ParsedSourceMap.SourceContentPtr.fromProvider(this);
     }

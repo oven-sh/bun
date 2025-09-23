@@ -360,7 +360,7 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     // }
 }
 
-extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 {
     return Bun::toStringView(provider->source());
 }

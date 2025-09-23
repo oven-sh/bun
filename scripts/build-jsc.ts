@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "child_process";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, rm, rmSync } from "fs";
 import { arch, platform } from "os";
 import { join, resolve } from "path";
 
@@ -203,6 +203,10 @@ function buildJSC() {
   runCommand("cmake", ["--build", buildDir, "--config", buildType, "--target", "jsc"], {
     cwd: buildDir,
     env,
+  });
+
+  rmSync("vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h", {
+    force: true,
   });
 
   console.log(`\n✅ JSC build completed successfully!`);

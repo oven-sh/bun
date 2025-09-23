@@ -340,17 +340,17 @@ pub const String = extern struct {
 
     pub fn toErrorInstance(this: *const String, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         defer this.deref();
-        return JSC__createError(globalObject, this);
+        return bun.cpp.JSC__createError(globalObject, this);
     }
 
     pub fn toTypeErrorInstance(this: *const String, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         defer this.deref();
-        return JSC__createTypeError(globalObject, this);
+        return bun.cpp.JSC__createTypeError(globalObject, this);
     }
 
     pub fn toRangeErrorInstance(this: *const String, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         defer this.deref();
-        return JSC__createRangeError(globalObject, this);
+        return bun.cpp.JSC__createRangeError(globalObject, this);
     }
 
     extern fn BunString__createExternal(
@@ -1048,10 +1048,6 @@ pub const String = extern struct {
     pub fn eql(this: String, other: String) bool {
         return this.toZigString().eql(other.toZigString());
     }
-
-    extern fn JSC__createError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
-    extern fn JSC__createTypeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
-    extern fn JSC__createRangeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
 
     pub fn jsGetStringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callFrame.arguments_old(1).slice();

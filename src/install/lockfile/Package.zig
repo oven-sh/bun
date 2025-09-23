@@ -2147,36 +2147,6 @@ pub fn Package(comptime SemverIntType: type) type {
                     try loadFields(stream, List, &list, &needs_update);
                 }
 
-                // inline for (FieldsEnum.fields) |field| {
-                //     const value = sliced.items(@field(List.Field, field.name));
-
-                //     comptime assertNoUninitializedPadding(@TypeOf(value));
-                //     const bytes = std.mem.sliceAsBytes(value);
-                //     const end_pos = stream.pos + bytes.len;
-                //     if (end_pos <= end_at) {
-                //         if (migrate_from_v2) {
-                //             if (comptime strings.eqlComptime(field.name, "resolution")) {}
-                //         }
-
-                //         @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
-                //         stream.pos = end_pos;
-                //         if (comptime strings.eqlComptime(field.name, "meta")) {
-                //             // need to check if any values were created from an older version of bun
-                //             // (currently just `has_install_script`). If any are found, the values need
-                //             // to be updated before saving the lockfile.
-                //             for (value) |*meta| {
-                //                 if (meta.needsUpdate()) {
-                //                     needs_update = true;
-                //                     break;
-                //                 }
-                //             }
-                //         }
-                //     } else if (comptime strings.eqlComptime(field.name, "scripts")) {
-                //         @memset(bytes, 0);
-                //     } else {
-                //         return error.@"Lockfile validation failed: invalid package list range";
-                //     }
-                // }
 
                 return .{
                     .list = list,

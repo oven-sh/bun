@@ -10,13 +10,13 @@ function(absolute_sources OUTPUT_VAR INPUT_FILE)
     else()
         set(BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
     endif()
-    
+
     # Read the file containing relative paths
     file(STRINGS "${INPUT_FILE}" RELATIVE_PATHS)
-    
+
     # Create a list to store absolute paths
     set(RESULT_LIST "")
-    
+
     # Convert each relative path to absolute
     foreach(REL_PATH ${RELATIVE_PATHS})
         # Skip empty lines
@@ -26,10 +26,10 @@ function(absolute_sources OUTPUT_VAR INPUT_FILE)
             list(APPEND RESULT_LIST ${ABS_PATH})
         endif()
     endforeach()
-    
+
     # Set the output variable in the parent scope
     set(${OUTPUT_VAR} ${RESULT_LIST} PARENT_SCOPE)
-    
+
     # Tell CMake that the configuration depends on this file
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${INPUT_FILE}")
 endfunction()

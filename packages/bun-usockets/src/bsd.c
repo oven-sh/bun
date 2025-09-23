@@ -17,6 +17,7 @@
 
 /* Todo: this file should lie in networking/bsd.c */
 
+// NOLINTNEXTLINE(bugprone-reserved-identifier)
 #define __APPLE_USE_RFC_3542
 
 #include "libusockets.h"

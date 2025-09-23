@@ -1,6 +1,7 @@
 #include "wtf/Compiler.h"
 
 #if ASAN_ENABLED
+// NOLINTNEXTLINE(bugprone-reserved-identifier)
 const char* __asan_default_options(void)
 {
     // detect_stack_use_after_return causes some stack allocations to be made on the heap instead,

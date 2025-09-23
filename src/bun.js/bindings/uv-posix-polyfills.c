@@ -34,6 +34,7 @@ uint64_t uv__hrtime(uv_clocktype_t type);
 // #elif defined(__sun)
 // #include "uv/sunos.h"
 #elif defined(__APPLE__)
+// NOLINTNEXTLINE(bugprone-suspicious-include)
 #include "uv-posix-polyfills-darwin.c"
 // #elif defined(__DragonFly__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 // #include "uv/bsd.h"

@@ -5,6 +5,7 @@ permissions:
   pull-requests: write
 
 on:
+  pull_request:
   workflow_run:
     workflows:
       - lint-cpp

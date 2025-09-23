@@ -180,8 +180,6 @@ function ClientRequest(input, options, cb) {
     }
 
     if (readableStreamController) {
-      readableStreamController.flush?.();
-
       const result = readableStreamController.end?.();
 
       // Handle the result which may be a Promise
@@ -656,11 +654,6 @@ function ClientRequest(input, options, cb) {
 
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.finish))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.finish;
-      if (readableStreamController) {
-        readableStreamController.close();
-        readableStreamController = undefined;
-      }
-
       this.emit("finish");
     }
   };

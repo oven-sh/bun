@@ -1251,6 +1251,12 @@ pub fn transpileSourceCode(
                 // TODO: should we add code for not reading the BOM?
                 const contents = parse_result.source.contents;
                 const uint8_array = try JSC.ArrayBuffer.create(globalObject.?, contents, .Uint8Array);
+
+                // The TC39 import-bytes proposal requires the Uint8Array to be immutable
+                // In bundled mode, freezing is done by the __base64ToUint8Array helper
+                // For runtime imports, we should also freeze but need to implement JSValue.freeze() first
+                // TODO: Call Object.freeze(uint8_array) and Object.freeze(uint8_array.buffer)
+
                 return ResolvedSource{
                     .allocator = null,
                     .specifier = input_specifier,

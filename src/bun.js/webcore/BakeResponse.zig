@@ -47,6 +47,10 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, b
     return Response.constructor(globalThis, callframe);
 }
 
+pub export fn BakeResponseClass__constructRedirect(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
+    return jsc.toJSHostCall(globalObject, @src(), constructRedirect, .{ globalObject, callFrame });
+}
+
 pub fn constructRedirect(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,

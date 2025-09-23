@@ -105,7 +105,7 @@ const data = Bun.YAML.parse(yaml);
 
 #### Error Handling
 
-`Bun.YAML.parse()` throws a `SyntaxError` if the YAML is invalid:
+`Bun.YAML.parse()` throws an error if the YAML is invalid:
 
 ```ts
 try {
@@ -200,11 +200,12 @@ obj.self = obj; // Circular reference
 
 const yamlString = YAML.stringify(obj, null, 2);
 console.log(yamlString);
-// &1
+// &root
 // name: root
-// self: *1
+// self:
+//   *root
 
-// Arrays with shared references
+// Objects with shared references
 const shared = { id: 1 };
 const data = {
   first: shared,
@@ -212,9 +213,11 @@ const data = {
 };
 
 console.log(YAML.stringify(data, null, 2));
-// first: &1
+// first:
+//   &first
 //   id: 1
-// second: *1
+// second:
+//   *first
 ```
 
 #### Special Values

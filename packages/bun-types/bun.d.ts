@@ -636,7 +636,7 @@ declare module "bun" {
      * import { YAML } from "bun";
      *
      * console.log(YAML.parse("123")) // 123
-     * console.log(YAML.parse("123")) // null
+     * console.log(YAML.parse("null")) // null
      * console.log(YAML.parse("false")) // false
      * console.log(YAML.parse("abc")) // "abc"
      * console.log(YAML.parse("- abc")) // [ "abc" ]

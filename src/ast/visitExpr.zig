@@ -33,6 +33,21 @@ pub fn VisitExpr(
             };
         }
 
+        const well_known_client_only_react_hooks = [_][]const u8{
+            "useState",
+            "useEffect",
+            "useLayoutEffect",
+            "useReducer",
+            "useRef",
+            "useCallback",
+            "useMemo",
+            "useImperativeHandle",
+            "useInsertionEffect",
+            "useSyncExternalStore",
+            "useTransition",
+            "useDeferredValue",
+        };
+
         const visitors = struct {
             pub fn e_new_target(_: *P, expr: Expr, _: ExprIn) Expr {
                 // this error is not necessary and it is causing breakages
@@ -1455,8 +1470,13 @@ pub fn VisitExpr(
                         break :check_for_usestate false;
                     }) {
                         bun.assert(p.options.features.server_components.isServerSide());
+
+                        const is_well_known_client_only_hook = inline for (well_known_client_only_react_hooks) |hook_name| {
+                            if (bun.strings.eqlComptime(original_name, hook_name)) break true;
+                        } else false;
+
                         if (!bun.strings.startsWith(p.source.path.pretty, "node_modules") and
-                            bun.strings.eqlComptime(original_name, "useState") and
+                            is_well_known_client_only_hook and
                             !p.has_reported_use_client_directive_hook_error)
                         {
                             p.has_reported_use_client_directive_hook_error = true;
@@ -1465,8 +1485,8 @@ pub fn VisitExpr(
                                 expr.loc,
                                 std.fmt.allocPrint(
                                     p.allocator,
-                                    "\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
-                                    .{},
+                                    "\"{s}\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
+                                    .{original_name},
                                 ) catch |err| bun.handleOom(err),
                             ) catch |err| bun.handleOom(err);
                         }

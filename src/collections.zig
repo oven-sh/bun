@@ -7,3 +7,11 @@ pub const bit_set = @import("./collections/bit_set.zig");
 pub const AutoBitSet = bit_set.AutoBitSet;
 pub const HiveArray = @import("./collections/hive_array.zig").HiveArray;
 pub const BoundedArray = @import("./collections/bounded_array.zig").BoundedArray;
+
+pub const array_list = @import("./collections/array_list.zig");
+pub const ArrayList = array_list.ArrayList; // any `std.mem.Allocator`
+pub const ArrayListDefault = array_list.ArrayListDefault; // always default allocator (no overhead)
+pub const ArrayListIn = array_list.ArrayListIn; // specific type of generic allocator
+pub const ArrayListAligned = array_list.ArrayAlignedList;
+pub const ArrayListAlignedDefault = array_list.ArrayListAlignedDefault;
+pub const ArrayListAlignedIn = array_list.ArrayListAlignedIn;

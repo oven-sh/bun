@@ -234,13 +234,12 @@ declare module "bun" {
     incr(key: RedisClient.KeyLike): Promise<number>;
 
     /**
-     * Increment the integer value of a hash field by the given number
-     * @param key The key
+     * Increment the integer value of a key by the given number
+     * @param key The key to increment
      * @param increment The amount to increment by
      * @returns Promise that resolves with the new value
      */
     incrby(key: RedisClient.KeyLike, increment: string | number): Promise<number>;
-
     /**
      * Decrement the integer value of a key by one
      * @param key The key to decrement

@@ -549,8 +549,19 @@ export class BunTestController implements vscode.Disposable {
     // This avoids conflicts with Bun listening on a unix socket path
     // when using --inspect(-wait) and ensures we can pass a single
     // BUN_INSPECT target with ?wait=1.
-    const port = await getAvailablePort();
-    return new TCPSocketSignal(port);
+    try {
+      const port = await getAvailablePort();
+      return new TCPSocketSignal(port);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      // Log the original error and rethrow a well-formed error with context
+      // so callers can handle it (no Unix fallback for simplicity).
+      debug.appendLine(`getAvailablePort() failed: ${error.message}`);
+      if (error.stack) debug.appendLine(error.stack);
+      throw new Error(
+        `Failed to create inspector TCP signal: could not acquire an available port. Original error: ${error.message}`,
+      );
+    }
   }
 
   private async runHandler(

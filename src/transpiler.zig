@@ -1349,10 +1349,10 @@ pub const Transpiler = struct {
                 const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
                 _ = bun.base64.encode(encoded, source.contents);
 
-                // Generate JavaScript code directly
+                // Generate JavaScript code directly (without Object.freeze since Turbopack doesn't do it)
                 const js_code = std.fmt.allocPrint(
                     allocator,
-                    "const data = Object.freeze(Uint8Array.fromBase64(\"{s}\")); Object.freeze(data.buffer); export default data;",
+                    "export default Uint8Array.fromBase64(\"{s}\");",
                     .{encoded},
                 ) catch unreachable;
 

@@ -991,6 +991,8 @@ const debug = bun.Output.scoped(.Postgres, .visible);
 extern fn Postgres__formatTime(microseconds: i64, buffer: [*]u8, bufferSize: usize) usize;
 extern fn Postgres__formatTimeTz(microseconds: i64, tzOffsetSeconds: i32, buffer: [*]u8, bufferSize: usize) usize;
 
+const log = bun.Output.scoped(.PostgresDataCell, .visible);
+
 const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
@@ -1007,4 +1009,3 @@ const String = bun.String;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const log = bun.Output.scoped(.PostgresDataCell, .visible);

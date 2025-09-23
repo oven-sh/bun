@@ -78,10 +78,12 @@ pub const UserOptions = struct {
             const module_path_str = bun.String.cloneUTF8(resolved_path.pathConst().?.text);
             defer module_path_str.deref();
 
+            var scope: jsc.CatchScope = undefined;
+            scope.init(global, @src());
+            defer scope.deinit();
+
             const promise = jsc.JSModuleLoader.loadAndEvaluateModule(global, &module_path_str) orelse {
-                if (global.hasException()) {
-                    return error.JSError;
-                }
+                try scope.returnIfException();
                 return global.throwInvalidArguments("Failed to load framework module '{s}'", .{name});
             };
 
@@ -109,10 +111,8 @@ pub const UserOptions = struct {
                 },
                 .rejected => |err| {
                     _ = err;
-                    if (!global.hasException()) {
-                        return global.throwInvalidArguments("Failed to load framework module '{s}'", .{name});
-                    }
-                    return error.JSError;
+                    try scope.returnIfException();
+                    return global.throwInvalidArguments("Failed to load framework module '{s}'", .{name});
                 },
             };
 

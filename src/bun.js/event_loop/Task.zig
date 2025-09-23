@@ -133,6 +133,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
     while (this.tasks.readItem()) |task| {
         log("run {s}", .{@tagName(task.tag())});
         defer counter += 1;
+
+        if (global.bunVM().isShuttingDown()) {
+            break;
+        }
         switch (task.tag()) {
             @field(Task.Tag, @typeName(ShellAsync)) => {
                 var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;

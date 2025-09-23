@@ -66,21 +66,6 @@ pub fn toJS(this: *Response, globalObject: *JSGlobalObject) JSValue {
     return js.toJSUnchecked(globalObject, this);
 }
 
-/// Corresponds to `JSBakeResponseKind` in
-/// `src/bun.js/bindings/JSBakeResponse.h`
-const SSRKind = enum(u8) {
-    regular = 0,
-    redirect = 1,
-    render = 2,
-};
-
-extern "C" fn Response__createForSSR(globalObject: *JSGlobalObject, this: *Response, kind: u8) callconv(jsc.conv) jsc.JSValue;
-
-pub fn toJSForSSR(this: *Response, globalObject: *JSGlobalObject, kind: SSRKind) JSValue {
-    this.calculateEstimatedByteSize();
-    return Response__createForSSR(globalObject, this, @intFromEnum(kind));
-}
-
 pub fn getBodyValue(
     this: *Response,
 ) *Body.Value {
@@ -334,7 +319,6 @@ pub fn cloneValue(
 }
 
 pub fn clone(this: *Response, globalThis: *JSGlobalObject) bun.JSError!*Response {
-    // TODO: handle clone for jsxElement for bake?
     return bun.new(Response, try this.cloneValue(globalThis));
 }
 
@@ -473,6 +457,16 @@ pub fn constructRedirect(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
+    const response = try constructRedirectImpl(globalThis, callframe);
+    const ptr = bun.new(Response, response);
+    const response_js = ptr.toJS(globalThis);
+    return response_js;
+}
+
+pub fn constructRedirectImpl(
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!Response {
     var args_list = callframe.arguments_old(4);
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -519,7 +513,7 @@ pub fn constructRedirect(
         }
 
         if (globalThis.hasException()) {
-            return .zero;
+            return error.JSError;
         }
         did_succeed = true;
         break :brk response;
@@ -528,77 +522,7 @@ pub fn constructRedirect(
     response.init.headers = try response.getOrCreateHeaders(globalThis);
     var headers_ref = response.init.headers.?;
     try headers_ref.put(.Location, url_string_slice.slice(), globalThis);
-    const ptr = bun.new(Response, response);
-
-    const vm = globalThis.bunVM();
-    // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
-    if (vm.getDevServerAsyncLocalStorage()) |async_local_storage| {
-        try assertStreamingDisabled(globalThis, async_local_storage, "Response.redirect");
-        return ptr.toJSForSSR(globalThis, .redirect);
-    }
-
-    const response_js = ptr.toJS(globalThis);
-
-    return response_js;
-}
-
-pub export fn ResponseClass__constructRender(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-    return @call(.always_inline, jsc.toJSHostFn(constructRender), .{ globalObject, callFrame });
-}
-
-/// This function is only available on JSBakeResponse
-pub fn constructRender(
-    globalThis: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) bun.JSError!JSValue {
-    const arguments = callframe.argumentsAsArray(2);
-    const vm = globalThis.bunVM();
-
-    // Check if dev server async local_storage is set
-    const async_local_storage = vm.getDevServerAsyncLocalStorage() orelse {
-        return globalThis.throwInvalidArguments("Response.render() is only available in the Bun dev server", .{});
-    };
-
-    try assertStreamingDisabled(globalThis, async_local_storage, "Response.render");
-
-    // Validate arguments
-    if (arguments.len < 1) {
-        return globalThis.throwInvalidArguments("Response.render() requires at least a path argument", .{});
-    }
-
-    const path_arg = arguments[0];
-    if (!path_arg.isString()) {
-        return globalThis.throwInvalidArguments("Response.render() path must be a string", .{});
-    }
-
-    // Get the path string
-    const path_str = try path_arg.toSlice(globalThis, bun.default_allocator);
-
-    // Duplicate the path string so it persists
-    const path_copy = bun.default_allocator.dupe(u8, path_str.slice()) catch {
-        path_str.deinit();
-        return globalThis.throwOutOfMemory();
-    };
-    path_str.deinit();
-
-    // Create a Response with Render body
-    var response = bun.new(Response, Response{
-        .body = Body{
-            .value = .{
-                .Render = .{
-                    .path = bun.ptr.Owned([]const u8).fromRaw(path_copy),
-                },
-            },
-        },
-        .init = Response.Init{
-            .status_code = 200,
-        },
-    });
-
-    const response_js = response.toJSForSSR(globalThis, .render);
-    response_js.ensureStillAlive();
-
-    return response_js;
+    return response;
 }
 
 pub fn constructError(
@@ -621,28 +545,6 @@ pub fn constructError(
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {
-    return constructorImpl(globalThis, callframe, null);
-}
-
-pub fn ResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) callconv(jsc.conv) ?*anyopaque {
-    return @as(*Response, Response.constructorForSSR(globalObject, callFrame, bake_ssr_has_jsx) catch |err| switch (err) {
-        error.JSError => return null,
-        error.OutOfMemory => {
-            globalObject.throwOutOfMemory() catch {};
-            return null;
-        },
-    });
-}
-
-comptime {
-    @export(&ResponseClass__constructForSSR, .{ .name = "ResponseClass__constructForSSR" });
-}
-
-pub fn constructorForSSR(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
-    return constructorImpl(globalThis, callframe, bake_ssr_has_jsx);
-}
-
-pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
@@ -675,19 +577,6 @@ pub fn constructorImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
                 var headers_ref = response.init.headers.?;
                 try headers_ref.put(.Location, result.url, globalThis);
                 return bun.new(Response, response);
-            }
-        }
-
-        // Special case for bake: allow `return new Response(<jsx> ... </jsx>, { ... }`
-        // inside of a react component
-        if (bake_ssr_has_jsx != null) {
-            bake_ssr_has_jsx.?.* = 0;
-            if (try arguments[0].isJSXElement(globalThis)) {
-                const vm = globalThis.bunVM();
-                if (vm.getDevServerAsyncLocalStorage()) |async_local_storage| {
-                    try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
-                }
-                bake_ssr_has_jsx.?.* = 1;
             }
         }
     }
@@ -870,15 +759,6 @@ inline fn emptyWithStatus(_: *jsc.JSGlobalObject, status: u16) Response {
             .status_code = status,
         },
     });
-}
-
-fn assertStreamingDisabled(globalThis: *jsc.JSGlobalObject, async_local_storage: JSValue, display_function: []const u8) bun.JSError!void {
-    if (async_local_storage.isEmptyOrUndefinedOrNull() or !async_local_storage.isObject()) return globalThis.throwInvalidArguments("store value must be an object", .{});
-    const getStoreFn = (try async_local_storage.getPropertyValue(globalThis, "getStore")) orelse return globalThis.throwInvalidArguments("store value must have a \"getStore\" field", .{});
-    const store_value = try getStoreFn.call(globalThis, async_local_storage, &.{});
-    const streaming_val = (try store_value.getPropertyValue(globalThis, "streaming")) orelse return globalThis.throwInvalidArguments("store value must have a \"streaming\" field", .{});
-    if (!streaming_val.isBoolean()) return globalThis.throwInvalidArguments("\"streaming\" fied must be a boolean", .{});
-    if (streaming_val.asBoolean()) return globalThis.throwInvalidArguments("\"{s}\" is not available when `export const streaming = true`", .{display_function});
 }
 
 /// https://developer.mozilla.org/en-US/docs/Web/API/Headers

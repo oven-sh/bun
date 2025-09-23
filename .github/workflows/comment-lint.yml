@@ -7,6 +7,9 @@ permissions:
 on:
   pull_request:
 
+env:
+  LLVM_VERSION_MAJOR: "19"
+
 jobs:
   comment-lint:
     if: ${{ github.repository_owner == 'oven-sh' }}
@@ -20,6 +23,11 @@ jobs:
         id: env
         shell: bash
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends --no-install-suggests -o=Dpkg::Use-Pty=0 clang-format-${{ env.LLVM_VERSION_MAJOR }}
+
           # Copy to outputs
           {
             echo 'text_output<<EOF'

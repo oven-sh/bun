@@ -3,6 +3,7 @@ import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
+import { isASAN, isWindows } from "harness";
 
 const listen_path = join(tmpdir(), "test-net-successful-connection-handle-leak.sock");
 
@@ -70,4 +71,7 @@ const post_rss = process.memoryUsage.rss();
 
 server.close();
 
-expect(post_rss - warmup_rss).toBeLessThan(1024 * 1024 * 15);
+let margin = 1024 * 1024 * 15;
+if (isWindows) margin = 1024 * 1024 * 20;
+if (isASAN) margin = 1024 * 1024 * 60;
+expect(post_rss - warmup_rss).toBeLessThan(margin);

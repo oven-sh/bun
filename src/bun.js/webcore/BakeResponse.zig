@@ -28,19 +28,19 @@ pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObje
     });
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: *c_int) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
     // Allow `return new Response(<jsx> ... </jsx>, { ... }`
     // inside of a react component
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
-        bake_ssr_has_jsx.?.* = 0;
+        bake_ssr_has_jsx.* = 0;
         if (try arguments[0].isJSXElement(globalThis)) {
             const vm = globalThis.bunVM();
             if (vm.getDevServerAsyncLocalStorage()) |async_local_storage| {
                 try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
             }
-            bake_ssr_has_jsx.?.* = 1;
+            bake_ssr_has_jsx.* = 1;
         }
     }
 

@@ -60,18 +60,21 @@ pub fn deinit(ptr_or_slice: anytype) void {
     const ptr_info = @typeInfo(@TypeOf(ptr_or_slice));
     const Child = ptr_info.pointer.child;
     const mutable = !ptr_info.pointer.is_const;
-    if (comptime std.meta.hasFn(Child, "deinit")) {
-        switch (comptime ptr_info.pointer.size) {
-            .one => {
-                ptr_or_slice.deinit();
-                if (comptime mutable) ptr_or_slice.* = undefined;
-            },
-            .slice => for (ptr_or_slice) |*elem| {
-                elem.deinit();
-                if (comptime mutable) elem.* = undefined;
-            },
-            else => @compileError("unsupported pointer type"),
-        }
+    const child_info = @typeInfo(Child);
+    if (child_info != .@"struct" and child_info != .@"union") return;
+
+    if (Child == std.mem.Allocator) return;
+
+    switch (comptime ptr_info.pointer.size) {
+        .one => {
+            ptr_or_slice.deinit(); // no deinit method? add one or block above
+            if (comptime mutable) ptr_or_slice.* = undefined;
+        },
+        .slice => for (ptr_or_slice) |*elem| {
+            elem.deinit();
+            if (comptime mutable) elem.* = undefined;
+        },
+        else => @compileError("unsupported pointer type"),
     }
 }
 

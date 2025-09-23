@@ -545,6 +545,8 @@ pub const StringVoidMap = struct {
     allocator: Allocator,
     map: bun.StringHashMapUnmanaged(void) = bun.StringHashMapUnmanaged(void){},
 
+    pub fn deinit(_: *StringVoidMap) void {}
+
     /// Returns true if the map already contained the given key.
     pub fn getOrPutContains(this: *StringVoidMap, key: string) bool {
         const entry = this.map.getOrPut(this.allocator, key) catch unreachable;

@@ -750,20 +750,14 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
     );
 
     switch (kr) {
-        case KERN_SUCCESS: {
-            break;
-        }
+        case KERN_SUCCESS:
 
         // This means that the send would've blocked because the
         // queue is full. We assume success because the port is full.
-        case MACH_SEND_TIMED_OUT: {
-            break;
-        }
+        case MACH_SEND_TIMED_OUT:
 
         // No space means it will wake up.
-        case MACH_SEND_NO_BUFFER: {
-            break;
-        }
+        case MACH_SEND_NO_BUFFER:
 
         default: {
             break;

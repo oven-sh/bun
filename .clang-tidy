@@ -14,7 +14,6 @@ Checks: >
   -bugprone-casting-through-void,
   -bugprone-switch-missing-default-case,
   -bugprone-assignment-in-if-condition,
-  -bugprone-branch-clone,
   -bugprone-implicit-widening-of-multiplication-result,
   performance-*,
   -performance-no-int-to-ptr,

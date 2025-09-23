@@ -3236,8 +3236,23 @@ fn printErrorInstance(
     }
 
     for (errors_to_append.items) |err| {
+        // Check for circular references to prevent infinite recursion in cause chains
+        if (formatter.map_node == null) {
+            formatter.map_node = ConsoleObject.Formatter.Visited.Pool.get(default_allocator);
+            formatter.map_node.?.data.clearRetainingCapacity();
+            formatter.map = formatter.map_node.?.data;
+        }
+
+        const entry = formatter.map.getOrPut(err) catch unreachable;
+        if (entry.found_existing) {
+            try writer.writeAll("\n");
+            try writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", allow_ansi_color));
+            continue;
+        }
+
         try writer.writeAll("\n");
         try this.printErrorInstance(.js, err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
+        _ = formatter.map.remove(err);
     }
 }
 

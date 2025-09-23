@@ -782,7 +782,7 @@ pub fn installWithManager(
             (did_meta_hash_change or
                 had_any_diffs or
                 manager.update_requests.len > 0 or
-                (load_result == .ok and load_result.ok.serializer_result.packages_need_update) or
+                (load_result == .ok and (load_result.ok.serializer_result.packages_need_update or load_result.ok.serializer_result.migrated_from_lockb_v2)) or
                 manager.lockfile.isEmpty() or
                 manager.options.enable.force_save_lockfile));
 

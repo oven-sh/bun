@@ -3,6 +3,7 @@ In Bun, YAML is a first-class citizen alongside JSON and TOML.
 Bun provides built-in support for YAML files through both runtime APIs and bundler integration. You can
 
 - Parse YAML strings with `Bun.YAML.parse`
+- Stringify JavaScript objects to YAML with `Bun.YAML.stringify`
 - import & require YAML files as modules at runtime (including hot reloading & watch mode support)
 - import & require YAML files in frontend apps via bun's bundler
 
@@ -112,6 +113,128 @@ try {
 } catch (error) {
   console.error("Failed to parse YAML:", error.message);
 }
+```
+
+### `Bun.YAML.stringify()`
+
+Convert a JavaScript value into a YAML string.
+
+```ts
+import { YAML } from "bun";
+
+const data = {
+  name: "John Doe",
+  age: 30,
+  email: "john@example.com",
+  hobbies: ["reading", "coding", "hiking"],
+};
+
+const yamlString = YAML.stringify(data);
+console.log(yamlString);
+// name: John Doe
+// age: 30
+// email: john@example.com
+// hobbies:
+//   - reading
+//   - coding
+//   - hiking
+```
+
+#### String Quoting
+
+`YAML.stringify()` automatically quotes strings when necessary:
+- Strings that would be parsed as YAML keywords (`true`, `false`, `null`, `yes`, `no`, etc.)
+- Strings that would be parsed as numbers
+- Strings containing special characters or escape sequences
+
+```ts
+const examples = {
+  keyword: "true",        // Will be quoted: "true"
+  number: "123",          // Will be quoted: "123"
+  text: "hello world",    // Won't be quoted: hello world
+  empty: "",              // Will be quoted: ""
+};
+
+console.log(YAML.stringify(examples));
+// keyword: "true"
+// number: "123"
+// text: hello world
+// empty: ""
+```
+
+#### Cycles and References
+
+`YAML.stringify()` automatically detects and handles circular references using YAML anchors and aliases:
+
+```ts
+const obj = { name: "root" };
+obj.self = obj;  // Circular reference
+
+const yamlString = YAML.stringify(obj);
+console.log(yamlString);
+// &1
+// name: root
+// self: *1
+
+// Arrays with shared references
+const shared = { id: 1 };
+const data = {
+  first: shared,
+  second: shared,
+};
+
+console.log(YAML.stringify(data));
+// first: &1
+//   id: 1
+// second: *1
+```
+
+#### Special Values
+
+```ts
+// Special numeric values
+console.log(YAML.stringify(Infinity));   // .inf
+console.log(YAML.stringify(-Infinity));  // -.inf
+console.log(YAML.stringify(NaN));        // .nan
+console.log(YAML.stringify(0));          // 0
+console.log(YAML.stringify(-0));         // -0
+
+// null and undefined
+console.log(YAML.stringify(null));       // null
+console.log(YAML.stringify(undefined));  // undefined (returns undefined, not a string)
+
+// Booleans
+console.log(YAML.stringify(true));       // true
+console.log(YAML.stringify(false));      // false
+```
+
+#### Complex Objects
+
+```ts
+const config = {
+  server: {
+    port: 3000,
+    host: "localhost",
+    ssl: {
+      enabled: true,
+      cert: "/path/to/cert.pem",
+      key: "/path/to/key.pem",
+    },
+  },
+  database: {
+    connections: [
+      { name: "primary", host: "db1.example.com" },
+      { name: "replica", host: "db2.example.com" },
+    ],
+  },
+  features: {
+    auth: true,
+    "rate-limit": 100,  // Keys with special characters are preserved
+  },
+};
+
+const yamlString = YAML.stringify(config);
+// Produces properly formatted, indented YAML
 ```
 
 ## Module Import

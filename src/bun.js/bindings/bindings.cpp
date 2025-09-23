@@ -4888,6 +4888,10 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (stackValue) {
+            // Prevent infinite recursion if stack property is the error object itself
+            if (stackValue == val) {
+                return;
+            }
             if (stackValue.isString()) {
                 WTF::String stack = stackValue.toWTFString(global);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]] {

@@ -151,6 +151,7 @@ test/cli/install/bun-install-security-provider.test.ts
 test/js/node/test/parallel/test-tls-fast-writing.js
 test/js/bun/sqlite/sqlite.test.js
 test/js/workerd/html-rewriter.test.js
+test/regression/issue/12250.test.ts
 
 
 # crash for reasons not related to LSAN
@@ -195,6 +196,7 @@ test/regression/issue/14338.test.ts
 test/js/bun/util/heap-snapshot.test.ts
 test/regression/issue/02499/02499.test.ts
 test/js/node/test/parallel/test-http-server-stale-close.js
+test/js/third_party/comlink/comlink.test.ts
 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData

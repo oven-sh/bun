@@ -381,7 +381,7 @@ function ClientRequest(input, options, cb) {
           fetchOptions.body = new ReadableStream({
             type: "direct",
 
-            pull(controller) {
+            async pull(controller) {
               const emitDrain = readableStreamController !== undefined;
               readableStreamController = controller;
               const chunks = self[kBodyChunks];
@@ -392,21 +392,24 @@ function ClientRequest(input, options, cb) {
               }
 
               if (isEnd) {
-                controller.end();
-                if (!responseHandled && handleResponse) {
-                  responseHandled = true;
-                  handleResponse();
+                const endResult = controller.end();
+                if ($isPromise(endResult)) {
+                  await endResult;
                 }
-              } else if (emitDrain && !self.finished && chunks.length === 0) {
-                self.emit("drain");
                 return;
               }
 
-              Promise.$resolve(controller.flush()).then(() => {
-                if (!self.finished && !isEnd) {
-                  self.emit("drain");
+              if (emitDrain && chunks.length === 0 && !self.finished) {
+                const flushResult = controller.flush();
+                if ($isPromise(flushResult)) {
+                  return flushResult.$then(() => {
+                    if (!self.finished && !isEnd) {
+                      self.emit("drain");
+                    }
+                  });
                 }
-              });
+                self.emit("drain");
+              }
             },
             cancel() {
               readableStreamController = undefined;

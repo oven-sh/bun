@@ -8,6 +8,7 @@
 // - It does not import dependencies, so it's faster to start.
 
 import { spawn, spawnSync } from "node:child_process";
+import { groupEnd } from "node:console";
 import { createHash } from "node:crypto";
 import {
   accessSync,
@@ -66,7 +67,6 @@ import {
   unzip,
   uploadArtifact,
 } from "./utils.mjs";
-import { groupEnd } from "node:console";
 
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();

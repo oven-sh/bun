@@ -25,7 +25,7 @@ register_command(
     "Running cppcheck"
   COMMAND
     ${CMAKE_COMMAND} -E make_directory cppcheck
-    && ${CPPCHECK_COMMAND} 
+    && ${CPPCHECK_COMMAND}
   CWD
     ${BUILD_PATH}
   TARGETS

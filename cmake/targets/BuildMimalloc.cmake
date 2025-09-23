@@ -14,7 +14,7 @@ set(MIMALLOC_CMAKE_ARGS
   -DMI_BUILD_TESTS=OFF
   -DMI_USE_CXX=ON
   -DMI_SKIP_COLLECT_ON_EXIT=ON
-  
+
   # ```
   # ❯ mimalloc_allow_large_os_pages=0 BUN_PORT=3004 mem bun http-hello.js
   # Started development server: http://localhost:3004
@@ -51,7 +51,7 @@ if(ENABLE_ASAN)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_DEBUG_UBSAN=ON)
 elseif(APPLE OR LINUX)
   if(APPLE)
-    list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OVERRIDE=OFF)  
+    list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OVERRIDE=OFF)
     list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OSX_ZONE=OFF)
     list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OSX_INTERPOSE=OFF)
   else()

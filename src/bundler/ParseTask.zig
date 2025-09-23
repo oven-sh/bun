@@ -594,7 +594,7 @@ fn getAST(
 
             const root = Expr.init(E.Call, E.Call{
                 .target = .{ .data = .{ .e_identifier = .{ .ref = Ref.None } }, .loc = .{ .start = 0 } },
-                .args = BabyList(Expr).init(try allocator.dupe(Expr, &.{base64_string})),
+                .args = BabyList(Expr).fromOwnedSlice(try allocator.dupe(Expr, &.{base64_string})),
             }, Logger.Loc.Empty);
 
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "__base64ToUint8Array")).?);

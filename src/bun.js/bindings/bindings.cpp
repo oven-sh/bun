@@ -3649,6 +3649,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
 
 JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGlobalObject* arg0) { return &arg0->vm(); };
 
+[[ZIG_EXPORT(nothrow)]]
 void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
 {
     return jsCast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();

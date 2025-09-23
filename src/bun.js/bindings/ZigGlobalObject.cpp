@@ -4059,7 +4059,10 @@ void GlobalObject::handleRejectedPromises()
             continue;
 
         Bun__handleRejectedPromise(this, promise);
-        if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
+        if (auto ex = scope.exception()) {
+            scope.clearException();
+            this->reportUncaughtExceptionAtEventLoop(this, ex);
+        }
     }
 }
 

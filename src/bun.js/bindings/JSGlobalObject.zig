@@ -596,9 +596,8 @@ pub const JSGlobalObject = opaque {
         return @as(*jsc.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
     }
 
-    extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;
     pub fn handleRejectedPromises(this: *JSGlobalObject) void {
-        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch @panic("unreachable");
+        return bun.cpp.JSC__JSGlobalObject__handleRejectedPromises(this);
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;

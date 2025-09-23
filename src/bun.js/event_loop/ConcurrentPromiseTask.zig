@@ -30,8 +30,6 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
             });
             var promise = jsc.JSPromise.create(globalThis);
             this.promise.strong.set(globalThis, promise.toJS());
-            this.ref.ref(this.event_loop.virtual_machine);
-
             return this;
         }
 
@@ -51,6 +49,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn schedule(this: *This) void {
+            this.ref.ref(this.event_loop.virtual_machine);
             WorkPool.schedule(&this.task);
         }
 

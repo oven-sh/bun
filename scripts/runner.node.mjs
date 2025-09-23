@@ -66,12 +66,14 @@ import {
   unzip,
   uploadArtifact,
 } from "./utils.mjs";
+import { groupEnd } from "node:console";
 
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
+const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
@@ -683,6 +685,9 @@ async function runTests() {
     }
   }
 
+  // tests are all over, close the group from the final test. any further output should print ungrouped.
+  groupEnd();
+
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
     const markdown = formatTestToMarkdown(failedResults, false, 0);
@@ -1147,6 +1152,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       delete bunEnv[tmpdir];
     }
     bunEnv["TEMP"] = tmpdirPath;
+  }
+  if (timeout === undefined) {
+    timeout = spawnBunTimeout;
   }
   try {
     const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];

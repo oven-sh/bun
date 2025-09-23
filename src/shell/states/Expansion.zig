@@ -786,9 +786,6 @@ pub const ShellGlobTask = struct {
             .expansion = expansion,
             .result = std.ArrayList([:0]const u8).init(this.alloc_scope.allocator()),
         };
-
-        this.ref.ref(this.event_loop);
-
         return this;
     }
 
@@ -836,6 +833,7 @@ pub const ShellGlobTask = struct {
 
     pub fn schedule(this: *This) void {
         debug("schedule", .{});
+        this.ref.ref(this.event_loop);
         WorkPool.schedule(&this.task);
     }
 

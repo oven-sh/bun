@@ -1938,9 +1938,7 @@ pub const JSZstd = struct {
 
         pub fn runFromJS(this: *ZstdJob) void {
             defer this.deinit();
-            if (this.vm.isShuttingDown()) {
-                return;
-            }
+            defer this.poll.unref(this.vm);
 
             const globalThis = this.vm.global;
             const promise = this.promise.swap();
@@ -1957,7 +1955,6 @@ pub const JSZstd = struct {
         }
 
         pub fn deinit(this: *ZstdJob) void {
-            this.poll.unref(this.vm);
             this.buffer.deinitAndUnprotect();
             this.promise.deinit();
             bun.default_allocator.free(this.output);

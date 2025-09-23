@@ -9,7 +9,7 @@ pub const WriteFile = struct {
     opened_fd: bun.FileDescriptor = invalid_fd,
     system_error: ?jsc.SystemError = null,
     errno: ?anyerror = null,
-    task: bun.ThreadPool.Task = undefined,
+    task: bun.ThreadPool.Task = .{ .callback = &doWriteLoopTask },
     io_task: ?*WriteFileTask = null,
     io_poll: bun.io.Poll = .{},
     io_request: bun.io.Request = .{ .callback = &onRequestWritable },
@@ -37,7 +37,6 @@ pub const WriteFile = struct {
 
     pub fn onReady(this: *WriteFile) void {
         bloblog("WriteFile.onReady()", .{});
-        this.task = .{ .callback = &doWriteLoopTask };
         jsc.WorkPool.schedule(&this.task);
     }
 
@@ -45,7 +44,6 @@ pub const WriteFile = struct {
         bloblog("WriteFile.onIOError()", .{});
         this.errno = bun.errnoToZigErr(err.errno);
         this.system_error = err.toSystemError();
-        this.task = .{ .callback = &doWriteLoopTask };
         jsc.WorkPool.schedule(&this.task);
     }
 
@@ -83,7 +81,6 @@ pub const WriteFile = struct {
             .bytes_blob = bytes_blob,
             .onCompleteCtx = onWriteFileContext,
             .onCompleteCallback = onCompleteCallback,
-            .task = .{ .callback = &doWriteLoopTask },
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
         });
         file_blob.store.?.ref();

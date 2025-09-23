@@ -228,11 +228,11 @@ pub const ShellLsTask = struct {
 
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
-    task: jsc.WorkPoolTask = .{
-        .callback = workPoolCallback,
-    },
+    task: jsc.WorkPoolTask = .{ .callback = workPoolCallback },
+    ref: bun.Async.KeepAlive = .{},
 
     pub fn schedule(this: *@This()) void {
+        this.ref.ref(this.event_loop);
         jsc.WorkPool.schedule(&this.task);
     }
 
@@ -413,6 +413,7 @@ pub const ShellLsTask = struct {
 
     pub fn runFromMainThread(this: *@This()) void {
         debug("runFromMainThread", .{});
+        this.ref.unref(this.event_loop);
         this.ls.onShellLsTaskDone(this);
     }
 

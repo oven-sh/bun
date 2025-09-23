@@ -289,6 +289,7 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 defer this.deinit();
+                defer this.ref.unref(this.globalObject.bunVM());
 
                 const globalObject = this.globalObject;
                 const success = @as(bun.sys.Maybe(ReturnType).Tag, this.result) == .result;
@@ -320,8 +321,6 @@ pub const Async = struct {
                 if (this.result == .err) {
                     this.result.err.deinit();
                 }
-
-                this.ref.unref(this.globalObject.bunVM());
                 if (@hasDecl(ArgumentType, "deinitAndUnprotect")) {
                     this.args.deinitAndUnprotect();
                 } else {
@@ -389,6 +388,7 @@ pub const Async = struct {
 
             pub fn runFromJSThread(this: *Task) void {
                 defer this.deinit();
+                defer this.ref.unref(this.globalObject.bunVM());
                 const globalObject = this.globalObject;
 
                 const tracker = this.tracker;
@@ -428,8 +428,6 @@ pub const Async = struct {
                 if (this.result == .err) {
                     this.result.err.deinit();
                 }
-
-                this.ref.unref(this.globalObject.bunVM());
                 if (@hasDecl(ArgumentType, "deinitAndUnprotect")) {
                     this.args.deinitAndUnprotect();
                 } else {
@@ -590,9 +588,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             task.args.src.toThreadSafe();
             task.args.dest.toThreadSafe();
             task.tracker.didSchedule(globalObject);
-
             jsc.WorkPool.schedule(&task.task);
-
             return task;
         }
 
@@ -618,9 +614,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             if (comptime !is_shell) task.ref.ref(mini);
             task.args.src.toThreadSafe();
             task.args.dest.toThreadSafe();
-
             jsc.WorkPool.schedule(&task.task);
-
             return task;
         }
 
@@ -678,6 +672,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             tracker.willDispatch(globalObject);
             defer tracker.didDispatch(globalObject);
 
+            this.ref.unref(this.evtloop);
             this.deinit();
             switch (success) {
                 false => {
@@ -693,7 +688,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             if (this.result == .err) {
                 this.result.err.deinit();
             }
-            if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
             this.promise.deinit();
             this.arena.deinit();
@@ -1231,6 +1225,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         tracker.willDispatch(globalObject);
         defer tracker.didDispatch(globalObject);
 
+        this.ref.unref(this.globalObject.bunVM());
         this.deinit();
         switch (success) {
             false => {
@@ -1247,8 +1242,6 @@ pub const AsyncReaddirRecursiveTask = struct {
         if (this.pending_err) |*err| {
             err.deinit();
         }
-
-        this.ref.unref(this.globalObject.bunVM());
         this.args.deinit();
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();

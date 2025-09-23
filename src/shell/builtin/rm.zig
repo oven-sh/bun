@@ -468,9 +468,8 @@ pub const ShellRmTask = struct {
 
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
-    task: jsc.WorkPoolTask = .{
-        .callback = workPoolCallback,
-    },
+    task: jsc.WorkPoolTask = .{ .callback = workPoolCallback },
+    ref: bun.Async.KeepAlive = .{},
     join_style: JoinStyle,
 
     /// On Windows we allow posix path separators
@@ -507,6 +506,8 @@ pub const ShellRmTask = struct {
         deleting_after_waiting_for_children: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         kind_hint: EntryKindHint,
         task: jsc.WorkPoolTask = .{ .callback = runFromThreadPool },
+        ref: bun.Async.KeepAlive = .{},
+        event_loop: bun.jsc.EventLoopHandle,
         deleted_entries: std.ArrayList(u8),
         concurrent_task: jsc.EventLoopTask,
 
@@ -521,6 +522,7 @@ pub const ShellRmTask = struct {
 
         pub fn runFromMainThread(this: *DirTask) void {
             debug("DirTask(0x{x}, path={s}) runFromMainThread", .{ @intFromPtr(this), this.path });
+            this.ref.unref(this.event_loop);
             this.task_manager.rm.writeVerbose(this).run();
         }
 
@@ -694,8 +696,9 @@ pub const ShellRmTask = struct {
                 .kind_hint = .idk,
                 .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
                 .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
+                .event_loop = rm.bltn().eventLoop(),
             },
-            .event_loop = rm.bltn().parentCmd().base.eventLoop(),
+            .event_loop = rm.bltn().eventLoop(),
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             .error_signal = error_signal,
             .root_is_absolute = is_absolute,
@@ -705,6 +708,7 @@ pub const ShellRmTask = struct {
     }
 
     pub fn schedule(this: *@This()) void {
+        this.ref.ref(this.event_loop);
         jsc.WorkPool.schedule(&this.task);
     }
 
@@ -730,7 +734,7 @@ pub const ShellRmTask = struct {
             return;
         }
 
-        var subtask = bun.handleOom(bun.default_allocator.create(DirTask));
+        var subtask: *DirTask = bun.handleOom(bun.default_allocator.create(DirTask));
         subtask.* = DirTask{
             .task_manager = this,
             .path = path,
@@ -739,6 +743,7 @@ pub const ShellRmTask = struct {
             .kind_hint = kind_hint,
             .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.event_loop),
+            .event_loop = this.event_loop,
         };
 
         const count = parent_task.subtask_count.fetchAdd(1, .monotonic);
@@ -746,6 +751,7 @@ pub const ShellRmTask = struct {
             assert(count > 0);
         }
 
+        subtask.ref.ref(this.event_loop);
         jsc.WorkPool.schedule(&subtask.task);
     }
 
@@ -1164,6 +1170,7 @@ pub const ShellRmTask = struct {
     }
 
     pub fn runFromMainThread(this: *ShellRmTask) void {
+        this.ref.unref(this.event_loop);
         this.rm.onShellRmTaskDone(this);
     }
 

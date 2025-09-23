@@ -385,7 +385,7 @@ pub const JSPasswordObject = struct {
                 var promise = this.promise;
                 defer promise.deinit();
                 this.promise = .{};
-                this.ref.unref(this.global.bunVM());
+                defer this.ref.unref(this.global.bunVM());
                 const global = this.global;
                 switch (this.value) {
                     .err => {
@@ -597,7 +597,7 @@ pub const JSPasswordObject = struct {
                 var promise = this.promise;
                 defer promise.deinit();
                 this.promise = .{};
-                this.ref.unref(this.global.bunVM());
+                defer this.ref.unref(this.global.bunVM());
                 const global = this.global;
                 switch (this.value) {
                     .err => {

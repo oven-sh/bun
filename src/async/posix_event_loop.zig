@@ -1211,7 +1211,8 @@ pub const Closer = struct {
         _: void,
     ) void {
         bun.assert(fd.isValid());
-        jsc.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
+        const task = Closer.new(.{ .fd = fd });
+        jsc.WorkPool.schedule(&task.task);
     }
 
     fn onClose(task: *jsc.WorkPoolTask) void {

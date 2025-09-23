@@ -12,6 +12,9 @@ export async function renderRoutesForProdStatic(
   renderStatic,
   getParams,
   clientEntryUrl,
+  routerTypeRoots,
+  routerTypeServerEntrypoints,
+  serverRuntime,
   // Indexed by route index
   patterns,
   files,
@@ -19,8 +22,10 @@ export async function renderRoutesForProdStatic(
   sourceRouteFiles,
   paramInformation,
   styles,
+  routeIndices,
 ) {
-  console.log("PATTERNS", patterns);
+  console.log("ROUTER TYPE ROOTS!", routerTypeRoots);
+
   $debug({
     outBase,
     allServerFiles,
@@ -34,6 +39,42 @@ export async function renderRoutesForProdStatic(
     styles,
   });
   const { join: pathJoin } = require("node:path");
+
+  // Helper function to make paths relative to _bun folder (removes _bun/ prefix and adds ./)
+  function makeRelativeToBun(path: string): string {
+    if (path.startsWith("/_bun/")) {
+      return "./" + path.slice(6); // Remove "/_bun/" and add ./ prefix
+    } else if (path.startsWith("_bun/")) {
+      return "./" + path.slice(5); // Remove "_bun/" and add ./ prefix
+    }
+    return "./" + path;
+  }
+
+  // Helper function to process route paths: removes router type prefix and extension, ensures leading slash
+  function processRoutePath(sourceRoute: string, routerRoot: string | undefined): string {
+    let routePath = sourceRoute;
+
+    // Remove router type prefix if present
+    if (routerRoot && routePath.startsWith(routerRoot)) {
+      routePath = routePath.slice(routerRoot.length);
+      if (routePath.startsWith("/")) {
+        routePath = routePath.slice(1);
+      }
+    }
+
+    // Remove extension
+    const lastDot = routePath.lastIndexOf(".");
+    if (lastDot > 0) {
+      routePath = routePath.slice(0, lastDot);
+    }
+
+    // Ensure it starts with /
+    if (!routePath.startsWith("/")) {
+      routePath = "/" + routePath;
+    }
+
+    return routePath;
+  }
 
   let loadedModules = new Array(allServerFiles.length);
 
@@ -67,9 +108,10 @@ export async function renderRoutesForProdStatic(
       Object.entries(files).map(([key, value]) => {
         if (params != null) {
           $assert(patterns[i].includes(`:`));
-          const newKey = patterns[i].replace(/:(\w+)/g, (_, p1) =>
-            typeof params[p1] === "string" ? params[p1] : params[p1].join("/"),
-          );
+          const newKey = patterns[i].replace(/:(\*\?|\*)?(\w+)/g, (_, modifier, p1) => {
+            const value = typeof params[p1] === "string" ? params[p1] : params[p1].join("/");
+            return value;
+          });
           return Bun.write(pathJoin(outBase, newKey + key), value);
         }
         return Bun.write(pathJoin(outBase, patterns[i] + key), value);
@@ -107,7 +149,8 @@ export async function renderRoutesForProdStatic(
 
   type SSRManifest = {
     mode: "ssr";
-    route_index: number;
+    route: string;
+    route_type: number;
     client_entrypoint?: string;
     modules?: string[];
     styles: string[];
@@ -115,7 +158,8 @@ export async function renderRoutesForProdStatic(
 
   type SSGManifest = {
     mode: "ssg";
-    route_index: number;
+    route: string;
+    route_type: number;
     entrypoint: string;
     params?: Record<string, string>;
     styles: string[];
@@ -126,6 +170,7 @@ export async function renderRoutesForProdStatic(
   type Manifest = {
     version: string;
     entries: ManifestEntry[];
+    server_runtime?: string;
   };
 
   let entries: ManifestEntry[] = [];
@@ -140,14 +185,21 @@ export async function renderRoutesForProdStatic(
 
       // Check if page is SSR or SSG and add to manifest
       if (pageModule.mode === "ssr") {
-        // Add SSR entry to manifest
+        const routePath = processRoutePath(sourceRouteFiles[i], routerTypeRoots[type]);
+
+        // Add SSR entry to manifest (make modules relative to _bun folder)
         const ssrEntry: SSRManifest = {
           mode: "ssr",
-          route_index: i,
+          route: routePath,
+          route_type: type,
           client_entrypoint: clientEntryUrl[type] || "",
           modules: allServerFiles
-            .filter((_, index) => files[i].includes(index))
-            .map(path => (path.startsWith("bake:/") ? path.slice(6) : path)), // Remove "bake:/" prefix
+            .filter((_: any, index: number) => files[i].includes(index))
+            .map((path: string) => {
+              // Remove "bake:/" prefix first, then make relative to _bun folder
+              const cleanPath = path.startsWith("bake:/") ? path.slice(6) : path;
+              return makeRelativeToBun(cleanPath);
+            }),
           styles: styles[i],
         };
         entries.push(ssrEntry);
@@ -164,17 +216,17 @@ export async function renderRoutesForProdStatic(
           layouts,
         });
 
-        // Get the bundled output file path for this route
-        const serverModule = allServerFiles
-          .filter((_, index) => files[i].includes(index))
-          .map(path => (path.startsWith("bake:/") ? path.slice(6) : path))[0];
+        // For SSG, we need the client-side JavaScript for hydration, not the server module
+        const clientEntry = clientEntryUrl[type] || "";
+        const routePath = processRoutePath(sourceRouteFiles[i], routerTypeRoots[type]);
 
         // Create an entry for each param combination
-        const addSsgEntry = params => {
+        const addSsgEntry = (params: any) => {
           const ssgEntry: SSGManifest = {
             mode: "ssg",
-            route_index: i,
-            entrypoint: serverModule || sourceRouteFiles[i],
+            route: routePath,
+            route_type: type,
+            entrypoint: clientEntry,
             params: params,
             styles: styles[i],
           };
@@ -208,14 +260,15 @@ export async function renderRoutesForProdStatic(
         }
       } else {
         // No params, single SSG entry
-        const serverModule = allServerFiles
-          .filter((_, index) => files[i].includes(index))
-          .map(path => (path.startsWith("bake:/") ? path.slice(6) : path))[0];
+        // For SSG, we need the client-side JavaScript for hydration, not the server module
+        const clientEntry = clientEntryUrl[type] || "";
+        const routePath = processRoutePath(sourceRouteFiles[i], routerTypeRoots[type]);
 
         const ssgEntry: SSGManifest = {
           mode: "ssg",
-          route_index: i,
-          entrypoint: serverModule || sourceRouteFiles[i],
+          route: routePath,
+          route_type: type,
+          entrypoint: clientEntry,
           styles: styles[i],
         };
         entries.push(ssgEntry);
@@ -225,9 +278,28 @@ export async function renderRoutesForProdStatic(
     }),
   );
 
+  // Build the router_types array (make server_entrypoint relative to _bun folder)
+  const routerTypes = [];
+  for (let i = 0; i < routerTypeServerEntrypoints.length; i++) {
+    const serverEntrypoint = routerTypeServerEntrypoints[i];
+    if (serverEntrypoint) {
+      // Remove "bake:/" prefix first, then make relative to _bun folder
+      const cleanPath = serverEntrypoint.startsWith("bake:/") ? serverEntrypoint.slice(6) : serverEntrypoint;
+      routerTypes.push({
+        server_entrypoint: makeRelativeToBun(cleanPath),
+      });
+    } else {
+      // Push null or empty object if no server entrypoint
+      routerTypes.push({
+        server_entrypoint: null,
+      });
+    }
+  }
+
   const manifest: Manifest = {
     version: "0.0.1",
     entries: entries,
+    router_types: routerTypes,
   };
 
   return manifest;

@@ -17,7 +17,7 @@
 
 namespace Bun {
 
-extern "C" JSC::EncodedJSValue Bun__JSRequest__createFromUwsReqForBake(Zig::GlobalObject* globalObject, void* requestPtr, uWS::HttpRequest* req)
+extern "C" JSC::EncodedJSValue Bun__JSRequest__createFromUwsReqForBake(Zig::GlobalObject* globalObject, void* requestPtr)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

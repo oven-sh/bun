@@ -1943,9 +1943,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 new_request_ctx.request_weakref = .initRef(new_request);
 
                                 server.onPendingRequest();
+                                const js_request = new_request.toJSForBake(server.globalThis) catch |err| brk: {
+                                    if (err == error.OutOfMemory) bun.outOfMemory();
+                                    break :brk server.globalThis.takeException(err);
+                                };
                                 // Call DevServer with the render path
                                 dev_server.handleRenderRedirect(bun.jsc.API.SavedRequest{
-                                    .js_request = .create(new_request.toJS(server.globalThis), server.globalThis),
+                                    .js_request = .create(js_request, server.globalThis),
                                     .ctx = AnyRequestContext.init(new_request_ctx),
                                     .request = new_request,
                                     .response = bun.uws.AnyResponse.init(resp.?),
@@ -1955,6 +1959,22 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                     return;
                                 };
 
+                                return;
+                            }
+                        }
+
+                        // Check for production SSR server with bake_manifest
+                        if (@hasField(@TypeOf(server.config), "bake_manifest")) {
+                            if (server.config.bake_manifest) |_| {
+                                // In production mode, handle render redirect by calling the SSR handler with the new URL
+                                if (this.req) |req| {
+                                    if (this.resp) |resp| {
+                                        // Call the production SSR handler with the render path
+                                        server.bakeProductionSSRRouteHandlerWithURL(req, resp, render_body.path);
+                                        return;
+                                    }
+                                }
+                                this.renderMissing();
                                 return;
                             }
                         }

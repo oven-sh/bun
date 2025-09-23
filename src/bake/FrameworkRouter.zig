@@ -57,7 +57,7 @@ pattern_string_arena: bun.ArenaAllocator,
 /// - As little memory indirection as possible.
 /// - Routes cannot be updated after serilaization.
 pub const Serialized = struct {
-    // TODO:
+    // TODO
 };
 
 const StaticRouteMap = bun.StringArrayHashMapUnmanaged(Route.Index);
@@ -496,7 +496,7 @@ pub const Style = union(enum) {
     pub const UiOrRoutes = enum { ui, routes };
     const NextRoutingConvention = enum { app, pages };
 
-    pub fn parse(style: Style, file_path: []const u8, ext: []const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
+    pub fn parse(style: Style, file_path: []const u8, ext: ?[]const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
         bun.assert(file_path[0] == '/');
 
         return switch (style) {
@@ -513,8 +513,8 @@ pub const Style = union(enum) {
 
     /// Implements the pages router parser from Next.js:
     /// https://nextjs.org/docs/getting-started/project-structure#pages-routing-conventions
-    pub fn parseNextJsPages(file_path_raw: []const u8, ext: []const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
-        var file_path = file_path_raw[0 .. file_path_raw.len - ext.len];
+    pub fn parseNextJsPages(file_path_raw: []const u8, ext: ?[]const u8, log: *TinyLog, allow_layouts: bool, arena: Allocator) !?ParsedPattern {
+        var file_path = if (ext) |e| file_path_raw[0 .. file_path_raw.len - e.len] else file_path_raw;
         var kind: ParsedPattern.Kind = .page;
         if (strings.hasSuffixComptime(file_path, "/index")) {
             file_path.len -= "/index".len;
@@ -537,16 +537,15 @@ pub const Style = union(enum) {
     /// https://nextjs.org/docs/getting-started/project-structure#app-routing-conventions
     pub fn parseNextJsApp(
         file_path_raw: []const u8,
-        ext: []const u8,
+        ext: ?[]const u8,
         log: *TinyLog,
         allow_layouts: bool,
         arena: Allocator,
         comptime extract: UiOrRoutes,
     ) !?ParsedPattern {
-        const without_ext = file_path_raw[0 .. file_path_raw.len - ext.len];
+        const without_ext = if (ext) |e| file_path_raw[0 .. file_path_raw.len - e.len] else file_path_raw;
         const basename = std.fs.path.basename(without_ext);
-        const loader = bun.options.Loader.fromString(ext) orelse
-            return null;
+        const loader = if (ext) |e| bun.options.Loader.fromString(e) orelse return null else return null;
 
         // TODO: opengraph-image and metadata friends
         if (!loader.isJavaScriptLike())
@@ -717,7 +716,7 @@ pub fn insert(
     ctx: InsertionContext,
     /// When `error.RouteCollision` is returned, this is set to the existing file index.
     out_colliding_file_id: *OpaqueFileId,
-) InsertError!void {
+) InsertError!Route.Index {
     // The root route is the index of the type
     const root_route = Type.rootRouteIndex(ty);
 
@@ -784,7 +783,7 @@ pub fn insert(
     const new_route = fr.routePtr(new_route_index);
     if (new_route.filePtr(file_kind).unwrap()) |existing| {
         if (existing == file_id) {
-            return; // exact match already exists. Hot-reloading code hits this
+            return new_route_index; // exact match already exists. Hot-reloading code hits this
         }
         out_colliding_file_id.* = existing;
         return error.RouteCollision;
@@ -810,6 +809,8 @@ pub fn insert(
             gop.value_ptr.* = new_route_index;
         },
     };
+
+    return new_route_index;
 }
 
 /// An enforced upper bound of 64 unique patterns allows routing to use no heap allocation
@@ -822,6 +823,28 @@ pub const MatchedParams = struct {
         key: []const u8,
         value: []const u8,
     };
+
+    /// Convert the matched params to a JavaScript object
+    /// Returns null if there are no params
+    pub fn toJS(self: *const MatchedParams, global: *jsc.JSGlobalObject) JSValue {
+        const params_array = self.params.slice();
+
+        if (params_array.len == 0) {
+            return JSValue.null;
+        }
+
+        // Create a JavaScript object with params
+        const obj = JSValue.createEmptyObject(global, params_array.len);
+        for (params_array) |param| {
+            const key_str = bun.String.cloneUTF8(param.key);
+            defer key_str.deref();
+            const value_str = bun.String.cloneUTF8(param.value);
+            defer value_str.deref();
+
+            _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global)) catch unreachable;
+        }
+        return obj;
+    }
 };
 
 /// Fast enough for development to be seamless, but avoids building a
@@ -1108,7 +1131,7 @@ fn scanInner(
                         },
                     };
 
-                    result catch |err| switch (err) {
+                    _ = result catch |err| switch (err) {
                         error.OutOfMemory => |e| return e,
                         error.RouteCollision => {
                             try ctx.vtable.onRouterCollisionError(

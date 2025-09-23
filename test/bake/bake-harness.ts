@@ -1495,6 +1495,17 @@ export async function copyCachedReactDeps(root: string): Promise<void> {
  */
 export async function tempDirWithBakeDeps(name: string, files: Record<string, string>): Promise<string> {
   const dir = tempDirWithFiles(name, files);
+  const defaultPackageJsonDependencies = {
+    "react": "experimental",
+    "react-dom": "experimental",
+    "react-server-dom-bun": "experimental",
+    "react-refresh": "experimental",
+  };
+  const userPackageJson = files["package.json"] ?? {};
+  const packageJson = {
+    ...userPackageJson,
+    dependencies: { ...defaultPackageJsonDependencies, ...(userPackageJson.dependencies ?? {}) },
+  };
   await copyCachedReactDeps(dir);
   return dir;
 }

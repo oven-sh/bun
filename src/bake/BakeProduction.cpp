@@ -14,6 +14,9 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     JSC::JSValue renderStatic,
     JSC::JSValue getParams,
     JSC::JSValue clientEntryUrl,
+    JSC::JSValue routerTypeRoots,
+    JSC::JSValue routerTypeServerEntrypoints,
+    JSC::JSValue serverRuntime,
     JSC::JSValue pattern,
     JSC::JSValue files,
     JSC::JSValue typeAndFlags,
@@ -31,6 +34,9 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProdStatic(
     args.append(renderStatic);
     args.append(getParams);
     args.append(clientEntryUrl);
+    args.append(routerTypeRoots);
+    args.append(routerTypeServerEntrypoints);
+    args.append(serverRuntime);
     args.append(pattern);
     args.append(files);
     args.append(typeAndFlags);

@@ -547,6 +547,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         poll_ref: Async.KeepAlive = .{},
 
         cached_hostname: bun.String = bun.String.empty,
+        bake_router: ?bake.FrameworkRouter = null,
+        bake_server_runtime_module: jsc.JSValue = .zero,
+        bake_server_runtime_handler: jsc.Strong.Optional = .empty,
 
         flags: packed struct(u4) {
             deinit_scheduled: bool = false,
@@ -1587,6 +1590,70 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
+        /// Context type for FrameworkRouter in production mode
+        /// Implements the required methods for route scanning
+        pub const ProductionFrameworkRouter = struct {
+            server: *ThisServer,
+            file_id_counter: u32 = 0,
+
+            pub fn init(server: *ThisServer) ProductionFrameworkRouter {
+                return .{ .server = server };
+            }
+
+            /// Generate a file ID for a route file
+            /// In production, we don't need to track actual files since they're bundled
+            pub fn getFileIdForRouter(
+                this: *ProductionFrameworkRouter,
+                abs_path: []const u8,
+                associated_route: bun.bake.FrameworkRouter.Route.Index,
+                file_kind: bun.bake.FrameworkRouter.Route.FileKind,
+            ) !bun.bake.FrameworkRouter.OpaqueFileId {
+                _ = abs_path;
+                _ = associated_route;
+                _ = file_kind;
+                // In production, we just need unique IDs for the route structure
+                // The actual files are already bundled
+                const id = this.file_id_counter;
+                this.file_id_counter += 1;
+                return bun.bake.FrameworkRouter.OpaqueFileId.init(id);
+            }
+
+            /// Handle route syntax errors
+            pub fn onRouterSyntaxError(
+                this: *ProductionFrameworkRouter,
+                rel_path: []const u8,
+                log: bun.bake.FrameworkRouter.TinyLog,
+            ) !void {
+                _ = this;
+                // In production, log syntax errors to console
+                // These shouldn't happen in production as routes are pre-validated during build
+                Output.prettyErrorln("<r><red>error<r>: route syntax error in {s}", .{rel_path});
+                log.print(rel_path);
+                Output.flush();
+            }
+
+            /// Handle route collision errors
+            pub fn onRouterCollisionError(
+                this: *ProductionFrameworkRouter,
+                rel_path: []const u8,
+                other_id: bun.bake.FrameworkRouter.OpaqueFileId,
+                file_kind: bun.bake.FrameworkRouter.Route.FileKind,
+            ) !void {
+                _ = this;
+                _ = other_id;
+                // In production, log collision errors
+                // These shouldn't happen in production as routes are pre-validated during build
+                Output.errGeneric("Multiple {s} matching the same route pattern is ambiguous", .{
+                    switch (file_kind) {
+                        .page => "pages",
+                        .layout => "layout",
+                    },
+                });
+                Output.prettyErrorln("  - <blue>{s}<r>", .{rel_path});
+                Output.flush();
+            }
+        };
+
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
 
@@ -1596,6 +1663,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.cached_hostname.deref();
             this.all_closed_promise.deinit();
+            this.bake_server_runtime_handler.deinit();
+            if (this.bake_server_runtime_module != .zero) {
+                this.bake_server_runtime_module.unprotect();
+            }
             for (this.user_routes.items) |*user_route| {
                 user_route.deinit();
             }
@@ -1625,14 +1696,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             errdefer bun.default_allocator.free(base_url);
 
             const dev_server = if (config.bake) |*bake_options|
-                try bun.bake.DevServer.init(.{
-                    .arena = bake_options.arena.allocator(),
-                    .root = bake_options.root,
-                    .framework = bake_options.framework,
-                    .bundler_options = bake_options.bundler_options,
-                    .vm = global.bunVM(),
-                    .broadcast_console_log_from_browser_to_server = config.broadcast_console_log_from_browser_to_server_for_bake,
-                })
+                if (config.development != .production)
+                    try bun.bake.DevServer.init(.{
+                        .arena = bake_options.arena.allocator(),
+                        .root = bake_options.root,
+                        .framework = bake_options.framework,
+                        .bundler_options = bake_options.bundler_options,
+                        .vm = global.bunVM(),
+                        .broadcast_console_log_from_browser_to_server = config.broadcast_console_log_from_browser_to_server_for_bake,
+                    })
+                else
+                    null
             else
                 null;
             errdefer if (dev_server) |d| d.deinit();
@@ -1645,6 +1719,77 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .allocator = Arena.getThreadLocalDefault(),
                 .dev_server = dev_server,
             });
+
+            // Initialize FrameworkRouter for production Bake builds
+            if (config.bake) |bake_opts| {
+                if (config.bake_manifest != null) {
+                    // Initialize the server runtime module
+                    // Construct path: <manifest_build_output_dir>/_bun/server-runtime.js
+                    const manifest = config.bake_manifest.?;
+                    const build_output_dir = manifest.build_output_dir;
+
+                    // Create absolute path for build output dir
+                    const server_runtime_path = bun.path.joinAbsString(
+                        bake_opts.root,
+                        &.{ build_output_dir, "_bun", "server-runtime.js" },
+                        .auto,
+                    );
+
+                    server.initBakeServerRuntime(server_runtime_path) catch |err| {
+                        Output.errGeneric("Failed to load SSR server runtime: {s}", .{@errorName(err)});
+                        return error.JSError;
+                    };
+
+                    // In production, we need to create a FrameworkRouter to map routes
+                    var router_types = try std.ArrayList(bun.bake.FrameworkRouter.Type).initCapacity(
+                        server.allocator,
+                        bake_opts.framework.file_system_router_types.len,
+                    );
+                    errdefer router_types.deinit();
+
+                    const transpiler = &server.vm.transpiler;
+
+                    for (bake_opts.framework.file_system_router_types) |fsr| {
+                        const buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(buf);
+                        const joined_root = bun.path.joinAbsStringBuf(bake_opts.root, buf, &.{fsr.root}, .auto);
+                        const entry = transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
+                            continue;
+
+                        try router_types.append(.{
+                            .abs_root = bun.strings.withoutTrailingSlash(entry.abs_path),
+                            .prefix = fsr.prefix,
+                            .ignore_underscores = fsr.ignore_underscores,
+                            .ignore_dirs = fsr.ignore_dirs,
+                            .extensions = fsr.extensions,
+                            .style = fsr.style,
+                            .allow_layouts = fsr.allow_layouts,
+                            // In production, we don't track individual files as they're already bundled
+                            .server_file = bun.bake.FrameworkRouter.OpaqueFileId.init(0),
+                            .client_file = if (fsr.entry_client) |_|
+                                bun.bake.FrameworkRouter.OpaqueFileId.init(1).toOptional()
+                            else
+                                .none,
+                            .server_file_string = .empty,
+                        });
+                    }
+
+                    server.bake_router = try bun.bake.FrameworkRouter.initEmpty(
+                        bake_opts.root,
+                        router_types.items,
+                        server.allocator,
+                    );
+
+                    // Scan the filesystem to populate the router with actual routes
+                    // This uses ProductionFrameworkRouter context to handle route registration
+                    var prod_router = ProductionFrameworkRouter.init(server);
+                    try server.bake_router.?.scanAll(
+                        server.allocator,
+                        &server.vm.transpiler.resolver,
+                        bun.bake.FrameworkRouter.InsertionContext.wrap(ProductionFrameworkRouter, &prod_router),
+                    );
+                }
+            }
 
             if (RequestContext.pool == null) {
                 RequestContext.pool = bun.create(
@@ -2265,7 +2410,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return .{
                 .js_request = switch (create_js_request) {
                     .yes => request_object.toJS(this.globalThis),
-                    .bake => request_object.toJSForBake(this.globalThis, req) catch |err| this.globalThis.takeException(err),
+                    .bake => request_object.toJSForBake(this.globalThis) catch |err| this.globalThis.takeException(err),
                     .no => .zero,
                 },
                 .request_object = request_object,
@@ -2591,7 +2736,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 6. Initialize plugins if needed ---
+            // --- 6. Handle Bake manifest routes (SSG) ---
+            if (this.config.bake_manifest) |manifest| {
+                this.setBakeManifestRoutes(app, manifest);
+            }
+
+            // --- 7. Initialize plugins if needed ---
             if (needs_plugins and this.plugins == null) {
                 if (this.vm.transpiler.options.serve_plugins) |serve_plugins_config| {
                     if (serve_plugins_config.len > 0) {
@@ -2600,7 +2750,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 7. Debug mode specific routes ---
+            // --- 8. Debug mode specific routes ---
             if (debug_mode) {
                 app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
                 if (this.config.inspector) {
@@ -2609,7 +2759,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 8. Handle DevServer routes & Track "/*" Coverage ---
+            // --- 9. Handle DevServer routes & Track "/*" Coverage ---
             var has_dev_server_for_star_path = false;
             if (dev_server) |dev| {
                 // dev.setRoutes might register its own "/*" HTTP handler
@@ -2632,7 +2782,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 9. Consolidated "/*" HTTP Fallback Registration ---
+            // --- 10. Consolidated "/*" HTTP Fallback Registration ---
             if (star_methods_covered_by_user.eql(bun.http.Method.Set.initFull())) {
                 // User/Static/Dev has already provided a "/*" handler for ALL methods.
                 // No further global "/*" HTTP fallback needed.
@@ -2643,21 +2793,31 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 star_methods_covered_by_user.toggleAll();
                 var iter = star_methods_covered_by_user.iterator();
                 while (iter.next()) |method_to_cover| {
-                    switch (this.config.onNodeHTTPRequest) {
-                        .zero => switch (this.config.onRequest) {
-                            .zero => app.method(method_to_cover, "/*", *ThisServer, this, on404),
-                            else => app.method(method_to_cover, "/*", *ThisServer, this, onRequest),
-                        },
-                        else => app.method(method_to_cover, "/*", *ThisServer, this, onNodeHTTPRequest),
+                    // If we have a bake manifest and router for SSR routes, use the SSR handler
+                    if (this.config.bake_manifest != null and this.config.bake_router != null) {
+                        app.method(method_to_cover, "/*", *ThisServer, this, bakeProductionSSRRouteHandler);
+                    } else {
+                        switch (this.config.onNodeHTTPRequest) {
+                            .zero => switch (this.config.onRequest) {
+                                .zero => app.method(method_to_cover, "/*", *ThisServer, this, on404),
+                                else => app.method(method_to_cover, "/*", *ThisServer, this, onRequest),
+                            },
+                            else => app.method(method_to_cover, "/*", *ThisServer, this, onNodeHTTPRequest),
+                        }
                     }
                 }
             } else {
-                switch (this.config.onNodeHTTPRequest) {
-                    .zero => switch (this.config.onRequest) {
-                        .zero => app.any("/*", *ThisServer, this, on404),
-                        else => app.any("/*", *ThisServer, this, onRequest),
-                    },
-                    else => app.any("/*", *ThisServer, this, onNodeHTTPRequest),
+                // If we have a bake manifest and router for SSR routes, use the SSR handler
+                if (this.config.bake_manifest != null and this.config.bake_router != null) {
+                    app.any("/*", *ThisServer, this, bakeProductionSSRRouteHandler);
+                } else {
+                    switch (this.config.onNodeHTTPRequest) {
+                        .zero => switch (this.config.onRequest) {
+                            .zero => app.any("/*", *ThisServer, this, on404),
+                            else => app.any("/*", *ThisServer, this, onRequest),
+                        },
+                        else => app.any("/*", *ThisServer, this, onNodeHTTPRequest),
+                    }
                 }
             }
 
@@ -2672,6 +2832,592 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             return route_list_value;
+        }
+
+        fn handleSingleSSGRoute(
+            this: *ThisServer,
+            app: *App,
+            ssg: *const bun.bake.Manifest.Route.SSG,
+            route_index: usize,
+            client_entrypoints_seen: *std.hash_map.HashMap([]const u8, void, bun.StringHashMapContext, 80),
+        ) void {
+            const any_server = AnyServer.from(this);
+
+            // For SSG routes with params, we need to build the actual URL path
+            // Use the route index to look up the pattern from the framework router
+            const url_path = if (ssg.params.len > 0)
+                this.reconstructPathFromParams(bun.default_allocator, @intCast(route_index), &ssg.params) catch "/"
+            else if (this.bake_router) |router| blk: {
+                // For routes without params, get the static path from the router
+                if (route_index < router.routes.items.len) {
+                    const ssg_route = &router.routes.items[route_index];
+                    // Build path from route parts
+                    var path_buf: [4096]u8 = undefined;
+                    var path_len: usize = 0;
+
+                    var current_route: ?*const bun.bake.FrameworkRouter.Route = ssg_route;
+                    var parts_stack: [32][]const u8 = undefined;
+                    var parts_count: usize = 0;
+
+                    // Collect all text parts from parent routes
+                    while (current_route) |r| : (parts_count += 1) {
+                        if (parts_count >= parts_stack.len) break;
+                        switch (r.part) {
+                            .text => |text| parts_stack[parts_count] = text,
+                            else => {},
+                        }
+                        if (r.parent.unwrap()) |parent_idx| {
+                            current_route = &router.routes.items[parent_idx.get()];
+                        } else {
+                            current_route = null;
+                        }
+                    }
+
+                    // Build path from collected parts (reverse order)
+                    if (parts_count > 0) {
+                        var i = parts_count;
+                        while (i > 0) : (i -= 1) {
+                            path_buf[path_len] = '/';
+                            path_len += 1;
+                            const part = parts_stack[i - 1];
+                            @memcpy(path_buf[path_len .. path_len + part.len], part);
+                            path_len += part.len;
+                        }
+                        break :blk path_buf[0..path_len];
+                    } else {
+                        break :blk "/";
+                    }
+                } else {
+                    break :blk "/";
+                }
+            } else "/";
+
+            httplog("(bake_prod) Setting URL path: {s}\n", .{url_path});
+
+            // Build the filesystem path to the pre-rendered files
+            // SSG files are stored in dist/{route}/index.html and dist/{route}/index.rsc
+            var dist_path_buf: [4096]u8 = undefined;
+            const dist_path = std.fmt.bufPrint(&dist_path_buf, "dist{s}", .{url_path}) catch bun.outOfMemory();
+
+            // Create file routes for the HTML and RSC files
+            // Serve index.html for the main route
+            const html_path = bun.default_allocator.alloc(u8, dist_path.len + "/index.html".len) catch bun.outOfMemory();
+            @memcpy(html_path[0..dist_path.len], dist_path);
+            @memcpy(html_path[dist_path.len..], "/index.html");
+
+            // Create a file blob for the HTML file
+            const html_store = jsc.WebCore.Blob.Store.initFile(
+                .{ .path = .{ .string = bun.PathString.init(html_path) } },
+                bun.http.MimeType.html,
+                bun.default_allocator,
+            ) catch bun.outOfMemory();
+
+            const html_blob = jsc.WebCore.Blob{
+                .size = jsc.WebCore.Blob.max_size,
+                .store = html_store,
+                .content_type = bun.http.MimeType.html.value,
+                .globalThis = this.globalThis,
+            };
+
+            const html_route = FileRoute.initFromBlob(html_blob, .{
+                .server = any_server,
+                .status_code = 200,
+            });
+
+            // Apply the HTML route
+            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, html_route, url_path, .{ .method = bun.http.Method.Set.init(.{ .GET = true }) });
+
+            // Also serve the .rsc file at the same path with .rsc extension
+            const rsc_url_path = bun.default_allocator.alloc(u8, url_path.len + ".rsc".len) catch bun.outOfMemory();
+            @memcpy(rsc_url_path[0..url_path.len], url_path);
+            @memcpy(rsc_url_path[url_path.len..], ".rsc");
+
+            const rsc_path = bun.default_allocator.alloc(u8, dist_path.len + "/index.rsc".len) catch bun.outOfMemory();
+            @memcpy(rsc_path[0..dist_path.len], dist_path);
+            @memcpy(rsc_path[dist_path.len..], "/index.rsc");
+
+            // Create a file blob for the RSC file
+            const rsc_store = jsc.WebCore.Blob.Store.initFile(
+                .{ .path = .{ .string = bun.PathString.init(rsc_path) } },
+                bun.http.MimeType.javascript,
+                bun.default_allocator,
+            ) catch bun.outOfMemory();
+
+            const rsc_blob = jsc.WebCore.Blob{
+                .size = jsc.WebCore.Blob.max_size,
+                .store = rsc_store,
+                .content_type = bun.http.MimeType.javascript.value,
+                .globalThis = this.globalThis,
+            };
+
+            const rsc_route = FileRoute.initFromBlob(rsc_blob, .{
+                .server = any_server,
+                .status_code = 200,
+            });
+
+            // Apply the RSC route
+            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, rsc_route, rsc_url_path, .{ .method = bun.http.Method.Set.init(.{ .GET = true }) });
+
+            // Register the client entrypoint if we haven't already
+            if (ssg.entrypoint.len > 0) {
+                const result = client_entrypoints_seen.getOrPut(ssg.entrypoint) catch bun.outOfMemory();
+                if (!result.found_existing) {
+                    // Serve the client JS file (e.g., /_bun/2eeb5qyr.js)
+                    // The file is in dist/_bun/xxx.js
+                    var client_file_path_buf: [4096]u8 = undefined;
+                    const client_file_path = std.fmt.bufPrint(&client_file_path_buf, "dist{s}", .{ssg.entrypoint}) catch bun.outOfMemory();
+
+                    const client_path = bun.default_allocator.dupe(u8, client_file_path) catch bun.outOfMemory();
+
+                    // Create a file blob for the client JS file
+                    const client_store = jsc.WebCore.Blob.Store.initFile(
+                        .{ .path = .{ .string = bun.PathString.init(client_path) } },
+                        bun.http.MimeType.javascript,
+                        bun.default_allocator,
+                    ) catch bun.outOfMemory();
+
+                    const client_blob = jsc.WebCore.Blob{
+                        .size = jsc.WebCore.Blob.max_size,
+                        .store = client_store,
+                        .content_type = bun.http.MimeType.javascript.value,
+                        .globalThis = this.globalThis,
+                    };
+
+                    const client_route = FileRoute.initFromBlob(client_blob, .{
+                        .server = any_server,
+                        .status_code = 200,
+                    });
+
+                    const client_url = bun.default_allocator.dupe(u8, ssg.entrypoint) catch bun.outOfMemory();
+                    ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *FileRoute, client_route, client_url, .{ .method = bun.http.Method.Set.init(.{ .GET = true }) });
+                }
+            }
+        }
+
+        pub fn bakeStaticChunkRequestHandler(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            const manifest = this.config.bake_manifest orelse {
+                resp.writeStatus("404 Not Found");
+                resp.end("", false);
+                return;
+            };
+
+            // Get the asset path from the URL (everything after /_bun/)
+            const url = req.url();
+            const prefix = "/_bun/";
+            if (!std.mem.startsWith(u8, url, prefix)) {
+                resp.writeStatus("404 Not Found");
+                resp.end("", false);
+                return;
+            }
+
+            const asset_path = url[prefix.len..];
+            if (asset_path.len == 0) {
+                resp.writeStatus("404 Not Found");
+                resp.end("", false);
+                return;
+            }
+
+            // Build the full file path: manifest.build_output_dir + "/_bun/" + asset_path
+            var file_path_buf: [4096]u8 = undefined;
+            const file_path = std.fmt.bufPrint(&file_path_buf, "{s}/_bun/{s}", .{ manifest.build_output_dir, asset_path }) catch {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("", false);
+                return;
+            };
+
+            // Make a copy of the path for the blob to own
+            const file_path_copy = bun.default_allocator.dupe(u8, file_path) catch {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("", false);
+                return;
+            };
+
+            // Determine MIME type based on file extension
+            const mime_type = if (std.mem.endsWith(u8, asset_path, ".js"))
+                bun.http.MimeType.javascript
+            else if (std.mem.endsWith(u8, asset_path, ".css"))
+                bun.http.MimeType.css
+            else if (std.mem.endsWith(u8, asset_path, ".map"))
+                bun.http.MimeType.json
+            else
+                bun.http.MimeType.other;
+
+            // Create a file blob for the static chunk
+            const store = jsc.WebCore.Blob.Store.initFile(
+                .{ .path = .{ .string = bun.PathString.init(file_path_copy) } },
+                mime_type,
+                bun.default_allocator,
+            ) catch {
+                resp.writeStatus("404 Not Found");
+                resp.end("", false);
+                return;
+            };
+
+            const blob = jsc.WebCore.Blob{
+                .size = jsc.WebCore.Blob.max_size,
+                .store = store,
+                .content_type = mime_type.value,
+                .globalThis = this.globalThis,
+            };
+
+            // Create a file route and serve it
+            const any_server = AnyServer.from(this);
+            const file_route = FileRoute.initFromBlob(blob, .{
+                .server = any_server,
+                .status_code = 200,
+            });
+
+            // Serve the file using the file route handler
+            const any_resp = if (ssl_enabled)
+                uws.AnyResponse{ .SSL = resp }
+            else
+                uws.AnyResponse{ .TCP = resp };
+            file_route.onRequest(req, any_resp);
+        }
+
+        fn setBakeManifestRoutes(this: *ThisServer, app: *App, manifest: *bun.bake.Manifest) void {
+            // Add route handler for /_bun/* static chunk files
+            app.get("/_bun/*", *ThisServer, this, bakeStaticChunkRequestHandler);
+
+            // First, we need to serve the client entrypoint files
+            // These are shared across all SSG routes of the same type
+            var client_entrypoints_seen = std.hash_map.HashMap([]const u8, void, bun.StringHashMapContext, 80).init(bun.default_allocator);
+            defer client_entrypoints_seen.deinit();
+
+            for (manifest.routes, 0..) |*route, route_index| {
+                switch (route.*) {
+                    .empty => {},
+                    .ssr => {
+                        // SSR routes are handled dynamically via bakeProductionSSRRouteHandler
+                        // We don't need to set up static routes for SSR
+                    },
+                    .ssg => |*ssg| {
+                        this.handleSingleSSGRoute(app, ssg, route_index, &client_entrypoints_seen);
+                    },
+                    .ssg_many => |*ssg_map| {
+                        // Handle multiple SSG entries for the same route
+                        var iter = ssg_map.iterator();
+                        while (iter.next()) |entry| {
+                            const ssg = &entry.key_ptr.*;
+                            this.handleSingleSSGRoute(app, ssg, route_index, &client_entrypoints_seen);
+                        }
+                    },
+                }
+            }
+        }
+
+        fn reconstructPathFromParams(
+            this: *ThisServer,
+            allocator: std.mem.Allocator,
+            route_index: u32,
+            params: *const bun.BabyList(bun.bake.Manifest.ParamEntry),
+        ) ![]const u8 {
+            const router = this.bake_router orelse return error.NoRouter;
+            if (route_index >= router.routes.items.len) return error.InvalidRouteIndex;
+
+            const target_route = &router.routes.items[route_index];
+            var parts = std.ArrayList(u8).init(allocator);
+            defer parts.deinit();
+
+            // Reconstruct the URL path from the route parts and params
+            var current_route: ?*const bun.bake.FrameworkRouter.Route = target_route;
+            var path_parts = std.ArrayList(bun.bake.FrameworkRouter.Part).init(allocator);
+            defer path_parts.deinit();
+
+            // Collect all parts from parent routes to build the full path
+            while (current_route) |r| {
+                try path_parts.append(r.part);
+                if (r.parent.unwrap()) |parent_idx| {
+                    current_route = &router.routes.items[parent_idx.get()];
+                } else {
+                    current_route = null;
+                }
+            }
+
+            // Reverse the parts array since we collected from child to parent
+            std.mem.reverse(bun.bake.FrameworkRouter.Part, path_parts.items);
+
+            // Build the URL path
+            for (path_parts.items) |part| {
+                if (part == .text and part.text.len == 0) continue;
+                try parts.append('/');
+                switch (part) {
+                    .text => |text| try parts.appendSlice(text),
+                    .param => |param_name| {
+                        // Find the param value from the params list
+                        var found = false;
+                        for (params.slice()) |param| {
+                            if (strings.eql(param.key, param_name)) {
+                                switch (param.value) {
+                                    .single => |val| try parts.appendSlice(val),
+                                    .multiple => |vals| {
+                                        // For regular params, just use the first value
+                                        if (vals.len > 0) {
+                                            try parts.appendSlice(vals.slice()[0]);
+                                        }
+                                    },
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            // If param not found, use the param name as placeholder
+                            try parts.append('[');
+                            try parts.appendSlice(param_name);
+                            try parts.append(']');
+                        }
+                    },
+                    .catch_all, .catch_all_optional => |name| {
+                        // For catch-all routes, look for the param with multiple values
+                        var found = false;
+                        for (params.slice()) |param| {
+                            if (strings.eql(param.key, name)) {
+                                switch (param.value) {
+                                    .single => |val| try parts.appendSlice(val),
+                                    .multiple => |vals| {
+                                        // Join all values with slashes for catch-all
+                                        for (vals.slice(), 0..) |val, i| {
+                                            if (i > 0) try parts.append('/');
+                                            try parts.appendSlice(val);
+                                        }
+                                    },
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            // If param not found, use placeholder
+                            try parts.appendSlice("[...");
+                            try parts.appendSlice(name);
+                            try parts.append(']');
+                        }
+                    },
+                    .group => {}, // Groups don't affect URL
+                }
+            }
+
+            if (parts.items.len == 0) {
+                try parts.append('/');
+            }
+
+            return allocator.dupe(u8, parts.items) catch bun.outOfMemory();
+        }
+
+        pub fn bakeProductionSSRRouteHandler(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            this.bakeProductionSSRRouteHandlerWithURL(req, resp, req.url());
+        }
+
+        pub fn bakeProductionSSRRouteHandlerWithURL(this: *ThisServer, req: *uws.Request, resp: *App.Response, url: []const u8) void {
+            // We can assume manifest and router exist since this handler is only registered when they do
+            const manifest = this.config.bake_manifest.?;
+            const router = this.config.bake_router.?;
+
+            // Try to match the request URL against the router
+            var params: bun.bake.FrameworkRouter.MatchedParams = undefined;
+            if (router.matchSlow(url, &params)) |route_index| {
+                // Found a route - check if it's an SSR route
+                if (route_index.get() < manifest.routes.len) {
+                    const route = &manifest.routes[route_index.get()];
+                    switch (route.*) {
+                        .ssr => |*ssr| {
+                            // Call the SSR request handler
+                            this.onBakeFrameworkSSRRequest(req, resp, ssr, route_index, &params);
+                            return;
+                        },
+                        .ssg, .ssg_many => {
+                            // This is an SSG route, which should have been handled by static routes
+                            // Fall through to the original handler
+                        },
+                        .empty => {
+                            // Empty route, fall through
+                        },
+                    }
+                }
+            }
+
+            // No SSR route matched, call the original handler based on config
+            switch (this.config.onNodeHTTPRequest) {
+                .zero => switch (this.config.onRequest) {
+                    .zero => this.on404(req, resp),
+                    else => this.onRequest(req, resp),
+                },
+                else => this.onNodeHTTPRequest(req, resp),
+            }
+        }
+
+        fn BakeLoadProductionServerCode(global: *jsc.JSGlobalObject, code: bun.String, path: bun.String) bun.JSError!jsc.JSValue {
+            const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.c) jsc.JSValue, .{ .name = "BakeLoadProductionServerCode" }).*;
+            return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, path });
+        }
+
+        fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *jsc.JSGlobalObject) jsc.JSValue {
+            const f = @extern(*const fn (*jsc.JSGlobalObject) callconv(.c) jsc.JSValue, .{ .name = "Bake__getEnsureAsyncLocalStorageInstanceJSFunction" }).*;
+            return f(global);
+        }
+
+        pub fn initBakeServerRuntime(this: *ThisServer, server_runtime_path: []const u8) !void {
+            const global = this.globalThis;
+
+            // Get the production server runtime code
+            const runtime_code = bun.String.static(bun.bake.getProductionRuntime(.server).code);
+
+            // Convert path to bun.String for passing to C++
+            const path_str = bun.String.cloneUTF8(server_runtime_path);
+            defer path_str.deref();
+
+            // Load and execute the production server runtime IIFE
+            const exports_object = BakeLoadProductionServerCode(global, runtime_code, path_str) catch |err| {
+                this.vm.printErrorLikeObjectToConsole(global.takeException(err));
+                Output.errGeneric("Server runtime failed to start", .{});
+                return error.FailedToLoadServerRuntime;
+            };
+
+            if (!exports_object.isObject()) {
+                Output.errGeneric("Server runtime failed to load - expected an object", .{});
+                return error.ServerRuntimeModuleNotFound;
+            }
+
+            // Store in the server for later use
+            this.bake_server_runtime_module = exports_object;
+            exports_object.protect();
+
+            // Extract and store the handleRequest function from the exports object
+            const handle_request_fn = exports_object.get(global, "handleRequest") catch null orelse {
+                Output.errGeneric("Server runtime module is missing 'handleRequest' export", .{});
+                return error.ServerRuntimeModuleNotFound;
+            };
+
+            if (!handle_request_fn.isCallable()) {
+                Output.errGeneric("Server runtime module's 'handleRequest' export is not a function", .{});
+                return error.ServerRuntimeModuleNotFound;
+            }
+
+            // Store a strong reference to the handleRequest function
+            this.bake_server_runtime_handler = .create(handle_request_fn, global);
+
+            handle_request_fn.ensureStillAlive();
+        }
+
+        pub fn onBakeFrameworkSSRRequest(
+            this: *ThisServer,
+            req: *uws.Request,
+            resp: *App.Response,
+            route: *const bun.bake.Manifest.Route.SSR,
+            route_index: bun.bake.FrameworkRouter.Route.Index,
+            params: *const bun.bake.FrameworkRouter.MatchedParams,
+        ) void {
+            if (comptime Environment.enable_logs)
+                httplog("[Bake SSR] {s} - {s}", .{ req.method(), req.url() });
+
+            // Get the handleRequest function from the server runtime
+            const server_request_callback = this.bake_server_runtime_handler.get() orelse {
+                // Server runtime not initialized
+                resp.writeStatus("500 Internal Server Error");
+                resp.writeHeader("Content-Type", "text/plain");
+                resp.end("SSR server runtime not initialized", false);
+                return;
+            };
+
+            const global = this.globalThis;
+            const allocator = this.allocator;
+
+            // Get the router type server entrypoint from the manifest
+            const router = this.config.bake_router orelse {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("Router not configured", false);
+                return;
+            };
+
+            const manifest = this.config.bake_manifest orelse {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("Manifest not configured", false);
+                return;
+            };
+
+            // Look up the route to get its router type
+            const framework_route = &router.routes.items[route_index.get()];
+            const router_type_index = framework_route.type.get();
+
+            // Get the server entrypoint for this router type from the manifest
+            const router_type_main = if (router_type_index < manifest.router_types.len)
+                // bun.String.init(bun.strings.concat(bun.default_allocator, &.{ "dist/", manifest.router_types[router_type_index].server_entrypoint }) catch bun.outOfMemory())
+                bun.String.init(manifest.router_types[router_type_index].server_entrypoint)
+            else
+                bun.String.init("");
+
+            // FIXME: this is gonna get GC'ed
+            // Create the route modules array
+            var modules_array = allocator.alloc(jsc.JSValue, route.modules.len) catch {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("Out of memory", false);
+                return;
+            };
+            defer allocator.free(modules_array);
+
+            for (route.modules.slice(), 0..) |module_path, i| {
+                const module_str = bun.String.init(module_path);
+                modules_array[i] = module_str.toJS(global);
+            }
+
+            const route_modules = jsc.JSValue.createEmptyArray(global, modules_array.len) catch {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("Out of memory", false);
+                return;
+            };
+            for (modules_array, 0..) |module_js, i| {
+                route_modules.putIndex(global, @intCast(i), module_js) catch {};
+            }
+
+            // Create client entry URL string (for SSR, this is route.entrypoint)
+            const client_entry = bun.String.init(route.entrypoint).toJS(global);
+
+            // FIXME: this is gonna get GC'ed
+            // Create styles array
+            var styles_array = allocator.alloc(jsc.JSValue, route.styles.len) catch {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("Out of memory", false);
+                return;
+            };
+            defer allocator.free(styles_array);
+
+            for (route.styles.slice(), 0..) |style_path, i| {
+                const style_str = bun.String.init(style_path);
+                styles_array[i] = style_str.toJS(global);
+            }
+
+            const styles = jsc.JSValue.createEmptyArray(global, styles_array.len) catch {
+                resp.writeStatus("500 Internal Server Error");
+                resp.end("Out of memory", false);
+                return;
+            };
+            for (styles_array, 0..) |style_js, i| {
+                styles.putIndex(global, @intCast(i), style_js) catch {};
+            }
+
+            // Convert params to JSValue
+            const params_js = params.toJS(global);
+
+            // Get the setAsyncLocalStorage function that properly sets up the AsyncLocalStorage instance
+            const setAsyncLocalStorage = Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global);
+
+            // Call the server runtime's handleRequest function using onSavedRequest
+            this.onSavedRequest(
+                .{ .stack = req },
+                resp,
+                server_request_callback,
+                7,
+                .{
+                    router_type_main.toJS(global), // routerTypeMain
+                    route_modules, // routeModules
+                    client_entry, // clientEntryUrl
+                    styles, // styles
+                    params_js, // params
+                    setAsyncLocalStorage, // setAsyncLocalStorage
+                    jsc.JSValue.js_undefined, // reserved for future use
+                },
+            );
         }
 
         pub fn on404(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -3426,3 +4172,5 @@ const Fetch = WebCore.Fetch;
 const Headers = WebCore.Headers;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
+
+const bake = bun.bake;

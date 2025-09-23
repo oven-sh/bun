@@ -1245,26 +1245,10 @@ fn onFrameworkRequestWithBundle(
 
     // Create params JSValue
     // TODO: lazy structure caching since we are making these objects a lot
-    const params_js_value = if (dev.router.matchSlow(pathname, &params)) |_| blk: {
-        const global = dev.vm.global;
-        const params_array = params.params.slice();
-
-        if (params_array.len == 0) {
-            break :blk JSValue.null;
-        }
-
-        // Create a JavaScript object with params
-        const obj = JSValue.createEmptyObject(global, params_array.len);
-        for (params_array) |param| {
-            const key_str = bun.String.cloneUTF8(param.key);
-            defer key_str.deref();
-            const value_str = bun.String.cloneUTF8(param.value);
-            defer value_str.deref();
-
-            _ = try obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global));
-        }
-        break :blk obj;
-    } else JSValue.null;
+    const params_js_value = if (dev.router.matchSlow(pathname, &params)) |_|
+        params.toJS(dev.vm.global)
+    else
+        JSValue.null;
 
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not initialize server code

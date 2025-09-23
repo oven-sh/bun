@@ -13,7 +13,16 @@ version: bun.Semver.Version = CURRENT_VERSION,
 ///
 /// Also: `manifest.routes[i] ≅ server.framework_router.routes[i]`
 routes: []Route = &[_]Route{},
+/// Build output directory, defaults to "dist"
+build_output_dir: []const u8 = "dist",
+/// Router types with their server entrypoints
+router_types: []RouterType = &[_]RouterType{},
 arena: std.heap.ArenaAllocator,
+
+pub const RouterType = struct {
+    /// Path to the server entrypoint module for this router type
+    server_entrypoint: []const u8,
+};
 
 pub fn allocate(_self: Manifest) !*Manifest {
     var self = _self;
@@ -26,16 +35,16 @@ pub fn deinit(self: *Manifest) void {
     self.arena.deinit();
 }
 
-pub fn fromFD(self: *Manifest, fd: bun.FileDescriptor, log: *logger.Log) !void {
+pub fn fromFD(self: *Manifest, fd: bun.FileDescriptor, router: *FrameworkRouter, log: *logger.Log) !void {
     const source = fd.stdFile().readToEndAlloc(self.arena.allocator(), std.math.maxInt(usize)) catch |e| {
         try log.addErrorFmt(null, logger.Loc.Empty, log.msgs.allocator, "Failed to read manifest.json: {s}", .{@errorName(e)});
         return error.InvalidManifest;
     };
     const json_source = logger.Source.initPathString("dist/manifest.json", source);
-    try self.initFromJSON(&json_source, log);
+    try self.initFromJSON(&json_source, router, log);
 }
 
-pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log) !void {
+pub fn initFromJSON(self: *Manifest, source: *const logger.Source, router: *FrameworkRouter, log: *logger.Log) !void {
     const allocator = self.arena.allocator();
 
     var temp_arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -100,6 +109,51 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
     // Minor and patch versions can be different - we're backwards compatible within the same major version
     self.version = manifest_version;
 
+    // Parse build_output_dir (optional, defaults to "dist")
+    if (json_obj.get("build_output_dir")) |build_output_dir_prop| {
+        if (build_output_dir_prop.data == .e_string) {
+            self.build_output_dir = try build_output_dir_prop.data.e_string.string(allocator);
+        } else if (build_output_dir_prop.data != .e_null) {
+            try log.addError(&json_source, build_output_dir_prop.loc, "manifest.json build_output_dir must be a string or null");
+            return error.InvalidManifest;
+        }
+    }
+
+    // Parse router_types array (optional)
+    if (json_obj.get("router_types")) |router_types_prop| {
+        if (router_types_prop.data == .e_array) {
+            const router_types_array = router_types_prop.data.e_array.items.slice();
+            self.router_types = try allocator.alloc(RouterType, router_types_array.len);
+
+            for (router_types_array, 0..) |router_type_expr, i| {
+                if (router_type_expr.data != .e_object) {
+                    try log.addError(&json_source, router_type_expr.loc, "manifest.json router_types array must contain objects");
+                    return error.InvalidManifest;
+                }
+
+                const router_type_obj = router_type_expr.data.e_object;
+
+                // Parse server_entrypoint
+                const server_entrypoint_prop = router_type_obj.get("server_entrypoint") orelse {
+                    try log.addError(&json_source, router_type_expr.loc, "router_type entry missing required 'server_entrypoint' field");
+                    return error.InvalidManifest;
+                };
+
+                if (server_entrypoint_prop.data != .e_string) {
+                    try log.addError(&json_source, server_entrypoint_prop.loc, "router_type 'server_entrypoint' must be a string");
+                    return error.InvalidManifest;
+                }
+
+                self.router_types[i] = .{
+                    .server_entrypoint = try server_entrypoint_prop.data.e_string.string(allocator),
+                };
+            }
+        } else if (router_types_prop.data != .e_null) {
+            try log.addError(&json_source, router_types_prop.loc, "manifest.json router_types must be an array or null");
+            return error.InvalidManifest;
+        }
+    }
+
     // Parse entries array
     const entries_prop = json_obj.get("entries") orelse {
         try log.addError(&json_source, json_expr.loc, "manifest.json must have an 'entries' field");
@@ -125,20 +179,194 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
 
     var max_route_index: u32 = 0;
 
-    // First pass: collect all entries grouped by route_index
+    // First pass: collect all entries and insert routes into router
     for (entries) |entry_expr| {
         if (entry_expr.data != .e_object) continue;
 
         const entry_obj = entry_expr.data.e_object;
 
-        const route_index = blk: {
-            const route_index_prop = entry_obj.get("route_index") orelse continue;
-            if (route_index_prop.data != .e_number) continue;
-            break :blk route_index_prop.data.e_number.toU32();
+        // Parse the new "route" field
+        const route_prop = entry_obj.get("route") orelse {
+            try log.addError(&json_source, entry_expr.loc, "manifest entry missing required 'route' field");
+            return error.InvalidManifest;
+        };
+        if (route_prop.data != .e_string) {
+            try log.addError(&json_source, route_prop.loc, "manifest entry 'route' field must be a string");
+            return error.InvalidManifest;
+        }
+        const route_str = try route_prop.data.e_string.string(temp_allocator);
+
+        // Parse the "route_type" field
+        const route_type_prop = entry_obj.get("route_type") orelse {
+            try log.addError(&json_source, entry_expr.loc, "manifest entry missing required 'route_type' field");
+            return error.InvalidManifest;
+        };
+        if (route_type_prop.data != .e_number) {
+            try log.addError(&json_source, route_type_prop.loc, "manifest entry 'route_type' field must be a number");
+            return error.InvalidManifest;
+        }
+        const route_type_index = route_type_prop.data.e_number.toU32();
+
+        // Get the type from the router
+        if (route_type_index >= router.types.len) {
+            try log.addErrorFmt(&json_source, route_type_prop.loc, log.msgs.allocator, "Invalid route_type index {d} (max: {d})", .{ route_type_index, router.types.len - 1 });
+            return error.InvalidManifest;
+        }
+        const route_type = &router.types[route_type_index];
+
+        const rel_path = route_str;
+
+        // Use a temporary log for parsing
+        var parse_log = FrameworkRouter.TinyLog.empty;
+        const parsed = (route_type.style.parse(rel_path, null, &parse_log, route_type.allow_layouts, temp_allocator) catch {
+            parse_log.cursor_at += @intCast(route_type.abs_root.len - router.root.len);
+            try log.addErrorFmt(&json_source, route_prop.loc, log.msgs.allocator, "Failed to parse route pattern '{s}': {s}", .{ route_str, parse_log.msg.slice() });
+            return error.InvalidManifest;
+        }) orelse {
+            // Route pattern not recognized by the style
+            continue;
         };
 
-        max_route_index = @max(max_route_index, route_index);
+        // Create encoded pattern for insertion
+        const encoded_pattern = try FrameworkRouter.EncodedPattern.initFromParts(parsed.parts, router.pattern_string_arena.allocator());
 
+        // Create a dummy insertion context for manifest loading
+        // We don't need actual file operations since we're loading from manifest
+        const DummyContext = struct {
+            fn getFileIdForRouter(_: *anyopaque, _: []const u8, _: FrameworkRouter.Route.Index, _: FrameworkRouter.Route.FileKind) bun.OOM!FrameworkRouter.OpaqueFileId {
+                // Return a dummy file ID
+                return FrameworkRouter.OpaqueFileId.init(0);
+            }
+            fn onRouterSyntaxError(_: *anyopaque, _: []const u8, _: FrameworkRouter.TinyLog) bun.OOM!void {
+                // Ignore syntax errors during manifest load
+            }
+            fn onRouterCollisionError(_: *anyopaque, _: []const u8, _: FrameworkRouter.OpaqueFileId, _: FrameworkRouter.Route.FileKind) bun.OOM!void {
+                // Ignore collision errors during manifest load - they're expected for SSG
+            }
+        };
+
+        var dummy_ctx: u8 = 0; // Just a dummy value to get a pointer
+        const vtable = struct {
+            const getFileId = DummyContext.getFileIdForRouter;
+            const onSyntaxError = DummyContext.onRouterSyntaxError;
+            const onCollisionError = DummyContext.onRouterCollisionError;
+        };
+        const insertion_ctx = FrameworkRouter.InsertionContext{
+            .opaque_ctx = @ptrCast(&dummy_ctx),
+            .vtable = &.{
+                .getFileIdForRouter = vtable.getFileId,
+                .onRouterSyntaxError = vtable.onSyntaxError,
+                .onRouterCollisionError = vtable.onCollisionError,
+            },
+        };
+
+        // Insert route into router to get route index
+        var dummy_file_id: FrameworkRouter.OpaqueFileId = undefined;
+        const route_index = blk: {
+            const file_kind: FrameworkRouter.Route.FileKind = switch (parsed.kind) {
+                .page => .page,
+                .layout => .layout,
+                else => .page,
+            };
+
+            // Handle static vs dynamic routes separately since insertion_kind must be comptime
+            // Check if this is truly a static route (no dynamic parts)
+            const is_static = isStaticCheck: {
+                for (parsed.parts) |part| {
+                    switch (part) {
+                        .text, .group => {},
+                        .param, .catch_all, .catch_all_optional => break :isStaticCheck false,
+                    }
+                }
+                break :isStaticCheck true;
+            };
+
+            if (is_static) {
+                // Static route - build the route path similarly to how scan() does it
+                // Calculate total length needed for the static route path
+                var static_total_len: usize = 0;
+                for (parsed.parts) |part| {
+                    switch (part) {
+                        .text => |data| static_total_len += 1 + data.len, // "/" + text
+                        .group => {},
+                        .param, .catch_all, .catch_all_optional => unreachable,
+                    }
+                }
+
+                // Allocate and build the static route path
+                const allocation = try router.pattern_string_arena.allocator().alloc(u8, static_total_len);
+                var s = std.io.fixedBufferStream(allocation);
+                for (parsed.parts) |part| {
+                    switch (part) {
+                        .text => |data| {
+                            _ = s.write("/") catch unreachable;
+                            _ = s.write(data) catch unreachable;
+                        },
+                        .group => {},
+                        .param, .catch_all, .catch_all_optional => unreachable,
+                    }
+                }
+                bun.assert(s.getWritten().len == allocation.len);
+
+                // Check if route already exists
+                const lookup_path = if (allocation.len == 0) "/" else allocation;
+                if (router.static_routes.get(lookup_path)) |existing_route_index| {
+                    // Route already exists, use existing index
+                    break :blk existing_route_index;
+                }
+
+                // Insert the static route properly
+                break :blk router.insert(
+                    allocator,
+                    FrameworkRouter.Type.Index.init(@intCast(route_type_index)),
+                    .static,
+                    .{ .route_path = lookup_path },
+                    file_kind,
+                    route_str,
+                    insertion_ctx,
+                    &dummy_file_id,
+                ) catch |err| switch (err) {
+                    error.RouteCollision => {
+                        // For static routes that collide, try to find the existing route
+                        if (router.static_routes.get(lookup_path)) |existing_route_index| {
+                            break :blk existing_route_index;
+                        }
+                        // If we still can't find it, use root as fallback
+                        break :blk FrameworkRouter.Type.rootRouteIndex(FrameworkRouter.Type.Index.init(@intCast(route_type_index)));
+                    },
+                    else => return err,
+                };
+            } else {
+                // Dynamic route
+                break :blk router.insert(
+                    allocator,
+                    FrameworkRouter.Type.Index.init(@intCast(route_type_index)),
+                    .dynamic,
+                    encoded_pattern,
+                    file_kind,
+                    route_str,
+                    insertion_ctx,
+                    &dummy_file_id,
+                ) catch |err| switch (err) {
+                    error.RouteCollision => {
+                        // For dynamic routes that collide, we need to find the existing route
+                        // This is expected for SSG routes with multiple param combinations
+                        // The collision means the route pattern already exists
+                        // We'll search for it in the dynamic routes
+                        for (router.dynamic_routes.keys()) |existing_pattern| {
+                            if (existing_pattern.effectiveURLHash() == encoded_pattern.effectiveURLHash()) {
+                                break :blk router.dynamic_routes.get(existing_pattern).?;
+                            }
+                        }
+                        // If we couldn't find it, something is wrong
+                        return err;
+                    },
+                    else => return err,
+                };
+            }
+        };
+
+        // Parse mode
         const mode_prop = entry_obj.get("mode") orelse {
             try log.addError(&json_source, entry_expr.loc, "manifest entry missing required 'mode' field");
             return error.InvalidManifest;
@@ -162,7 +390,10 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
             .loc = entry_expr.loc,
         };
 
-        const gop = try route_map.getOrPut(route_index);
+        const route_index_u32 = route_index.get();
+        max_route_index = @max(max_route_index, route_index_u32);
+
+        const gop = try route_map.getOrPut(route_index_u32);
         if (!gop.found_existing) {
             gop.value_ptr.* = std.ArrayList(RawManifestEntry).init(temp_allocator);
         }
@@ -179,7 +410,7 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
     var routes = try allocator.alloc(Route, max_route_index + 1);
     @memset(routes, Route{ .empty = {} });
 
-    // Second pass: build Route structs
+    // Second pass: build Route structs (continues from original code...)
     var it = route_map.iterator();
     while (it.next()) |entry| {
         const route_index = entry.key_ptr.*;
@@ -191,7 +422,7 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
 
         // Check if all entries have the same mode
         for (route_entries) |route_entry| {
-            if (route_entry.mode == first_mode) {
+            if (route_entry.mode != first_mode) {
                 try log.addError(&json_source, route_entry.loc, "All entries for a route must have the same mode");
                 return error.InvalidManifest;
             }
@@ -208,8 +439,8 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
                 const entry_obj = route_entries[0].json_obj;
 
                 // Parse client entrypoint
-                const ep_prop = entry_obj.get("client_entrypoint") orelse {
-                    try log.addError(&json_source, Loc.Empty, "SSR entry missing required 'client_entrypoint' field");
+                const ep_prop = entry_obj.get("client_entrypoint") orelse entry_obj.get("entrypoint") orelse {
+                    try log.addError(&json_source, Loc.Empty, "SSR entry missing required 'client_entrypoint' or 'entrypoint' field");
                     return error.InvalidManifest;
                 };
                 if (ep_prop.data != .e_string) {
@@ -218,33 +449,28 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
                 }
                 const entrypoint = try ep_prop.data.e_string.string(allocator);
 
-                // Parse all modules
+                // Parse all modules (optional for new format)
                 var modules = bun.BabyList([]const u8){};
-                const modules_prop = entry_obj.get("modules") orelse {
-                    try log.addError(&json_source, Loc.Empty, "SSR entry missing required 'modules' field");
-                    return error.InvalidManifest;
-                };
-                if (modules_prop.data != .e_array) {
-                    try log.addError(&json_source, Loc.Empty, "SSR entry 'modules' must be an array");
-                    return error.InvalidManifest;
-                }
-                const modules_array = modules_prop.data.e_array.items.slice();
-                if (modules_array.len > 0) {
-                    try modules.ensureUnusedCapacity(allocator, modules_array.len);
-                    for (modules_array, 0..) |module_expr, i| {
-                        if (module_expr.data != .e_string) {
-                            try log.addErrorFmt(&json_source, Loc.Empty, log.msgs.allocator, "SSR entry modules[{}] must be a string", .{i});
-                            return error.InvalidManifest;
-                        }
-                        const module_str = try module_expr.data.e_string.string(allocator);
-                        try modules.append(allocator, module_str);
+                if (entry_obj.get("modules")) |modules_prop| {
+                    if (modules_prop.data != .e_array) {
+                        try log.addError(&json_source, Loc.Empty, "SSR entry 'modules' must be an array");
+                        return error.InvalidManifest;
                     }
-                } else {
-                    try log.addError(&json_source, modules_prop.loc, "SSR entry 'modules' must be an array with a size of at least one element");
-                    return error.InvalidManifest;
+                    const modules_array = modules_prop.data.e_array.items.slice();
+                    if (modules_array.len > 0) {
+                        try modules.ensureUnusedCapacity(allocator, modules_array.len);
+                        for (modules_array, 0..) |module_expr, i| {
+                            if (module_expr.data != .e_string) {
+                                try log.addErrorFmt(&json_source, Loc.Empty, log.msgs.allocator, "SSR entry modules[{}] must be a string", .{i});
+                                return error.InvalidManifest;
+                            }
+                            const module_str = try module_expr.data.e_string.string(allocator);
+                            try modules.append(allocator, module_str);
+                        }
+                    }
                 }
 
-                const styles = try parseStyles(allocator, entry_obj);
+                const styles = try parseStyles(allocator, log, &json_source, entry_obj);
 
                 routes[route_index] = .{
                     .ssr = .{
@@ -268,8 +494,8 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
                     }
                     const entrypoint = try ep_prop.data.e_string.string(allocator);
 
-                    const params = try parseParams(allocator, entry_obj);
-                    const styles = try parseStyles(allocator, entry_obj);
+                    const params = try parseParams(allocator, log, &json_source, entry_obj);
+                    const styles = try parseStyles(allocator, log, &json_source, entry_obj);
 
                     routes[route_index] = .{
                         .ssg = .{
@@ -294,8 +520,8 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
                         }
                         const entrypoint = try ep_prop.data.e_string.string(allocator);
 
-                        const params = try parseParams(allocator, entry_obj);
-                        const styles = try parseStyles(allocator, entry_obj);
+                        const params = try parseParams(allocator, log, &json_source, entry_obj);
+                        const styles = try parseStyles(allocator, log, &json_source, entry_obj);
 
                         const ssg = Route.SSG{
                             .entrypoint = entrypoint,
@@ -315,28 +541,60 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.
     self.routes = routes;
 }
 
-fn parseParams(allocator: Allocator, entry_obj: *const E.Object) !bun.BabyList(ParamEntry) {
+fn parseParams(allocator: Allocator, log: *logger.Log, json_source: *const logger.Source, entry_obj: *const E.Object) !bun.BabyList(ParamEntry) {
     var params = bun.BabyList(ParamEntry){};
 
     // Params is optional for SSG entries - it's only present for dynamic routes
     if (entry_obj.get("params")) |params_prop| {
         if (params_prop.data != .e_object) {
             // If params is present, it must be an object
+            try log.addError(json_source, params_prop.loc, "SSG entry 'params' must be an object");
             return error.InvalidManifest;
         }
         const params_obj = params_prop.data.e_object;
 
         for (params_obj.properties.slice()) |prop| {
             if (prop.value) |value_expr| {
-                if (value_expr.data != .e_string) {
-                    // All param values must be strings
-                    return error.InvalidManifest;
+                const key = prop.key.?.asString(allocator) orelse "";
+
+                switch (value_expr.data) {
+                    .e_string => {
+                        // Single string value
+                        const param_entry = ParamEntry{
+                            .key = key,
+                            .value = .{ .single = try value_expr.data.e_string.string(allocator) },
+                        };
+                        try params.append(allocator, param_entry);
+                    },
+                    .e_array => |arr| {
+                        // Array of strings - for catch-all routes
+                        const array_items = arr.items.slice();
+                        if (array_items.len == 0) {
+                            try log.addError(json_source, value_expr.loc, "SSG entry 'params' array cannot be empty");
+                            return error.InvalidManifest;
+                        }
+
+                        // Validate all items are strings and collect them
+                        var values = bun.BabyList([]const u8){};
+                        for (array_items) |item| {
+                            if (item.data != .e_string) {
+                                try log.addError(json_source, item.loc, "SSG entry 'params' array must contain only strings");
+                                return error.InvalidManifest;
+                            }
+                            try values.append(allocator, try item.data.e_string.string(allocator));
+                        }
+
+                        const param_entry = ParamEntry{
+                            .key = key,
+                            .value = .{ .multiple = values },
+                        };
+                        try params.append(allocator, param_entry);
+                    },
+                    else => {
+                        try log.addError(json_source, value_expr.loc, "SSG entry 'params' values must be strings or arrays of strings");
+                        return error.InvalidManifest;
+                    },
                 }
-                const param_entry = ParamEntry{
-                    .key = prop.key.?.asString(allocator) orelse "",
-                    .value = try value_expr.data.e_string.string(allocator),
-                };
-                try params.append(allocator, param_entry);
             }
         }
     }
@@ -344,15 +602,17 @@ fn parseParams(allocator: Allocator, entry_obj: *const E.Object) !bun.BabyList(P
     return params;
 }
 
-fn parseStyles(allocator: Allocator, entry_obj: *const E.Object) !Styles {
+fn parseStyles(allocator: Allocator, log: *logger.Log, json_source: *const logger.Source, entry_obj: *const E.Object) !Styles {
     var styles = Styles{};
 
     // Styles field is required and must be an array (can be empty)
     const styles_prop = entry_obj.get("styles") orelse {
+        try log.addError(json_source, Loc.Empty, "SSG entry missing required 'styles' field");
         return error.InvalidManifest;
     };
 
     if (styles_prop.data != .e_array) {
+        try log.addError(json_source, styles_prop.loc, "SSG entry 'styles' must be an array");
         return error.InvalidManifest;
     }
 
@@ -367,6 +627,7 @@ fn parseStyles(allocator: Allocator, entry_obj: *const E.Object) !Styles {
     for (styles_array) |style_expr| {
         if (style_expr.data != .e_string) {
             // All style array elements must be strings
+            try log.addError(json_source, Loc.Empty, "SSG entry 'styles' must be an array");
             return error.InvalidManifest;
         }
         const style_str = try style_expr.data.e_string.string(allocator);
@@ -376,21 +637,21 @@ fn parseStyles(allocator: Allocator, entry_obj: *const E.Object) !Styles {
     return styles;
 }
 
-const Route = union(enum) {
+pub const Route = union(enum) {
     empty,
     ssr: SSR,
     ssg: SSG,
     ssg_many: SSGMany,
 
     /// A route which has been server-side rendered
-    const SSR = struct {
+    pub const SSR = struct {
         entrypoint: []const u8,
         modules: bun.BabyList([]const u8),
         styles: Styles,
     };
 
     /// A route which has been statically generated
-    const SSG = struct {
+    pub const SSG = struct {
         entrypoint: []const u8,
         params: bun.BabyList(ParamEntry),
         styles: Styles,
@@ -407,7 +668,7 @@ const Route = union(enum) {
     /// those are unique for a given route
     ///
     /// We do this so we can quickly disambiguate based on the params
-    const SSGMany = std.ArrayHashMapUnmanaged(
+    pub const SSGMany = std.ArrayHashMapUnmanaged(
         SSG,
         void,
         struct {
@@ -415,7 +676,14 @@ const Route = union(enum) {
                 var hasher = std.hash.Wyhash.init(0);
                 for (key.params.slice()) |param| {
                     hasher.update(param.key);
-                    hasher.update(param.value);
+                    switch (param.value) {
+                        .single => |val| hasher.update(val),
+                        .multiple => |vals| {
+                            for (vals.slice()) |val| {
+                                hasher.update(val);
+                            }
+                        },
+                    }
                 }
                 return @truncate(hasher.final());
             }
@@ -446,13 +714,32 @@ const RawManifestEntry = struct {
 
 const ParamEntriesHash = u32;
 
-const ParamEntry = struct {
+pub const ParamEntry = struct {
     key: []const u8,
-    value: []const u8,
+    value: Value,
+
+    pub const Value = union(enum) {
+        single: []const u8,
+        multiple: bun.BabyList([]const u8),
+
+        pub fn eql(a: *const Value, b: *const Value) bool {
+            if (@as(std.meta.Tag(Value), a.*) != @as(std.meta.Tag(Value), b.*)) return false;
+            return switch (a.*) {
+                .single => |a_val| bun.strings.eql(a_val, b.single),
+                .multiple => |a_list| blk: {
+                    const b_list = b.multiple;
+                    if (a_list.len != b_list.len) break :blk false;
+                    for (a_list.slice(), b_list.slice()) |a_item, b_item| {
+                        if (!bun.strings.eql(a_item, b_item)) break :blk false;
+                    }
+                    break :blk true;
+                },
+            };
+        }
+    };
 
     pub fn eql(a: *const ParamEntry, b: *const ParamEntry) bool {
-        return bun.strings.eql(a.key, b.key) and
-            bun.strings.eql(a.value, b.value);
+        return bun.strings.eql(a.key, b.key) and a.value.eql(&b.value);
     }
 };
 
@@ -476,3 +763,5 @@ const Resolver = bun.resolver.Resolver;
 
 const mem = std.mem;
 const Allocator = mem.Allocator;
+
+const FrameworkRouter = bun.bake.FrameworkRouter;

@@ -255,6 +255,14 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
     bun.assert(server_transpiler.env == client_transpiler.env);
 
+    const original_roots = brk: {
+        const roots = try allocator.alloc([]const u8, options.framework.file_system_router_types.len);
+        for (options.framework.file_system_router_types, roots) |*in, *out| {
+            out.* = in.root;
+        }
+        break :brk roots;
+    };
+
     framework.* = framework.resolve(&server_transpiler.resolver, &client_transpiler.resolver, allocator) catch {
         if (framework.is_built_in_react)
             try bake.Framework.addReactInstallCommandNote(server_transpiler.log);
@@ -309,6 +317,14 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         FrameworkRouter.InsertionContext.wrap(EntryPointMap, &entry_points),
     );
 
+    // Add the production SSR runtime server as an entry point
+    const production_ssr_runtime_path = bun.path.joinAbs(
+        bun.Environment.base_path,
+        .auto,
+        "src/bake/production-runtime-server.ts",
+    );
+    const production_ssr_runtime_id = try entry_points.getOrPutEntryPoint(production_ssr_runtime_path, .server);
+
     const bundled_outputs_list = try bun.BundleV2.generateFromBakeProductionCLI(
         entry_points,
         &server_transpiler,
@@ -335,6 +351,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     defer root_dir.close();
 
     var maybe_runtime_file_index: ?u32 = null;
+    var maybe_ssr_runtime_file_index: ?u32 = null;
 
     var css_chunks_count: usize = 0;
     var css_chunks_first: usize = 0;
@@ -379,6 +396,13 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 bun.assertf(maybe_runtime_file_index == null, "Runtime file should only be in one chunk.", .{});
             }
             maybe_runtime_file_index = @intCast(i);
+        }
+
+        // Check if this is the SSR runtime server file
+        if (file.entry_point_index) |ep| {
+            if (ep == production_ssr_runtime_id.get()) {
+                maybe_ssr_runtime_file_index = @intCast(i);
+            }
         }
 
         // TODO: Maybe not do all the disk-writing in 1 thread?
@@ -481,8 +505,21 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     const server_render_funcs = try JSValue.createEmptyArray(global, router.types.len);
     const server_param_funcs = try JSValue.createEmptyArray(global, router.types.len);
     const client_entry_urls = try JSValue.createEmptyArray(global, router.types.len);
+    const router_type_roots = try JSValue.createEmptyArray(global, router.types.len);
+    const router_type_server_entrypoints = try JSValue.createEmptyArray(global, router.types.len);
 
-    for (router.types, 0..) |router_type, i| {
+    for (router.types, original_roots, 0..) |router_type, root, i| {
+        // Add the router type root path to the array (relative path)
+        try router_type_roots.putIndex(global, @intCast(i), try bun.String.createUTF8ForJS(global, root));
+
+        // Add the server entrypoint path for this router type
+        const server_module_key = module_keys[router_type.server_file.get()];
+        const server_entrypoint_js = if (server_module_key.isEmpty())
+            JSValue.null
+        else
+            server_module_key.toJS(global);
+        try router_type_server_entrypoints.putIndex(global, @intCast(i), server_entrypoint_js);
+
         if (router_type.client_file.unwrap()) |client_file| {
             const str = (try bun.String.createFormat("{s}{s}", .{
                 public_path,
@@ -588,7 +625,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 params_buf.append(ctx.allocator, route.part.catch_all) catch unreachable;
             },
             .catch_all_optional => {
-                return global.throw("catch-all routes are not supported in static site generation", .{});
+                return global.throw("catch-all optional routes are not supported in static site generation", .{});
             },
             else => {},
         }
@@ -681,6 +718,13 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         try route_style_references.putIndex(global, @intCast(nav_index), styles);
     }
 
+    // Get the server runtime path if it exists
+    const server_runtime_js = if (maybe_ssr_runtime_file_index) |ssr_idx| blk: {
+        _ = ssr_idx; // Will use the bundled file later if needed
+        const module_key = module_keys[production_ssr_runtime_id.get()];
+        break :blk if (module_key.isEmpty()) JSValue.null else module_key.toJS(global);
+    } else JSValue.null;
+
     const render_promise = BakeRenderRoutesForProdStatic(
         global,
         // outBase: string
@@ -693,6 +737,12 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         server_param_funcs,
         // clientEntryUrl: string[]
         client_entry_urls,
+        // routerTypeRoots: string[]
+        router_type_roots,
+        // routerTypeServerEntrypoints: string[]
+        router_type_server_entrypoints,
+        // serverRuntime: string | null
+        server_runtime_js,
 
         // patterns: string[]
         route_patterns,
@@ -794,6 +844,12 @@ extern fn BakeRenderRoutesForProdStatic(
     get_params: JSValue,
     /// Client entry URLs by router type (e.g., ["/client.js", null])
     client_entry_urls: JSValue,
+    /// Router type root paths by router type (e.g., ["/pages", "/app"])
+    router_type_roots: JSValue,
+    /// Router type server entrypoints by router type (e.g., ["bake://react.server.js"])
+    router_type_server_entrypoints: JSValue,
+    /// Server runtime path (e.g., "bake://production-runtime-server.js")
+    server_runtime: JSValue,
     /// Route patterns (e.g., ["/", "/about", "/blog/:slug"])
     patterns: JSValue,
     /// File indices per route (e.g., [[0], [1], [2, 0]])

@@ -63,6 +63,7 @@ user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteB
 
 bake: ?bun.bake.UserOptions = null,
 bake_manifest: ?*bun.bake.Manifest = null,
+bake_router: ?*bun.bake.FrameworkRouter = null,
 
 pub const DevelopmentOption = enum {
     development,
@@ -409,9 +410,9 @@ pub fn fromJS(
     var has_hostname = false;
 
     defer {
-        if (!args.development.isHMREnabled()) {
-            bun.assert(args.bake == null);
-        }
+        // if (!args.development.isHMREnabled()) {
+        //     bun.assert(args.bake == null);
+        // }
     }
 
     if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
@@ -828,6 +829,8 @@ pub fn fromJS(
                     return global.throwInvalidArguments("'app' + HTML loader not supported.", .{});
                 }
 
+                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
+
                 if (args.development == .production) {
                     const fd = switch (bun.sys.open("dist/manifest.json", bun.O.RDONLY, 0)) {
                         .result => |fd| fd,
@@ -840,20 +843,57 @@ pub fn fromJS(
                     defer fd.close();
                     var log = bun.logger.Log.init(bun.default_allocator);
                     defer log.deinit();
+
+                    var types = try std.ArrayListUnmanaged(bun.bake.FrameworkRouter.Type).initCapacity(
+                        bun.default_allocator,
+                        args.bake.?.framework.file_system_router_types.len,
+                    );
+                    errdefer types.deinit(bun.default_allocator);
+
+                    const root = args.bake.?.root;
+                    const transpiler = &global.bunVM().transpiler;
+                    for (args.bake.?.framework.file_system_router_types) |fsr| {
+                        const buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(buf);
+                        const joined_root = bun.path.joinAbsStringBuf(root, buf, &.{fsr.root}, .auto);
+                        const entry = transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
+                            continue;
+
+                        try types.append(bun.default_allocator, .{
+                            .abs_root = bun.strings.withoutTrailingSlash(entry.abs_path),
+                            .prefix = fsr.prefix,
+                            .ignore_underscores = fsr.ignore_underscores,
+                            .ignore_dirs = fsr.ignore_dirs,
+                            .extensions = fsr.extensions,
+                            .style = fsr.style,
+                            .allow_layouts = fsr.allow_layouts,
+                            // In production, we don't track individual files as they're already bundled
+                            .server_file = bun.bake.FrameworkRouter.OpaqueFileId.init(0),
+                            .client_file = if (fsr.entry_client) |_|
+                                bun.bake.FrameworkRouter.OpaqueFileId.init(1).toOptional()
+                            else
+                                .none,
+                            .server_file_string = .empty,
+                        });
+                    }
+
+                    const router = try bun.default_allocator.create(bun.bake.FrameworkRouter);
+                    router.* = try bun.bake.FrameworkRouter.initEmpty(root, types.items, bun.default_allocator);
+                    errdefer bun.default_allocator.destroy(router);
+
                     var manifest = bun.bake.Manifest{
                         .arena = std.heap.ArenaAllocator.init(bun.default_allocator),
                     };
                     errdefer manifest.deinit();
-                    manifest.fromFD(fd, &log) catch |err| {
+                    manifest.fromFD(fd, router, &log) catch |err| {
                         if (err == error.InvalidManifest) {
                             return global.throwValue(try log.toJS(global, bun.default_allocator, "Failed to parse manifest.json"));
                         }
                         return global.throwError(err, "Failed to parse manifest.json");
                     };
                     args.bake_manifest = try manifest.allocate();
+                    args.bake_router = router;
                 }
-
-                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
             }
         }
 

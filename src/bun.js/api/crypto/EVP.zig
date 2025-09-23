@@ -36,10 +36,11 @@ pub const Algorithm = enum {
     @"sha3-256",
     @"sha3-384",
     @"sha3-512",
-    @"shake-128",
     shake128,
-    @"shake-256",
     shake256,
+
+    pub const @"shake-128": Algorithm = .shake128;
+    pub const @"shake-256": Algorithm = .shake256;
 
     pub fn md(this: Algorithm) ?*const BoringSSL.EVP_MD {
         return switch (this) {

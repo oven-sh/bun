@@ -1100,10 +1100,10 @@ const ReqOrSaved = union(enum) {
         };
     }
 
-    pub fn url(this: *const @This(), alloc: Allocator) []const u8 {
+    pub fn url(this: *const @This(), alloc: Allocator) bun.ZigString.Slice {
         return switch (this.*) {
-            .req => |req| req.url(),
-            .saved => |saved| saved.request.url.toUTF8(alloc).slice(),
+            .req => |req| bun.ZigString.Slice.fromUTF8NeverFree(req.url()),
+            .saved => |saved| saved.request.url.toUTF8(alloc),
         };
     }
 };
@@ -1122,7 +1122,6 @@ fn deferRequest(
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .dev = dev,
-        .ref_count = .init(),
         .handler = switch (kind) {
             .bundled_html_page => brk: {
                 resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
@@ -1136,14 +1135,28 @@ fn deferRequest(
                     },
                     .saved => |saved| saved,
                 };
-                server_handler.ctx.setAdditionalOnAbortCallback(.{ .cb = DeferredRequest.onAbortWrapper, .data = &deferred.data });
+                server_handler.ctx.ref();
+                server_handler.ctx.setAdditionalOnAbortCallback(.{
+                    .cb = DeferredRequest.onAbortWrapper,
+                    .data = &deferred.data,
+                    .deref_fn = struct {
+                        fn deref_fn(ptr: *anyopaque) void {
+                            var self: *DeferredRequest = @ptrCast(@alignCast(ptr));
+                            self.weakDeref();
+                        }
+                    }.deref_fn,
+                });
                 break :brk .{
                     .server_handler = server_handler,
                 };
             },
         },
     };
-    deferred.data.ref();
+
+    if (deferred.data.handler == .server_handler) {
+        deferred.data.weakRef();
+    }
+
     requests_array.prepend(deferred);
 }
 
@@ -1591,24 +1604,45 @@ pub const DeferredRequest = struct {
     pub const List = std.SinglyLinkedList(DeferredRequest);
     pub const Node = List.Node;
 
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinitImpl, .{
-        .debug_name = "DeferredRequest",
-    });
-
     const debugLog = bun.Output.Scoped("DlogeferredRequest", .hidden).log;
 
     route_bundle_index: RouteBundle.Index,
     handler: Handler,
     dev: *DevServer,
 
-    /// This struct can have at most 2 references it:
-    /// - The dev server (`dev.current_bundle.requests`)
-    /// - uws.Response as a user data pointer
-    ref_count: RefCount,
+    /// This struct can be referenced by the dev server (`dev.current_bundle.requests`)
+    ///
+    /// Simultaneously, RequestContext may refer to it for AdditionalOnAbortCallback,
+    /// but we treat this as a weak reference, otherwise we will have reference
+    /// count cycles as this struct itself may store a reference to
+    /// RequestContext in the `server_handler` variant of `Handler`
+    referenced_by_devserver: bool = true,
+    weakly_referenced_by_requestcontext: bool = false,
 
-    // expose `ref` and `deref` as public methods
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
+    pub fn isAlive(this: *DeferredRequest) bool {
+        return this.referenced_by_devserver;
+    }
+
+    pub fn deref(this: *DeferredRequest) void {
+        this.referenced_by_devserver = false;
+        const should_free = !this.weakly_referenced_by_requestcontext;
+        this.__deinit();
+        if (should_free) {
+            this.__free();
+        }
+    }
+
+    pub fn weakRef(this: *DeferredRequest) void {
+        bun.assert(!this.weakly_referenced_by_requestcontext);
+        this.weakly_referenced_by_requestcontext = true;
+    }
+
+    pub fn weakDeref(this: *DeferredRequest) void {
+        this.weakly_referenced_by_requestcontext = false;
+        if (!this.referenced_by_devserver) {
+            this.__free();
+        }
+    }
 
     const Handler = union(enum) {
         /// For a .framework route. This says to call and render the page.
@@ -1630,6 +1664,7 @@ pub const DeferredRequest = struct {
 
     fn onAbortWrapper(this: *anyopaque) void {
         const self: *DeferredRequest = @alignCast(@ptrCast(this));
+        if (!self.isAlive()) return;
         self.onAbortImpl();
     }
 
@@ -1644,16 +1679,19 @@ pub const DeferredRequest = struct {
         assert(this.handler == .aborted);
     }
 
+    /// Actually free the underlying allocation for the node, does not deinitialize children
+    fn __free(this: *DeferredRequest) void {
+        this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
+    }
+
     /// *WARNING*: Do not call this directly, instead call `.deref()`
     ///
     /// Calling this is only required if the desired handler is going to be avoided,
     /// such as for bundling failures or aborting the server.
     /// Does not free the underlying `DeferredRequest.Node`
-    fn deinitImpl(this: *DeferredRequest) void {
+    fn __deinit(this: *DeferredRequest) void {
         debugLog("DeferredRequest(0x{x}) deinitImpl", .{@intFromPtr(this)});
-        this.ref_count.assertNoRefs();
 
-        defer this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
         switch (this.handler) {
             .server_handler => |*saved| saved.deinit(),
             .bundled_html_page, .aborted => {},

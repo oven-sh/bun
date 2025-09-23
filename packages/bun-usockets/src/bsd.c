@@ -593,6 +593,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         *err = 0;
     }
 
+    // NOLINTNEXTLINE(cppcoreguidelines-init-variables)
     LIBUS_SOCKET_DESCRIPTOR created_fd;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
     const int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
@@ -696,6 +697,7 @@ int bsd_addr_get_port(struct bsd_addr_t *addr) {
 
 // called by dispatch_ready_poll
 LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr) {
+    // NOLINTNEXTLINE(cppcoreguidelines-init-variables)
     LIBUS_SOCKET_DESCRIPTOR accepted_fd;
 
     while (1) {
@@ -855,7 +857,7 @@ int bsd_would_block() {
 }
 
 static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog, int* error) {
-    int result;
+    int result = 0;
     do
         result = bind(listenFd, listenAddr, listenAddrLength);
     while (IS_EINTR(result));
@@ -973,7 +975,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
-    struct addrinfo hints, *result;
+    struct addrinfo hints, *result = NULL;
     memset(&hints, 0, sizeof(struct addrinfo));
 
     hints.ai_flags = AI_PASSIVE;
@@ -988,7 +990,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     }
 
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
-    struct addrinfo *listenAddr;
+    struct addrinfo* listenAddr = NULL;
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
@@ -1174,7 +1176,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
         *err = 0;
     }
 
-    struct addrinfo hints, *result;
+    struct addrinfo hints, *result = NULL;
     memset(&hints, 0, sizeof(struct addrinfo));
 
     hints.ai_flags = AI_PASSIVE;
@@ -1284,7 +1286,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 }
 
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
-    struct addrinfo hints, *result;
+    struct addrinfo hints, *result = NULL;
     memset(&hints, 0, sizeof(struct addrinfo));
 
     hints.ai_family = AF_UNSPEC;
@@ -1394,8 +1396,8 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
 
 
 #else
-    int r;
-     do {
+    int r = 0;
+    do {
         errno = 0;
         r = connect(fd, (struct sockaddr *)addr, namelen);
     } while (IS_EINTR(r));

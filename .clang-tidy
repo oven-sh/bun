@@ -20,7 +20,6 @@ Checks: >
   -performance-no-int-to-ptr,
   cppcoreguidelines-*,
   -cppcoreguidelines-avoid-magic-numbers,
-  -cppcoreguidelines-init-variables,
   -cppcoreguidelines-narrowing-conversions,
   -cppcoreguidelines-macro-to-enum,
   -cppcoreguidelines-avoid-non-const-global-variables,

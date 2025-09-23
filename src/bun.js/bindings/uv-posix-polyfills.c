@@ -74,7 +74,7 @@ UV_EXTERN void uv_mutex_destroy(uv_mutex_t* mutex)
 UV_EXTERN int uv_mutex_init(uv_mutex_t* mutex)
 {
     pthread_mutexattr_t attr;
-    int err;
+    int err = 0;
 
     if (pthread_mutexattr_init(&attr))
         abort();
@@ -94,7 +94,7 @@ UV_EXTERN int uv_mutex_init(uv_mutex_t* mutex)
 UV_EXTERN int uv_mutex_init_recursive(uv_mutex_t* mutex)
 {
     pthread_mutexattr_t attr;
-    int err;
+    int err = 0;
 
     if (pthread_mutexattr_init(&attr))
         abort();
@@ -120,7 +120,7 @@ UV_EXTERN void uv_mutex_lock(uv_mutex_t* mutex)
 // Copy-pasted from libuv
 UV_EXTERN int uv_mutex_trylock(uv_mutex_t* mutex)
 {
-    int err;
+    int err = 0;
 
     err = pthread_mutex_trylock(mutex);
     if (err) {

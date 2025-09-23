@@ -11,6 +11,11 @@ pub const ZigStackFrame = extern struct {
     /// This informs formatters whether to display as a blob URL or not
     remapped: bool = false,
 
+    pub fn ref(this: *const ZigStackFrame) void {
+        this.function_name.ref();
+        this.source_url.ref();
+    }
+
     pub fn deinit(this: *ZigStackFrame) void {
         this.function_name.deref();
         this.source_url.deref();

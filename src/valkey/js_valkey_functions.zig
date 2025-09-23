@@ -193,14 +193,14 @@ pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // Implement decrby (decrement key by integer value)
 pub fn decrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const key = try callframe.argument(0).toBunString(globalObject);
-    defer key.deref();
-    const value = try callframe.argument(1).toBunString(globalObject);
-    defer value.deref();
-    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-    defer key_slice.deinit();
-    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
-    defer value_slice.deinit();
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("decrby", "key", "string or buffer");
+    };
+    defer key.deinit();
+    const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+        return globalObject.throwInvalidArgumentType("decrby", "decrement", "string or number");
+    };
+    defer value.deinit();
 
     // Send DECRBY command
     const promise = this.send(
@@ -208,7 +208,7 @@ pub fn decrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
         callframe.this(),
         &.{
             .command = "DECRBY",
-            .args = .{ .slices = &.{ key_slice, value_slice } },
+            .args = .{ .args = &.{ key, value } },
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send DECRBY command", err);

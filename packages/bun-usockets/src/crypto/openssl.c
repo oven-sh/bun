@@ -114,7 +114,6 @@ int passphrase_cb(char *buf, int size, int rwflag, void *u) {
   size_t passphrase_length = strlen(passphrase);
   memcpy(buf, passphrase, passphrase_length);
   buf[passphrase_length] = 0;
-  // put null at end? no?
   return (int)passphrase_length;
 }
 

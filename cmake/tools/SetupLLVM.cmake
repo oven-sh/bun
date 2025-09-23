@@ -17,7 +17,6 @@ set(DEFAULT_LLVM_VERSION "19.1.7")
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
 string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" USE_LLVM_VERSION ${LLVM_VERSION})
-set(USE_LLVM_VERSION $<BOOL:${USE_LLVM_VERSION}>)
 
 if(USE_LLVM_VERSION)
   set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
@@ -66,11 +65,13 @@ endif()
 macro(find_llvm_command variable command)
   set(commands ${command})
 
+  if(USE_LLVM_VERSION)
     list(APPEND commands
       ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}
       ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}
       ${command}-${LLVM_VERSION_MAJOR}
     )
+  endif()
 
   math(EXPR LLVM_VERSION_NEXT_MAJOR "${LLVM_VERSION_MAJOR} + 1")
 

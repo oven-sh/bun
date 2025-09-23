@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isWindows, bunExe, bunEnv, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 describe("process.report", () => {
   it("process.report.getReport() returns a valid report object", () => {
@@ -142,11 +142,7 @@ describe("process.report", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");

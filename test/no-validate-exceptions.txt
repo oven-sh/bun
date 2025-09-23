@@ -41,6 +41,8 @@ test/js/third_party/pg-gateway/pglite.test.ts
 test/js/web/websocket/websocket.test.js
 test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/bun/resolve/resolve.test.ts
+test/cli/install/bunx.test.ts
+test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
 
 # trips asan on my macos test machine
 test/js/node/test/parallel/test-fs-watch.js
@@ -128,6 +130,7 @@ test/js/node/crypto/node-crypto.test.js
 test/js/third_party/pg/pg.test.ts
 test/regression/issue/01466.test.ts
 test/regression/issue/21311.test.ts
+test/js/deno/crypto/webcrypto.test.ts
 
 
 test/regression/issue/ctrl-c.test.ts
@@ -138,4 +141,4 @@ test/cli/hot/hot.test.ts
 test/cli/install/bun-repl.test.ts
 test/bundler/esbuild/default.test.ts
 test/integration/vite-build/vite-build.test.ts
-test/cli/inspect/HTTPServerAgent.test.ts 
+test/cli/inspect/HTTPServerAgent.test.ts

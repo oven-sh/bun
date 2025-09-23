@@ -326,8 +326,44 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("concurrentTestGlob")) |expr| {
-                        try this.expectString(expr);
-                        this.ctx.test_options.concurrent_test_glob = try expr.data.e_string.string(allocator);
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                // Reject empty strings
+                                if (str.len() == 0) {
+                                    try this.addError(expr.loc, "concurrentTestGlob cannot be an empty string");
+                                    return;
+                                }
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.concurrent_test_glob = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) {
+                                    try this.addError(expr.loc, "concurrentTestGlob array cannot be empty");
+                                    return;
+                                }
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "concurrentTestGlob array must contain only strings");
+                                        return;
+                                    }
+                                    // Reject empty strings in array
+                                    if (item.data.e_string.len() == 0) {
+                                        try this.addError(item.loc, "concurrentTestGlob patterns cannot be empty strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.concurrent_test_glob = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "concurrentTestGlob must be a string or array of strings");
+                                return;
+                            },
+                        }
                     }
 
                     if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {

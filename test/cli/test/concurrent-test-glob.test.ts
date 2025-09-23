@@ -5,26 +5,22 @@ import { writeFileSync } from "fs";
 
 describe("concurrent-test-glob", () => {
   test("tests matching glob pattern run concurrently", async () => {
-    using dir = tempDir("concurrent-glob", {});
-
-    // Create a shared log file to track execution order
-    const logFile = join(String(dir), "execution.log");
-
     // Create test files that log their execution
     const testFile1 = `
 import { test, expect } from "bun:test";
 import { appendFileSync } from "fs";
+import { join } from "path";
 
-const logFile = "${logFile.replace(/\\/g, "\\\\")}";
+const logFile = join(import.meta.dir, "execution.log");
 
-test.concurrent("test 1", async () => {
+test("test 1", async () => {
   appendFileSync(logFile, "test1-start\\n");
   await Bun.sleep(50);
   appendFileSync(logFile, "test1-end\\n");
   expect(1).toBe(1);
 });
 
-test.concurrent("test 2", async () => {
+test("test 2", async () => {
   appendFileSync(logFile, "test2-start\\n");
   await Bun.sleep(50);
   appendFileSync(logFile, "test2-end\\n");
@@ -35,17 +31,18 @@ test.concurrent("test 2", async () => {
     const testFile2 = `
 import { test, expect } from "bun:test";
 import { appendFileSync } from "fs";
+import { join } from "path";
 
-const logFile = "${logFile.replace(/\\/g, "\\\\")}";
+const logFile = join(import.meta.dir, "execution.log");
 
-test.concurrent("test 3", async () => {
+test("test 3", async () => {
   appendFileSync(logFile, "test3-start\\n");
   await Bun.sleep(50);
   appendFileSync(logFile, "test3-end\\n");
   expect(3).toBe(3);
 });
 
-test.concurrent("test 4", async () => {
+test("test 4", async () => {
   appendFileSync(logFile, "test4-start\\n");
   await Bun.sleep(50);
   appendFileSync(logFile, "test4-end\\n");
@@ -53,18 +50,12 @@ test.concurrent("test 4", async () => {
 });
 `;
 
-    // Create bunfig.toml with concurrent-test-glob
-    const bunfigContent = `
-[test]
-concurrentTestGlob = "**/concurrent-*.test.ts"
-`;
-
-    await Bun.write(join(String(dir), "bunfig.toml"), bunfigContent);
-    await Bun.write(join(String(dir), "concurrent-1.test.ts"), testFile1);
-    await Bun.write(join(String(dir), "concurrent-2.test.ts"), testFile2);
-
-    // Initialize the log file
-    writeFileSync(logFile, "");
+    using dir = tempDir("concurrent-glob", {
+      "bunfig.toml": `[test]\nconcurrentTestGlob = "**/concurrent-*.test.ts"`,
+      "concurrent-1.test.ts": testFile1,
+      "concurrent-2.test.ts": testFile2,
+      "execution.log": "",
+    });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test"],
       env: bunEnv,
@@ -83,7 +74,8 @@ concurrentTestGlob = "**/concurrent-*.test.ts"
     expect(stdout + stderr).toContain("4 pass");
 
     // Read the execution log to verify concurrent execution
-    const log = await Bun.file(logFile).text();
+    const logPath = join(String(dir), "execution.log");
+    const log = await Bun.file(logPath).text();
     const lines = log.trim().split("\n").filter(Boolean);
 
     // If tests ran concurrently, we should see interleaved starts
@@ -97,16 +89,12 @@ concurrentTestGlob = "**/concurrent-*.test.ts"
   });
 
   test("tests not matching glob pattern run sequentially", async () => {
-    using dir = tempDir("sequential-glob", {});
-
-    const logFile = join(String(dir), "sequential.log");
-
     const testFile = `
 import { test, expect } from "bun:test";
-import { appendFileSync } from "fs";
-import { existsSync } from "fs";
+import { appendFileSync, existsSync } from "fs";
+import { join } from "path";
 
-const logFile = "${logFile.replace(/\\/g, "\\\\")}";
+const logFile = join(import.meta.dir, "sequential.log");
 
 // Initialize the log file
 if (!existsSync(logFile)) {
@@ -134,15 +122,11 @@ test("sequential test 2", async () => {
 });
 `;
 
-    // Create bunfig.toml with concurrent-test-glob that doesn't match
-    const bunfigContent = `
-[test]
-concurrentTestGlob = "**/concurrent-*.test.ts"
-`;
-
-    await Bun.write(join(String(dir), "bunfig.toml"), bunfigContent);
-    await Bun.write(join(String(dir), "sequential.test.ts"), testFile);
-    writeFileSync(logFile, "");
+    using dir = tempDir("sequential-glob", {
+      "bunfig.toml": `[test]\nconcurrentTestGlob = "**/concurrent-*.test.ts"`,
+      "sequential.test.ts": testFile,
+      "sequential.log": "",
+    });
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test"],
@@ -162,32 +146,105 @@ concurrentTestGlob = "**/concurrent-*.test.ts"
     expect(stdout + stderr).toContain("2 pass");
 
     // Verify sequential execution pattern
-    const log = await Bun.file(logFile).text();
+    const logPath = join(String(dir), "sequential.log");
+    const log = await Bun.file(logPath).text();
     const lines = log.trim().split("\n").filter(Boolean);
 
     // Sequential execution should show: seq1-start, seq1-end, seq2-start, seq2-end
     expect(lines).toEqual(["seq1-start", "seq1-end", "seq2-start", "seq2-end"]);
   });
 
-  test("concurrent flag overrides concurrent-test-glob", async () => {
-    using dir = tempDir("concurrent-override", {});
-
-    const testFile = `
+  test("multiple glob patterns work correctly", async () => {
+    const testFile1 = `
 import { test, expect } from "bun:test";
+import { appendFileSync } from "fs";
+import { join } from "path";
 
-test("test 1", () => {
+const logFile = join(import.meta.dir, "execution.log");
+
+test("test 1", async () => {
+  appendFileSync(logFile, "test1-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "test1-end\\n");
   expect(1).toBe(1);
+});
+
+test("test 2", async () => {
+  appendFileSync(logFile, "test2-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "test2-end\\n");
+  expect(2).toBe(2);
 });
 `;
 
-    // Create bunfig.toml with concurrent-test-glob that doesn't match
-    const bunfigContent = `
-[test]
-concurrentTestGlob = "**/concurrent-*.test.ts"
+    const testFile2 = `
+import { test, expect } from "bun:test";
+import { appendFileSync } from "fs";
+import { join } from "path";
+
+const logFile = join(import.meta.dir, "execution.log");
+
+test("test 3", async () => {
+  appendFileSync(logFile, "test3-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "test3-end\\n");
+  expect(3).toBe(3);
+});
+
+test("test 4", async () => {
+  appendFileSync(logFile, "test4-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "test4-end\\n");
+  expect(4).toBe(4);
+});
 `;
 
-    await Bun.write(join(String(dir), "bunfig.toml"), bunfigContent);
-    await Bun.write(join(String(dir), "sequential.test.ts"), testFile);
+    using dir = tempDir("multiple-patterns", {
+      "bunfig.toml": `[test]\nconcurrentTestGlob = ["**/async-*.test.ts", "**/parallel-*.test.ts"]`,
+      "async-one.test.ts": testFile1,
+      "parallel-two.test.ts": testFile2,
+      "execution.log": "",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout + stderr).toContain("4 pass");
+
+    // Read the execution log to verify concurrent execution
+    const logPath = join(String(dir), "execution.log");
+    const log = await Bun.file(logPath).text();
+    const lines = log.trim().split("\n").filter(Boolean);
+
+    // If tests ran concurrently, we should see interleaved starts
+    const firstEndIndex = lines.findIndex(line => line.includes("-end"));
+    const startsBeforeFirstEnd = lines.slice(0, firstEndIndex).filter(line => line.includes("-start")).length;
+
+    // With concurrent execution, we expect multiple starts before the first end
+    expect(startsBeforeFirstEnd).toBeGreaterThan(1);
+  });
+
+  test("concurrent flag overrides concurrent-test-glob", async () => {
+    using dir = tempDir("concurrent-override", {
+      "bunfig.toml": `[test]\nconcurrentTestGlob = "**/concurrent-*.test.ts"`,
+      "sequential.test.ts": `import { test, expect } from "bun:test";
+
+test("test 1", () => {
+  expect(1).toBe(1);
+});`,
+    });
 
     // Run with --concurrent flag
     await using proc = Bun.spawn({

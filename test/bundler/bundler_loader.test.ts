@@ -92,6 +92,34 @@ describe("bundler", async () => {
         },
         run: { stdout: "Hello, 世界! 🌍" },
       });
+      itBundled("bun/loader-bytes-immutable", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import data from './test.bin' with {type: "bytes"};
+
+        // Check immutability as per TC39 spec
+        const checks = [
+          data instanceof Uint8Array,
+          Object.isFrozen(data),
+          Object.isFrozen(data.buffer),
+          (() => {
+            const original = data[0];
+            data[0] = 255;
+            return data[0] === original;
+          })(),
+          (() => {
+            data.customProp = "test";
+            return data.customProp === undefined;
+          })()
+        ];
+
+        console.write(JSON.stringify(checks));
+      `,
+          "/test.bin": Buffer.from([1, 2, 3]),
+        },
+        run: { stdout: "[true,true,true,true,true]" },
+      });
     });
   }
 

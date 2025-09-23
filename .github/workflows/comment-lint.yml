@@ -9,7 +9,6 @@ on:
 
 env:
   LLVM_VERSION_MAJOR: "19"
-  LLVM_VERSION: "19.1.7"
 
 jobs:
   comment-lint:
@@ -32,7 +31,7 @@ jobs:
           # Copy to outputs
           {
             echo 'text_output<<EOF'
-            bun run clang-tidy:check -DLLVM_VERSION=${{ env.LLVM_VERSION }}
+            bun run clang-tidy:check
             echo EOF
           } >> "$GITHUB_OUTPUT"
 

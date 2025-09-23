@@ -1,9 +1,9 @@
 import { expect } from "bun:test";
+import { isASAN, isWindows } from "harness";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { isASAN, isWindows } from "harness";
 
 const listen_path = join(tmpdir(), "test-net-successful-connection-handle-leak.sock");
 

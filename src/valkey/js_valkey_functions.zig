@@ -148,14 +148,14 @@ pub fn incr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
 // Implement incrby (increment key by integer value)
 pub fn incrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    const key = try callframe.argument(0).toBunString(globalObject);
-    defer key.deref();
-    const value = try callframe.argument(1).toBunString(globalObject);
-    defer value.deref();
-    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-    defer key_slice.deinit();
-    const value_slice = value.toUTF8WithoutRef(bun.default_allocator);
-    defer value_slice.deinit();
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("incrby", "key", "string or buffer");
+    };
+    defer key.deinit();
+    const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+        return globalObject.throwInvalidArgumentType("incrby", "increment", "string or number");
+    };
+    defer value.deinit();
 
     // Send INCRBY command
     const promise = this.send(
@@ -163,7 +163,7 @@ pub fn incrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfram
         callframe.this(),
         &.{
             .command = "INCRBY",
-            .args = .{ .slices = &.{ key_slice, value_slice } },
+            .args = .{ .args = &.{ key, value } },
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send INCRBY command", err);

@@ -248,13 +248,12 @@ declare module "bun" {
     decr(key: RedisClient.KeyLike): Promise<number>;
 
     /**
-     * Decrement the integer value of a hash field by the given number
-     * @param key The key
+     * Decrement the integer value of a key by the given number
+     * @param key The key to decrement
      * @param decrement The amount to decrement by
      * @returns Promise that resolves with the new value
      */
     decrby(key: RedisClient.KeyLike, decrement: string | number): Promise<number>;
-
     /**
      * Determine if a key exists
      * @param key The key to check

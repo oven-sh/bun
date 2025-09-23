@@ -121,21 +121,21 @@ const continueScriptTag = "<script>__bun_f.push(";
 
 const enum HtmlState {
   /** HTML is flowing, it is not an okay time to inject RSC data. */
-  Flowing,
+  Flowing = 1,
   /** It is safe to inject RSC data. */
   Boundary,
 }
 
 const enum RscState {
   /** No RSC data has been written yet */
-  Waiting,
+  Waiting = 1,
   /** Some but not all RSC data has been written */
   Paused,
   /** All RSC data has been written */
   Done,
 }
 
-class RscInjectionStream extends EventEmitter implements NodeJS.WritableStream {
+class RscInjectionStream extends EventEmitter {
   controller: ReadableStreamDirectController;
 
   html: HtmlState = HtmlState.Flowing;
@@ -151,7 +151,7 @@ class RscInjectionStream extends EventEmitter implements NodeJS.WritableStream {
   /** Resolved when all data is written */
   finished: Promise<void>;
   finalize: () => void;
-  reject: (err: any) => void;
+  reject: (err: unknown) => void;
 
   constructor(rscPayload: Readable, controller: ReadableStreamDirectController) {
     super();
@@ -159,7 +159,7 @@ class RscInjectionStream extends EventEmitter implements NodeJS.WritableStream {
 
     const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
-    this.finalize = x => (controller.close(), resolve(x));
+    this.finalize = () => (controller.close(), resolve());
     this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));

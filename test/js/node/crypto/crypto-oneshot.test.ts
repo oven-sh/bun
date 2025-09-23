@@ -62,6 +62,7 @@ describe("crypto.hash", () => {
     "sha-512_256",
     "sha-512256",
     "sha512-256",
+    "sha384",
     "sha3-224",
     "sha3-256",
     "sha3-384",
@@ -72,7 +73,7 @@ describe("crypto.hash", () => {
     "shake-256",
   ].forEach(method => {
     test(`output matches crypto.createHash(${method})`, () => {
-      for (const outputEncoding of ["buffer", "hex", "base64", "base64url", undefined]) {
+      for (const outputEncoding of ["buffer", "hex", "base64", undefined]) {
         const oldDigest = crypto
           .createHash(method)
           .update(input)

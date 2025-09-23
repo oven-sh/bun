@@ -170,16 +170,17 @@ console.log(YAML.stringify(arr, null, 2));
 #### String Quoting
 
 `YAML.stringify()` automatically quotes strings when necessary:
+
 - Strings that would be parsed as YAML keywords (`true`, `false`, `null`, `yes`, `no`, etc.)
 - Strings that would be parsed as numbers
 - Strings containing special characters or escape sequences
 
 ```ts
 const examples = {
-  keyword: "true",        // Will be quoted: "true"
-  number: "123",          // Will be quoted: "123"
-  text: "hello world",    // Won't be quoted: hello world
-  empty: "",              // Will be quoted: ""
+  keyword: "true", // Will be quoted: "true"
+  number: "123", // Will be quoted: "123"
+  text: "hello world", // Won't be quoted: hello world
+  empty: "", // Will be quoted: ""
 };
 
 console.log(YAML.stringify(examples, null, 2));
@@ -195,7 +196,7 @@ console.log(YAML.stringify(examples, null, 2));
 
 ```ts
 const obj = { name: "root" };
-obj.self = obj;  // Circular reference
+obj.self = obj; // Circular reference
 
 const yamlString = YAML.stringify(obj, null, 2);
 console.log(yamlString);
@@ -220,19 +221,19 @@ console.log(YAML.stringify(data, null, 2));
 
 ```ts
 // Special numeric values
-console.log(YAML.stringify(Infinity));   // .inf
-console.log(YAML.stringify(-Infinity));  // -.inf
-console.log(YAML.stringify(NaN));        // .nan
-console.log(YAML.stringify(0));          // 0
-console.log(YAML.stringify(-0));         // -0
+console.log(YAML.stringify(Infinity)); // .inf
+console.log(YAML.stringify(-Infinity)); // -.inf
+console.log(YAML.stringify(NaN)); // .nan
+console.log(YAML.stringify(0)); // 0
+console.log(YAML.stringify(-0)); // -0
 
 // null and undefined
-console.log(YAML.stringify(null));       // null
-console.log(YAML.stringify(undefined));  // undefined (returns undefined, not a string)
+console.log(YAML.stringify(null)); // null
+console.log(YAML.stringify(undefined)); // undefined (returns undefined, not a string)
 
 // Booleans
-console.log(YAML.stringify(true));       // true
-console.log(YAML.stringify(false));      // false
+console.log(YAML.stringify(true)); // true
+console.log(YAML.stringify(false)); // false
 ```
 
 #### Complex Objects
@@ -256,7 +257,7 @@ const config = {
   },
   features: {
     auth: true,
-    "rate-limit": 100,  // Keys with special characters are preserved
+    "rate-limit": 100, // Keys with special characters are preserved
   },
 };
 

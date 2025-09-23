@@ -131,6 +131,13 @@ test/js/third_party/pg/pg.test.ts
 test/regression/issue/01466.test.ts
 test/regression/issue/21311.test.ts
 test/js/deno/crypto/webcrypto.test.ts
+vendor/elysia/test/aot/response.test.ts
+vendor/elysia/test/cookie/response.test.ts
+vendor/elysia/test/cookie/signature.test.ts
+vendor/elysia/test/core/dynamic.test.ts
+vendor/elysia/test/lifecycle/error.test.ts
+vendor/elysia/test/validator/body.test.ts
+vendor/elysia/test/ws/message.test.ts
 
 
 test/regression/issue/ctrl-c.test.ts

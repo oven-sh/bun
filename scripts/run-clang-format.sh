@@ -88,13 +88,13 @@ if [ "$MODE" = "check" ]; then
             fi
             dir=$(dirname "$dir")
         done
-        
+
         if ! $CLANG_FORMAT --dry-run --Werror "$file" 2>/dev/null; then
             echo "Format check failed: $file"
             FAILED=1
         fi
     done
-    
+
     if [ $FAILED -eq 1 ]; then
         echo "Some files need formatting. Run 'bun run clang-format' to fix."
         exit 1

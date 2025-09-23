@@ -23,6 +23,7 @@ jobs:
         id: env
         shell: bash
         run: |
+          sudo apt-get remove -qq clang-18
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update -qq

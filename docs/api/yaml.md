@@ -117,7 +117,15 @@ try {
 
 ### `Bun.YAML.stringify()`
 
-Convert a JavaScript value into a YAML string.
+Convert a JavaScript value into a YAML string. The API signature matches `JSON.stringify`:
+
+```ts
+YAML.stringify(value, replacer?, space?)
+```
+
+- `value`: The value to convert to YAML
+- `replacer`: Currently only `null` or `undefined` (function replacers not yet supported)
+- `space`: Number of spaces for indentation (e.g., `2`) or a string to use for indentation
 
 ```ts
 import { YAML } from "bun";
@@ -129,7 +137,7 @@ const data = {
   hobbies: ["reading", "coding", "hiking"],
 };
 
-const yamlString = YAML.stringify(data);
+const yamlString = YAML.stringify(data, null, 2);
 console.log(yamlString);
 // name: John Doe
 // age: 30
@@ -155,7 +163,7 @@ const examples = {
   empty: "",              // Will be quoted: ""
 };
 
-console.log(YAML.stringify(examples));
+console.log(YAML.stringify(examples, null, 2));
 // keyword: "true"
 // number: "123"
 // text: hello world
@@ -170,7 +178,7 @@ console.log(YAML.stringify(examples));
 const obj = { name: "root" };
 obj.self = obj;  // Circular reference
 
-const yamlString = YAML.stringify(obj);
+const yamlString = YAML.stringify(obj, null, 2);
 console.log(yamlString);
 // &1
 // name: root
@@ -183,7 +191,7 @@ const data = {
   second: shared,
 };
 
-console.log(YAML.stringify(data));
+console.log(YAML.stringify(data, null, 2));
 // first: &1
 //   id: 1
 // second: *1
@@ -233,8 +241,24 @@ const config = {
   },
 };
 
-const yamlString = YAML.stringify(config);
-// Produces properly formatted, indented YAML
+const yamlString = YAML.stringify(config, null, 2);
+console.log(yamlString);
+// server:
+//   port: 3000
+//   host: localhost
+//   ssl:
+//     enabled: true
+//     cert: /path/to/cert.pem
+//     key: /path/to/key.pem
+// database:
+//   connections:
+//     - name: primary
+//       host: db1.example.com
+//     - name: replica
+//       host: db2.example.com
+// features:
+//   auth: true
+//   rate-limit: 100
 ```
 
 ## Module Import

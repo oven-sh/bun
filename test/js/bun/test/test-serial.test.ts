@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // Test that test.serial() is available and works
 test("test.serial is a function", () => {
@@ -94,7 +94,11 @@ describe.serial("serial describe block", () => {
 });
 
 // Test test.serial.each functionality
-const testCases = [[1, 2, 3], [4, 5, 9], [10, 20, 30]];
+const testCases = [
+  [1, 2, 3],
+  [4, 5, 9],
+  [10, 20, 30],
+];
 let eachCounter = 0;
 
 test.serial.each(testCases)("serial.each test %#", (a, b, expected) => {

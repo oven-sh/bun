@@ -1456,8 +1456,10 @@ pub fn VisitExpr(
                     }) {
                         bun.assert(p.options.features.server_components.isServerSide());
                         if (!bun.strings.startsWith(p.source.path.pretty, "node_modules") and
-                            bun.strings.eqlComptime(original_name, "useState"))
+                            bun.strings.eqlComptime(original_name, "useState") and
+                            !p.has_reported_use_client_directive_hook_error)
                         {
+                            p.has_reported_use_client_directive_hook_error = true;
                             p.log.addError(
                                 p.source,
                                 expr.loc,

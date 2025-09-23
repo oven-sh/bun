@@ -5,7 +5,8 @@ permissions:
   pull-requests: write
 
 on:
-  pull_request:
+  # pull_request:
+  workflow_dispatch:
 
 env:
   LLVM_VERSION_MAJOR: "19"

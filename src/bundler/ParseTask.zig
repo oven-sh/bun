@@ -588,16 +588,29 @@ fn getAST(
             const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
             _ = bun.base64.encode(encoded, source.contents);
 
-            const base64_string = Expr.init(E.String, E.String{
-                .data = encoded,
-            }, Logger.Loc.Empty);
+            // Generate JavaScript code directly
+            const js_code = std.fmt.allocPrint(
+                allocator,
+                "const data = Object.freeze(Uint8Array.fromBase64(\"{s}\")); Object.freeze(data.buffer); export default data;",
+                .{encoded},
+            ) catch unreachable;
 
-            const root = Expr.init(E.Call, E.Call{
-                .target = .{ .data = .{ .e_identifier = .{ .ref = Ref.None } }, .loc = .{ .start = 0 } },
-                .args = BabyList(Expr).fromOwnedSlice(try allocator.dupe(Expr, &.{base64_string})),
-            }, Logger.Loc.Empty);
+            // Parse the generated JavaScript
+            var temp_source = source.*;
+            temp_source.contents = js_code;
 
-            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "__base64ToUint8Array")).?);
+            const parse_result = try resolver.caches.js.parse(
+                transpiler.allocator,
+                opts,
+                transpiler.options.define,
+                log,
+                &temp_source,
+            );
+
+            return switch (parse_result orelse return error.ParserError) {
+                .ast => |value| JSAst.init(value),
+                .cached, .already_bundled => return error.ParserError,
+            };
         },
         .file, .wasm => {
             bun.assert(loader.shouldCopyForBundling());

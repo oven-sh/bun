@@ -1344,35 +1344,41 @@ pub const Transpiler = struct {
                 };
             },
             .bytes => {
-                // Convert to base64
+                // Convert to base64 for efficiency
                 const encoded_len = std.base64.standard.Encoder.calcSize(source.contents.len);
                 const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
                 _ = bun.base64.encode(encoded, source.contents);
 
-                // Generate simple JavaScript code similar to text loader but with base64 conversion
-                var parser_opts = js_parser.Parser.Options.init(transpiler.options.jsx, loader);
+                // Generate JavaScript code directly
+                const js_code = std.fmt.allocPrint(
+                    allocator,
+                    "const data = Object.freeze(Uint8Array.fromBase64(\"{s}\")); Object.freeze(data.buffer); export default data;",
+                    .{encoded},
+                ) catch unreachable;
+
+                // Parse the generated JavaScript
+                var temp_source = source.*;
+                temp_source.contents = js_code;
+
+                var parser_opts = js_parser.Parser.Options.init(transpiler.options.jsx, .js);
                 parser_opts.features.allow_runtime = transpiler.options.allow_runtime;
 
-                const base64_string = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
-                    .data = encoded,
-                }, logger.Loc.Empty);
-
-                // Use the lazy export AST to handle the runtime import properly
-                const ast = (js_parser.newLazyExportAST(
+                const parse_result = transpiler.resolver.caches.js.parse(
                     allocator,
-                    transpiler.options.define,
                     parser_opts,
+                    transpiler.options.define,
                     transpiler.log,
-                    base64_string,
-                    source,
-                    "__base64ToUint8Array",
-                ) catch return null) orelse return null;
+                    &temp_source,
+                ) catch return null;
 
-                return ParseResult{
-                    .ast = ast,
-                    .source = source.*,
-                    .loader = loader,
-                    .input_fd = input_fd,
+                return switch (parse_result orelse return null) {
+                    .ast => |value| ParseResult{
+                        .ast = value,
+                        .source = source.*,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
+                    .cached, .already_bundled => return null,
                 };
             },
             .wasm => {

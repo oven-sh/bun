@@ -66,13 +66,11 @@ endif()
 macro(find_llvm_command variable command)
   set(commands ${command})
 
-  if(USE_LLVM_VERSION)
     list(APPEND commands
       ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}
       ${command}-${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}
       ${command}-${LLVM_VERSION_MAJOR}
     )
-  endif()
 
   math(EXPR LLVM_VERSION_NEXT_MAJOR "${LLVM_VERSION_MAJOR} + 1")
 

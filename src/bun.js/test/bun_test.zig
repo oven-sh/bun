@@ -650,7 +650,7 @@ pub const StepResult = union(enum) {
 pub const Collection = @import("./Collection.zig");
 
 pub const BaseScopeCfg = struct {
-    self_concurrent: bool = false,
+    self_concurrent: ?bool = null,
     self_mode: ScopeMode = .normal,
     self_only: bool = false,
     test_id_for_debugger: i32 = 0,
@@ -658,9 +658,9 @@ pub const BaseScopeCfg = struct {
     /// returns null if the other already has the value
     pub fn extend(this: BaseScopeCfg, other: BaseScopeCfg) ?BaseScopeCfg {
         var result = this;
-        if (other.self_concurrent) {
-            if (result.self_concurrent) return null;
-            result.self_concurrent = true;
+        if (other.self_concurrent) |concurrent| {
+            if (result.self_concurrent) |_| return null;
+            result.self_concurrent = concurrent;
         }
         if (other.self_mode != .normal) {
             if (result.self_mode != .normal) return null;
@@ -695,7 +695,7 @@ pub const BaseScope = struct {
         return .{
             .parent = parent,
             .name = if (name_not_owned) |name| bun.handleOom(gpa.dupe(u8, name)) else null,
-            .concurrent = this.self_concurrent or if (parent) |p| p.base.concurrent else false,
+            .concurrent = if (this.self_concurrent) |concurrent| concurrent else if (parent) |p| p.base.concurrent else false,
             .mode = if (parent) |p| if (p.base.mode != .normal) p.base.mode else this.self_mode else this.self_mode,
             .only = if (this.self_only) .yes else .no,
             .has_callback = has_callback,

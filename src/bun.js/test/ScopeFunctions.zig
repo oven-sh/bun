@@ -13,12 +13,14 @@ pub const strings = struct {
     pub const todo = bun.String.static("todo");
     pub const failing = bun.String.static("failing");
     pub const concurrent = bun.String.static("concurrent");
+    pub const serial = bun.String.static("serial");
     pub const only = bun.String.static("only");
     pub const @"if" = bun.String.static("if");
     pub const skipIf = bun.String.static("skipIf");
     pub const todoIf = bun.String.static("todoIf");
     pub const failingIf = bun.String.static("failingIf");
     pub const concurrentIf = bun.String.static("concurrentIf");
+    pub const serialIf = bun.String.static("serialIf");
     pub const each = bun.String.static("each");
 };
 
@@ -33,6 +35,9 @@ pub fn getFailing(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSErro
 }
 pub fn getConcurrent(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     return genericExtend(this, globalThis, .{ .self_concurrent = true }, "get .concurrent", strings.concurrent);
+}
+pub fn getSerial(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    return genericExtend(this, globalThis, .{ .self_concurrent = false }, "get .serial", strings.serial);
 }
 pub fn getOnly(this: *ScopeFunctions, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     return genericExtend(this, globalThis, .{ .self_only = true }, "get .only", strings.only);
@@ -51,6 +56,9 @@ pub fn fnFailingIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame
 }
 pub fn fnConcurrentIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     return genericIf(this, globalThis, callFrame, .{ .self_concurrent = true }, "call .concurrentIf()", false, strings.concurrentIf);
+}
+pub fn fnSerialIf(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+    return genericIf(this, globalThis, callFrame, .{ .self_concurrent = false }, "call .serialIf()", false, strings.serialIf);
 }
 pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     groupLog.begin(@src());
@@ -197,7 +205,10 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     base.line_no = line_no;
     base.test_id_for_debugger = test_id_for_debugger;
     if (bun.jsc.Jest.Jest.runner) |runner| if (runner.concurrent) {
-        base.self_concurrent = true;
+        // Only set to concurrent if not explicitly set (null)
+        if (base.self_concurrent == null) {
+            base.self_concurrent = true;
+        }
     };
 
     switch (this.mode) {
@@ -398,7 +409,13 @@ pub const fromJSDirect = js.fromJSDirect;
 
 pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
     try writer.print("{s}", .{@tagName(this.mode)});
-    if (this.cfg.self_concurrent) try writer.print(".concurrent", .{});
+    if (this.cfg.self_concurrent) |concurrent| {
+        if (concurrent) {
+            try writer.print(".concurrent", .{});
+        } else {
+            try writer.print(".serial", .{});
+        }
+    }
     if (this.cfg.self_mode != .normal) try writer.print(".{s}", .{@tagName(this.cfg.self_mode)});
     if (this.cfg.self_only) try writer.print(".only", .{});
     if (this.each != .zero) try writer.print(".each()", .{});

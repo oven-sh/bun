@@ -822,6 +822,10 @@ export default [
         getter: "getConcurrent",
         cache: true,
       },
+      serial: {
+        getter: "getSerial",
+        cache: true,
+      },
       only: {
         getter: "getOnly",
         cache: true,
@@ -844,6 +848,10 @@ export default [
       },
       concurrentIf: {
         fn: "fnConcurrentIf",
+        length: 1,
+      },
+      serialIf: {
+        fn: "fnSerialIf",
         length: 1,
       },
       each: {

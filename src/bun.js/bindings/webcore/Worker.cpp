@@ -565,7 +565,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
-        auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.dataMessagePorts));
+        auto ports = MessagePort::entanglePorts(*globalObject->scriptExecutionContext(), WTFMove(options.dataMessagePorts));
         RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.workerDataAndEnvironmentData);
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
         RETURN_IF_EXCEPTION(scope, {});

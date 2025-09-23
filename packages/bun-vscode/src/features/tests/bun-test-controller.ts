@@ -545,12 +545,12 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private async createSignal(): Promise<UnixSignal | TCPSocketSignal> {
-    if (process.platform === "win32") {
-      const port = await getAvailablePort();
-      return new TCPSocketSignal(port);
-    } else {
-      return new UnixSignal();
-    }
+    // Use a TCP reverse-connection socket on all platforms.
+    // This avoids conflicts with Bun listening on a unix socket path
+    // when using --inspect(-wait) and ensures we can pass a single
+    // BUN_INSPECT target with ?wait=1.
+    const port = await getAvailablePort();
+    return new TCPSocketSignal(port);
   }
 
   private async runHandler(

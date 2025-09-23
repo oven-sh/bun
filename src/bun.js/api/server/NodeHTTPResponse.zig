@@ -593,7 +593,7 @@ pub fn drainRequestBody(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObje
 
 fn drainBufferedRequestBodyFromPause(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     if (this.buffered_request_body_data_during_pause.len > 0) {
-        const result = jsc.JSValue.createBuffer(globalObject, this.buffered_request_body_data_during_pause.slice(), bun.default_allocator);
+        const result = jsc.JSValue.createBuffer(globalObject, this.buffered_request_body_data_during_pause.slice());
         this.buffered_request_body_data_during_pause = .{};
         return result;
     }

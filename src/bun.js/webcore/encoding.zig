@@ -50,7 +50,7 @@ export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, inpu
         .base64 => constructFromU8(input, len, bun.default_allocator, .base64),
         else => unreachable,
     };
-    return jsc.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+    return jsc.JSValue.createBuffer(globalObject, slice);
 }
 
 export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
@@ -65,7 +65,7 @@ export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input
         .latin1 => constructFromU16(input, len, bun.default_allocator, .latin1),
         else => unreachable,
     };
-    return jsc.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+    return jsc.JSValue.createBuffer(globalObject, slice);
 }
 
 // for SQL statement

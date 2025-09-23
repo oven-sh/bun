@@ -140,6 +140,8 @@ fn shouldPrintPackageInstall(
         dep_id,
         this.options.local_package_features,
         &pkg_metas[package_id],
+        this.options.cpu,
+        this.options.os,
     )) {
         return .no;
     }

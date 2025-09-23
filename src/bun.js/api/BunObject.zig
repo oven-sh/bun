@@ -1819,7 +1819,7 @@ pub const JSZstd = struct {
             output = try allocator.realloc(output, compressed_size);
         }
 
-        return jsc.JSValue.createBuffer(globalThis, output, bun.default_allocator);
+        return jsc.JSValue.createBuffer(globalThis, output);
     }
 
     pub fn decompressSync(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -1854,7 +1854,7 @@ pub const JSZstd = struct {
         // mimalloc doesn't care about the self-reported size of the slice.
         output.len = actual_size;
 
-        return jsc.JSValue.createBuffer(globalThis, output, bun.default_allocator);
+        return jsc.JSValue.createBuffer(globalThis, output);
     }
 
     // --- Async versions ---
@@ -1956,7 +1956,7 @@ pub const JSZstd = struct {
             }
 
             const output_slice = this.output;
-            const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+            const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice);
             this.output = &[_]u8{};
             promise.resolve(globalThis, buffer_value);
         }

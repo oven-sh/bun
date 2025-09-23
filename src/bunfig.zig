@@ -325,6 +325,11 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
 
+                    if (test_.get("concurrentTestGlob")) |expr| {
+                        try this.expectString(expr);
+                        this.ctx.test_options.concurrent_test_glob = try expr.data.e_string.string(allocator);
+                    }
+
                     if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
                         switch (expr.data) {
                             .e_string => |str| {

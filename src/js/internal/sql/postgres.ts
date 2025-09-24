@@ -1,6 +1,6 @@
 import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { DatabaseAdapter, SQLArrayParameter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
+import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode, SQLArrayParameter } from "./shared";
 const { SQLHelper, SSLMode, SQLResultArray, SQLArrayParameter } = require("internal/sql/shared");
 const {
   Query,
@@ -1291,6 +1291,8 @@ class PostgresAdapter
                     query += `$${binding_idx++}${k < lastColumnIndex ? ", " : ""}`;
                     if (typeof columnValue === "undefined") {
                       binding_values.push(null);
+                    } else if ($isArray(columnValue)) {
+                      binding_values.push(serializeArray(columnValue, "JSON"));
                     } else {
                       binding_values.push(columnValue);
                     }
@@ -1310,6 +1312,8 @@ class PostgresAdapter
                   query += `$${binding_idx++}${j < lastColumnIndex ? ", " : ""}`;
                   if (typeof columnValue === "undefined") {
                     binding_values.push(null);
+                  } else if ($isArray(columnValue)) {
+                    binding_values.push(serializeArray(columnValue, "JSON"));
                   } else {
                     binding_values.push(columnValue);
                   }
@@ -1341,6 +1345,8 @@ class PostgresAdapter
 
                     if (typeof value_from_key === "undefined") {
                       binding_values.push(null);
+                    } else if ($isArray(value_from_key)) {
+                      binding_values.push(serializeArray(value_from_key, "JSON"));
                     } else {
                       binding_values.push(value_from_key);
                     }
@@ -1349,6 +1355,8 @@ class PostgresAdapter
                   const value = items[j];
                   if (typeof value === "undefined") {
                     binding_values.push(null);
+                  } else if ($isArray(value)) {
+                    binding_values.push(serializeArray(value, "JSON"));
                   } else {
                     binding_values.push(value);
                   }
@@ -1377,7 +1385,11 @@ class PostgresAdapter
                 if (typeof columnValue === "undefined") {
                   binding_values.push(null);
                 } else {
-                  binding_values.push(columnValue);
+                  if ($isArray(columnValue)) {
+                    binding_values.push(serializeArray(columnValue, "JSON"));
+                  } else {
+                    binding_values.push(columnValue);
+                  }
                 }
               }
               query += " "; // the user can add where clause after this
@@ -1390,7 +1402,11 @@ class PostgresAdapter
             if (typeof value === "undefined") {
               binding_values.push(null);
             } else {
-              binding_values.push(value);
+              if ($isArray(value)) {
+                binding_values.push(serializeArray(value, "JSON"));
+              } else {
+                binding_values.push(value);
+              }
             }
           }
         }

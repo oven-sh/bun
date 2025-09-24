@@ -44,8 +44,6 @@ group_index: usize,
 pub const ConcurrentGroup = struct {
     sequence_start: usize,
     sequence_end: usize,
-    /// Index of the next sequence that has not been started yet
-    next_sequence_index: usize,
     executing: bool,
     remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
@@ -58,7 +56,6 @@ pub const ConcurrentGroup = struct {
             .executing = false,
             .remaining_incomplete_entries = sequence_end - sequence_start,
             .failure_skip_to = next_index,
-            .next_sequence_index = 0,
         };
     }
     pub fn tryExtend(this: *ConcurrentGroup, next_sequence_start: usize, next_sequence_end: usize) bool {
@@ -246,24 +243,11 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
             this.advanceSequence(sequence, group);
 
             const now = bun.timespec.now();
-            const sequence_result = try stepSequence(buntest_strong, globalThis, group, sequence_index, now);
+            const sequence_result = try stepSequence(buntest_strong, globalThis, sequence, group, sequence_index, now);
             switch (sequence_result) {
                 .done => {},
                 .execute => |exec| return .{ .waiting = .{ .timeout = exec.timeout } },
             }
-            // this sequence is complete; execute the next sequence
-            while (group.next_sequence_index < group.sequences(this).len) : (group.next_sequence_index += 1) {
-                const target_sequence = &group.sequences(this)[group.next_sequence_index];
-                if (target_sequence.executing) continue;
-                const sequence_status = try stepSequence(buntest_strong, globalThis, group, group.next_sequence_index, now);
-                switch (sequence_status) {
-                    .done => continue,
-                    .execute => |exec| {
-                        return .{ .waiting = .{ .timeout = exec.timeout } };
-                    },
-                }
-            }
-            // all sequences have started
             if (group.remaining_incomplete_entries == 0) {
                 return try stepGroup(buntest_strong, globalThis, now);
             }
@@ -315,21 +299,14 @@ fn stepGroupOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalOb
     const buntest = buntest_strong.get();
     const this = &buntest.execution;
     var final_status: AdvanceStatus = .done;
-    const concurrent_limit = if (buntest.reporter) |reporter| reporter.jest.max_concurrency else blk: {
-        bun.assert(false); // probably can't get here because reporter is only set null when the file is exited
-        break :blk 20;
-    };
-    var active_count: usize = 0;
-    for (0..group.sequences(this).len) |sequence_index| {
-        const sequence_status = try stepSequence(buntest_strong, globalThis, group, sequence_index, now);
+    for (group.sequences(this), 0..) |*sequence, sequence_index| {
+        const sequence_status = try stepSequence(buntest_strong, globalThis, sequence, group, sequence_index, now);
         switch (sequence_status) {
             .done => {},
             .execute => |exec| {
                 const prev_timeout: bun.timespec = if (final_status == .execute) final_status.execute.timeout else .epoch;
                 const this_timeout = exec.timeout;
                 final_status = .{ .execute = .{ .timeout = prev_timeout.minIgnoreEpoch(this_timeout) } };
-                active_count += 1;
-                if (active_count >= concurrent_limit) break;
             },
         }
     }
@@ -343,19 +320,18 @@ const AdvanceSequenceStatus = union(enum) {
         timeout: bun.timespec = .epoch,
     },
 };
-fn stepSequence(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !AdvanceSequenceStatus {
+fn stepSequence(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !AdvanceSequenceStatus {
     while (true) {
-        return try stepSequenceOne(buntest_strong, globalThis, group, sequence_index, now) orelse continue;
+        return try stepSequenceOne(buntest_strong, globalThis, sequence, group, sequence_index, now) orelse continue;
     }
 }
 /// returns null if the while loop should continue
-fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !?AdvanceSequenceStatus {
+fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject, sequence: *ExecutionSequence, group: *ConcurrentGroup, sequence_index: usize, now: bun.timespec) !?AdvanceSequenceStatus {
     groupLog.begin(@src());
     defer groupLog.end();
     const buntest = buntest_strong.get();
     const this = &buntest.execution;
 
-    const sequence = &group.sequences(this)[sequence_index];
     if (sequence.executing) {
         const active_entry = sequence.activeEntry(this) orelse {
             bun.debugAssert(false); // sequence is executing with no active entry

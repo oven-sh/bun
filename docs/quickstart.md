@@ -103,6 +103,9 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 +   },
     "devDependencies": {
       "@types/bun": "latest"
+    },
+    "peerDependencies": {
+      "typescript": "^5"
     }
   }
 ```

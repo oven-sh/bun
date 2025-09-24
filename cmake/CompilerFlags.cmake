@@ -48,7 +48,6 @@ if(ENABLE_ASAN)
   register_compiler_flags(
     DESCRIPTION "Enable AddressSanitizer"
     -fsanitize=address
-    -fsanitize=leak
   )
 endif()
 

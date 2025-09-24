@@ -108,3 +108,13 @@ leak:fromErrorInstance
 leak:TLSSocket__create
 leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
+
+# file comments below are where it was first seen, not an exhaustive list
+# test/js/node/tls/node-tls-cert.test.ts
+leak:create_ssl_context_from_bun_options
+# test/js/node/test/parallel/test-inspector-enabled.js
+leak:bun.js.Debugger.startJSDebuggerThread
+# test/js/sql/sqlite-sql.test.ts
+leak:WebCore::jsSQLStatementOpenStatementFunction
+# ci, test/js/node/test/parallel/test-dgram-unref-in-cluster.js
+leak:bun.js.api.bun.udp_socket.UDPSocket.udpSocket

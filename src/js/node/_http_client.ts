@@ -72,9 +72,6 @@ function ClientRequest(input, options, cb) {
     return new (ClientRequest as any)(input, options, cb);
   }
 
-  let readableStreamController: ReadableStreamDirectController | undefined;
-  let responseHandled = false;
-
   this.write = (chunk, encoding, callback) => {
     if (this.destroyed) return false;
     if ($isCallable(chunk)) {
@@ -92,7 +89,6 @@ function ClientRequest(input, options, cb) {
   };
 
   let writeCount = 0;
-  let isEnd = false;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
 
   const pushChunk = chunk => {
@@ -104,6 +100,7 @@ function ClientRequest(input, options, cb) {
   };
 
   const write_ = (chunk, encoding, callback) => {
+    const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
     const canSkipReEncodingData =
       // UTF-8 string:
       (typeof chunk === "string" && (encoding === "utf-8" || encoding === "utf8" || !encoding)) ||
@@ -116,21 +113,6 @@ function ClientRequest(input, options, cb) {
     bodySize = chunk.length;
     writeCount++;
 
-    if (readableStreamController) {
-      const result = readableStreamController.write(chunk);
-      if ($isPromise(result)) {
-        if (callback) {
-          result.$then(() => callback(), callback);
-        }
-
-        return false;
-      } else if (callback) {
-        callback();
-      }
-
-      return true;
-    }
-
     if (!this[kBodyChunks]) {
       this[kBodyChunks] = [];
       pushChunk(chunk);
@@ -139,9 +121,20 @@ function ClientRequest(input, options, cb) {
       return true;
     }
 
+    // Signal fake backpressure if the body size is > 1024 * 1024
+    // So that code which loops forever until backpressure is signaled
+    // will eventually exit.
+
+    for (let chunk of this[kBodyChunks]) {
+      bodySize += chunk.length;
+      if (bodySize >= MAX_FAKE_BACKPRESSURE_SIZE) {
+        break;
+      }
+    }
     pushChunk(chunk);
+
     if (callback) callback();
-    return true;
+    return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
   };
 
   const oldEnd = this.end;
@@ -160,8 +153,6 @@ function ClientRequest(input, options, cb) {
       callback = undefined;
     }
 
-    isEnd = true;
-
     if (chunk) {
       if (this.finished) {
         emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
@@ -177,48 +168,6 @@ function ClientRequest(input, options, cb) {
           callback($ERR_STREAM_ALREADY_FINISHED("end"));
         }
       }
-    }
-
-    if (readableStreamController) {
-      const result = readableStreamController.end?.();
-
-      // Handle the result which may be a Promise
-      if ($isPromise(result)) {
-        // Register callback before the promise resolves
-        if (callback) {
-          this.once("finish", callback);
-        }
-
-        result
-          .$then(() => {
-            readableStreamController = undefined;
-            if (!responseHandled && handleResponse) {
-              responseHandled = true;
-              handleResponse();
-            }
-            // Use maybeEmitFinish to ensure proper event ordering
-            process.nextTick(maybeEmitFinish.bind(this));
-          })
-          .$catch(err => {
-            readableStreamController = undefined;
-            this.emit("error", err);
-          });
-      } else {
-        readableStreamController = undefined;
-        if (!responseHandled && handleResponse) {
-          responseHandled = true;
-          handleResponse();
-        }
-
-        if (callback) {
-          this.once("finish", callback);
-        }
-
-        // Use maybeEmitFinish to ensure proper event ordering
-        process.nextTick(maybeEmitFinish.bind(this));
-      }
-
-      return this;
     }
 
     if (callback) {
@@ -378,43 +327,34 @@ function ClientRequest(input, options, cb) {
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
         } else if (isDuplex) {
-          fetchOptions.body = new ReadableStream({
-            type: "direct",
+          fetchOptions.body = async function* () {
+            while (self[kBodyChunks]?.length > 0) {
+              yield self[kBodyChunks].shift();
+            }
 
-            async pull(controller) {
-              const emitDrain = readableStreamController !== undefined;
-              readableStreamController = controller;
-              const chunks = self[kBodyChunks];
-              self[kBodyChunks] = [];
+            if (self[kBodyChunks]?.length === 0) {
+              self.emit("drain");
+            }
 
-              for (let chunk of chunks) {
-                controller.write(chunk);
-              }
+            while (!self.finished) {
+              yield await new Promise(resolve => {
+                resolveNextChunk = end => {
+                  resolveNextChunk = undefined;
+                  if (end) {
+                    resolve(undefined);
+                  } else {
+                    resolve(self[kBodyChunks].shift());
+                  }
+                };
+              });
 
-              if (isEnd) {
-                const endResult = controller.end();
-                if ($isPromise(endResult)) {
-                  await endResult;
-                }
-                return;
-              }
-
-              if (emitDrain && chunks.length === 0 && !self.finished) {
-                const flushResult = controller.flush();
-                if ($isPromise(flushResult)) {
-                  return flushResult.$then(() => {
-                    if (!self.finished && !isEnd) {
-                      self.emit("drain");
-                    }
-                  });
-                }
+              if (self[kBodyChunks]?.length === 0) {
                 self.emit("drain");
               }
-            },
-            cancel() {
-              readableStreamController = undefined;
-            },
-          });
+            }
+
+            handleResponse?.();
+          };
         }
       }
 
@@ -447,7 +387,6 @@ function ClientRequest(input, options, cb) {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
           handleResponse = undefined;
-          responseHandled = false;
 
           const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
           setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
@@ -502,10 +441,7 @@ function ClientRequest(input, options, cb) {
         };
 
         if (!keepOpen) {
-          if (!responseHandled && handleResponse) {
-            responseHandled = true;
-            handleResponse();
-          }
+          handleResponse();
         }
 
         onEnd();
@@ -621,10 +557,7 @@ function ClientRequest(input, options, cb) {
     try {
       startFetch(body);
       onEnd = () => {
-        if (!responseHandled && handleResponse) {
-          responseHandled = true;
-          handleResponse();
-        }
+        handleResponse?.();
       };
     } catch (err) {
       if (!!$debug) globalReportError(err);
@@ -972,10 +905,9 @@ function ClientRequest(input, options, cb) {
 
   this._httpMessage = this;
 
-  this[kEmitState] = 0;
-
-  // Defer socket and continue event emission
   process.nextTick(emitContinueAndSocketNT, this);
+
+  this[kEmitState] = 0;
 
   this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {
     $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
@@ -1090,7 +1022,7 @@ function validateHost(host, name) {
 
 function emitContinueAndSocketNT(self) {
   if (self.destroyed) return;
-  // Emit socket event if not already emitted
+  // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
   if (!(self[kEmitState] & (1 << ClientRequestEmitState.socket))) {
     self[kEmitState] |= 1 << ClientRequestEmitState.socket;
     self.emit("socket", self.socket);

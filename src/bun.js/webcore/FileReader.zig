@@ -371,6 +371,14 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         }
 
         if (buf.len == 0) {
+            // Certain readers (such as pipes) may return 0-byte reads even when not
+            // at EOF. Consequently, we need to check whether the reader is actually
+            // done or not.
+            if (!this.reader.isDone()) {
+                // If the reader is not done, we still want to keep reading.
+                return true;
+            }
+
             if (this.buffered.items.len == 0) {
                 this.buffered.clearAndFree(bun.default_allocator);
                 this.buffered = reader_buffer.moveToUnmanaged();
@@ -388,7 +396,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
             } else {
                 this.pending.result = .{ .done = {} };
             }
-            mlog("FileReader onReadChunk: returning false (0-byte read in pending state)\n", .{});
+            mlog("FileReader onReadChunk: returning false (true EOF with 0-byte read)\n", .{});
             return false;
         }
 
@@ -482,19 +490,19 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
             this.buffered.clearAndFree(bun.default_allocator);
 
             if (this.reader.isDone()) {
-                mlog("FileReader onPull(buffer_len={d}) returning INTO_ARRAY_AND_DONE with {d} bytes\n", .{buffer.len, drained.len});
+                mlog("FileReader onPull(buffer_len={d}) returning INTO_ARRAY_AND_DONE with {d} bytes\n", .{ buffer.len, drained.len });
                 return .{ .into_array_and_done = .{ .value = array, .len = drained.len } };
             } else {
-                mlog("FileReader onPull(buffer_len={d}) returning INTO_ARRAY with {d} bytes\n", .{buffer.len, drained.len});
+                mlog("FileReader onPull(buffer_len={d}) returning INTO_ARRAY with {d} bytes\n", .{ buffer.len, drained.len });
                 return .{ .into_array = .{ .value = array, .len = drained.len } };
             }
         }
 
         if (this.reader.isDone()) {
-            mlog("FileReader onPull(buffer_len={d}) returning OWNED_AND_DONE with {d} bytes\n", .{buffer.len, drained.len});
+            mlog("FileReader onPull(buffer_len={d}) returning OWNED_AND_DONE with {d} bytes\n", .{ buffer.len, drained.len });
             return .{ .owned_and_done = drained };
         } else {
-            mlog("FileReader onPull(buffer_len={d}) returning OWNED with {d} bytes\n", .{buffer.len, drained.len});
+            mlog("FileReader onPull(buffer_len={d}) returning OWNED with {d} bytes\n", .{ buffer.len, drained.len });
             return .{ .owned = drained };
         }
     }

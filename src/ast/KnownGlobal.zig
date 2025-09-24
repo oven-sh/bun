@@ -109,6 +109,9 @@ pub const KnownGlobal = enum {
                                 return js_ast.Expr.init(E.Array, .{ .items = e.args }, loc);
                             },
                             .number => {
+                                if (arg.data != .e_number) {
+                                    return callFromNew(e, loc);
+                                }
                                 const val = arg.data.e_number.value;
                                 if (
                                 // only want this with whitespace minification

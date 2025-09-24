@@ -52,7 +52,7 @@ pub const ReadFile = struct {
     read_eof: bool = false,
     size: SizeType = 0,
     buffer: std.ArrayListUnmanaged(u8) = .{},
-    task: bun.ThreadPool.Task = .{ .callback = &doReadLoopTask },
+    task: bun.ThreadPool.Task = undefined,
     system_error: ?jsc.SystemError = null,
     errno: ?anyerror = null,
     onCompleteCtx: *anyopaque = undefined,
@@ -130,6 +130,7 @@ pub const ReadFile = struct {
 
     pub fn onReady(this: *ReadFile) void {
         bloblog("ReadFile.onReady", .{});
+        this.task = .{ .callback = &doReadLoopTask };
         // On macOS, we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
@@ -145,6 +146,7 @@ pub const ReadFile = struct {
         bloblog("ReadFile.onIOError", .{});
         this.errno = bun.errnoToZigErr(err.errno);
         this.system_error = err.toSystemError();
+        this.task = .{ .callback = &doReadLoopTask };
         // On macOS, we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue

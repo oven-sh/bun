@@ -39,10 +39,8 @@ pub const SecretsJob = struct {
 
     pub fn runFromJS(this: *SecretsJob) void {
         defer this.deinit();
-        const vm = this.vm;
-        defer this.poll.unref(vm);
 
-        if (vm.isShuttingDown()) {
+        if (this.vm.isShuttingDown()) {
             return;
         }
 
@@ -53,6 +51,7 @@ pub const SecretsJob = struct {
     }
 
     fn deinit(this: *SecretsJob) void {
+        this.poll.unref(this.vm);
         SecretsJobOptions.Bun__SecretsJobOptions__deinit(this.ctx);
         this.promise.deinit();
         bun.destroy(this);

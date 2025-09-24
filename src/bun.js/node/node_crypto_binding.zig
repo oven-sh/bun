@@ -157,7 +157,6 @@ fn CryptoJob(comptime Ctx: type) type {
         pub fn runFromJS(this: *@This()) void {
             defer this.deinit();
             const vm = this.vm;
-            defer this.poll.unref(vm);
 
             if (vm.isShuttingDown()) {
                 return;
@@ -172,6 +171,7 @@ fn CryptoJob(comptime Ctx: type) type {
 
         fn deinit(this: *@This()) void {
             this.ctx.deinit();
+            this.poll.unref(this.vm);
             this.callback.deinit();
             bun.destroy(this);
         }

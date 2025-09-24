@@ -64,10 +64,7 @@ pub const Job = struct {
 
     pub fn runFromJS(this: *Job) void {
         defer this.deinit();
-        const vm = this.vm;
-        defer this.poll.unref(vm);
-
-        if (vm.isShuttingDown()) {
+        if (this.vm.isShuttingDown()) {
             return;
         }
 
@@ -86,6 +83,7 @@ pub const Job = struct {
     }
 
     pub fn deinit(this: *Job) void {
+        this.poll.unref(this.vm);
         this.pbkdf2.deinitAndUnprotect();
         this.promise.deinit();
         bun.default_allocator.free(this.output);

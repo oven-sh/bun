@@ -29,16 +29,20 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, value: *Context) !*This {
             var vm = globalThis.bunVM();
-            return bun.new(This, .{
+            var this = bun.new(This, .{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
                 .async_task_tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
             });
+            this.ref.ref(this.event_loop.virtual_machine);
+
+            return this;
         }
 
         pub fn deinit(this: *This) void {
+            this.ref.unref(this.event_loop.virtual_machine);
             bun.destroy(this);
         }
 

@@ -926,7 +926,6 @@ pub fn parse(
         error.OutOfMemory => |oom| oom,
         error.StackOverflow => global.throwStackOverflow(),
         else => {
-            // Throw a SyntaxError instead of BuildMessage to match JSON.parse behavior
             if (log.msgs.items.len > 0) {
                 const first_msg = log.msgs.items[0];
                 const error_text = first_msg.data.text;

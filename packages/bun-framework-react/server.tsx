@@ -28,7 +28,6 @@ function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: reado
     <html lang="en">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Bun + React Server Components</title>
         {styles.map(url => (
           // `data-bake-ssr` is used on the client-side to construct the styles array.
           <link key={url} rel="stylesheet" href={url} data-bake-ssr />

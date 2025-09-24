@@ -300,6 +300,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::evalMode() = evalMode;
         JSC::Options::heapGrowthSteepnessFactor() = 1.0;
         JSC::Options::heapGrowthMaxIncrease() = 2.0;
+        JSC::Options::useAsyncStackTrace() = true;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -329,6 +330,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
+
+// Declare the Zig functions for LazyProperty initializers
+extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
@@ -623,6 +629,9 @@ WTF::String Bun::formatStackTrace(
         sb.append("    at "_s);
 
         if (!functionName.isEmpty()) {
+            if (frame.isAsyncFrame()) {
+                sb.append("async "_s);
+            }
             sb.append(functionName);
             sb.append(" ("_s);
         }
@@ -1349,10 +1358,10 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
     auto* globalObj = static_cast<GlobalObject*>(obj);
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(JSC::Strong<JSPromise>(obj->vm(), promise));
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
         break;
     case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching([&](Strong<JSPromise>& unhandledPromise) {
+        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching(globalObj, [&](JSC::WriteBarrier<JSC::JSPromise>& unhandledPromise) {
             return unhandledPromise.get() == promise;
         });
         if (removed) break;
@@ -1543,9 +1552,18 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    auto function = globalObject->performMicrotaskFunction();
+#if ASSERT_ENABLED
+    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
+    ASSERT_WITH_MESSAGE(!callback.isEmpty(), "Invalid microtask callback");
+#endif
+
+    if (asyncContext.isEmpty()) {
+        asyncContext = JSC::jsUndefined();
+    }
 
     // This is a JSC builtin function
-    lexicalGlobalObject->queueMicrotask(globalObject->performMicrotaskFunction(), callback, asyncContext,
+    lexicalGlobalObject->queueMicrotask(function, callback, asyncContext,
         JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -2216,11 +2234,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
 }
 
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Jest__createTestPreloadObject(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Jest__testPreloadObject(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->lazyPreloadTestModuleObject());
-}
 extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->lazyTestModuleObject());
@@ -2859,14 +2872,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(result.toObject(globalObject));
         });
 
-    m_lazyPreloadTestModuleObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            JSValue result = JSValue::decode(Bun__Jest__createTestPreloadObject(globalObject));
-            init.set(result.toObject(globalObject));
-        });
-
     m_testMatcherUtilsObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
@@ -3463,6 +3468,17 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
     });
 
+    // Initialize LazyProperties for stdin/stderr/stdout
+    m_bunStdin.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStdin(init.owner)).getObject());
+    });
+    m_bunStderr.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStderr(init.owner)).getObject());
+    });
+    m_bunStdout.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        init.set(JSC::JSValue::decode(BunObject__createBunStdout(init.owner)).getObject());
+    });
+
     configureNodeVM(vm, this);
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -4032,16 +4048,13 @@ void GlobalObject::handleRejectedPromises()
 {
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_CATCH_SCOPE(virtual_machine);
-    do {
-        auto unhandledRejections = WTFMove(m_aboutToBeNotifiedRejectedPromises);
-        for (auto& promise : unhandledRejections) {
-            if (promise->isHandled(virtual_machine))
-                continue;
+    while (auto* promise = m_aboutToBeNotifiedRejectedPromises.takeFirst(this)) {
+        if (promise->isHandled(virtual_machine))
+            continue;
 
-            Bun__handleRejectedPromise(this, promise.get());
-            if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
-        }
-    } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
+        Bun__handleRejectedPromise(this, promise);
+        if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
+    }
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);
@@ -4053,6 +4066,9 @@ void GlobalObject::visitAdditionalChildren(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     thisObject->globalEventScope->visitJSEventListeners(visitor);
+
+    thisObject->m_aboutToBeNotifiedRejectedPromises.visit(thisObject, visitor);
+    thisObject->m_ffiFunctions.visit(thisObject, visitor);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
@@ -4130,6 +4146,12 @@ extern "C" void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
 extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* globalObject, void* ptr, MicrotaskCallback callback)
 {
     JSFunction* function = globalObject->nativeMicrotaskTrampoline();
+
+#if ASSERT_ENABLED
+    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
+    ASSERT_WITH_MESSAGE(ptr, "Invalid microtask context");
+    ASSERT_WITH_MESSAGE(callback, "Invalid microtask callback");
+#endif
 
     // Do not use JSCell* here because the GC will try to visit it.
     globalObject->queueMicrotask(function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
@@ -4545,10 +4567,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
     } else if (handler == jsFunctionOnLoadObjectResultReject) {
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultReject;
-    } else if (handler == Bun__TestScope__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__onReject;
-    } else if (handler == Bun__TestScope__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__onResolve;
+    } else if (handler == Bun__TestScope__Describe2__bunTestThen) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
+    } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
     } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
     } else if (handler == Bun__BodyValueBufferer__onRejectStream) {
@@ -4609,18 +4631,13 @@ void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvir
 
 void GlobalObject::trackFFIFunction(JSC::JSFunction* function)
 {
-    this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
+    this->m_ffiFunctions.append(vm(), this, function);
 }
 bool GlobalObject::untrackFFIFunction(JSC::JSFunction* function)
 {
-    for (size_t i = 0; i < this->m_ffiFunctions.size(); ++i) {
-        if (this->m_ffiFunctions[i].get() == function) {
-            this->m_ffiFunctions[i].clear();
-            this->m_ffiFunctions.removeAt(i);
-            return true;
-        }
-    }
-    return false;
+    return this->m_ffiFunctions.removeFirstMatching(this, [&](JSC::WriteBarrier<JSC::JSFunction>& untrackedFunction) -> bool {
+        return untrackedFunction.get() == function;
+    });
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

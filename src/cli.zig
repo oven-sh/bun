@@ -217,6 +217,21 @@ pub const HelpCommand = struct {
 
         switch (reason) {
             .explicit => {
+                if (comptime Environment.isDebug) {
+                    if (bun.argv.len == 1) {
+                        if (bun.Output.isAIAgent()) {
+                            if (bun.getenvZ("npm_lifecycle_event")) |event| {
+                                if (bun.strings.hasPrefixComptime(event, "bd")) {
+                                    // claude gets very confused by the help menu
+                                    // let's give claude some self confidence.
+                                    Output.println("BUN COMPILED SUCCESSFULLY! 🎉", .{});
+                                    Global.exit(0);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Output.pretty(
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
                         Global.package_json_version_with_revision ++
@@ -323,6 +338,7 @@ pub const Command = struct {
         repeat_count: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
+        concurrent: bool = false,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_pattern: ?[]const u8 = null,
@@ -380,6 +396,8 @@ pub const Command = struct {
         runtime_options: RuntimeOptions = .{},
 
         filters: []const []const u8 = &.{},
+        workspaces: bool = false,
+        if_present: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
@@ -400,6 +418,7 @@ pub const Command = struct {
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            keep_names: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
@@ -583,7 +602,7 @@ pub const Command = struct {
             RootCommandMatcher.case("auth") => .ReservedCommand,
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
-            RootCommandMatcher.case("whoami") => .ReservedCommand,
+            RootCommandMatcher.case("whoami") => .PackageManagerCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
@@ -815,7 +834,7 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -854,7 +873,7 @@ pub const Command = struct {
                 };
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);

@@ -1241,6 +1241,7 @@ describe("bundler", () => {
       },
       minifyWhitespace: minify,
       emitDCEAnnotations: emitDCEAnnotations,
+      backend: "cli",
       onAfterBundle(api) {
         const code = api.readFile("/out.js");
         expect(code).not.toContain("_yes"); // should not contain any *_yes variables
@@ -1926,7 +1927,7 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    todo: true,
+    minifySyntax: true,
     dce: true,
   });
   itBundled("dce/RemoveUnusedImports", {

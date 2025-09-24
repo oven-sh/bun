@@ -114,6 +114,8 @@
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
 #include "JSNodePerformanceHooksHistogram.h"
+#include <limits>
+#include <algorithm>
 
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>
@@ -5565,9 +5567,16 @@ SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::uniq
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object)
+    : m_simpleInMemoryPropertyTable(WTFMove(object))
+    , m_fastPath(FastPath::SimpleObject)
+{
+    m_memoryCost = computeMemoryCost();
+}
+
 SerializedScriptValue::SerializedScriptValue(const String& fastPathString)
     : m_fastPathString(fastPathString)
-    , m_isStringFastPath(true)
+    , m_fastPath(FastPath::String)
 {
     m_memoryCost = computeMemoryCost();
 }
@@ -5623,8 +5632,30 @@ size_t SerializedScriptValue::computeMemoryCost() const
     //     cost += handle.url().string().sizeInBytes();
 
     // Account for fast path string memory usage
-    if (m_isStringFastPath)
+    switch (m_fastPath) {
+    case FastPath::String:
+        ASSERT(m_simpleInMemoryPropertyTable.isEmpty());
         cost += m_fastPathString.sizeInBytes();
+        break;
+    case FastPath::SimpleObject:
+        ASSERT(m_fastPathString.isEmpty());
+        cost += m_simpleInMemoryPropertyTable.byteSize();
+        // Add the memory cost of strings in the simple property table
+        for (const auto& entry : m_simpleInMemoryPropertyTable) {
+            // Add property name string cost
+            cost += entry.propertyName.sizeInBytes();
+
+            // Add value string cost if it's a string
+            if (std::holds_alternative<WTF::String>(entry.value)) {
+                const auto& str = std::get<WTF::String>(entry.value);
+                cost += str.sizeInBytes();
+            }
+        }
+
+        break;
+    case FastPath::None:
+        break;
+    }
 
     return cost;
 }
@@ -5699,6 +5730,43 @@ static Exception exceptionForSerializationFailure(SerializationReturnCode code)
     return Exception { TypeError };
 }
 
+// This is based on `checkStrucureForClone`
+static bool isObjectFastPathCandidate(Structure* structure)
+{
+    static constexpr bool verbose = false;
+
+    if (structure->typeInfo().type() != FinalObjectType) {
+        dataLogLnIf(verbose, "target is not final object");
+        return false;
+    }
+
+    if (!structure->canAccessPropertiesQuicklyForEnumeration()) {
+        dataLogLnIf(verbose, "target cannot access properties quickly for enumeration");
+        return false;
+    }
+
+    if (hasIndexedProperties(structure->indexingType())) {
+        dataLogLnIf(verbose, "target has indexing mode");
+        return false;
+    }
+
+    if (structure->isBrandedStructure()) {
+        dataLogLnIf(verbose, "target has isBrandedStructure");
+        return false;
+    }
+
+    if (structure->hasAnyKindOfGetterSetterProperties()) {
+        dataLogLnIf(verbose, "target has any kind of getter setter properties");
+        return false;
+    }
+
+    if (structure->hasNonConfigurableProperties() || structure->hasNonEnumerableProperties()) {
+        dataLogLnIf(verbose, "target has non-configurable or non-enumerable properties");
+        return false;
+    }
+
+    return true;
+}
 // static bool containsDuplicates(const Vector<RefPtr<ImageBitmap>>& imageBitmaps)
 // {
 //     HashSet<ImageBitmap*> visited;
@@ -5766,17 +5834,86 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Fast path optimization: for postMessage/structuredClone with pure strings and no transfers
-    if ((context == SerializationContext::WorkerPostMessage || context == SerializationContext::WindowPostMessage || context == SerializationContext::Default)
+    const bool canUseFastPath = (context == SerializationContext::WorkerPostMessage || context == SerializationContext::WindowPostMessage || context == SerializationContext::Default)
         && forStorage == SerializationForStorage::No
         && forTransfer == SerializationForCrossProcessTransfer::No
         && transferList.isEmpty()
-        && messagePorts.isEmpty()
-        && value.isString()) {
+        && messagePorts.isEmpty();
 
-        JSC::JSString* jsString = asString(value);
-        String stringValue = jsString->value(&lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, Exception { TypeError });
-        return SerializedScriptValue::createStringFastPath(stringValue);
+    if (canUseFastPath) {
+        bool canUseStringFastPath = false;
+        bool canUseObjectFastPath = false;
+        JSObject* object = nullptr;
+        Structure* structure = nullptr;
+        if (value.isCell()) {
+            auto* cell = value.asCell();
+            if (cell->isString()) {
+                canUseStringFastPath = true;
+            } else if (cell->isObject()) {
+                object = cell->getObject();
+                structure = object->structure();
+
+                if (isObjectFastPathCandidate(structure)) {
+                    canUseObjectFastPath = true;
+                }
+            }
+        }
+
+        if (canUseStringFastPath) {
+            JSC::JSString* jsString = asString(value);
+            String stringValue = jsString->value(&lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            return SerializedScriptValue::createStringFastPath(stringValue);
+        }
+
+        if (canUseObjectFastPath) {
+            ASSERT(object != nullptr);
+
+            WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
+
+            structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                // Only enumerable, data properties
+                if (entry.attributes() & PropertyAttribute::DontEnum) [[unlikely]] {
+                    ASSERT_NOT_REACHED_WITH_MESSAGE("isObjectFastPathCandidate should not allow non-enumerable, data properties");
+                    canUseObjectFastPath = false;
+                    return false;
+                }
+
+                if (entry.attributes() & PropertyAttribute::Accessor) [[unlikely]] {
+                    ASSERT_NOT_REACHED_WITH_MESSAGE("isObjectFastPathCandidate should not allow accessor properties");
+                    canUseObjectFastPath = false;
+                    return false;
+                }
+
+                JSValue value = object->getDirect(entry.offset());
+
+                if (value.isCell()) {
+                    // We only support strings, numbers and primitives. Nothing else.
+                    if (!value.isString()) {
+                        canUseObjectFastPath = false;
+                        return false;
+                    }
+
+                    auto* string = asString(value);
+                    String stringValue = string->value(&lexicalGlobalObject);
+                    if (scope.exception()) {
+                        canUseObjectFastPath = false;
+                        return false;
+                    }
+                    properties.append({ entry.key()->isolatedCopy(), Bun::toCrossThreadShareable(stringValue) });
+                } else {
+                    // Primitive values are safe to share across threads.
+                    properties.append({ entry.key()->isolatedCopy(), value });
+                }
+
+                return true;
+            });
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+
+            if (canUseObjectFastPath) {
+                return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTFMove(properties)));
+            }
+        }
     }
 
     Vector<RefPtr<JSC::ArrayBuffer>> arrayBuffers;
@@ -6000,6 +6137,11 @@ Ref<SerializedScriptValue> SerializedScriptValue::createStringFastPath(const Str
     return adoptRef(*new SerializedScriptValue(Bun::toCrossThreadShareable(string)));
 }
 
+Ref<SerializedScriptValue> SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object)
+{
+    return adoptRef(*new SerializedScriptValue(WTFMove(object)));
+}
+
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSContextRef originContext, JSValueRef apiValue, JSValueRef* exception)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(originContext);
@@ -6117,11 +6259,36 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Fast path for string-only values - avoid deserialization overhead
-    if (m_isStringFastPath) {
+    switch (m_fastPath) {
+    case FastPath::String:
         if (didFail)
             *didFail = false;
         return jsString(vm, m_fastPathString);
+    case FastPath::SimpleObject: {
+        JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(m_simpleInMemoryPropertyTable.size()), JSFinalObject::maxInlineCapacity));
+        if (scope.exception()) [[unlikely]] {
+            if (didFail)
+                *didFail = true;
+            return {};
+        }
+
+        for (const auto& property : m_simpleInMemoryPropertyTable) {
+            // We **must** clone this so that the atomic flag doesn't get set to true.
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, property.propertyName.isolatedCopy());
+            JSValue value = WTF::switchOn(
+                property.value, [](JSValue value) -> JSValue { return value; },
+                [&](const String& string) -> JSValue { return jsString(vm, string); });
+            object->putDirect(vm, identifier, value);
+        }
+
+        if (didFail)
+            *didFail = false;
+
+        return object;
+    }
+    case FastPath::None: {
+        break;
+    }
     }
 
     DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts

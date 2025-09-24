@@ -3,6 +3,11 @@ import { afterAll, beforeAll, expect } from "bun:test";
 import { bunEnv, isCI, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
+import * as dockerCompose from "../../docker/index.ts";
+import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
+import * as fs from "node:fs";
+import * as os from "node:os";
+
 const dockerCLI = Bun.which("docker") as string;
 export const isEnabled =
   !!dockerCLI &&
@@ -133,9 +138,11 @@ interface ContainerConfiguration {
 // Shared container configuration
 let containerConfig: ContainerConfiguration | null = null;
 let dockerStarted = false;
+let dockerComposeInfo: any = null;
+let unixSocketProxy: UnixDomainSocketProxy | null = null;
 
 /**
- * Start the Redis Docker container with TCP, TLS, and Unix socket support
+ * Start the Redis Docker container with TCP, TLS, and Unix socket support using docker-compose
  */
 async function startContainer(): Promise<ContainerConfiguration> {
   if (dockerStarted) {
@@ -143,116 +150,22 @@ async function startContainer(): Promise<ContainerConfiguration> {
   }
 
   try {
-    // Check for any existing running valkey-unified-test containers
-    const checkRunning = Bun.spawn({
-      cmd: [
-        dockerCLI,
-        "ps",
-        "--filter",
-        "name=valkey-unified-test",
-        "--filter",
-        "status=running",
-        "--format",
-        "{{json .}}",
-      ],
-      stdout: "pipe",
-    });
+    // First, try to use docker-compose
+    console.log("Attempting to use docker-compose for Redis...");
+    const redisInfo = await dockerCompose.ensure("redis_unified");
 
-    let runningContainers = await new Response(checkRunning.stdout).text();
-    runningContainers = runningContainers.trim();
+    const port = redisInfo.ports[6379];
+    const tlsPort = redisInfo.ports[6380];
+    const containerName = "redis_unified"; // docker-compose service name
 
-    console.log(`Running containers: ${runningContainers}`);
-
-    if (runningContainers.trim()) {
-      // Parse the JSON container information
-      const containerInfo = JSON.parse(runningContainers);
-      const containerName = containerInfo.Names;
-
-      // Parse port mappings from the Ports field
-      const portsString = containerInfo.Ports;
-      const portMappings = portsString.split(", ");
-
-      let port = 0;
-      let tlsPort = 0;
-
-      console.log(portMappings);
-
-      // Extract port mappings for Redis ports 6379 and 6380
-      for (const mapping of portMappings) {
-        if (mapping.includes("->6379/tcp")) {
-          const match = mapping.split("->")[0].split(":")[1];
-          if (match) {
-            port = parseInt(match);
-          }
-        } else if (mapping.includes("->6380/tcp")) {
-          const match = mapping.split("->")[0].split(":")[1];
-          if (match) {
-            tlsPort = parseInt(match);
-          }
-        }
-      }
-
-      if (port && tlsPort) {
-        console.log(`Reusing existing container ${containerName} on ports ${port}:6379 and ${tlsPort}:6380`);
-
-        // Update Redis connection info
-        REDIS_PORT = port;
-        REDIS_TLS_PORT = tlsPort;
-        DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
-        TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
-        UNIX_REDIS_URL = `redis+unix:${REDIS_UNIX_SOCKET}`;
-        AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
-        READONLY_REDIS_URL = `redis://readonly:readonly@${REDIS_HOST}:${REDIS_PORT}`;
-        WRITEONLY_REDIS_URL = `redis://writeonly:writeonly@${REDIS_HOST}:${REDIS_PORT}`;
-
-        containerConfig = {
-          port,
-          tlsPort,
-          containerName,
-          useUnixSocket: true,
-        };
-
-        dockerStarted = true;
-        return containerConfig;
-      }
-    }
-
-    // No suitable running container found, create a new one
-    console.log("Building unified Redis Docker image...");
-    const dockerfilePath = path.join(import.meta.dir, "docker-unified", "Dockerfile");
-    await Bun.spawn(
-      [dockerCLI, "build", "--pull", "--rm", "-f", dockerfilePath, "-t", "bun-valkey-unified-test", "."],
-      {
-        cwd: path.join(import.meta.dir, "docker-unified"),
-        stdio: ["inherit", "inherit", "inherit"],
-      },
-    ).exited;
-
-    const port = randomPort();
-    const tlsPort = randomPort();
-
-    // Create container name with unique identifier to avoid conflicts in CI
-    const containerName = `valkey-unified-test-bun-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
-    // Check if container exists and remove it
-    try {
-      const containerCheck = Bun.spawn({
-        cmd: [dockerCLI, "ps", "-a", "--filter", `name=${containerName}`, "--format", "{{.ID}}"],
-        stdout: "pipe",
-      });
-
-      const containerId = await new Response(containerCheck.stdout).text();
-      if (containerId.trim()) {
-        console.log(`Removing existing container ${containerName}`);
-        await Bun.spawn([dockerCLI, "rm", "-f", containerName]).exited;
-      }
-    } catch (error) {
-      // Container might not exist, ignore error
-    }
+    // Create Unix domain socket proxy for Redis
+    unixSocketProxy = await UnixDomainSocketProxy.create("Redis", redisInfo.host, port);
 
     // Update Redis connection info
     REDIS_PORT = port;
     REDIS_TLS_PORT = tlsPort;
+    REDIS_HOST = redisInfo.host;
+    REDIS_UNIX_SOCKET = unixSocketProxy.path;  // Use the proxy socket
     DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
     TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
     UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
@@ -264,161 +177,17 @@ async function startContainer(): Promise<ContainerConfiguration> {
       port,
       tlsPort,
       containerName,
-      useUnixSocket: true,
+      useUnixSocket: true, // Now supported via proxy!
     };
 
-    // Start the unified container with TCP, TLS, and Unix socket
-    console.log(`Starting Redis container ${containerName} on ports ${port}:6379 and ${tlsPort}:6380...`);
-
-    // Function to try starting container with port retries
-    async function tryStartContainer(attempt = 1, maxAttempts = 3) {
-      const currentPort = attempt === 1 ? port : randomPort();
-      const currentTlsPort = attempt === 1 ? tlsPort : randomPort();
-
-      console.log(`Attempt ${attempt}: Using ports ${currentPort}:6379 and ${currentTlsPort}:6380...`);
-
-      const startProcess = Bun.spawn({
-        cmd: [
-          dockerCLI,
-          "run",
-          "-d",
-          "--name",
-          containerName,
-          "-p",
-          `${currentPort}:6379`,
-          "-p",
-          `${currentTlsPort}:6380`,
-          // TODO: unix domain socket has permission errors in CI.
-          // "-v",
-          // `${REDIS_TEMP_DIR}:/tmp`,
-          "--health-cmd",
-          "redis-cli ping || exit 1",
-          "--health-interval",
-          "2s",
-          "--health-timeout",
-          "1s",
-          "--health-retries",
-          "5",
-          "bun-valkey-unified-test",
-        ],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const containerID = await new Response(startProcess.stdout).text();
-      const startError = await new Response(startProcess.stderr).text();
-      const startExitCode = await startProcess.exited;
-
-      if (startExitCode === 0 && containerID.trim()) {
-        // Update the ports if we used different ones on a retry
-        if (attempt > 1) {
-          REDIS_PORT = currentPort;
-          REDIS_TLS_PORT = currentTlsPort;
-          DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
-          TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
-          UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
-          AUTH_REDIS_URL = `redis://testuser:test123@${REDIS_HOST}:${REDIS_PORT}`;
-          READONLY_REDIS_URL = `redis://readonly:readonly@${REDIS_HOST}:${REDIS_PORT}`;
-          WRITEONLY_REDIS_URL = `redis://writeonly:writeonly@${REDIS_HOST}:${REDIS_PORT}`;
-
-          containerConfig = {
-            port: currentPort,
-            tlsPort: currentTlsPort,
-            containerName,
-            useUnixSocket: true,
-          };
-        }
-        return { containerID, success: true };
-      }
-
-      // If the error is related to port already in use, try again with different ports
-      if (startError.includes("address already in use") && attempt < maxAttempts) {
-        console.log(`Port conflict detected. Retrying with different ports...`);
-        // Remove failed container if it was created
-        if (containerID.trim()) {
-          await Bun.spawn([dockerCLI, "rm", "-f", containerID.trim()]).exited;
-        }
-        return tryStartContainer(attempt + 1, maxAttempts);
-      }
-
-      console.error(`Failed to start container. Exit code: ${startExitCode}, Error: ${startError}`);
-      throw new Error(`Failed to start Redis container: ${startError || "unknown error"}`);
-    }
-
-    const { containerID } = await tryStartContainer();
-
-    console.log(`Container started with ID: ${containerID.trim()}`);
-
-    // Wait a moment for container to initialize
-    console.log("Waiting for container to initialize...");
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // Check if Redis is responding inside the container
-    const redisPingProcess = Bun.spawn({
-      cmd: [dockerCLI, "exec", containerName, "redis-cli", "ping"],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const redisPingOutput = await new Response(redisPingProcess.stdout).text();
-    console.log(`Redis inside container responds: ${redisPingOutput.trim()}`);
-    redisPingProcess.kill?.();
-
-    // Also try to get Redis info to ensure it's configured properly
-    const redisInfoProcess = Bun.spawn({
-      cmd: [dockerCLI, "exec", containerName, "redis-cli", "info", "server"],
-      stdout: "pipe",
-    });
-
-    const redisInfo = await new Response(redisInfoProcess.stdout).text();
-    console.log(`Redis server info: Redis version ${redisInfo.match(/redis_version:(.*)/)?.[1]?.trim() || "unknown"}`);
-    redisInfoProcess.kill?.();
-
-    // Check if the container is actually running
-    const containerRunning = Bun.spawn({
-      cmd: [dockerCLI, "ps", "--filter", `name=${containerName}`, "--format", "{{.ID}}"],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const runningStatus = await new Response(containerRunning.stdout).text();
-    containerRunning.kill?.();
-
-    if (!runningStatus.trim()) {
-      console.error(`Container ${containerName} failed to start properly`);
-
-      // Get logs to see what happened
-      const logs = Bun.spawn({
-        cmd: [dockerCLI, "logs", containerName],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const logOutput = await new Response(logs.stdout).text();
-      const errOutput = await new Response(logs.stderr).text();
-
-      console.log(`Container logs:\n${logOutput}\n${errOutput}`);
-
-      // Check container status to get more details
-      const inspectProcess = Bun.spawn({
-        cmd: [dockerCLI, "inspect", containerName],
-        stdout: "pipe",
-      });
-
-      const inspectOutput = await new Response(inspectProcess.stdout).text();
-      console.log(`Container inspection:\n${inspectOutput}`);
-
-      inspectProcess.kill?.();
-      throw new Error(`Redis container failed to start - check logs for details`);
-    }
-
-    console.log(`Container ${containerName} is running, waiting for Redis services...`);
-
     dockerStarted = true;
+    dockerComposeInfo = redisInfo;
+
+    console.log(`Redis container ready via docker-compose on ports ${port}:6379 and ${tlsPort}:6380`);
     return containerConfig;
   } catch (error) {
-    console.error("Error starting Redis container:", error);
-    throw error;
+    console.error("Failed to start Redis via docker-compose:", error);
+    throw new Error(`Docker Compose is required. Redis container failed to start via docker-compose: ${error}`);
   }
 }
 
@@ -431,7 +200,6 @@ export async function setupDockerContainer() {
   if (!dockerStarted) {
     try {
       containerConfig = await (dockerSetupPromise ??= startContainer());
-
       return true;
     } catch (error) {
       console.error("Failed to start Redis container:", error);
@@ -454,49 +222,55 @@ import { tmpdir } from "os";
 /**
  * Create a new client with specific connection type
  */
-export function createClient(connectionType: ConnectionType = ConnectionType.TCP, customOptions = {}) {
+export function createClient(
+    connectionType: ConnectionType = ConnectionType.TCP,
+    customOptions = {},
+    dbId: number | undefined = undefined,
+) {
   let url: string;
+  const mkUrl = (baseUrl: string) => dbId ? `${baseUrl}/${dbId}`: baseUrl;
+
   let options: any = {};
   context.id++;
 
   switch (connectionType) {
     case ConnectionType.TCP:
-      url = DEFAULT_REDIS_URL;
+      url = mkUrl(DEFAULT_REDIS_URL);
       options = {
         ...DEFAULT_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.TLS:
-      url = TLS_REDIS_URL;
+      url = mkUrl(TLS_REDIS_URL);
       options = {
         ...TLS_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.UNIX:
-      url = UNIX_REDIS_URL;
+      url = mkUrl(UNIX_REDIS_URL);
       options = {
         ...UNIX_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.AUTH:
-      url = AUTH_REDIS_URL;
+      url = mkUrl(AUTH_REDIS_URL);
       options = {
         ...AUTH_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.READONLY:
-      url = READONLY_REDIS_URL;
+      url = mkUrl(READONLY_REDIS_URL);
       options = {
         ...READONLY_REDIS_OPTIONS,
         ...customOptions,
       };
       break;
     case ConnectionType.WRITEONLY:
-      url = WRITEONLY_REDIS_URL;
+      url = mkUrl(WRITEONLY_REDIS_URL);
       options = {
         ...WRITEONLY_REDIS_OPTIONS,
         ...customOptions,
@@ -673,6 +447,11 @@ if (isEnabled)
       if (context.redisWriteOnly) {
         await context.redisWriteOnly.close();
       }
+
+      // Clean up Unix socket proxy if it exists
+      if (unixSocketProxy) {
+        unixSocketProxy.stop();
+      }
     } catch (err) {
       console.error("Error during test cleanup:", err);
     }
@@ -743,6 +522,13 @@ async function getRedisContainerName(): Promise<string> {
     throw new Error("Docker CLI not available");
   }
 
+  // If using docker-compose
+  if (dockerComposeInfo) {
+    const projectName = process.env.COMPOSE_PROJECT_NAME || "bun-test-services";
+    return `${projectName}-redis_unified-1`;
+  }
+
+  // Fallback to old method
   const listProcess = Bun.spawn({
     cmd: [dockerCLI, "ps", "--filter", "name=valkey-unified-test", "--format", "{{.Names}}"],
     stdout: "pipe",
@@ -761,25 +547,67 @@ async function getRedisContainerName(): Promise<string> {
  * Restart the Redis container to simulate connection drop
  */
 export async function restartRedisContainer(): Promise<void> {
-  const containerName = await getRedisContainerName();
+  // If using docker-compose, get the actual container name
+  if (dockerComposeInfo) {
+    const projectName = process.env.COMPOSE_PROJECT_NAME || "bun-test-services";
+    const containerName = `${projectName}-redis_unified-1`;
+    console.log(`Restarting Redis container: ${containerName}`);
 
-  console.log(`Restarting Redis container: ${containerName}`);
+    // Use docker restart to preserve data
+    const restartProcess = Bun.spawn({
+      cmd: [dockerCLI, "restart", containerName],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const exitCode = await restartProcess.exited;
+    if (exitCode !== 0) {
+      const stderr = await new Response(restartProcess.stderr).text();
+      throw new Error(`Failed to restart container: ${stderr}`);
+    }
 
-  const restartProcess = Bun.spawn({
-    cmd: [dockerCLI, "restart", containerName],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
+    // Wait for Redis to be ready
+    console.log("Waiting for Redis to be ready after restart...");
 
-  const exitCode = await restartProcess.exited;
-  if (exitCode !== 0) {
-    const stderr = await new Response(restartProcess.stderr).text();
-    throw new Error(`Failed to restart container: ${stderr}`);
+    let retries = 30;
+    while (retries > 0) {
+      try {
+        const pingProcess = Bun.spawn({
+          cmd: [dockerCLI, "exec", containerName, "redis-cli", "ping"],
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const pingOutput = await new Response(pingProcess.stdout).text();
+        if (pingOutput.trim() === "PONG") {
+          console.log(`Redis container restarted and ready: ${containerName}`);
+          break;
+        }
+      } catch {}
+      retries--;
+      if (retries > 0) {
+        await delay(100);
+      }
+    }
+
+    if (retries === 0) {
+      throw new Error("Redis failed to become ready after restart");
+    }
+  } else {
+    // Fallback to old method
+    const containerName = await getRedisContainerName();
+    console.log(`Restarting Redis container: ${containerName}`);
+
+    // Use docker restart to preserve data
+    const restartProcess = Bun.spawn({
+      cmd: [dockerCLI, "restart", containerName],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const exitCode = await restartProcess.exited;
+    if (exitCode !== 0) {
+      const stderr = await new Response(restartProcess.stderr).text();
+      throw new Error(`Failed to restart container: ${stderr}`);
+    }
   }
-
-  // Wait a moment for the container to fully restart
-  await delay(2000);
-
-  console.log(`Redis container restarted: ${containerName}`);
 }

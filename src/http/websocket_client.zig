@@ -260,7 +260,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     var outstring = jsc.ZigString.Empty;
                     if (utf16_bytes_) |utf16| {
                         outstring = jsc.ZigString.from16Slice(utf16);
-                        outstring.mark();
+                        outstring.markGlobal();
                         jsc.markBinding(@src());
                         out.didReceiveText(false, &outstring);
                     } else {

@@ -151,9 +151,7 @@ pub const LinkerContext = struct {
         pub fn computeQuotedSourceContents(this: *LinkerContext, _: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing Quoted Source Contents: {d}", .{source_index});
             const quoted_source_contents = &this.graph.files.items(.quoted_source_contents)[source_index];
-            if (quoted_source_contents.take()) |old| {
-                old.deinit();
-            }
+            quoted_source_contents.reset();
 
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
             if (!loader.canHaveSourceMap()) {
@@ -163,7 +161,8 @@ pub const LinkerContext = struct {
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             var mutable = MutableString.initEmpty(bun.default_allocator);
             bun.handleOom(js_printer.quoteForJSON(source.contents, &mutable, false));
-            quoted_source_contents.* = mutable.toDefaultOwned().toOptional();
+            var mutableOwned = mutable.toDefaultOwned();
+            quoted_source_contents.* = mutableOwned.toOptional();
         }
     };
 
@@ -308,7 +307,7 @@ pub const LinkerContext = struct {
                     @panic("Assertion failed: HTML import file not found in pathToSourceIndexMap");
                 };
 
-                bun.handleOom(html_source_indices.push(this.allocator(), source_index));
+                bun.handleOom(html_source_indices.append(this.allocator(), source_index));
 
                 // S.LazyExport is a call to __jsonParse.
                 const original_ref = parts[html_import]
@@ -391,6 +390,7 @@ pub const LinkerContext = struct {
             }
         }
 
+        try this.graph.propagateAsyncDependencies();
         try this.scanImportsAndExports();
 
         // Stop now if there were errors
@@ -455,7 +455,7 @@ pub const LinkerContext = struct {
         var parts_list = this.allocator().alloc(u32, 1) catch unreachable;
         parts_list[0] = part_index;
 
-        top_level.put(this.allocator(), ref, BabyList(u32).init(parts_list)) catch unreachable;
+        top_level.put(this.allocator(), ref, BabyList(u32).fromOwnedSlice(parts_list)) catch unreachable;
 
         var resolved_exports = &this.graph.meta.items(.resolved_exports)[source_index];
         resolved_exports.put(this.allocator(), alias, ExportData{
@@ -748,12 +748,12 @@ pub const LinkerContext = struct {
         if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
             j.pushStatic(
-                quoted_source_map_contents[source_indices_for_contents[0]].getConst() orelse "",
+                quoted_source_map_contents[source_indices_for_contents[0]].get() orelse "",
             );
 
             for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
-                j.pushStatic(quoted_source_map_contents[index].getConst() orelse "");
+                j.pushStatic(quoted_source_map_contents[index].get() orelse "");
             }
         }
         j.pushStatic(
@@ -2075,7 +2075,7 @@ pub const LinkerContext = struct {
                                 .{ .ref = c.graph.ast.items(.wrapper_ref)[source_index], .is_top_level = true },
                             },
                         ) catch unreachable,
-                        .dependencies = Dependency.List.init(dependencies),
+                        .dependencies = Dependency.List.fromOwnedSlice(dependencies),
                     },
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
@@ -2127,7 +2127,7 @@ pub const LinkerContext = struct {
                         .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(c.allocator(), &[_]js_ast.DeclaredSymbol{
                             .{ .ref = wrapper_ref, .is_top_level = true },
                         }) catch unreachable,
-                        .dependencies = Dependency.List.init(dependencies),
+                        .dependencies = Dependency.List.fromOwnedSlice(dependencies),
                     },
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
@@ -2316,7 +2316,7 @@ pub const LinkerContext = struct {
                         c.allocator(),
                         import_ref,
                         .{
-                            .re_exports = bun.BabyList(js_ast.Dependency).init(re_exports.items),
+                            .re_exports = bun.BabyList(js_ast.Dependency).fromOwnedSlice(re_exports.items),
                             .data = .{
                                 .source_index = Index.source(result.source_index),
                                 .import_ref = result.ref,
@@ -2335,7 +2335,7 @@ pub const LinkerContext = struct {
                         c.allocator(),
                         import_ref,
                         .{
-                            .re_exports = bun.BabyList(js_ast.Dependency).init(re_exports.items),
+                            .re_exports = bun.BabyList(js_ast.Dependency).fromOwnedSlice(re_exports.items),
                             .data = .{
                                 .source_index = Index.source(result.source_index),
                                 .import_ref = result.ref,
@@ -2498,7 +2498,7 @@ pub const LinkerContext = struct {
         try pieces.append(OutputPiece.init(output, OutputPiece.Query.none));
 
         return .{
-            .pieces = bun.BabyList(Chunk.OutputPiece).init(pieces.items),
+            .pieces = bun.BabyList(Chunk.OutputPiece).fromOwnedSlice(pieces.items),
         };
     }
 };

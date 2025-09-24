@@ -26,6 +26,6 @@
 
 /// <reference path="./bun.ns.d.ts" />
 
-// @ts-ignore Must disable this so it doesn't conflict with the DOM onmessage type, but still
+// Must disable this so it doesn't conflict with the DOM onmessage type, but still
 // allows us to declare our own globals that Node's types can "see" and not conflict with
-declare var onmessage: never;
+declare var onmessage: Bun.__internal.UseLibDomIfAvailable<"onmessage", never>;

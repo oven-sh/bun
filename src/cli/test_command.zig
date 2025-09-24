@@ -1301,6 +1301,7 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .concurrent = ctx.test_options.concurrent,
+                .concurrent_test_glob = ctx.test_options.concurrent_test_glob,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
                 .bail = ctx.test_options.bail,
@@ -1417,7 +1418,9 @@ pub const TestCommand = struct {
                         } else {
                             Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
                         }
-                        Global.exit(1);
+                        vm.exit_handler.exit_code = 1;
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                     },
                 };
             }
@@ -1459,7 +1462,9 @@ pub const TestCommand = struct {
                     } else {
                         Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {}", .{bun.fmt.quote(dir_to_scan)});
                     }
-                    Global.exit(1);
+                    vm.exit_handler.exit_code = 1;
+                    vm.is_shutting_down = true;
+                    vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                 },
             };
         }
@@ -1709,6 +1714,7 @@ pub const TestCommand = struct {
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             vm.exit_handler.exit_code = 1;
         }
+        vm.is_shutting_down = true;
         vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
     }
 
@@ -1807,7 +1813,9 @@ pub const TestCommand = struct {
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
-            bun_test_root.enterFile(file_id, reporter);
+            // Determine if this file should run tests concurrently based on glob pattern
+            const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);
+            bun_test_root.enterFile(file_id, reporter, should_run_concurrent);
             defer bun_test_root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
@@ -1825,7 +1833,9 @@ pub const TestCommand = struct {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
 
-                        Global.exit(1);
+                        vm.exit_handler.exit_code = 1;
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                     }
 
                     return;

@@ -328,7 +328,7 @@ pub const BunTest = struct {
         errdefer group.log("ended in error", .{});
 
         const result, const this_ptr = callframe.argumentsAsArray(2);
-        if (this_ptr.asPtrAddress() == 0) return; // extra handler
+        if (this_ptr.isEmptyOrUndefinedOrNull()) return;
 
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
         defer refdata.deref();
@@ -470,21 +470,21 @@ pub const BunTest = struct {
             }
         }
 
-        this.updateMinTimeout(globalThis, min_timeout);
+        this.updateMinTimeout(globalThis, &min_timeout);
     }
 
-    fn updateMinTimeout(this: *BunTest, globalThis: *jsc.JSGlobalObject, min_timeout: bun.timespec) void {
+    fn updateMinTimeout(this: *BunTest, globalThis: *jsc.JSGlobalObject, min_timeout: *const bun.timespec) void {
         group.begin(@src());
         defer group.end();
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
-        group.log("-> timeout: {} {}, {s}", .{ min_timeout, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
+        group.log("-> timeout: {} {}, {s}", .{ min_timeout.*, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
         if (min_timeout.orderIgnoreEpoch(this.timer.next) == .lt) {
-            group.log("-> setting timer to {}", .{min_timeout});
+            group.log("-> setting timer to {}", .{min_timeout.*});
             if (!this.timer.next.eql(&.epoch)) {
                 group.log("-> removing existing timer", .{});
                 globalThis.bunVM().timer.remove(&this.timer);
             }
-            this.timer.next = min_timeout;
+            this.timer.next = min_timeout.*;
             if (!this.timer.next.eql(&.epoch)) {
                 group.log("-> inserting timer", .{});
                 globalThis.bunVM().timer.insert(&this.timer);
@@ -545,7 +545,7 @@ pub const BunTest = struct {
     }
 
     /// if sync, the result is returned. if async, null is returned.
-    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg_callback: jsc.JSValue, cfg_done_parameter: bool, cfg_data: BunTest.RefDataValue, timeout: bun.timespec) ?RefDataValue {
+    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg_callback: jsc.JSValue, cfg_done_parameter: bool, cfg_data: BunTest.RefDataValue, timeout: *const bun.timespec) ?RefDataValue {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
@@ -586,25 +586,30 @@ pub const BunTest = struct {
             defer result_jsvalue.ensureStillAlive(); // because sometimes we use promise without result
 
             group.log("callTestCallback -> promise: data {}", .{cfg_data});
-            // TODO: supress unhandled rejection error
-            result_jsvalue.then(globalThis, null, bunTestThen, bunTestCatch);
-            drain(globalThis); // drain microtasks to see if the promise is immediately resolved
-            if (dcb_ref == null) {
-                const immediate_status = promise.status(globalThis.vm());
-                if (immediate_status != .pending) {
-                    // immediately resolved
-                    if (immediate_status == .rejected) {
-                        // post error
-                        const value = promise.result(globalThis.vm());
-                        this.onUncaughtException(globalThis, value, true, cfg_data);
-                    }
+            const vm = globalThis.bunVM();
+
+            vm.drainMicrotasks();
+
+            switch (promise.status(globalThis.vm())) {
+                .pending => {
+                    // not immediately resolved; register 'then' to handle the result when it becomes available
+                    const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
+                    result_jsvalue.then(globalThis, this_ref, bunTestThen, bunTestCatch);
+                    return null;
+                },
+                .fulfilled => {
+                    // Do not register a then callback when it's already fulfilled.
                     return cfg_data;
-                }
+                },
+                .rejected => {
+                    // Prevent the promise from entering the promise rejection queue.
+                    promise.setHandled(globalThis.vm());
+
+                    const value = promise.result(globalThis.vm());
+                    this.onUncaughtException(globalThis, value, true, cfg_data);
+                    return cfg_data;
+                },
             }
-            // not immediately resolved; register 'then' to handle the result when it becomes available
-            const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
-            result_jsvalue.then(globalThis, this_ref, bunTestThen, bunTestCatch);
-            return null;
         };
 
         if (dcb_ref) |_| {
@@ -857,6 +862,26 @@ pub const ExecutionEntry = struct {
         }
         return entry;
     }
+
+    pub fn evaluateTimeout(this: *ExecutionEntry, sequence: *Execution.ExecutionSequence, now: *const bun.timespec) bool {
+        if (!this.timespec.eql(&.epoch) and this.timespec.order(now) == .lt) {
+            // timed out
+            sequence.result = if (this == sequence.test_entry)
+                if (this.has_done_parameter)
+                    .fail_because_timeout_with_done_callback
+                else
+                    .fail_because_timeout
+            else if (this.has_done_parameter)
+                .fail_because_hook_timeout_with_done_callback
+            else
+                .fail_because_hook_timeout;
+            sequence.maybe_skip = true;
+            return true;
+        }
+
+        return false;
+    }
+
     pub fn destroy(this: *ExecutionEntry, gpa: std.mem.Allocator) void {
         if (this.callback) |*c| c.deinit();
         this.base.deinit(gpa);

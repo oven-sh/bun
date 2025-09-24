@@ -139,7 +139,7 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, callback.get(), false, .{
             .collection = .{ .active_scope = previous_scope },
-        }, .epoch)) |cfg_data| {
+        }, &.epoch)) |cfg_data| {
             // the result is available immediately; queue
             buntest.addResult(cfg_data);
         }

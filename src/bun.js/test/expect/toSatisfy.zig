@@ -34,7 +34,6 @@ pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
 
     if (pass) return .js_undefined;
 
-
     if (not) {
         const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
         return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{predicate.toJestPrettyFormat(globalThis)});

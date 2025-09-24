@@ -13,7 +13,6 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
 
     this.incrementExpectCallCounter();
 
-
     const expected_value = arguments[0];
     if (!expected_value.isString() and !expected_value.isRegExp()) {
         return globalThis.throw("Expected value must be a string or regular expression: {any}", .{expected_value.toJestPrettyFormat(globalThis)});

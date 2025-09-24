@@ -55,7 +55,6 @@ pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
 
     if (pass) return .js_undefined;
 
-
     const expected_fmt = expected_.toJestPrettyFormat(globalThis);
     const received_fmt = received_.toJestPrettyFormat(globalThis);
 

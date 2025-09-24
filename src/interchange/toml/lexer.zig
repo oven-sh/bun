@@ -1176,7 +1176,7 @@ pub const Lexer = struct {
                         hour_found += shiftLeftBase10(u8, lexer.code_point, hour);
 
                         if (hour == 0) {
-                            if (hour_found > 23 or hour_found < 0) {
+                            if (hour_found > 23) {
                                 try lexer.invalidValueError(Error.InvalidTime, "Expected hour to be in the range [00,23].", .{});
                             }
                             expect_numeric = false;
@@ -1190,7 +1190,7 @@ pub const Lexer = struct {
                         minute_found += shiftLeftBase10(u8, lexer.code_point, minute);
 
                         if (minute == 0) {
-                            if (minute_found > 59 or minute_found < 0) {
+                            if (minute_found > 59) {
                                 try lexer.invalidValueError(Error.InvalidTime, "Expected minutes to be in the range [00,59].", .{});
                             }
 
@@ -1207,7 +1207,7 @@ pub const Lexer = struct {
                         if (second == 0) {
                             // RFC3339 calls out leap second rules, but at this layer, we should allow flexibility for
                             // applications to decide the level of strictness they require.
-                            if (second_found > 60 or second_found < 0) {
+                            if (second_found > 60) {
                                 try lexer.invalidValueError(Error.InvalidTime, "Expected seconds to be in the range [00,60].", .{});
                             }
 

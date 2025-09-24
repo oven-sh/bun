@@ -1,3 +1,5 @@
+"use client";
+
 import { router } from "../client/constants.ts";
 
 export interface LinkProps extends React.ComponentProps<"a"> {

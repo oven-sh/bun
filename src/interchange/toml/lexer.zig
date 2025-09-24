@@ -1599,7 +1599,9 @@ pub inline fn isValidDate(year: u16, month: u8, day: u8) bool {
     if (month > 12 or month < 1) {
         return false;
     }
-
+    if (day < 1) {
+        return false;
+    }
     const days_per_month = [_]u8{ 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
     const max_day = if (month == 2 and isLeapYear(year)) 29 else days_per_month[month];
     return day <= max_day;

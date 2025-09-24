@@ -300,6 +300,15 @@ ld2 = 1979-00-01
   expect(() => Bun.TOML.parse(toml)).toThrow("Invalid Date: 1979-00-01");
 });
 
+it("handles-invalid-date: 0 isn't a valid day", () => {
+  const Bun = globalThis.Bun;
+  const toml = `
+[invalid.day]
+ld3 = 2025-01-00
+`;
+  expect(() => Bun.TOML.parse(toml)).toThrow("Invalid Date: 2025-01-00");
+});
+
 it("handles-invalid-date: not a leap year", () => {
   const Bun = globalThis.Bun;
   const toml = `

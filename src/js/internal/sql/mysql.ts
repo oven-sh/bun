@@ -1,6 +1,6 @@
 import type { MySQLErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode, SQLArrayParameter } from "./shared";
+import type { DatabaseAdapter, SQLArrayParameter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
 const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,

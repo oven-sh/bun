@@ -1,7 +1,7 @@
 import type { MySQLAdapter } from "internal/sql/mysql";
 import type { PostgresAdapter } from "internal/sql/postgres";
 import type { BaseQueryHandle, Query } from "internal/sql/query";
-import type { SQLHelper, SQLArrayParameter } from "internal/sql/shared";
+import type { SQLArrayParameter, SQLHelper } from "internal/sql/shared";
 
 const { Query, SQLQueryFlags } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");

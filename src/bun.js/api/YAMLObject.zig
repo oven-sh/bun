@@ -932,7 +932,7 @@ pub fn parse(
                 const error_text = first_msg.data.text;
                 return global.throwValue(global.createSyntaxErrorInstance("YAML Parse error: {s}", .{error_text}));
             }
-            return global.throwValue(global.createSyntaxErrorInstance("Failed to parse YAML", .{}));
+            return global.throwValue(global.createSyntaxErrorInstance("YAML Parse error: Unable to parse YAML string", .{}));
         },
     };
 

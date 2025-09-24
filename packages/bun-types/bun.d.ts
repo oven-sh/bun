@@ -636,7 +636,7 @@ declare module "bun" {
      * import { YAML } from "bun";
      *
      * console.log(YAML.parse("123")) // 123
-     * console.log(YAML.parse("123")) // null
+     * console.log(YAML.parse("null")) // null
      * console.log(YAML.parse("false")) // false
      * console.log(YAML.parse("abc")) // "abc"
      * console.log(YAML.parse("- abc")) // [ "abc" ]
@@ -653,7 +653,10 @@ declare module "bun" {
      *
      * @param input The JavaScript value to stringify.
      * @param replacer Currently not supported.
-     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation. The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
+     *              Without this parameter, outputs flow-style (single-line) YAML.
+     *              With this parameter, outputs block-style (multi-line) YAML.
+     *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
      * @returns A string containing the YAML document.
      *
      * @example
@@ -661,19 +664,24 @@ declare module "bun" {
      * import { YAML } from "bun";
      *
      * const input = {
-     *   abc: "def"
+     *   abc: "def",
+     *   num: 123
      * };
+     *
+     * // Without space - flow style (single-line)
      * console.log(YAML.stringify(input));
-     * // # output
+     * // {abc: def,num: 123}
+     *
+     * // With space - block style (multi-line)
+     * console.log(YAML.stringify(input, null, 2));
      * // abc: def
+     * // num: 123
      *
      * const cycle = {};
      * cycle.obj = cycle;
-     * console.log(YAML.stringify(cycle));
-     * // # output
-     * // &root
-     * // obj:
-     * //   *root
+     * console.log(YAML.stringify(cycle, null, 2));
+     * // &1
+     * // obj: *1
      */
     export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }

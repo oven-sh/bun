@@ -400,3 +400,4 @@ test/js/bun/http/bun-connect-x509.test.ts
 test/js/third_party/rollup-v4/rollup-v4.test.ts
 test/js/web/abort/abort.test.ts
 test/js/third_party/resvg/bbox.test.js
+test/regression/issue/10139.test.ts

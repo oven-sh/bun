@@ -1111,8 +1111,7 @@ pub const Lexer = struct {
     }
 
     pub fn discardTilEndOfLine(lexer: *Lexer) void {
-        while (true) {
-            lexer.step();
+        while (true): (lexer.step()) {
             switch (lexer.code_point) {
                 '\r', '\n', 0x2028, 0x2029, -1 => {
                     return;
@@ -1125,6 +1124,9 @@ pub const Lexer = struct {
     /// After parsing the necessary 3 digits of fractional precision, call this function to ignore any remaining
     /// consecutive numeric digits.
     ///
+    /// When this function exits, `lexer.code_point` will be on the first non-numeric code-point following the
+    /// fraction.
+    ///
     /// From the TOML v1.0.0 spec:
     /// > Millisecond precision is required. Further precision of fractional seconds is implementation-specific.
     /// > If the value contains greater precision than the implementation can support, the additional precision
@@ -1132,10 +1134,9 @@ pub const Lexer = struct {
     ///
     /// _NOTE: NodeJS stops at ms precision._
     pub fn drainTimeFraction(lexer: *Lexer) void {
-        while (true) {
-            lexer.step();
+        while (true): (lexer.step()) {
             switch (lexer.code_point) {
-                '0'...'9' => continue,
+                '0'...'9' => {},
                 else => break,
             }
         }
@@ -1303,7 +1304,13 @@ pub const Lexer = struct {
         var offset_start: ?usize = null;
 
         // Iterate over a date/datetime until complete or an invalid format is detected.
-        while (true) : (lexer.step()) {
+        var skip_stepping = true;
+        while (true) {
+            if (!skip_stepping) {
+                lexer.step();
+            }
+            skip_stepping = false;
+
             switch (lexer.code_point) {
                 '0'...'9' => {
                     if (!expect_maybe_numeric) {
@@ -1386,8 +1393,12 @@ pub const Lexer = struct {
                         }
 
                         // Truncate any digits beyond ms, while still accounting for a possible offset.
+                        //
+                        // The current digit must be the 4th digit after the decimal if we're here,
+                        // so the fractional_end is the position before this one.
                         fractional_end = lexer.current - 1;
                         lexer.drainTimeFraction();
+                        skip_stepping = true;
                         expect_fractional = false;
                         expect_maybe_offset = true;
                         continue;
@@ -1458,8 +1469,9 @@ pub const Lexer = struct {
                     if (offset_hour < 2) {
                         try lexer.invalidValueError(Error.InvalidDate, "Cannot specify both 'Z' (no offset) and a specific offset", .{});
                     }
+                    offset_start = lexer.current - 1;
                     expect_maybe_offset = false;
-                    expect_maybe_numeric = true;
+                    expect_maybe_numeric = false;
                     maybe_complete = true;
                 },
                 ':' => {

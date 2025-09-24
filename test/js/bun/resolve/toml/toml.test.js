@@ -32,6 +32,9 @@ function checkToml(toml) {
   expect(toml.calendar["odt9"]).toBe("1979-05-27T00:32:00.999+07:00");
   expect(toml.calendar["odt10"]).toBe("1979-05-27 07:32:00Z");
   expect(toml.calendar["odt11"]).toBe("1979-05-27T00:32:00.999+07:00");
+  expect(toml.calendar["odt12"]).toBe("1979-05-27T07:32:00.999+05:00");
+  expect(toml.calendar["odt13"]).toBe("1979-05-27T07:32:00.123-07:00");
+  expect(toml.calendar["odt14"]).toBe("1979-05-27T07:32:00.999Z");
 
   expect(toml.calendar["ldt1"]).toBe("1979-05-27T07:32:00.9");
   expect(toml.calendar["ldt2"]).toBe("1979-05-27T07:32:00.99");

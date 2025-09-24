@@ -1269,7 +1269,7 @@ pub const Lexer = struct {
     /// * local date-time
     /// * offset date-time
     pub fn parseDateTime(lexer: *Lexer) !void {
-        // Expected numer of digits per component.
+        // Expected number of digits per component.
         var year: u8 = 4;
         var month: u8 = 2;
         var mday: u8 = 2;
@@ -1300,7 +1300,7 @@ pub const Lexer = struct {
         var expect_fractional = false;
         var maybe_complete = false;
 
-        // Accounting for variable length fractional times with trunction, we might need to drop some chars.
+        // Accounting for variable length fractional times with truncation, we might need to drop some chars.
         var fractional_end: ?usize = null;
         var offset_start: ?usize = null;
 

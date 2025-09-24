@@ -36,6 +36,10 @@ function checkToml(toml) {
   expect(toml.calendar["odt13"]).toBe("1979-05-27T07:32:00.123-07:00");
   expect(toml.calendar["odt14"]).toBe("1979-05-27T07:32:00.999Z");
 
+  expect(toml.calendar["date_array"][0]).toBe("1979-05-27");
+  expect(toml.calendar["date_array"][1]).toBe("2025-09-24");
+  expect(toml.calendar["date_array"][2]).toBe("2026-01-01");
+
   expect(toml.calendar["ldt1"]).toBe("1979-05-27T07:32:00.9");
   expect(toml.calendar["ldt2"]).toBe("1979-05-27T07:32:00.99");
   expect(toml.calendar["ldt3"]).toBe("1979-05-27T00:32:00.999");
@@ -50,6 +54,9 @@ function checkToml(toml) {
   expect(toml.calendar["lt3"]).toBe("00:32:00.99");
   expect(toml.calendar["lt4"]).toBe("00:32:00.999");
   expect(toml.calendar["lt5"]).toBe("00:32:00.999");
+
+  expect(toml.calendar["time_array"][0]).toBe("07:32:00");
+  expect(toml.calendar["time_array"][1]).toBe("04:05:06.933");
 }
 
 it("via dynamic import", async () => {

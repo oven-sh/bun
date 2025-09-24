@@ -1165,17 +1165,20 @@ pub const Lexer = struct {
         var maybe_complete: bool = false;
         var fractional_end: ?usize = null;
 
-        while (true) : (lexer.step()) {
+        var skip_stepping = true;
+        while (true) {
+            if (!skip_stepping) {
+                lexer.step();
+            }
+            skip_stepping = false;
             switch (lexer.code_point) {
                 '0'...'9' => {
                     if (!expect_numeric) {
                         try lexer.invalidValueError(Error.InvalidTime, "Got an unexpected number while parsing time.", .{});
                     }
-
                     if (hour > 0) {
                         hour -= 1;
                         hour_found += shiftLeftBase10(u8, lexer.code_point, hour);
-
                         if (hour == 0) {
                             if (hour_found > 23) {
                                 try lexer.invalidValueError(Error.InvalidTime, "Expected hour to be in the range [00,23].", .{});
@@ -1185,40 +1188,33 @@ pub const Lexer = struct {
                         }
                         continue;
                     }
-
                     if (minute > 0) {
                         minute -= 1;
                         minute_found += shiftLeftBase10(u8, lexer.code_point, minute);
-
                         if (minute == 0) {
                             if (minute_found > 59) {
                                 try lexer.invalidValueError(Error.InvalidTime, "Expected minutes to be in the range [00,59].", .{});
                             }
-
                             expect_numeric = false;
                             expect_colon = true;
                         }
                         continue;
                     }
-
                     if (second > 0) {
                         second -= 1;
                         second_found += shiftLeftBase10(u8, lexer.code_point, second);
-
                         if (second == 0) {
                             // RFC3339 calls out leap second rules, but at this layer, we should allow flexibility for
                             // applications to decide the level of strictness they require.
                             if (second_found > 60) {
                                 try lexer.invalidValueError(Error.InvalidTime, "Expected seconds to be in the range [00,60].", .{});
                             }
-
                             expect_numeric = false;
                             expect_maybe_dot = true;
                             maybe_complete = true;
                         }
                         continue;
                     }
-
                     if (expect_fractional) {
                         if (fractional > 0) {
                             fractional -= 1;
@@ -1226,14 +1222,14 @@ pub const Lexer = struct {
                             fractional_end = lexer.current;
                             continue;
                         }
-
                         // Truncate any digits beyond ms.
                         fractional_end = lexer.current - 1;
                         lexer.drainTimeFraction();
+                        // drainTimeFraction() stops on the first non-digit. Don't step again this iteration.
+                        skip_stepping = true;
                         expect_fractional = false;
                         continue;
                     }
-
                     // There's a logic error if we hit this spot.
                     unreachable;
                 },

@@ -72,6 +72,7 @@ const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
+const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
@@ -1151,6 +1152,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       delete bunEnv[tmpdir];
     }
     bunEnv["TEMP"] = tmpdirPath;
+  }
+  if (timeout === undefined) {
+    timeout = spawnBunTimeout;
   }
   try {
     const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];

@@ -18,7 +18,7 @@ pub fn toJSForSSR(this: *Response, globalObject: *JSGlobalObject, kind: SSRKind)
     return BakeResponse__createForSSR(globalObject, this, @intFromEnum(kind));
 }
 
-pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) callconv(jsc.conv) ?*anyopaque {
+pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, bake_ssr_has_jsx: *c_int) callconv(jsc.conv) ?*anyopaque {
     return @as(*Response, constructor(globalObject, callFrame, bake_ssr_has_jsx) catch |err| switch (err) {
         error.JSError => return null,
         error.OutOfMemory => {
@@ -28,23 +28,27 @@ pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObje
     });
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: ?*c_int) bun.JSError!*Response {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: *c_int) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
     // Allow `return new Response(<jsx> ... </jsx>, { ... }`
     // inside of a react component
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
-        bake_ssr_has_jsx.?.* = 0;
+        bake_ssr_has_jsx.* = 0;
         if (try arguments[0].isJSXElement(globalThis)) {
             const vm = globalThis.bunVM();
             if (vm.getDevServerAsyncLocalStorage()) |async_local_storage| {
                 try assertStreamingDisabled(globalThis, async_local_storage, "new Response(<jsx />, { ... })");
             }
-            bake_ssr_has_jsx.?.* = 1;
+            bake_ssr_has_jsx.* = 1;
         }
     }
 
     return Response.constructor(globalThis, callframe);
+}
+
+pub export fn BakeResponseClass__constructRedirect(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
+    return jsc.toJSHostCall(globalObject, @src(), constructRedirect, .{ globalObject, callFrame });
 }
 
 pub fn constructRedirect(

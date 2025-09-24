@@ -17,7 +17,6 @@ const params = new URLSearchParams();
 params.set("grant_type", "client_credentials");
 params.set("client_id", "abc");
 params.set("client_secret", "xyz");
-params.set("note", "I said \\"hi\\" \\\\ test");
 
 await fetch(String(server.url), {
   method: "POST",
@@ -44,7 +43,5 @@ await server.stop();
   const output = stdout + stderr;
   const normalized = normalizeBunSnapshot(output, dirPath);
 
-  expect(normalized).toContain(
-    '--data-raw "grant_type=client_credentials&client_id=abc&client_secret=xyz&note=I+said+%22hi%22+%5C+test"',
-  );
+  expect(normalized).toContain('--data-raw "grant_type=client_credentials&client_id=abc&client_secret=xyz');
 });

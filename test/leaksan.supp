@@ -123,3 +123,13 @@ leak:bun.js.api.bun.udp_socket.UDPSocket.udpSocket
 leak:options.Target.outExtensions
 leak:options.loadersFromTransformOptions
 leak:options.ESMConditions.init
+# test/js/bun/bun-object/write.spec.ts
+leak:bun.js.webcore.blob.read_file.ReadFile.runAsyncWithFD
+# test/cli/run/env.test.ts
+leak:env_loader.Map.createNullDelimitedEnvMap
+leak:cli.run_command.RunCommand.runPackageScriptForeground
+# test/js/bun/globals.test.js
+leak:cli.Arguments.loadConfigPath__anon
+# test/js/bun/globals.test.js
+leak:options.definesFromTransformOptions
+leak:transpiler.Transpiler.init

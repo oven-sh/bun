@@ -9,11 +9,11 @@ const bun = @This();
 pub const Environment = @import("./env.zig");
 
 pub const use_mimalloc = Environment.enable_mimalloc;
-pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
+pub const default_allocator: std.mem.Allocator = (allocators.Default{}).allocator();
 /// Zero-sized type whose `allocator` method returns `default_allocator`.
 pub const DefaultAllocator = allocators.Default;
 /// Zeroing memory allocator
-pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
+pub const z_allocator: std.mem.Allocator = if (use_mimalloc) allocators.z_allocator else std.heap.c_allocator;
 
 pub const default_malloc = if (use_mimalloc) mimalloc.mi_malloc else std.c.malloc;
 pub const default_free = if (use_mimalloc) mimalloc.mi_free else std.c.free;

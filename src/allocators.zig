@@ -917,6 +917,7 @@ pub fn unpackNullable(comptime Allocator: type, allocator: Nullable(Allocator)) 
 pub const Default = struct {
     pub fn allocator(self: Default) std.mem.Allocator {
         _ = self;
+        if (!Environment.enable_mimalloc) return std.heap.c_allocator;
         return c_allocator;
     }
 };

@@ -83,9 +83,11 @@ pub const Snapshots = struct {
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if (bun.detectCI()) |_| {
-            if (!this.update_snapshots) {
-                return error.SnapshotCreationNotAllowedInCI;
+        if (bun.FeatureFlags.breaking_changes_1_3) {
+            if (bun.detectCI()) |_| {
+                if (!this.update_snapshots) {
+                    return error.SnapshotCreationNotAllowedInCI;
+                }
             }
         }
 

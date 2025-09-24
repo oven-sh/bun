@@ -175,7 +175,6 @@ pub const ShellMkdirTask = struct {
 
     err: ?jsc.SystemError = null,
     task: jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
-    ref: bun.Async.KeepAlive = .{},
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
 
@@ -218,13 +217,11 @@ pub const ShellMkdirTask = struct {
 
     pub fn schedule(this: *@This()) void {
         debug("{} schedule", .{this});
-        this.ref.ref(this.event_loop);
         WorkPool.schedule(&this.task);
     }
 
     pub fn runFromMainThread(this: *@This()) void {
         debug("{} runFromJS", .{this});
-        this.ref.unref(this.event_loop);
         this.mkdir.onShellMkdirTaskDone(this);
     }
 

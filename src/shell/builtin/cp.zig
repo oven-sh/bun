@@ -309,7 +309,6 @@ pub const ShellCpTask = struct {
     verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
     task: jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
-    ref: bun.Async.KeepAlive = .{},
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
     err: ?bun.shell.ShellErr = null,
@@ -333,7 +332,6 @@ pub const ShellCpTask = struct {
 
     pub fn schedule(this: *@This()) void {
         debug("schedule", .{});
-        this.ref.ref(this.event_loop);
         WorkPool.schedule(&this.task);
     }
 
@@ -413,7 +411,6 @@ pub const ShellCpTask = struct {
 
     pub fn runFromMainThread(this: *ShellCpTask) void {
         debug("runFromMainThread", .{});
-        this.ref.unref(this.event_loop);
         this.cp.onShellCpTaskDone(this);
     }
 

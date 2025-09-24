@@ -8,7 +8,6 @@
 // - It does not import dependencies, so it's faster to start.
 
 import { spawn, spawnSync } from "node:child_process";
-import { groupEnd } from "node:console";
 import { createHash } from "node:crypto";
 import {
   accessSync,
@@ -686,7 +685,7 @@ async function runTests() {
   }
 
   // tests are all over, close the group from the final test. any further output should print ungrouped.
-  groupEnd();
+  startGroup("End");
 
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);

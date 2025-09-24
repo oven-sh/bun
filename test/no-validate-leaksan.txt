@@ -399,3 +399,4 @@ test/js/third_party/grpc-js/test-channel-credentials.test.ts
 test/js/bun/http/bun-connect-x509.test.ts
 test/js/third_party/rollup-v4/rollup-v4.test.ts
 test/js/web/abort/abort.test.ts
+test/js/third_party/resvg/bbox.test.js

@@ -30,6 +30,10 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
 [ ASAN ] test/js/node/http/node-http-uaf.test.ts [ CRASH ] # should not crash on abort (node-http-uaf-fixture.ts)
+[ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js [ CRASH ]
+[ ASAN ] test/js/node/test/parallel/test-fs-promises-watch.js [ CRASH ]
+[ ASAN ] test/js/node/async_hooks/async-context/async-context-fs-watch.js [ CRASH ]
 
 # Tests failed due to ASAN: unknown-crash
 [ ASAN ] test/js/sql/tls-sql.test.ts [ CRASH ] # After: Throws on illegal transactions

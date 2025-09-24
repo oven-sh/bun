@@ -329,7 +329,7 @@ fn stepGroupOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalOb
                 const this_timeout = exec.timeout;
                 final_status = .{ .execute = .{ .timeout = prev_timeout.minIgnoreEpoch(this_timeout) } };
                 active_count += 1;
-                if (active_count >= concurrent_limit) break;
+                if (concurrent_limit != 0 and active_count >= concurrent_limit) break;
             },
         }
     }

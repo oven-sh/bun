@@ -44,7 +44,10 @@ struct alignas(16) HttpContextData {
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
+    using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
+    
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
@@ -61,9 +64,10 @@ private:
     void *upgradedWebSocket = nullptr;
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;
+    OnSocketDrainCallback onSocketDrain = nullptr;
+    OnSocketDataCallback onSocketData = nullptr;
     OnClientErrorCallback onClientError = nullptr;
 
-    HttpFlags flags;
     uint64_t maxHeaderSize = 0; // 0 means no limit
 
     // TODO: SNI
@@ -73,10 +77,8 @@ private:
         filterHandlers.clear();
     }
 
-    public:
-    bool isAuthorized() const {
-        return flags.isAuthorized;
-    }
+public:
+    HttpFlags flags;
 };
 
 }

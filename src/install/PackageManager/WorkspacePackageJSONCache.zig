@@ -49,12 +49,12 @@ pub fn getWithPath(
         break :brk buf[0..abs_package_json_path.len];
     };
 
-    const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
+    const entry = bun.handleOom(this.map.getOrPut(allocator, path));
     if (entry.found_existing) {
         return .{ .entry = entry.value_ptr };
     }
 
-    const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
+    const key = bun.handleOom(allocator.dupeZ(u8, path));
     entry.key_ptr.* = key;
 
     const source = &(bun.sys.File.toSource(key, allocator, .{}).unwrap() catch |err| {
@@ -85,7 +85,7 @@ pub fn getWithPath(
     };
 
     entry.value_ptr.* = .{
-        .root = json.root.deepClone(bun.default_allocator) catch bun.outOfMemory(),
+        .root = bun.handleOom(json.root.deepClone(bun.default_allocator)),
         .source = source.*,
         .indentation = json.indentation,
     };
@@ -112,7 +112,7 @@ pub fn getWithSource(
         break :brk buf[0..source.path.text.len];
     };
 
-    const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
+    const entry = bun.handleOom(this.map.getOrPut(allocator, path));
     if (entry.found_existing) {
         return .{ .entry = entry.value_ptr };
     }
@@ -138,12 +138,12 @@ pub fn getWithSource(
     };
 
     entry.value_ptr.* = .{
-        .root = json.root.deepClone(allocator) catch bun.outOfMemory(),
+        .root = bun.handleOom(json.root.deepClone(allocator)),
         .source = source.*,
         .indentation = json.indentation,
     };
 
-    entry.key_ptr.* = allocator.dupe(u8, path) catch bun.outOfMemory();
+    entry.key_ptr.* = bun.handleOom(allocator.dupe(u8, path));
 
     return .{ .entry = entry.value_ptr };
 }

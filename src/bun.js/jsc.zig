@@ -32,6 +32,7 @@ pub const JSHostFnZig = host_fn.JSHostFnZig;
 pub const JSHostFnZigWithContext = host_fn.JSHostFnZigWithContext;
 pub const JSHostFunctionTypeWithContext = host_fn.JSHostFunctionTypeWithContext;
 pub const toJSHostFn = host_fn.toJSHostFn;
+pub const toJSHostFnResult = host_fn.toJSHostFnResult;
 pub const toJSHostFnWithContext = host_fn.toJSHostFnWithContext;
 pub const toJSHostCall = host_fn.toJSHostCall;
 pub const fromJSHostCall = host_fn.fromJSHostCall;
@@ -82,6 +83,7 @@ pub const Exception = @import("./bindings/Exception.zig").Exception;
 pub const SourceProvider = @import("./bindings/SourceProvider.zig").SourceProvider;
 pub const CatchScope = @import("./bindings/CatchScope.zig").CatchScope;
 pub const ExceptionValidationScope = @import("./bindings/CatchScope.zig").ExceptionValidationScope;
+pub const MarkedArgumentBuffer = @import("./bindings/MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
 
 // JavaScript-related
 pub const Errorable = @import("./bindings/Errorable.zig").Errorable;

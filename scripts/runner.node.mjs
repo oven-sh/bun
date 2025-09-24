@@ -72,6 +72,7 @@ const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
+const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
@@ -182,6 +183,37 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+let newFiles = [];
+let prFileCount = 0;
+if (isBuildkite) {
+  try {
+    console.log("on buildkite: collecting new files from PR");
+    const per_page = 50;
+    for (let i = 1; i <= 5; i++) {
+      const res = await fetch(
+        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+        {
+          headers: {
+            Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
+          },
+        },
+      );
+      const doc = await res.json();
+      console.log(`-> page ${i}, found ${doc.length} items`);
+      if (doc.length === 0) break;
+      if (doc.length < per_page) break;
+      for (const { filename, status } of doc) {
+        prFileCount += 1;
+        if (status !== "added") continue;
+        newFiles.push(filename);
+      }
+    }
+    console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 let coresDir;
 
 if (options["coredump-upload"]) {
@@ -267,7 +299,7 @@ function getTestExpectations() {
   return expectations;
 }
 
-const skipArray = (() => {
+const skipsForExceptionValidation = (() => {
   const path = join(cwd, "test/no-validate-exceptions.txt");
   if (!existsSync(path)) {
     return [];
@@ -278,13 +310,32 @@ const skipArray = (() => {
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
+const skipsForLeaksan = (() => {
+  const path = join(cwd, "test/no-validate-leaksan.txt");
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .filter(line => !line.startsWith("#") && line.length > 0);
+})();
+
 /**
  * Returns whether we should validate exception checks running the given test
  * @param {string} test
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipArray.includes(test) || skipArray.includes("test/" + test));
+  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+};
+
+/**
+ * Returns whether we should validate exception checks running the given test
+ * @param {string} test
+ * @returns {boolean}
+ */
+const shouldValidateLeakSan = test => {
+  return !(skipsForLeaksan.includes(test) || skipsForLeaksan.includes("test/" + test));
 };
 
 /**
@@ -369,7 +420,9 @@ async function runTests() {
 
   const okResults = [];
   const flakyResults = [];
+  const flakyResultsTitles = [];
   const failedResults = [];
+  const failedResultsTitles = [];
   const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
@@ -405,6 +458,7 @@ async function runTests() {
       if (ok) {
         if (failure) {
           flakyResults.push(failure);
+          flakyResultsTitles.push(title);
         } else {
           okResults.push(result);
         }
@@ -424,6 +478,7 @@ async function runTests() {
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
+        failedResultsTitles.push(title);
         break;
       }
     }
@@ -534,6 +589,13 @@ async function runTests() {
             };
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
               env.BUN_JSC_validateExceptionChecks = "1";
+              env.BUN_JSC_dumpSimulatedThrows = "1";
+            }
+            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+              env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
+              // prettier-ignore
+              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -590,6 +652,15 @@ async function runTests() {
         }
       } else {
         throw new Error(`Unsupported package manager: ${packageManager}`);
+      }
+
+      // build
+      const buildResult = await spawnBun(execPath, {
+        cwd: vendorPath,
+        args: ["run", "build"],
+      });
+      if (!buildResult.ok) {
+        throw new Error(`Failed to build vendor: ${buildResult.error}`);
       }
 
       for (const testPath of testPaths) {
@@ -777,14 +848,14 @@ async function runTests() {
 
     if (failedResults.length) {
       console.log(`${getAnsi("red")}Failing Tests:${getAnsi("reset")}`);
-      for (const { testPath } of failedResults) {
+      for (const testPath of failedResultsTitles) {
         console.log(`${getAnsi("red")}- ${testPath}${getAnsi("reset")}`);
       }
     }
 
     if (flakyResults.length) {
       console.log(`${getAnsi("yellow")}Flaky Tests:${getAnsi("reset")}`);
-      for (const { testPath } of flakyResults) {
+      for (const testPath of flakyResultsTitles) {
         console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
       }
     }
@@ -1062,7 +1133,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
 
-  if (basename(execPath).includes("asan")) {
+  if (basename(execPath).includes("asan") && bunEnv.ASAN_OPTIONS === undefined) {
     bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
   }
 
@@ -1081,6 +1152,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       delete bunEnv[tmpdir];
     }
     bunEnv["TEMP"] = tmpdirPath;
+  }
+  if (timeout === undefined) {
+    timeout = spawnBunTimeout;
   }
   try {
     const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];
@@ -1218,17 +1292,17 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  *
  * @param {string} execPath
  * @param {string} testPath
- * @param {object} [options]
- * @param {string} [options.cwd]
- * @param {string[]} [options.args]
+ * @param {object} [opts]
+ * @param {string} [opts.cwd]
+ * @param {string[]} [opts.args]
  * @returns {Promise<TestResult>}
  */
-async function spawnBunTest(execPath, testPath, options = { cwd }) {
+async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
-  const absPath = join(options["cwd"], testPath);
+  const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
-  const args = options["args"] ?? [];
+  const args = opts["args"] ?? [];
 
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
 
@@ -1257,11 +1331,18 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
+    env.BUN_JSC_dumpSimulatedThrows = "1";
+  }
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
+    env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
+    // prettier-ignore
+    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
-    cwd: options["cwd"],
+    cwd: opts["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env,
     stdout: options.stdout,
@@ -1495,7 +1576,11 @@ function isNodeTest(path) {
     return false;
   }
   const unixPath = path.replaceAll(sep, "/");
-  return unixPath.includes("js/node/test/parallel/") || unixPath.includes("js/node/test/sequential/");
+  return (
+    unixPath.includes("js/node/test/parallel/") ||
+    unixPath.includes("js/node/test/sequential/") ||
+    unixPath.includes("js/bun/test/parallel/")
+  );
 }
 
 /**
@@ -1986,6 +2071,9 @@ function formatTestToMarkdown(result, concise, retries) {
     if (retries > 0) {
       markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
     }
+    if (newFiles.includes(testTitle)) {
+      markdown += ` (new)`;
+    }
 
     if (concise) {
       markdown += "</li>\n";
@@ -2181,7 +2269,7 @@ function getExitCode(outcome) {
   return 1;
 }
 
-// A flaky segfault, sigtrap, or sigill must never be ignored.
+// A flaky segfault, sigtrap, or sigkill must never be ignored.
 // If it happens in CI, it will happen to our users.
 // Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
 function isAlwaysFailure(error) {
@@ -2190,7 +2278,9 @@ function isAlwaysFailure(error) {
     error.includes("segmentation fault") ||
     error.includes("illegal instruction") ||
     error.includes("sigtrap") ||
+    error.includes("sigkill") ||
     error.includes("error: addresssanitizer") ||
+    error.includes("internal assertion failure") ||
     error.includes("core dumped") ||
     error.includes("crash reported")
   );

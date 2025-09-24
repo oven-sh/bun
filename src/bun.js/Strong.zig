@@ -147,5 +147,7 @@ const Impl = opaque {
     extern fn Bun__StrongRef__clear(this: *Impl) void;
 };
 
+pub const Deprecated = @import("./DeprecatedStrong.zig");
+
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -764,7 +764,10 @@ fn NewLexer_(
 
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-            lexer.string_literal_raw_content = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
+            const suffix_len = @as(usize, string_literal_details.suffix_len);
+            const end_pos = if (lexer.end >= suffix_len) lexer.end - suffix_len else lexer.end;
+            const slice_end = @min(lexer.source.contents.len, @max(base, end_pos));
+            lexer.string_literal_raw_content = lexer.source.contents[base..slice_end];
             lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .ascii;
             lexer.string_literal_start = lexer.start;
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and !string_literal_details.needs_decode;
@@ -879,7 +882,7 @@ fn NewLexer_(
                     lexer.step();
 
                     if (lexer.code_point != 'u') {
-                        try lexer.syntaxError();
+                        try lexer.addSyntaxError(lexer.loc().toUsize(), "{any}", .{InvalidEscapeSequenceFormatter{ .code_point = lexer.code_point }});
                     }
                     lexer.step();
                     if (lexer.code_point == '{') {
@@ -2672,7 +2675,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.initCopy(lexer.allocator, text) catch bun.outOfMemory();
+            var bytes = bun.handleOom(MutableString.initCopy(lexer.allocator, text));
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';
@@ -3363,6 +3366,20 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }
+
+const InvalidEscapeSequenceFormatter = struct {
+    code_point: i32,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self.code_point) {
+            '"' => try writer.writeAll("Unexpected escaped double quote '\"'"),
+            '\'' => try writer.writeAll("Unexpected escaped single quote \"'\""),
+            '`' => try writer.writeAll("Unexpected escaped backtick '`'"),
+            '\\' => try writer.writeAll("Unexpected escaped backslash '\\'"),
+            else => try writer.writeAll("Unexpected escape sequence"),
+        }
+    }
+};
 
 const string = []const u8;
 

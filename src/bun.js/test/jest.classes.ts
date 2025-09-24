@@ -151,6 +151,14 @@ export default [
         fn: "printReceived",
         length: 1,
       },
+      EXPECTED_COLOR: {
+        fn: "printExpected",
+        length: 1,
+      },
+      RECEIVED_COLOR: {
+        fn: "printReceived",
+        length: 1,
+      },
       matcherHint: {
         fn: "matcherHint",
         length: 1,
@@ -784,4 +792,75 @@ export default [
       },
     },
   }),
+  define({
+    name: "DoneCallback",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: [],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ScopeFunctions",
+    construct: false,
+    noConstructor: true,
+    forBind: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["each"],
+    configurable: false,
+    klass: {},
+    proto: {
+      skip: {
+        getter: "getSkip",
+        cache: true,
+      },
+      todo: {
+        getter: "getTodo",
+        cache: true,
+      },
+      failing: {
+        getter: "getFailing",
+        cache: true,
+      },
+      concurrent: {
+        getter: "getConcurrent",
+        cache: true,
+      },
+      only: {
+        getter: "getOnly",
+        cache: true,
+      },
+      if: {
+        fn: "fnIf",
+        length: 1,
+      },
+      skipIf: {
+        fn: "fnSkipIf",
+        length: 1,
+      },
+      todoIf: {
+        fn: "fnTodoIf",
+        length: 1,
+      },
+      failingIf: {
+        fn: "fnFailingIf",
+        length: 1,
+      },
+      concurrentIf: {
+        fn: "fnConcurrentIf",
+        length: 1,
+      },
+      each: {
+        fn: "fnEach",
+        length: 1,
+      },
+    },
+  }),
+  // define({
+  //   name: "Jest2",
+  // }),
 ];

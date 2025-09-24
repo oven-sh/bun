@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe, bunEnv, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("--randomize flag randomizes test execution order", async () => {
@@ -7,7 +7,9 @@ test("--randomize flag randomizes test execution order", async () => {
   using dir = tempDir("test-randomize", {});
   const testFile = join(String(dir), "order.test.js");
 
-  await Bun.write(testFile, `
+  await Bun.write(
+    testFile,
+    `
     import { test } from "bun:test";
 
     test("test-01", () => {
@@ -41,7 +43,8 @@ test("--randomize flag randomizes test execution order", async () => {
     test("test-08", () => {
       console.log("test-08");
     });
-  `);
+  `,
+  );
 
   // Run without --randomize to get the default order
   await using defaultProc = Bun.spawn({
@@ -110,7 +113,9 @@ test("--randomize flag works with describe blocks", async () => {
   using dir = tempDir("test-randomize-describe", {});
   const testFile = join(String(dir), "describe.test.js");
 
-  await Bun.write(testFile, `
+  await Bun.write(
+    testFile,
+    `
     import { test, describe } from "bun:test";
 
     describe("Suite-A", () => {
@@ -146,7 +151,8 @@ test("--randomize flag works with describe blocks", async () => {
         console.log("C2");
       });
     });
-  `);
+  `,
+  );
 
   // Run without --randomize
   await using defaultProc = Bun.spawn({
@@ -209,7 +215,9 @@ test("without --randomize flag tests run in consistent order", async () => {
   using dir = tempDir("test-consistent", {});
   const testFile = join(String(dir), "consistent.test.js");
 
-  await Bun.write(testFile, `
+  await Bun.write(
+    testFile,
+    `
     import { test } from "bun:test";
 
     test("test-1", () => { console.log("1"); });
@@ -217,7 +225,8 @@ test("without --randomize flag tests run in consistent order", async () => {
     test("test-3", () => { console.log("3"); });
     test("test-4", () => { console.log("4"); });
     test("test-5", () => { console.log("5"); });
-  `);
+  `,
+  );
 
   const runs = [];
 
@@ -231,11 +240,7 @@ test("without --randomize flag tests run in consistent order", async () => {
       cwd: String(dir),
     });
 
-    const [out, err, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
 

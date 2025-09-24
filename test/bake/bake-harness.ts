@@ -1734,9 +1734,10 @@ function testImpl<T extends DevServerTest>(
           path.join(root, "bun.app.ts"),
           dedent`
             ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
+            ${options.framework === "react" ? `import reactFramework from '${path.join(__dirname, "../../packages/bun-framework-react")}';` : ""}
             export default {
               app: {
-                framework: ${JSON.stringify(options.framework)},
+                framework: ${options.framework === "react" ? "reactFramework" : JSON.stringify(options.framework)},
                 plugins,
               },
             };

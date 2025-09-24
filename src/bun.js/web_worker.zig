@@ -47,11 +47,6 @@ pub const Status = enum(u8) {
     terminated,
 };
 
-extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *anyopaque, i32) void;
-extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
-extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
-extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
-
 export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
     const worker = vm.worker orelse return null;
     return worker.cpp_worker;
@@ -386,7 +381,7 @@ fn flushLogs(this: *WebWorker) void {
         error.OutOfMemory => bun.outOfMemory(),
     };
     defer str.deref();
-    bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
+    bun.jsc.fromJSHostCallGeneric(vm.global, @src(), bun.cpp.WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
         _ = vm.global.reportUncaughtException(vm.global.takeException(e).asException(vm.global.vm()).?);
     };
 }
@@ -433,7 +428,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         bun.outOfMemory();
     };
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
+    bun.cpp.WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();
         worker.parent_poll_ref.unrefConcurrently(worker.parent);
@@ -501,8 +496,8 @@ fn spin(this: *WebWorker) void {
     log("[{d}] event loop start", .{this.execution_context_id});
     // TODO(@190n) call dispatchOnline earlier (basically as soon as spin() starts, before
     // we start running JS)
-    WebWorker__dispatchOnline(this.cpp_worker, vm.global);
-    WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
+    bun.cpp.WebWorker__dispatchOnline(this.cpp_worker, vm.global);
+    bun.cpp.WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
     this.setStatus(.running);
 
     // don't run the GC if we don't actually need to
@@ -604,7 +599,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
     var arena = this.arena;
 
-    WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+    bun.cpp.WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }

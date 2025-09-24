@@ -607,16 +607,10 @@ pub fn constructInternal(
     return constructS3FileInternal(globalObject, path, args.nextEat());
 }
 
-pub fn construct(
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) callconv(jsc.conv) ?*Blob {
+pub fn construct(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) ?*Blob {
     return constructInternal(globalObject, callframe) catch |err| switch (err) {
         error.JSError => null,
-        error.OutOfMemory => {
-            _ = globalObject.throwOutOfMemoryValue();
-            return null;
-        },
+        error.OutOfMemory => globalObject.throwOutOfMemory() catch null,
     };
 }
 pub fn hasInstance(_: jsc.JSValue, _: *jsc.JSGlobalObject, value: jsc.JSValue) callconv(jsc.conv) bool {

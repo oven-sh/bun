@@ -2,7 +2,7 @@ const SavedSourceMap = @This();
 
 /// This is a pointer to the map located on the VirtualMachine struct
 map: *HashTable,
-mutex: bun.Mutex = .{},
+mutex: bun.Mutex,
 
 pub const vlq_offset = 24;
 
@@ -15,12 +15,12 @@ pub fn init(this: *SavedSourceMap, map: *HashTable) void {
     this.map.lockPointers();
 }
 
-pub inline fn lock(map: *SavedSourceMap) void {
+pub fn lock(map: *SavedSourceMap) void {
     map.mutex.lock();
     map.map.unlockPointers();
 }
 
-pub inline fn unlock(map: *SavedSourceMap) void {
+pub fn unlock(map: *SavedSourceMap) void {
     map.map.lockPointers();
     map.mutex.unlock();
 }
@@ -35,7 +35,7 @@ pub const SavedMappings = struct {
         return this.data[vlq_offset..this.len()];
     }
 
-    pub inline fn len(this: SavedMappings) usize {
+    pub fn len(this: SavedMappings) usize {
         return @as(u64, @bitCast(this.data[0..8].*));
     }
 

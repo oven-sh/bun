@@ -1459,7 +1459,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
             const ext_size = @sizeOf(WrappedSocket);
 
-            var handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
+            var handlers_ptr = bun.new(Handlers, undefined);
             handlers.withAsyncContextIfNeeded(globalObject);
             handlers_ptr.* = handlers;
             handlers_ptr.protect();
@@ -1534,7 +1534,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.ref();
             const vm = handlers.vm;
 
-            var raw_handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
+            var raw_handlers_ptr = bun.new(Handlers, undefined);
             raw_handlers_ptr.* = blk: {
                 const this_handlers = this.getHandlers();
                 break :blk .{
@@ -1951,7 +1951,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         return globalObject.throw("Expected \"socket\" option", .{});
     };
 
-    var handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+    const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
 
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
     if (try opts.getTruthy(globalObject, "tls")) |tls| {
@@ -1982,7 +1982,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 
     const is_server = false; // A duplex socket is always handled as a client
 
-    var handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
+    var handlers_ptr = bun.new(Handlers, undefined);
     handlers_ptr.* = handlers;
     handlers_ptr.is_server = is_server;
     handlers_ptr.withAsyncContextIfNeeded(globalObject);

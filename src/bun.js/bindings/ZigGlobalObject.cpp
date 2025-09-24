@@ -933,7 +933,7 @@ extern "C" size_t Bun__reported_memory_size;
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
@@ -1118,7 +1118,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 
-extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0)
+extern "C" [[ZIG_EXPORT(nothrow)]] void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0)
 {
     if (JSC::JSObject* loader = JSC::jsDynamicCast<JSC::JSObject*>(arg0->moduleLoader())) {
         JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
@@ -1133,8 +1133,7 @@ extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* ar
     return nullptr;
 }
 
-extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject* globalObject,
-    void* map_ptr)
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject* globalObject, void* map_ptr)
 {
     if (map_ptr == nullptr)
         return false;
@@ -2216,7 +2215,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
     return 0;
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2278,12 +2277,12 @@ static inline JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBufferBo
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(promise));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     return ZigGlobalObject__readableStreamToArrayBufferBody(static_cast<Zig::GlobalObject*>(globalObject), readableStreamValue);
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2322,7 +2321,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::Globa
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(promise));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2342,7 +2341,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::Global
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue, JSC::EncodedJSValue contentTypeValue)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue, JSC::EncodedJSValue contentTypeValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2363,7 +2362,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::Gl
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2383,7 +2382,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::Global
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -2403,7 +2402,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::Global
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
 {
     return globalObject->makeNapiEnvForFFI();
 }
@@ -3982,7 +3981,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
-extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
+extern "C" [[ZIG_EXPORT(nothrow)]] bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -3994,14 +3993,14 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     return false;
 }
 
-extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     vm.ensureTerminationException();
     vm.setHasTerminationRequest();
 }
 
-extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     // Clear the request for the termination exception to be thrown
@@ -4137,7 +4136,7 @@ void GlobalObject::reload()
     }
 }
 
-extern "C" void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     globalObject->reload();
@@ -4640,7 +4639,7 @@ bool GlobalObject::untrackFFIFunction(JSC::JSFunction* function)
     });
 }
 
-extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     if (vm.entryScope) {

@@ -48,13 +48,12 @@ pub const ZigString = extern struct {
         }
     }
 
-    extern fn ZigString__toValueGC(arg0: *const ZigString, arg1: *JSGlobalObject) jsc.JSValue;
     pub fn toJS(this: *const ZigString, ctx: *jsc.JSGlobalObject) JSValue {
         if (this.isGloballyAllocated()) {
             return this.toExternalValue(ctx);
         }
 
-        return ZigString__toValueGC(this, ctx);
+        return bun.cpp.ZigString__toValueGC(this, ctx);
     }
 
     /// This function is not optimized!
@@ -138,11 +137,9 @@ pub const ZigString = extern struct {
         return strings.isAllASCII(this.slice());
     }
 
-    extern fn ZigString__toJSONObject(this: *const ZigString, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue;
-
     pub fn toJSONObject(this: ZigString, globalThis: *jsc.JSGlobalObject) JSValue {
         jsc.markBinding(@src());
-        return ZigString__toJSONObject(&this, globalThis);
+        return bun.cpp.ZigString__toJSONObject(&this, globalThis);
     }
 
     extern fn BunString__toURL(this: *const ZigString, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue;
@@ -457,6 +454,12 @@ pub const ZigString = extern struct {
         return ZigString{ ._unsafe_ptr_do_not_use = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn initGlobal(slice_: []const u8) ZigString {
+        var out = init(slice_);
+        out.markGlobal();
+        return out;
+    }
+
     pub fn initUTF8(slice_: []const u8) ZigString {
         var out = init(slice_);
         out.markUTF8();
@@ -494,9 +497,8 @@ pub const ZigString = extern struct {
         return GithubActionFormatter{ .text = this };
     }
 
-    extern fn ZigString__toAtomicValue(this: *const ZigString, globalThis: *jsc.JSGlobalObject) JSValue;
     pub fn toAtomicValue(this: *const ZigString, globalThis: *jsc.JSGlobalObject) JSValue {
-        return ZigString__toAtomicValue(this, globalThis);
+        return bun.cpp.ZigString__toAtomicValue(this, globalThis);
     }
 
     pub fn initUTF16(items: []const u16) ZigString {
@@ -542,14 +544,13 @@ pub const ZigString = extern struct {
         }
     }
 
-    extern fn ZigString__toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue;
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
             global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
-        return ZigString__toExternalU16(ptr, len, global);
+        return bun.cpp.ZigString__toExternalU16(ptr, len, global);
     }
 
     pub fn isUTF8(this: ZigString) bool {
@@ -736,25 +737,14 @@ pub const ZigString = extern struct {
         return bun.cpp.ZigString__toExternalValue(this, global);
     }
 
-    extern fn ZigString__toExternalValueWithCallback(
-        this: *const ZigString,
-        global: *JSGlobalObject,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
-    ) JSValue;
     pub fn toExternalValueWithCallback(
         this: *const ZigString,
         global: *JSGlobalObject,
         callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
     ) JSValue {
-        return ZigString__toExternalValueWithCallback(this, global, callback);
+        return bun.cpp.ZigString__toExternalValueWithCallback(this, global, callback);
     }
 
-    extern fn ZigString__external(
-        this: *const ZigString,
-        global: *JSGlobalObject,
-        ctx: ?*anyopaque,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
-    ) JSValue;
     pub fn external(
         this: *const ZigString,
         global: *JSGlobalObject,
@@ -767,13 +757,12 @@ pub const ZigString = extern struct {
             return .zero;
         }
 
-        return ZigString__external(this, global, ctx, callback);
+        return bun.cpp.ZigString__external(this, global, ctx, callback);
     }
 
-    extern fn ZigString__to16BitValue(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn to16BitValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         this.assertGlobal();
-        return ZigString__to16BitValue(this, global);
+        return bun.cpp.ZigString__to16BitValue(this, global);
     }
 
     pub fn withEncoding(this: *const ZigString) ZigString {
@@ -793,29 +782,24 @@ pub const ZigString = extern struct {
             C_API.JSStringCreateStatic(untagged(this._unsafe_ptr_do_not_use), this.len);
     }
 
-    extern fn ZigString__toErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn toErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
-        return ZigString__toErrorInstance(this, global);
+        return bun.cpp.ZigString__toErrorInstance(this, global);
     }
 
-    extern fn ZigString__toTypeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn toTypeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
-        return ZigString__toTypeErrorInstance(this, global);
+        return bun.cpp.ZigString__toTypeErrorInstance(this, global);
     }
 
-    extern fn ZigString__toDOMExceptionInstance(this: *const ZigString, global: *JSGlobalObject, code: u8) JSValue;
     pub fn toDOMExceptionInstance(this: *const ZigString, global: *JSGlobalObject, code: jsc.WebCore.DOMExceptionCode) JSValue {
-        return ZigString__toDOMExceptionInstance(this, global, @intFromEnum(code));
+        return bun.cpp.ZigString__toDOMExceptionInstance(this, global, code);
     }
 
-    extern fn ZigString__toSyntaxErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn toSyntaxErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
-        return ZigString__toSyntaxErrorInstance(this, global);
+        return bun.cpp.ZigString__toSyntaxErrorInstance(this, global);
     }
 
-    extern fn ZigString__toRangeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn toRangeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
-        return ZigString__toRangeErrorInstance(this, global);
+        return bun.cpp.ZigString__toRangeErrorInstance(this, global);
     }
 };
 

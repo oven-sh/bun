@@ -1716,10 +1716,7 @@ fn writeBytesToFileFast(
 export fn JSDOMFile__construct(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) ?*Blob {
     return JSDOMFile__construct_(globalThis, callframe) catch |err| switch (err) {
         error.JSError => null,
-        error.OutOfMemory => {
-            globalThis.throwOutOfMemory() catch {};
-            return null;
-        },
+        error.OutOfMemory => globalThis.throwOutOfMemory() catch null,
     };
 }
 pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Blob {

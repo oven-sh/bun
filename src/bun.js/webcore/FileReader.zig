@@ -351,6 +351,14 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
             else => @panic("Invalid state"),
         }
     } else if (this.pending.state == .pending) {
+        // Certain readers (such as pipes) may return 0-byte reads even when
+        // not at EOF. Consequently, we need to check whether the reader is
+        // actually done or not.
+        if (buf.len == 0 and state == .drained) {
+            // If the reader is not done, we still want to keep reading.
+            return true;
+        }
+
         defer {
             this.pending_value.clearWithoutDeallocation();
             this.pending_view = &.{};
@@ -358,14 +366,6 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         }
 
         if (buf.len == 0) {
-            // Certain readers (such as pipes) may return 0-byte reads even when
-            // not at EOF. Consequently, we need to check whether the reader is
-            // actually done or not.
-            if (state == .drained) {
-                // If the reader is not done, we still want to keep reading.
-                return true;
-            }
-
             if (this.buffered.items.len == 0) {
                 this.buffered.clearAndFree(bun.default_allocator);
                 this.buffered = reader_buffer.moveToUnmanaged();

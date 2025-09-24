@@ -145,7 +145,7 @@ pub const UV_VERSION_H = "";
 pub const UV_VERSION_MAJOR = @as(c_int, 1);
 pub const UV_VERSION_MINOR = @as(c_int, 51);
 pub const UV_VERSION_PATCH = @as(c_int, 0);
-pub const UV_VERSION_IS_RELEASE = @as(c_int, 0);
+pub const UV_VERSION_IS_RELEASE = @as(c_int, 1);
 pub const UV_VERSION_SUFFIX = "";
 pub const UV_VERSION_HEX = ((UV_VERSION_MAJOR << @as(c_int, 16)) | (UV_VERSION_MINOR << @as(c_int, 8))) | UV_VERSION_PATCH;
 

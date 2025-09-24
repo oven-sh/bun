@@ -4,7 +4,7 @@ This example demonstrates how to use the `concurrentTestGlob` option to selectiv
 
 ## Project Structure
 
-```
+```text
 my-project/
 ├── bunfig.toml
 ├── tests/
@@ -84,6 +84,7 @@ test("fetch comments", async () => {
 bun test
 
 # Override: Force ALL tests to run concurrently
+# Note: This overrides bunfig.toml and runs all tests concurrently, regardless of glob
 bun test --concurrent
 
 # Run only unit tests (sequential)
@@ -116,7 +117,8 @@ To migrate existing tests to concurrent execution:
 - Use descriptive prefixes: `concurrent-`, `parallel-`, `async-`
 - Keep related sequential tests together
 - Document why certain tests must remain sequential
-- Use `test.concurrent()` within files for fine-grained control
+- Use `test.concurrent()` for fine-grained control in sequential files
+  (In files matched by `concurrentTestGlob`, plain `test()` already runs concurrently)
 - Consider separate globs for different test types:
 
 ```toml

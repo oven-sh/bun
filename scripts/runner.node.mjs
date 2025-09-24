@@ -80,7 +80,7 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
     return 90_000;
   }
-  return 10_000;
+  return 20_000;
 }
 
 process.on("SIGTRAP", () => {

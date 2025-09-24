@@ -50,7 +50,10 @@ pub fn initDefault(comptime T: type) T {
 fn exemptedFromDeinit(comptime T: type) bool {
     return switch (T) {
         std.mem.Allocator => true,
-        else => false,
+        else => {
+            _ = T.deinit; // no deinit method? add one, set to void, or add an exemption
+            return false;
+        };
     };
 }
 
@@ -93,13 +96,13 @@ pub fn deinit(ptr_or_slice: anytype) void {
     switch (comptime ptr_info.pointer.size) {
         .one => {
             if (comptime should_call_deinit) {
-                ptr_or_slice.deinit(); // no deinit method? add one, set to void, or add exemption
+                ptr_or_slice.deinit();
             }
             if (comptime mutable) ptr_or_slice.* = undefined;
         },
         .slice => for (ptr_or_slice) |*elem| {
             if (comptime should_call_deinit) {
-                elem.deinit(); // no deinit method? add one, set to void, or add exemption
+                elem.deinit();
             }
             if (comptime mutable) elem.* = undefined;
         },

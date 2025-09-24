@@ -351,13 +351,13 @@ pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
 pub fn resolveMapping(
     this: *SavedSourceMap,
     path: []const u8,
-    line: i32,
-    column: i32,
+    line: bun.Ordinal,
+    column: bun.Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
     const parse = this.getWithContent(path, switch (source_handling) {
         .no_source_contents => .mappings_only,
-        .source_contents => .{ .all = .{ .line = line, .column = column } },
+        .source_contents => .{ .all = .{ .line = @max(line.zeroBased(), 0), .column = @max(column.zeroBased(), 0) } },
     });
     const map = parse.map orelse return null;
 

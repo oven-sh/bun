@@ -33,11 +33,11 @@ static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugInfo);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugStack);
 static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugTask);
 
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*);
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructRedirect(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructRedirect(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 
 bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
@@ -76,7 +76,7 @@ extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JS
     return isJSXElement(JSValue0, globalObject);
 }
 
-extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Response__createForSSR(Zig::GlobalObject* globalObject, void* ptr, uint8_t kind)
+extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponse__createForSSR(Zig::GlobalObject* globalObject, void* ptr, uint8_t kind)
 {
     Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
 
@@ -101,8 +101,8 @@ static const HashTableValue JSBakeResponseConstructorTableValues[] = {
     { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructError, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructJSON, 0 } },
 
-    { "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructRedirect, 0 } },
-    { "render"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructRender, 0 } }
+    { "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BakeResponseClass__constructRedirect, 0 } },
+    { "render"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BakeResponseClass__constructRender, 0 } }
 
 };
 
@@ -213,7 +213,7 @@ public:
         JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
         int arg_was_jsx = 0;
-        void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, &arg_was_jsx);
+        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, &arg_was_jsx);
         if (scope.exception()) [[unlikely]] {
             ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());
@@ -243,7 +243,7 @@ public:
         Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
         JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
 
-        void* ptr = ResponseClass__constructForSSR(globalObject, callFrame, nullptr);
+        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, nullptr);
         if (scope.exception()) [[unlikely]] {
             ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
             return JSValue::encode(JSC::jsUndefined());

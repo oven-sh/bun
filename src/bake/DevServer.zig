@@ -168,6 +168,11 @@ plugin_state: enum {
 /// There is only ever one bundle executing at the same time, since all bundles
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
+///
+/// The current bundle may include *multiple* routes, this is done by adding the
+/// routes to `next_bundle.route_queue`. Inside of
+/// `startNextBundleIfPresent(...)` we add all the entrypoints for all the
+/// routes.
 current_bundle: ?struct {
     bv2: *BundleV2,
     /// Information BundleV2 needs to finalize the bundle
@@ -960,88 +965,96 @@ fn ensureRouteIsBundled(
 ) bun.JSError!void {
     assert(dev.magic == .valid);
     assert(dev.server != null);
-    sw: switch (dev.routeBundlePtr(route_bundle_index).server_state) {
+    const state = dev.routeBundlePtr(route_bundle_index).server_state;
+    sw: switch (state) {
         .unqueued => {
+            // We already are bundling something, defer the request
             if (dev.current_bundle != null) {
                 try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
-                dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
                 try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
-            } else {
-                // If plugins are not yet loaded, prepare them.
-                // In the case plugins are set to &.{}, this will not hit `.pending`.
-                plugin: switch (dev.plugin_state) {
-                    .unknown => if (dev.bundler_options.plugin != null) {
-                        // Framework-provided plugin is likely going to be phased out later
-                        dev.plugin_state = .loaded;
-                    } else {
-                        // TODO: implement a proper solution here
-                        dev.has_tailwind_plugin_hack = if (dev.vm.transpiler.options.serve_plugins) |serve_plugins|
-                            for (serve_plugins) |plugin| {
-                                if (bun.strings.includes(plugin, "tailwind")) break .empty;
-                            } else null
-                        else
-                            null;
-
-                        switch (dev.server.?.getOrLoadPlugins(.{ .dev_server = dev })) {
-                            .pending => {
-                                dev.plugin_state = .pending;
-                                continue :plugin .pending;
-                            },
-                            .err => {
-                                dev.plugin_state = .err;
-                                continue :plugin .err;
-                            },
-                            .ready => |ready| {
-                                dev.plugin_state = .loaded;
-                                dev.bundler_options.plugin = ready;
-                            },
-                        }
-                    },
-                    .pending => {
-                        try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
-                        dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
-                        try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
-                        return;
-                    },
-                    .err => {
-                        // TODO: render plugin error page
-                        resp.end("Plugin Error", false);
-                        return;
-                    },
-                    .loaded => {},
-                }
-
-                // Prepare a bundle with just this route.
-                var sfa = std.heap.stackFallback(4096, dev.allocator());
-                const temp_alloc = sfa.get();
-
-                var entry_points: EntryPointList = .empty;
-                defer entry_points.deinit(temp_alloc);
-                try dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index);
-
-                // If all files were already bundled (possible with layouts),
-                // then no entry points will be queued up here. That does
-                // not mean the route is ready for presentation.
-                if (entry_points.set.count() == 0) {
-                    if (dev.bundling_failures.count() > 0) {
-                        dev.routeBundlePtr(route_bundle_index).server_state = .possible_bundling_failures;
-                        continue :sw .possible_bundling_failures;
-                    } else {
-                        dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
-                        continue :sw .loaded;
-                    }
-                }
-
-                try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
-
-                dev.startAsyncBundle(
-                    entry_points,
-                    false,
-                    std.time.Timer.start() catch @panic("timers unsupported"),
-                ) catch |err| bun.handleOom(err);
+                dev.routeBundlePtr(route_bundle_index).server_state = .deferred_to_next_bundle;
+                return;
             }
 
+            // No current bundle, we'll create a bundle with just this route, but first:
+            // If plugins are not yet loaded, prepare them.
+            // In the case plugins are set to &.{}, this will not hit `.pending`.
+            plugin: switch (dev.plugin_state) {
+                .unknown => if (dev.bundler_options.plugin != null) {
+                    // Framework-provided plugin is likely going to be phased out later
+                    dev.plugin_state = .loaded;
+                } else {
+                    // TODO: implement a proper solution here
+                    dev.has_tailwind_plugin_hack = if (dev.vm.transpiler.options.serve_plugins) |serve_plugins|
+                        for (serve_plugins) |plugin| {
+                            if (bun.strings.includes(plugin, "tailwind")) break .empty;
+                        } else null
+                    else
+                        null;
+
+                    switch (dev.server.?.getOrLoadPlugins(.{ .dev_server = dev })) {
+                        .pending => {
+                            dev.plugin_state = .pending;
+                            continue :plugin .pending;
+                        },
+                        .err => {
+                            dev.plugin_state = .err;
+                            continue :plugin .err;
+                        },
+                        .ready => |ready| {
+                            dev.plugin_state = .loaded;
+                            dev.bundler_options.plugin = ready;
+                        },
+                    }
+                },
+                .pending => {
+                    try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
+                    try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
+                    dev.routeBundlePtr(route_bundle_index).server_state = .deferred_to_next_bundle;
+                    return;
+                },
+                .err => {
+                    // TODO: render plugin error page
+                    resp.end("Plugin Error", false);
+                    return;
+                },
+                .loaded => {},
+            }
+
+            // Prepare a bundle with just this route.
+            var sfa = std.heap.stackFallback(4096, dev.allocator());
+            const temp_alloc = sfa.get();
+
+            var entry_points: EntryPointList = .empty;
+            defer entry_points.deinit(temp_alloc);
+            try dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index);
+
+            // If all files were already bundled (possible with layouts),
+            // then no entry points will be queued up here. That does
+            // not mean the route is ready for presentation.
+            if (entry_points.set.count() == 0) {
+                if (dev.bundling_failures.count() > 0) {
+                    dev.routeBundlePtr(route_bundle_index).server_state = .possible_bundling_failures;
+                    continue :sw .possible_bundling_failures;
+                } else {
+                    dev.routeBundlePtr(route_bundle_index).server_state = .loaded;
+                    continue :sw .loaded;
+                }
+            }
+
+            try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
+            try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
             dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
+
+            dev.startAsyncBundle(
+                entry_points,
+                false,
+                std.time.Timer.start() catch @panic("timers unsupported"),
+            ) catch |err| bun.handleOom(err);
+        },
+        .deferred_to_next_bundle => {
+            bun.assert(dev.next_bundle.route_queue.get(route_bundle_index) != null);
+            try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
         },
         .bundling => {
             bun.assert(dev.current_bundle != null);
@@ -1086,6 +1099,13 @@ const ReqOrSaved = union(enum) {
             .saved => |saved| saved.request.method,
         };
     }
+
+    pub fn url(this: *const @This(), alloc: Allocator) bun.ZigString.Slice {
+        return switch (this.*) {
+            .req => |req| bun.ZigString.Slice.fromUTF8NeverFree(req.url()),
+            .saved => |saved| saved.request.url.toUTF8(alloc),
+        };
+    }
 };
 
 fn deferRequest(
@@ -1102,7 +1122,6 @@ fn deferRequest(
     deferred.data = .{
         .route_bundle_index = route_bundle_index,
         .dev = dev,
-        .ref_count = .init(),
         .handler = switch (kind) {
             .bundled_html_page => brk: {
                 resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
@@ -1116,14 +1135,28 @@ fn deferRequest(
                     },
                     .saved => |saved| saved,
                 };
-                server_handler.ctx.setAdditionalOnAbortCallback(.{ .cb = DeferredRequest.onAbortWrapper, .data = &deferred.data });
+                server_handler.ctx.ref();
+                server_handler.ctx.setAdditionalOnAbortCallback(.{
+                    .cb = DeferredRequest.onAbortWrapper,
+                    .data = &deferred.data,
+                    .deref_fn = struct {
+                        fn deref_fn(ptr: *anyopaque) void {
+                            var self: *DeferredRequest = @ptrCast(@alignCast(ptr));
+                            self.weakDeref();
+                        }
+                    }.deref_fn,
+                });
                 break :brk .{
                     .server_handler = server_handler,
                 };
             },
         },
     };
-    deferred.data.ref();
+
+    if (deferred.data.handler == .server_handler) {
+        deferred.data.weakRef();
+    }
+
     requests_array.prepend(deferred);
 }
 
@@ -1555,24 +1588,45 @@ pub const DeferredRequest = struct {
     pub const List = std.SinglyLinkedList(DeferredRequest);
     pub const Node = List.Node;
 
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinitImpl, .{
-        .debug_name = "DeferredRequest",
-    });
-
     const debugLog = bun.Output.Scoped("DlogeferredRequest", .hidden).log;
 
     route_bundle_index: RouteBundle.Index,
     handler: Handler,
     dev: *DevServer,
 
-    /// This struct can have at most 2 references it:
-    /// - The dev server (`dev.current_bundle.requests`)
-    /// - uws.Response as a user data pointer
-    ref_count: RefCount,
+    /// This struct can be referenced by the dev server (`dev.current_bundle.requests`)
+    ///
+    /// Simultaneously, RequestContext may refer to it for AdditionalOnAbortCallback,
+    /// but we treat this as a weak reference, otherwise we will have reference
+    /// count cycles as this struct itself may store a reference to
+    /// RequestContext in the `server_handler` variant of `Handler`
+    referenced_by_devserver: bool = true,
+    weakly_referenced_by_requestcontext: bool = false,
 
-    // expose `ref` and `deref` as public methods
-    pub const ref = RefCount.ref;
-    pub const deref = RefCount.deref;
+    pub fn isAlive(this: *DeferredRequest) bool {
+        return this.referenced_by_devserver;
+    }
+
+    pub fn deref(this: *DeferredRequest) void {
+        this.referenced_by_devserver = false;
+        const should_free = !this.weakly_referenced_by_requestcontext;
+        this.__deinit();
+        if (should_free) {
+            this.__free();
+        }
+    }
+
+    pub fn weakRef(this: *DeferredRequest) void {
+        bun.assert(!this.weakly_referenced_by_requestcontext);
+        this.weakly_referenced_by_requestcontext = true;
+    }
+
+    pub fn weakDeref(this: *DeferredRequest) void {
+        this.weakly_referenced_by_requestcontext = false;
+        if (!this.referenced_by_devserver) {
+            this.__free();
+        }
+    }
 
     const Handler = union(enum) {
         /// For a .framework route. This says to call and render the page.
@@ -1594,6 +1648,7 @@ pub const DeferredRequest = struct {
 
     fn onAbortWrapper(this: *anyopaque) void {
         const self: *DeferredRequest = @alignCast(@ptrCast(this));
+        if (!self.isAlive()) return;
         self.onAbortImpl();
     }
 
@@ -1608,16 +1663,19 @@ pub const DeferredRequest = struct {
         assert(this.handler == .aborted);
     }
 
+    /// Actually free the underlying allocation for the node, does not deinitialize children
+    fn __free(this: *DeferredRequest) void {
+        this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
+    }
+
     /// *WARNING*: Do not call this directly, instead call `.deref()`
     ///
     /// Calling this is only required if the desired handler is going to be avoided,
     /// such as for bundling failures or aborting the server.
     /// Does not free the underlying `DeferredRequest.Node`
-    fn deinitImpl(this: *DeferredRequest) void {
+    fn __deinit(this: *DeferredRequest) void {
         debugLog("DeferredRequest(0x{x}) deinitImpl", .{@intFromPtr(this)});
-        this.ref_count.assertNoRefs();
 
-        defer this.dev.deferred_request_pool.put(@fieldParentPtr("data", this));
         switch (this.handler) {
             .server_handler => |*saved| saved.deinit(),
             .bundled_html_page, .aborted => {},
@@ -1719,6 +1777,7 @@ pub fn startAsyncBundle(
         .resolution_failure_entries = .{},
     };
     dev.next_bundle.requests = .{};
+    dev.next_bundle.route_queue.clearRetainingCapacity();
 }
 
 pub fn prepareAndLogResolutionFailures(dev: *DevServer) !void {
@@ -3723,30 +3782,6 @@ const c = struct {
         return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, separate_ssr_graph });
     }
 };
-
-/// Called on DevServer thread via HotReloadTask
-pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
-    defer event.files.clearRetainingCapacity();
-
-    var sfb = std.heap.stackFallback(4096, dev.allocator());
-    const temp_alloc = sfb.get();
-    var entry_points: EntryPointList = EntryPointList.empty;
-    defer entry_points.deinit(temp_alloc);
-
-    event.processFileList(dev, &entry_points, temp_alloc);
-    if (entry_points.set.count() == 0) {
-        return;
-    }
-
-    dev.startAsyncBundle(
-        entry_points,
-        true,
-        event.timer,
-    ) catch |err| {
-        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-        return;
-    };
-}
 
 fn markAllRouteChildren(router: *FrameworkRouter, comptime n: comptime_int, bits: [n]*DynamicBitSetUnmanaged, route_index: Route.Index) void {
     var next = router.routePtr(route_index).first_child.unwrap();

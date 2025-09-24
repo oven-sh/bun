@@ -243,6 +243,28 @@ pub fn onAbort(self: AnyRequestContext, response: uws.AnyResponse) void {
     }
 }
 
+pub fn ref(self: AnyRequestContext) void {
+    if (self.tagged_pointer.isNull()) {
+        return;
+    }
+
+    switch (self.tagged_pointer.tag()) {
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+            self.tagged_pointer.as(HTTPServer.RequestContext).ref();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+            self.tagged_pointer.as(HTTPSServer.RequestContext).ref();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+            self.tagged_pointer.as(DebugHTTPServer.RequestContext).ref();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).ref();
+        },
+        else => @panic("Unexpected AnyRequestContext tag"),
+    }
+}
+
 pub fn deref(self: AnyRequestContext) void {
     if (self.tagged_pointer.isNull()) {
         return;

@@ -224,3 +224,137 @@ devTest("Response.redirect() when streaming = true should error", {
     expect(text.toLowerCase()).toContain("error");
   },
 });
+
+// Test case 9: Concurrent requests with different Response options (AsyncLocalStorage isolation)
+devTest("concurrent requests maintain isolated Response options via AsyncLocalStorage", {
+  framework: "react",
+  files: {
+    "pages/request-a.tsx": `
+      export const streaming = false;
+      export const mode = "ssr";
+
+      export default async function RequestA() {
+        // Simulate some async work to increase chance of overlapping
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        return new Response(<h1>Request A</h1>, {
+          status: 201,
+          headers: {
+            "X-Request-Id": "request-a",
+            "X-Custom-A": "value-a"
+          }
+        });
+      }
+    `,
+    "pages/request-b.tsx": `
+      export const streaming = false;
+      export const mode = "ssr";
+
+      export default async function RequestB() {
+        // Different timing to create overlapping requests
+        await new Promise(resolve => setTimeout(resolve, 5));
+
+        return new Response(<h2>Request B</h2>, {
+          status: 202,
+          headers: {
+            "X-Request-Id": "request-b",
+            "X-Custom-B": "value-b"
+          }
+        });
+      }
+    `,
+    "pages/request-c.tsx": `
+      export const streaming = false;
+      export const mode = "ssr";
+
+      export default async function RequestC() {
+        // No delay for this one
+        return new Response(<h3>Request C</h3>, {
+          status: 203,
+          headers: {
+            "X-Request-Id": "request-c",
+            "X-Custom-C": "value-c"
+          }
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    // Launch multiple concurrent requests
+    const promises: Promise<any>[] = [];
+    const requestCount = 10; // Multiple iterations to increase chance of catching issues
+
+    for (let i = 0; i < requestCount; i++) {
+      // Interleave different request types
+      promises.push(
+        dev.fetch("/request-a").then(async res => ({
+          path: "/request-a",
+          status: res.status,
+          headers: {
+            requestId: res.headers.get("X-Request-Id"),
+            customA: res.headers.get("X-Custom-A"),
+            customB: res.headers.get("X-Custom-B"),
+            customC: res.headers.get("X-Custom-C"),
+          },
+          text: await res.text(),
+        })),
+      );
+
+      promises.push(
+        dev.fetch("/request-b").then(async res => ({
+          path: "/request-b",
+          status: res.status,
+          headers: {
+            requestId: res.headers.get("X-Request-Id"),
+            customA: res.headers.get("X-Custom-A"),
+            customB: res.headers.get("X-Custom-B"),
+            customC: res.headers.get("X-Custom-C"),
+          },
+          text: await res.text(),
+        })),
+      );
+
+      promises.push(
+        dev.fetch("/request-c").then(async res => ({
+          path: "/request-c",
+          status: res.status,
+          headers: {
+            requestId: res.headers.get("X-Request-Id"),
+            customA: res.headers.get("X-Custom-A"),
+            customB: res.headers.get("X-Custom-B"),
+            customC: res.headers.get("X-Custom-C"),
+          },
+          text: await res.text(),
+        })),
+      );
+    }
+
+    const results = await Promise.all(promises);
+
+    // Verify each request maintained its own isolated Response options
+    for (const result of results) {
+      if (result.path === "/request-a") {
+        expect(result.status).toBe(201);
+        expect(result.headers.requestId).toBe("request-a");
+        expect(result.headers.customA).toBe("value-a");
+        expect(result.headers.customB).toBeNull(); // Should not leak from request-b
+        expect(result.headers.customC).toBeNull(); // Should not leak from request-c
+        expect(result.text).toContain("<h1>Request A</h1>");
+      } else if (result.path === "/request-b") {
+        expect(result.status).toBe(202);
+        expect(result.headers.requestId).toBe("request-b");
+        expect(result.headers.customA).toBeNull(); // Should not leak from request-a
+        expect(result.headers.customB).toBe("value-b");
+        expect(result.headers.customC).toBeNull(); // Should not leak from request-c
+        expect(result.text).toContain("<h2>Request B</h2>");
+      } else if (result.path === "/request-c") {
+        expect(result.status).toBe(203);
+        expect(result.headers.requestId).toBe("request-c");
+        expect(result.headers.customA).toBeNull(); // Should not leak from request-a
+        expect(result.headers.customB).toBeNull(); // Should not leak from request-b
+        expect(result.headers.customC).toBe("value-c");
+        expect(result.text).toContain("<h3>Request C</h3>");
+      }
+    }
+  },
+});

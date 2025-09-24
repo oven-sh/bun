@@ -283,7 +283,7 @@ pub fn NewParser_(
         jsx_imports: JSXImport.Symbols = .{},
 
         /// only applicable when `.options.features.react_fast_refresh` is set.
-        /// populated befora visit pass starts.
+        /// populated before visit pass starts.
         react_refresh: ReactRefresh = .{},
 
         /// only applicable when `.options.features.server_components` is
@@ -2173,19 +2173,17 @@ pub fn NewParser_(
             switch (p.options.features.server_components) {
                 .none, .client_side => {},
                 else => {
-                    p.response_ref = try p.declareGeneratedSymbol(.class, "Response");
-                    if (p.options.features.hot_module_reloading) {
-                        p.bun_app_namespace_ref = try p.newSymbol(
-                            .other,
-                            "import_bun_app",
-                        );
-                        const symbol = &p.symbols.items[p.response_ref.inner_index];
-                        symbol.namespace_alias = .{
-                            .namespace_ref = p.bun_app_namespace_ref,
-                            .alias = "Response",
-                            .import_record_index = std.math.maxInt(u32),
-                        };
-                    }
+                    p.response_ref = try p.declareGeneratedSymbol(.import, "Response");
+                    p.bun_app_namespace_ref = try p.newSymbol(
+                        .other,
+                        "import_bun_app",
+                    );
+                    const symbol = &p.symbols.items[p.response_ref.inner_index];
+                    symbol.namespace_alias = .{
+                        .namespace_ref = p.bun_app_namespace_ref,
+                        .alias = "Response",
+                        .import_record_index = std.math.maxInt(u32),
+                    };
                 },
             }
 

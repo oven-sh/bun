@@ -203,41 +203,25 @@ pub const Entry = struct {
     fn encodeSourceMapPath(
         side: bake.Side,
         utf8_input: []const u8,
-        writer: *std.ArrayList(u8),
+        array_list: *std.ArrayList(u8),
     ) error{ OutOfMemory, IncompleteUTF8 }!void {
         // On the client, percent encode everything so it works in the browser
         if (side == .client) {
-            return bun.strings.percentEncodeWrite(utf8_input, writer);
+            return bun.strings.percentEncodeWrite(utf8_input, array_list);
         }
 
-        // On the server, escape special characters for JSON
-        var remaining = utf8_input;
-        while (remaining.len > 0) {
-            if (bun.strings.indexOfAny(remaining, "\"\\\n\r\t")) |index| {
-                // Write everything before the special character
-                if (index > 0) {
-                    try writer.appendSlice(remaining[0..index]);
-                }
-                // Write the escaped character
-                switch (remaining[index]) {
-                    '"' => try writer.appendSlice("\\\""),
-                    '\\' => try writer.appendSlice("\\\\"),
-                    '\n' => try writer.appendSlice("\\n"),
-                    '\r' => try writer.appendSlice("\\r"),
-                    '\t' => try writer.appendSlice("\\t"),
-                    else => unreachable,
-                }
-                remaining = remaining[index + 1 ..];
-            } else {
-                // No special characters found, write the rest
-                try writer.appendSlice(remaining);
-                break;
-            }
-        }
+        const writer = array_list.writer();
+        try bun.js_printer.writePreQuotedString(utf8_input, @TypeOf(writer), writer, '"', false, true, .utf8);
     }
 
     fn joinVLQ(map: *const Entry, kind: ChunkKind, j: *StringJoiner, arena: Allocator, side: bake.Side) !void {
+        _ = side;
         const map_files = map.files.slice();
+
+        const runtime: bake.HmrRuntime = switch (kind) {
+            .initial_response => bun.bake.getHmrRuntime(.client),
+            .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
+        };
 
         var prev_end_state: SourceMap.SourceMapState = .{
             .generated_line = 0,
@@ -247,20 +231,9 @@ pub const Entry = struct {
             .original_column = 0,
         };
 
-        var lines_between: u32 = lines_between: {
-            if (side == .client) {
-                const runtime: bake.HmrRuntime = switch (kind) {
-                    .initial_response => bun.bake.getHmrRuntime(.client),
-                    .hmr_chunk => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
-                };
-                // +2 because the magic fairy in my dreams said it would align the source maps.
-                // TODO: why the fuck is this 2?
-                const lines_between: u32 = runtime.line_count + 2;
-                break :lines_between lines_between;
-            }
-
-            break :lines_between 0;
-        };
+        // The runtime.line_count counts newlines (e.g., 2941 for a 2942-line file).
+        // The runtime ends at line 2942 with })({ so modules start after that.
+        var lines_between: u32 = runtime.line_count;
 
         // Join all of the mappings together.
         for (0..map_files.len) |i| switch (map_files.get(i)) {

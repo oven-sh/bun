@@ -269,7 +269,7 @@ pub const Value = union(Tag) {
     Error: ValueError,
     Null,
     Render: struct {
-        path: []const u8,
+        path: bun.ptr.Owned([]const u8),
     },
 
     // We may not have all the data yet
@@ -760,7 +760,7 @@ pub const Value = union(Tag) {
             .InternalBlob => this.InternalBlob.sliceConst(),
             .WTFStringImpl => if (this.WTFStringImpl.canUseAsUTF8()) this.WTFStringImpl.latin1Slice() else "",
             // .InlineBlob => this.InlineBlob.sliceConst(),
-            .Render => "",
+            .Render => this.Render.path.get(),
             else => "",
         };
     }
@@ -975,7 +975,7 @@ pub const Value = union(Tag) {
         }
 
         if (tag == .Render) {
-            bun.default_allocator.free(this.Render.path);
+            this.Render.path.deinit();
         }
     }
 

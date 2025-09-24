@@ -11,6 +11,11 @@
 pub const AdditionalOnAbortCallback = struct {
     cb: *const fn (this: *anyopaque) void,
     data: *anyopaque,
+    deref_fn: *const fn (this: *anyopaque) void,
+
+    pub fn deref(this: AdditionalOnAbortCallback) void {
+        this.deref_fn(this.data);
+    }
 };
 
 pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
@@ -258,6 +263,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 this.request_body = null;
             }
 
+            if (this.additional_on_abort) |cb| {
+                cb.deref();
+                this.additional_on_abort = null;
+            }
+
             if (this.server) |server| {
                 this.server = null;
                 server.request_pool_allocator.put(this);
@@ -266,7 +276,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn deref(this: *RequestContext) void {
-            streamLog("deref", .{});
+            streamLog("deref {d} -> {d}", .{ this.ref_count, this.ref_count - 1 });
             assert(this.ref_count > 0);
             const ref_count = this.ref_count;
             this.ref_count -= 1;
@@ -277,7 +287,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn ref(this: *RequestContext) void {
-            streamLog("ref", .{});
+            streamLog("ref {d} -> {d}", .{ this.ref_count, this.ref_count + 1 });
             this.ref_count += 1;
         }
 
@@ -599,6 +609,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // mark request as aborted
             this.flags.aborted = true;
             if (this.additional_on_abort) |abort| {
+                defer abort.deref();
+                this.additional_on_abort = null;
                 abort.cb(abort.data);
             }
 
@@ -1928,11 +1940,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                     .signal = signal,
                                 };
 
-                                const url = bun.String.cloneUTF8(render_body.path);
+                                const url = bun.String.cloneUTF8(render_body.path.get());
                                 const body: jsc.WebCore.Body.Value = .{ .Null = {} };
 
                                 const new_request = Request.new(.{
-                                    .method = .GET, // TODO: use the correct one
+                                    .method = this.method,
                                     .request_context = AnyRequestContext.init(new_request_ctx),
                                     .https = ssl_enabled,
                                     .signal = if (signal) |s| s.ref() else null,
@@ -1953,7 +1965,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                     .ctx = AnyRequestContext.init(new_request_ctx),
                                     .request = new_request,
                                     .response = bun.uws.AnyResponse.init(resp.?),
-                                }, render_body.path, response) catch {
+                                }, render_body.path.get(), response) catch {
+                                    new_request_ctx.deinit();
                                     // On error, render missing
                                     this.renderMissing();
                                     return;

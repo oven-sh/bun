@@ -23,6 +23,7 @@ pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Enviro
     debug_allocator_data.allocator
 else
     default_allocator;
+
 pub const debug_allocator_data = struct {
     comptime {
         if (!Environment.isDebug) @compileError("only available in debug");
@@ -133,10 +134,6 @@ pub fn intFromFloat(comptime Int: type, value: anytype) Int {
     // Safe to convert - truncate toward zero
     return @as(Int, @intFromFloat(truncated));
 }
-
-/// We cannot use a threadlocal memory allocator for FileSystem-related things
-/// FileSystem is a singleton.
-pub const fs_allocator = default_allocator;
 
 pub fn typedAllocator(comptime T: type) std.mem.Allocator {
     if (heap_breakdown.enabled)
@@ -3260,8 +3257,8 @@ pub fn getRoughTickCountMs() u64 {
 }
 
 pub const timespec = extern struct {
-    sec: isize,
-    nsec: isize,
+    sec: i64,
+    nsec: i64,
 
     pub const epoch: timespec = .{ .sec = 0, .nsec = 0 };
 
@@ -3375,6 +3372,22 @@ pub const timespec = extern struct {
     pub fn msFromNow(interval: i64) timespec {
         return now().addMs(interval);
     }
+
+    pub fn min(a: timespec, b: timespec) timespec {
+        return if (a.order(&b) == .lt) a else b;
+    }
+    pub fn max(a: timespec, b: timespec) timespec {
+        return if (a.order(&b) == .gt) a else b;
+    }
+    pub fn orderIgnoreEpoch(a: timespec, b: timespec) std.math.Order {
+        if (a.eql(&b)) return .eq;
+        if (a.eql(&.epoch)) return .gt;
+        if (b.eql(&.epoch)) return .lt;
+        return a.order(&b);
+    }
+    pub fn minIgnoreEpoch(a: timespec, b: timespec) timespec {
+        return if (a.orderIgnoreEpoch(b) == .lt) a else b;
+    }
 };
 
 pub const UUID = @import("./bun.js/uuid.zig");
@@ -3391,36 +3404,36 @@ pub fn OrdinalT(comptime Int: type) type {
         start = 0,
         _,
 
-        pub fn fromZeroBased(int: Int) @This() {
+        pub inline fn fromZeroBased(int: Int) @This() {
             assert(int >= 0);
             assert(int != std.math.maxInt(Int));
             return @enumFromInt(int);
         }
 
-        pub fn fromOneBased(int: Int) @This() {
+        pub inline fn fromOneBased(int: Int) @This() {
             assert(int > 0);
             return @enumFromInt(int - 1);
         }
 
-        pub fn zeroBased(ord: @This()) Int {
+        pub inline fn zeroBased(ord: @This()) Int {
             return @intFromEnum(ord);
         }
 
-        pub fn oneBased(ord: @This()) Int {
+        pub inline fn oneBased(ord: @This()) Int {
             return @intFromEnum(ord) + 1;
         }
 
         /// Add two ordinal numbers together. Both are converted to zero-based before addition.
-        pub fn add(ord: @This(), b: @This()) @This() {
+        pub inline fn add(ord: @This(), b: @This()) @This() {
             return fromZeroBased(ord.zeroBased() + b.zeroBased());
         }
 
         /// Add a scalar value to an ordinal number
-        pub fn addScalar(ord: @This(), inc: Int) @This() {
+        pub inline fn addScalar(ord: @This(), inc: Int) @This() {
             return fromZeroBased(ord.zeroBased() + inc);
         }
 
-        pub fn isValid(ord: @This()) bool {
+        pub inline fn isValid(ord: @This()) bool {
             return ord.zeroBased() >= 0;
         }
     };
@@ -3755,7 +3768,7 @@ pub const highway = @import("./highway.zig");
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
 /// Automatically generated C++ bindings for functions marked with `[[ZIG_EXPORT(...)]]`
-pub const cpp = @import("cpp").bindings;
+pub const cpp = @import("cpp");
 
 pub const asan = @import("./asan.zig");
 

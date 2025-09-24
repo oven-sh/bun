@@ -371,9 +371,9 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         }
 
         if (buf.len == 0) {
-            // Certain readers (such as pipes) may return 0-byte reads even when not
-            // at EOF. Consequently, we need to check whether the reader is actually
-            // done or not.
+            // Certain readers (such as pipes) may return 0-byte reads even when
+            // not at EOF. Consequently, we need to check whether the reader is
+            // actually done or not.
             if (!this.reader.isDone()) {
                 // If the reader is not done, we still want to keep reading.
                 return true;

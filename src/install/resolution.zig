@@ -188,6 +188,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 .git => .init(.{ .git = this.value.git }),
                 .github => .init(.{ .github = this.value.github }),
                 .root => .init(.{ .root = {} }),
+                .uninitialized => .init(.{ .uninitialized = {} }),
                 else => {
                     std.debug.panic("Internal error: unexpected resolution tag: {}", .{this.tag});
                 },

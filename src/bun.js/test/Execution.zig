@@ -487,6 +487,8 @@ fn onGroupCompleted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGloba
     vm.auto_killer.disable();
 }
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
+    if (sequence.test_entry) |entry| if (entry.callback == null) return;
+
     sequence.started_at = bun.timespec.now();
 
     if (sequence.test_entry) |entry| {
@@ -500,6 +502,8 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     }
 }
 fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
+    if (entry.callback == null) return;
+
     groupLog.begin(@src());
     defer groupLog.end();
     if (entry.timeout != 0) {
@@ -512,7 +516,7 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
 }
 fn onEntryCompleted(_: *Execution, _: *ExecutionEntry) void {}
 fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
-    const elapsed_ns = sequence.started_at.sinceNow();
+    const elapsed_ns = if (sequence.started_at.eql(&.epoch)) 0 else sequence.started_at.sinceNow();
     switch (sequence.expect_assertions) {
         .not_set => {},
         .at_least_one => if (sequence.expect_call_count == 0 and sequence.result.isPass(.pending_is_pass)) {

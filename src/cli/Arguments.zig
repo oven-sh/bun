@@ -194,6 +194,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--concurrent                     Treat all tests as `test.concurrent()` tests") catch unreachable,
+    clap.parseParam("--randomize                      Run tests in random order") catch unreachable,
     clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
     clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
@@ -492,6 +493,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.concurrent = args.flag("--concurrent");
+        ctx.test_options.randomize = args.flag("--randomize");
     }
 
     ctx.args.absolute_working_dir = cwd;

@@ -2981,7 +2981,7 @@ fn StreamMixin(comptime Type: type) type {
                         req.readStop();
                         error_cb(context_data, ReturnCodeI64.init(nreads).errEnum() orelse bun.sys.E.CANCELED);
                     } else {
-                        read_cb(context_data, buffer.slice());
+                        read_cb(context_data, buffer.base[0..@intCast(nreads)]);
                     }
                 }
             };

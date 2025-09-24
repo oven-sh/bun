@@ -543,8 +543,8 @@ pub const BunTest = struct {
         }
     }
 
-    /// if sync, the result is queued and appended later
-    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg_callback: jsc.JSValue, cfg_done_parameter: bool, cfg_data: BunTest.RefDataValue, timeout: bun.timespec) void {
+    /// if sync, the result is returned. if async, null is returned.
+    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg_callback: jsc.JSValue, cfg_done_parameter: bool, cfg_data: BunTest.RefDataValue, timeout: bun.timespec) ?RefDataValue {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
@@ -586,20 +586,19 @@ pub const BunTest = struct {
             const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
             result.?.then(globalThis, this_ref, bunTestThen, bunTestCatch);
             drain(globalThis);
-            return;
+            return null;
         }
 
         if (dcb_ref) |_| {
             // completed asynchronously
             group.log("callTestCallback -> wait for done callback", .{});
             drain(globalThis);
-            return;
+            return null;
         }
 
         group.log("callTestCallback -> sync", .{});
         drain(globalThis);
-        this.addResult(cfg_data);
-        return;
+        return cfg_data;
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error

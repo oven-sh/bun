@@ -374,7 +374,11 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
         };
         groupLog.log("runSequence queued callback: {}", .{callback_data});
 
-        BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, next_item.timespec);
+        if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, next_item.timespec) != null) {
+            // the result is available immediately; advance the sequence and run again.
+            this.advanceSequence(sequence, group);
+            return null; // run again
+        }
         return .{ .execute = .{ .timeout = next_item.timespec } };
     } else {
         switch (next_item.base.mode) {

@@ -244,6 +244,7 @@ describe("bun test", () => {
               })
             })
             `,
+        env: { CI: "false" },
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");
@@ -287,6 +288,7 @@ describe("bun test", () => {
             });
           });
         `,
+        env: { CI: "false" },
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");

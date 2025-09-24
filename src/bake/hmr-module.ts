@@ -603,19 +603,6 @@ type HotArrayAcceptFunction = (esmExports: (any | void)[]) => void;
 type HotDisposeFunction = (data: any) => void | Promise<void>;
 type HotEventHandler = (data: any) => void;
 
-// If updating this, make sure the `devserver.d.ts` types are
-// kept in sync.
-type HMREvent =
-  | "bun:ready"
-  | "bun:beforeUpdate"
-  | "bun:afterUpdate"
-  | "bun:beforeFullReload"
-  | "bun:beforePrune"
-  | "bun:invalidate"
-  | "bun:error"
-  | "bun:ws:disconnect"
-  | "bun:ws:connect";
-
 /** Called when modules are replaced. */
 export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
   Object.assign(unloadedModuleRegistry, modules);
@@ -830,15 +817,16 @@ function createAcceptArray(modules: string[], key: Id) {
   return arr;
 }
 
-export function emitEvent(event: HMREvent, data: any) {
+export function emitEvent(event: Bun.HMREvent, data: unknown) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
+
   for (const handler of handlers) {
     handler(data);
   }
 }
 
-export function onEvent(event: HMREvent, cb) {
+export function onEvent(event: Bun.HMREvent, cb) {
   (eventHandlers[event] ??= [])!.push(cb);
 }
 

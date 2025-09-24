@@ -316,6 +316,7 @@ testingHook?.({
 
 try {
   const { refresh } = config;
+
   if (refresh) {
     const refreshRuntime = await loadModuleAsync(refresh, false, null);
     setRefreshRuntime(refreshRuntime);

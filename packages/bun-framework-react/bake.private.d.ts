@@ -18,7 +18,7 @@ interface Config {
   /** Dev Server's `configuration_hash_key` */
   version: string;
   /** If available, this is the Id of `react-refresh/runtime` */
-  refresh?: Id;
+  refresh?: Id | undefined;
   /**
    * A list of "roots" that the client is aware of. This includes
    * the framework entry point, as well as every client component.
@@ -28,6 +28,7 @@ interface Config {
    * If true, the client will receive console logs from the server.
    */
   console: boolean;
+  generation: number;
 }
 
 /**
@@ -74,7 +75,7 @@ declare const side: "client" | "server";
  * helpful information to someone working on the bundler itself. Assertions
  * aimed for the end user should always be enabled.
  */
-declare var IS_BUN_DEVELOPMENT: typeof globalThis extends { IS_BUN_DEVELOPMENT: infer R } ? R : unknown;
+declare var IS_BUN_DEVELOPMENT: unknown;
 
 /** If this is the fallback error page */
 declare const IS_ERROR_RUNTIME: boolean;

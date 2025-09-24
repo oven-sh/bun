@@ -10,9 +10,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
 
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
     if (!calls.jsType().isArray()) {
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-        return this.throw(globalThis, comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
+        return this.throw(globalThis, comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toJestPrettyFormat(globalThis)});
     }
 
     const totalCalls: u32 = @truncate(try calls.getLength(globalThis));
@@ -24,9 +22,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
         lastCallValue = try calls.getIndex(globalThis, totalCalls - 1);
 
         if (!lastCallValue.jsType().isArray()) {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toJestPrettyFormat(globalThis)});
         }
 
         if (try lastCallValue.getLength(globalThis) != arguments.len) {
@@ -47,8 +43,6 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
     }
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     const expected_args_js_array = try JSValue.createEmptyArray(globalThis, arguments.len);
     for (arguments, 0..) |arg, i| {
@@ -59,14 +53,14 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
     if (this.flags.not) {
         const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", true);
         return this.throw(globalThis, signature, "\n\nExpected last call not to be with: <green>{any}<r>\nBut it was.", .{
-            expected_args_js_array.toFmt(&formatter),
+            expected_args_js_array.toJestPrettyFormat(globalThis),
         });
     }
     const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false);
 
     if (totalCalls == 0) {
         return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nBut it was not called.", .{
-            expected_args_js_array.toFmt(&formatter),
+            expected_args_js_array.toJestPrettyFormat(globalThis),
         });
     }
 

@@ -11,9 +11,7 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
 
     const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
     if (!returns.jsType().isArray()) {
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toJestPrettyFormat(globalThis)});
     }
 
     const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
@@ -56,14 +54,12 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
     }
 
     // Handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     const signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", false);
 
     if (this.flags.not) {
         const not_signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", true);
-        return this.throw(globalThis, not_signature, "\n\n" ++ "Expected mock function not to have returned: <green>{any}<r>\n", .{expected.toFmt(&formatter)});
+        return this.throw(globalThis, not_signature, "\n\n" ++ "Expected mock function not to have returned: <green>{any}<r>\n", .{expected.toJestPrettyFormat(globalThis)});
     }
 
     // No match was found.
@@ -83,8 +79,8 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
         }
 
         return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{
-            expected.toFmt(&formatter),
-            received.toFmt(&formatter),
+            expected.toJestPrettyFormat(globalThis),
+            received.toJestPrettyFormat(globalThis),
         });
     }
 
@@ -93,7 +89,6 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
         const list_formatter = mock.AllCallsFormatter{
             .globalThis = globalThis,
             .returns = returns,
-            .formatter = &formatter,
         };
         const fmt =
             \\Some calls errored:
@@ -109,7 +104,7 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
         switch (Output.enable_ansi_colors) {
             inline else => |colors| {
                 return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
-                    expected.toFmt(&formatter),
+                    expected.toJestPrettyFormat(globalThis),
                     list_formatter,
                     successful_returns_count,
                     calls_count,
@@ -121,7 +116,6 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
         const list_formatter = mock.SuccessfulReturnsFormatter{
             .globalThis = globalThis,
             .successful_returns = &successful_returns,
-            .formatter = &formatter,
         };
         const fmt =
             \\    <green>Expected<r>: {any}
@@ -134,7 +128,7 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
         switch (Output.enable_ansi_colors) {
             inline else => |colors| {
                 return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
-                    expected.toFmt(&formatter),
+                    expected.toJestPrettyFormat(globalThis),
                     list_formatter,
                     successful_returns_count,
                 });

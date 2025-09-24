@@ -63,10 +63,8 @@ pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, cal
     if (pass) return .js_undefined;
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const expected_fmt = expected.toFmt(&formatter);
-    const value_fmt = value.toFmt(&formatter);
+    const expected_fmt = expected.toJestPrettyFormat(globalThis);
+    const value_fmt = value.toJestPrettyFormat(globalThis);
 
     if (not) {
         const signature = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", true);

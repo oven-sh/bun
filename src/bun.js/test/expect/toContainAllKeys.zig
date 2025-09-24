@@ -46,12 +46,10 @@ pub fn toContainAllKeys(
     if (pass) return thisValue;
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-    defer formatter.deinit();
-    const value_fmt = keys.toFmt(&formatter);
-    const expected_fmt = expected.toFmt(&formatter);
+    const value_fmt = keys.toJestPrettyFormat(globalObject);
+    const expected_fmt = expected.toJestPrettyFormat(globalObject);
     if (not) {
-        const received_fmt = keys.toFmt(&formatter);
+        const received_fmt = keys.toJestPrettyFormat(globalObject);
         const expected_line = "Expected to not contain all keys: <green>{any}<r>\nReceived: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line;
         return this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });

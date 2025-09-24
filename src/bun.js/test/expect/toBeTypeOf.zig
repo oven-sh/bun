@@ -67,10 +67,8 @@ pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
     if (not) pass = !pass;
     if (pass) return .js_undefined;
 
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const received = value.toFmt(&formatter);
-    const expected_str = expected.toFmt(&formatter);
+    const received = value.toJestPrettyFormat(globalThis);
+    const expected_str = expected.toJestPrettyFormat(globalThis);
 
     if (not) {
         const signature = comptime getSignature("toBeTypeOf", "", true);

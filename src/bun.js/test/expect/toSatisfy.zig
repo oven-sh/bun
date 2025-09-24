@@ -34,19 +34,17 @@ pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
 
     if (pass) return .js_undefined;
 
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     if (not) {
         const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
-        return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{predicate.toFmt(&formatter)});
+        return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{predicate.toJestPrettyFormat(globalThis)});
     }
 
     const signature = comptime getSignature("toSatisfy", "<green>expected<r>", false);
 
     return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
-        predicate.toFmt(&formatter),
-        value.toFmt(&formatter),
+        predicate.toJestPrettyFormat(globalThis),
+        value.toJestPrettyFormat(globalThis),
     });
 }
 

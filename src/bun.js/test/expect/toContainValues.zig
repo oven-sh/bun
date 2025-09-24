@@ -45,12 +45,10 @@ pub fn toContainValues(
     if (pass) return thisValue;
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-    defer formatter.deinit();
-    const value_fmt = value.toFmt(&formatter);
-    const expected_fmt = expected.toFmt(&formatter);
+    const value_fmt = value.toJestPrettyFormat(globalObject);
+    const expected_fmt = expected.toJestPrettyFormat(globalObject);
     if (not) {
-        const received_fmt = value.toFmt(&formatter);
+        const received_fmt = value.toJestPrettyFormat(globalObject);
         const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line;
         return this.throw(globalObject, comptime getSignature("toContainValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });

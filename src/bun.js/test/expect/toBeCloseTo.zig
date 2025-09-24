@@ -55,11 +55,9 @@ pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
 
     if (pass) return .js_undefined;
 
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
-    const expected_fmt = expected_.toFmt(&formatter);
-    const received_fmt = received_.toFmt(&formatter);
+    const expected_fmt = expected_.toJestPrettyFormat(globalThis);
+    const received_fmt = received_.toJestPrettyFormat(globalThis);
 
     const expected_line = "Expected: <green>{any}<r>\n";
     const received_line = "Received: <red>{any}<r>\n";

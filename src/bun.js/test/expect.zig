@@ -186,10 +186,8 @@ pub const Expect = struct {
                             .resolves => {},
                             .rejects => {
                                 if (!silent) {
-                                    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                    defer formatter.deinit();
                                     const message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
-                                    return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
+                                    return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toJestPrettyFormat(globalThis)});
                                 }
                                 return error.JSError;
                             },
@@ -199,10 +197,8 @@ pub const Expect = struct {
                             .rejects => {},
                             .resolves => {
                                 if (!silent) {
-                                    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                                    defer formatter.deinit();
                                     const message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
-                                    return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
+                                    return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toJestPrettyFormat(globalThis)});
                                 }
                                 return error.JSError;
                             },
@@ -215,10 +211,8 @@ pub const Expect = struct {
                     return newValue;
                 } else {
                     if (!silent) {
-                        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                        defer formatter.deinit();
                         const message = "Expected promise<r>\nReceived: <red>{any}<r>\n";
-                        return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
+                        return throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toJestPrettyFormat(globalThis)});
                     }
                     return error.JSError;
                 }
@@ -793,16 +787,12 @@ pub const Expect = struct {
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
                     "\n\nReceived: {any}\n";
 
-                var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-                defer formatter.deinit();
-                return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
+                return globalThis.throwPretty(fmt, .{value.toJestPrettyFormat(globalThis)});
             }
         }
 
         value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-            defer formatter.deinit();
-            return globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Failed to pretty format value: {s}", .{value.toJestPrettyFormat(globalThis)});
         };
     }
     pub fn snapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, hint: []const u8, comptime fn_name: []const u8) bun.JSError!JSValue {
@@ -811,8 +801,6 @@ pub const Expect = struct {
         try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
 
         const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.slice(), hint) catch |err| {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-            defer formatter.deinit();
             const buntest = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
             const test_file_path = Jest.runner.?.files.get(buntest.file_id).source.path.text;
             return switch (err) {
@@ -822,7 +810,7 @@ pub const Expect = struct {
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
                 error.SnapshotInConcurrentGroup => globalThis.throw("Snapshot matchers are not supported in concurrent tests", .{}),
                 error.TestNotActive => globalThis.throw("Snapshot matchers are not supported after the test has finished executing", .{}),
-                else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
+                else => globalThis.throw("Failed to snapshot value: {any}", .{value.toJestPrettyFormat(globalThis)}),
             };
         };
 
@@ -984,16 +972,13 @@ pub const Expect = struct {
     fn throwInvalidMatcherError(globalThis: *JSGlobalObject, matcher_name: bun.String, result: JSValue) bun.JSError {
         @branchHint(.cold);
 
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-
         const fmt =
             "Unexpected return from matcher function `{s}`.\n" ++
             "Matcher functions should return an object in the following format:\n" ++
             "  {{message?: string | function, pass: boolean}}\n" ++
             "'{any}' was returned";
         const err = switch (Output.enable_ansi_colors) {
-            inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
+            inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toJestPrettyFormat(globalThis) }),
         };
         err.put(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
         return globalThis.throwValue(err);
@@ -1169,14 +1154,12 @@ pub const Expect = struct {
         const expected: JSValue = arguments[0];
 
         if (!expected.isNumber()) {
-            var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
+            return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toJestPrettyFormat(globalThis)});
         }
 
         const expected_assertions: f64 = try expected.toNumber(globalThis);
         if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0 or expected_assertions > std.math.maxInt(u32)) {
-            var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
+            return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toJestPrettyFormat(globalThis)});
         }
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
@@ -1824,9 +1807,7 @@ pub const ExpectMatcherUtils = struct {
             }
         }
 
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-        try writer.print("{}", .{value.toFmt(&formatter)});
+        try writer.print("{}", .{value.toJestPrettyFormat(globalThis)});
 
         if (comptime color_or_null) |_| {
             if (Output.enable_ansi_colors) {
@@ -1964,9 +1945,7 @@ pub const mock = struct {
     pub fn jestMockIterator(globalThis: *JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!bun.jsc.JSArrayIterator {
         const returns: bun.jsc.JSValue = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
         if (!returns.jsType().isArray()) {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Expected value must be a mock function: {any}", .{value.toJestPrettyFormat(globalThis)});
         }
 
         return try returns.arrayIterator(globalThis);
@@ -1977,9 +1956,7 @@ pub const mock = struct {
                 if (try ReturnStatus.Map.fromJS(globalThis, type_string)) |val| return val;
             }
         }
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function with returns: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function with returns: {any}", .{value.toJestPrettyFormat(globalThis)});
     }
     pub fn jestMockReturnObject_value(globalThis: *JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!JSValue {
         return (try value.get(globalThis, "value")) orelse .js_undefined;
@@ -1988,7 +1965,6 @@ pub const mock = struct {
     pub const AllCallsWithArgsFormatter = struct {
         globalThis: *JSGlobalObject,
         calls: JSValue,
-        formatter: *jsc.ConsoleObject.Formatter,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var printed_once = false;
@@ -2005,7 +1981,7 @@ pub const mock = struct {
 
                 try writer.print("           {d: >4}: ", .{i + 1});
                 const call_args = try self.calls.getIndex(self.globalThis, @intCast(i));
-                try writer.print("{any}", .{call_args.toFmt(self.formatter)});
+                try writer.print("{any}", .{call_args.toJestPrettyFormat(self.globalThis)});
             }
         }
     };
@@ -2022,7 +1998,6 @@ pub const mock = struct {
     pub const AllCallsFormatter = struct {
         globalThis: *JSGlobalObject,
         returns: JSValue,
-        formatter: *jsc.ConsoleObject.Formatter,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             var printed_once = false;
@@ -2041,11 +2016,11 @@ pub const mock = struct {
                 const value = try jestMockReturnObject_value(self.globalThis, item);
                 switch (try jestMockReturnObject_type(self.globalThis, item)) {
                     .@"return" => {
-                        try writer.print("{any}", .{value.toFmt(self.formatter)});
+                        try writer.print("{any}", .{value.toJestPrettyFormat(self.globalThis)});
                         num_returns += 1;
                     },
                     .throw => {
-                        try writer.print("function call threw an error: {any}", .{value.toFmt(self.formatter)});
+                        try writer.print("function call threw an error: {any}", .{value.toJestPrettyFormat(self.globalThis)});
                     },
                     .incomplete => {
                         try writer.print("<incomplete call>", .{});
@@ -2058,7 +2033,6 @@ pub const mock = struct {
     pub const SuccessfulReturnsFormatter = struct {
         globalThis: *JSGlobalObject,
         successful_returns: *const std.ArrayList(JSValue),
-        formatter: *jsc.ConsoleObject.Formatter,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const len = self.successful_returns.items.len;
@@ -2071,7 +2045,7 @@ pub const mock = struct {
                 printed_once = true;
 
                 try writer.print("           {d: >4}: ", .{i});
-                try writer.print("{any}", .{val.toFmt(self.formatter)});
+                try writer.print("{any}", .{val.toJestPrettyFormat(self.globalThis)});
             }
         }
     };

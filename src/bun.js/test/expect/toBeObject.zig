@@ -11,9 +11,7 @@ pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
 
     if (pass) return thisValue;
 
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const received = value.toFmt(&formatter);
+    const received = value.toJestPrettyFormat(globalThis);
 
     if (not) {
         const signature = comptime getSignature("toBeObject", "", true);

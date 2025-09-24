@@ -41,10 +41,8 @@ pub fn toBeLessThanOrEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame
     if (pass) return .js_undefined;
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const value_fmt = value.toFmt(&formatter);
-    const expected_fmt = other_value.toFmt(&formatter);
+    const value_fmt = value.toJestPrettyFormat(globalThis);
+    const expected_fmt = other_value.toJestPrettyFormat(globalThis);
     if (not) {
         const expected_line = "Expected: not \\<= <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";

@@ -11,9 +11,7 @@ pub fn toHaveLastReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfr
 
     const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
     if (!returns.jsType().isArray()) {
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toJestPrettyFormat(globalThis)});
     }
 
     const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
@@ -50,13 +48,11 @@ pub fn toHaveLastReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfr
     }
 
     // Handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     const signature = comptime getSignature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
     if (this.flags.not) {
-        return this.throw(globalThis, comptime getSignature("toHaveBeenLastReturnedWith", "<green>expected<r>", true), "\n\n" ++ "Expected mock function not to have last returned: <green>{any}<r>\n" ++ "But it did.\n", .{expected.toFmt(&formatter)});
+        return this.throw(globalThis, comptime getSignature("toHaveBeenLastReturnedWith", "<green>expected<r>", true), "\n\n" ++ "Expected mock function not to have last returned: <green>{any}<r>\n" ++ "But it did.\n", .{expected.toJestPrettyFormat(globalThis)});
     }
 
     if (calls_count == 0) {
@@ -64,7 +60,7 @@ pub fn toHaveLastReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfr
     }
 
     if (last_call_threw) {
-        return this.throw(globalThis, signature, "\n\n" ++ "The last call threw an error: <red>{any}<r>\n", .{last_error_value.toFmt(&formatter)});
+        return this.throw(globalThis, signature, "\n\n" ++ "The last call threw an error: <red>{any}<r>\n", .{last_error_value.toJestPrettyFormat(globalThis)});
     }
 
     // Diff if possible
@@ -73,7 +69,7 @@ pub fn toHaveLastReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfr
         return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
     }
 
-    return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{ expected.toFmt(&formatter), last_return_value.toFmt(&formatter) });
+    return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{ expected.toJestPrettyFormat(globalThis), last_return_value.toJestPrettyFormat(globalThis) });
 }
 
 const bun = @import("bun");

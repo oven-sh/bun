@@ -13,19 +13,17 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
 
     this.incrementExpectCallCounter();
 
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     const expected_value = arguments[0];
     if (!expected_value.isString() and !expected_value.isRegExp()) {
-        return globalThis.throw("Expected value must be a string or regular expression: {any}", .{expected_value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a string or regular expression: {any}", .{expected_value.toJestPrettyFormat(globalThis)});
     }
     expected_value.ensureStillAlive();
 
     const value: JSValue = try this.getValue(globalThis, thisValue, "toMatch", "<green>expected<r>");
 
     if (!value.isString()) {
-        return globalThis.throw("Received value must be a string: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Received value must be a string: {any}", .{value.toJestPrettyFormat(globalThis)});
     }
 
     const not = this.flags.not;
@@ -42,8 +40,8 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     if (pass) return .js_undefined;
 
     // handle failure
-    const expected_fmt = expected_value.toFmt(&formatter);
-    const value_fmt = value.toFmt(&formatter);
+    const expected_fmt = expected_value.toJestPrettyFormat(globalThis);
+    const value_fmt = value.toJestPrettyFormat(globalThis);
 
     if (not) {
         const expected_line = "Expected substring or pattern: not <green>{any}<r>\n";

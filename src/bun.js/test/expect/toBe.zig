@@ -25,14 +25,12 @@ pub fn toBe(
     if (pass) return .js_undefined;
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     switch (this.custom_label.isEmpty()) {
         inline else => |has_custom_label| {
             if (not) {
                 const signature = comptime getSignature("toBe", "<green>expected<r>", true);
-                return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{right.toFmt(&formatter)});
+                return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{right.toJestPrettyFormat(globalThis)});
             }
 
             const signature = comptime getSignature("toBe", "<green>expected<r>", false);
@@ -41,7 +39,7 @@ pub fn toBe(
                     (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
                     "\n\nExpected: <green>{any}<r>\n" ++
                     "Received: serializes to the same string\n";
-                return this.throw(globalThis, signature, fmt, .{right.toFmt(&formatter)});
+                return this.throw(globalThis, signature, fmt, .{right.toJestPrettyFormat(globalThis)});
             }
 
             if (right.isString() and left.isString()) {
@@ -55,8 +53,8 @@ pub fn toBe(
             }
 
             return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
-                right.toFmt(&formatter),
-                left.toFmt(&formatter),
+                right.toJestPrettyFormat(globalThis),
+                left.toJestPrettyFormat(globalThis),
             });
         },
     }

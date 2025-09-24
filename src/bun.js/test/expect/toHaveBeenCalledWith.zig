@@ -10,9 +10,7 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
 
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
     if (!calls.jsType().isArray()) {
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-        return this.throw(globalThis, comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
+        return this.throw(globalThis, comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toJestPrettyFormat(globalThis)});
     }
 
     var pass = false;
@@ -51,8 +49,6 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     }
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     const expected_args_js_array = try JSValue.createEmptyArray(globalThis, arguments.len);
     for (arguments, 0..) |arg, i| {
@@ -63,14 +59,14 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     if (this.flags.not) {
         const signature = comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", true);
         return this.throw(globalThis, signature, "\n\nExpected mock function not to have been called with: <green>{any}<r>\nBut it was.", .{
-            expected_args_js_array.toFmt(&formatter),
+            expected_args_js_array.toJestPrettyFormat(globalThis),
         });
     }
     const signature = comptime getSignature("toHaveBeenCalledWith", "<green>...expected<r>", false);
 
     if (calls_count == 0) {
         return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nBut it was not called.", .{
-            expected_args_js_array.toFmt(&formatter),
+            expected_args_js_array.toJestPrettyFormat(globalThis),
         });
     }
 
@@ -90,7 +86,6 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     const list_formatter = mock.AllCallsWithArgsFormatter{
         .globalThis = globalThis,
         .calls = calls,
-        .formatter = &formatter,
     };
 
     const fmt =
@@ -104,7 +99,7 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     switch (Output.enable_ansi_colors) {
         inline else => |colors| {
             return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
-                expected_args_js_array.toFmt(&formatter),
+                expected_args_js_array.toJestPrettyFormat(globalThis),
                 list_formatter,
                 calls_count,
             });

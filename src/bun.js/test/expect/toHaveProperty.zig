@@ -42,23 +42,21 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     if (pass) return .js_undefined;
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
     if (not) {
         if (expected_property != null) {
             const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
             if (received_property != .zero) {
                 return this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nExpected value: not <green>{any}<r>\n", .{
-                    expected_property_path.toFmt(&formatter),
-                    expected_property.?.toFmt(&formatter),
+                    expected_property_path.toJestPrettyFormat(globalThis),
+                    expected_property.?.toJestPrettyFormat(globalThis),
                 });
             }
         }
 
         const signature = comptime getSignature("toHaveProperty", "<green>path<r>", true);
         return this.throw(globalThis, signature, "\n\nExpected path: not <green>{any}<r>\n\nReceived value: <red>{any}<r>\n", .{
-            expected_property_path.toFmt(&formatter),
-            received_property.toFmt(&formatter),
+            expected_property_path.toJestPrettyFormat(globalThis),
+            received_property.toJestPrettyFormat(globalThis),
         });
     }
 
@@ -78,13 +76,13 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
         const fmt = "\n\nExpected path: <green>{any}<r>\n\nExpected value: <green>{any}<r>\n\n" ++
             "Unable to find property\n";
         return this.throw(globalThis, signature, fmt, .{
-            expected_property_path.toFmt(&formatter),
-            expected_property.?.toFmt(&formatter),
+            expected_property_path.toJestPrettyFormat(globalThis),
+            expected_property.?.toJestPrettyFormat(globalThis),
         });
     }
 
     const signature = comptime getSignature("toHaveProperty", "<green>path<r>", false);
-    return this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(&formatter)});
+    return this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n", .{expected_property_path.toJestPrettyFormat(globalThis)});
 }
 
 const DiffFormatter = @import("../diff_format.zig").DiffFormatter;

@@ -59,11 +59,9 @@ pub fn toIncludeRepeated(this: *Expect, globalThis: *JSGlobalObject, callFrame: 
     if (not) pass = !pass;
     if (pass) return .js_undefined;
 
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const expect_string_fmt = expect_string.toFmt(&formatter);
-    const substring_fmt = substring.toFmt(&formatter);
-    const times_fmt = count.toFmt(&formatter);
+    const expect_string_fmt = expect_string.toJestPrettyFormat(globalThis);
+    const substring_fmt = substring.toJestPrettyFormat(globalThis);
+    const times_fmt = count.toJestPrettyFormat(globalThis);
 
     const received_line = "Received: <red>{any}<r>\n";
 

@@ -47,12 +47,10 @@ pub fn toContainKeys(
     if (pass) return thisValue;
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const value_fmt = value.toFmt(&formatter);
-    const expected_fmt = expected.toFmt(&formatter);
+    const value_fmt = value.toJestPrettyFormat(globalThis);
+    const expected_fmt = expected.toJestPrettyFormat(globalThis);
     if (not) {
-        const received_fmt = value.toFmt(&formatter);
+        const received_fmt = value.toJestPrettyFormat(globalThis);
         const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
         const signature = comptime getSignature("toContainKeys", "<green>expected<r>", true);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });

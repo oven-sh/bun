@@ -13,9 +13,7 @@ pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     if (pass) return .js_undefined;
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const value_fmt = value.toFmt(&formatter);
+    const value_fmt = value.toJestPrettyFormat(globalThis);
     if (not) {
         const received_line = "Received: <red>{any}<r>\n";
         const signature = comptime getSignature("toBeUndefined", "", true);

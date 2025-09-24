@@ -17,9 +17,7 @@ pub fn toBePositive(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Call
 
     if (pass) return .js_undefined;
 
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const received = value.toFmt(&formatter);
+    const received = value.toJestPrettyFormat(globalThis);
 
     if (not) {
         const signature = comptime getSignature("toBePositive", "", true);

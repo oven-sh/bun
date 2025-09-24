@@ -1976,6 +1976,40 @@ pub const JSValue = enum(i64) {
         };
     }
 
+    pub const JestPrettyFormatter = struct {
+        value: JSValue,
+        globalObject: *jsc.JSGlobalObject,
+
+        pub fn format(self: JestPrettyFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const vals = [_]JSValue{self.value};
+            try JestPrettyFormat.format(
+                .Debug,
+                self.globalObject,
+                &vals,
+                1,
+                @TypeOf(writer),
+                @TypeOf(writer),
+                writer,
+                .{
+                    .enable_colors = false,
+                    .add_newline = false,
+                    .flush = false,
+                    .quote_strings = true,
+                },
+            );
+        }
+    };
+
+    pub fn toJestPrettyFormat(
+        this: JSValue,
+        globalObject: *jsc.JSGlobalObject,
+    ) JestPrettyFormatter {
+        return JestPrettyFormatter{
+            .value = this,
+            .globalObject = globalObject,
+        };
+    }
+
     /// Check if the JSValue is either a signed 32-bit integer or a double and
     /// return the value as a f64
     ///

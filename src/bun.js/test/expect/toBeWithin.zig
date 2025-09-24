@@ -38,11 +38,9 @@ pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
 
     if (pass) return .js_undefined;
 
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
-    const start_fmt = startValue.toFmt(&formatter);
-    const end_fmt = endValue.toFmt(&formatter);
-    const received_fmt = value.toFmt(&formatter);
+    const start_fmt = startValue.toJestPrettyFormat(globalThis);
+    const end_fmt = endValue.toJestPrettyFormat(globalThis);
+    const received_fmt = value.toJestPrettyFormat(globalThis);
 
     if (not) {
         const expected_line = "Expected: not between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";

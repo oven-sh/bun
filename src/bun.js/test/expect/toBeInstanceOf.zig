@@ -10,12 +10,10 @@ pub fn toBeInstanceOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     }
 
     this.incrementExpectCallCounter();
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     const expected_value = arguments[0];
     if (!expected_value.isConstructor()) {
-        return globalThis.throw("Expected value must be a function: {any}", .{expected_value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a function: {any}", .{expected_value.toJestPrettyFormat(globalThis)});
     }
     expected_value.ensureStillAlive();
 
@@ -27,8 +25,8 @@ pub fn toBeInstanceOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     if (pass) return .js_undefined;
 
     // handle failure
-    const expected_fmt = expected_value.toFmt(&formatter);
-    const value_fmt = value.toFmt(&formatter);
+    const expected_fmt = expected_value.toJestPrettyFormat(globalThis);
+    const value_fmt = value.toJestPrettyFormat(globalThis);
     if (not) {
         const expected_line = "Expected constructor: not <green>{any}<r>\n";
         const received_line = "Received value: <red>{any}<r>\n";

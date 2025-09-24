@@ -10,9 +10,7 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
 
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
     if (!calls.jsType().isArray()) {
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-        return this.throw(globalThis, comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
+        return this.throw(globalThis, comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toJestPrettyFormat(globalThis)});
     }
 
     if (arguments.len == 0 or !arguments[0].isAnyInt()) {
@@ -55,8 +53,6 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
     }
 
     // handle failure
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     const expected_args_slice = arguments[1..];
     const expected_args_js_array = try JSValue.createEmptyArray(globalThis, expected_args_slice.len);
@@ -69,7 +65,7 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
         const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", true);
         return this.throw(globalThis, signature, "\n\nExpected call #{d} not to be with: <green>{any}<r>\nBut it was.", .{
             nthCallNum,
-            expected_args_js_array.toFmt(&formatter),
+            expected_args_js_array.toJestPrettyFormat(globalThis),
         });
     }
     const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false);

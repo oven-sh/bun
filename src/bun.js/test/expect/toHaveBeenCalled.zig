@@ -13,9 +13,7 @@ pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
     this.incrementExpectCallCounter();
     if (!calls.jsType().isArray()) {
-        var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toJestPrettyFormat(globalThis)});
     }
 
     const calls_length = try calls.getLength(globalThis);

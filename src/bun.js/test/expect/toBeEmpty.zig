@@ -8,8 +8,6 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
 
     const not = this.flags.not;
     var pass = false;
-    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-    defer formatter.deinit();
 
     const actual_length = try value.getLengthIfPropertyExistsInternal(globalThis);
 
@@ -45,7 +43,7 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
             const signature = comptime getSignature("toBeEmpty", "", false);
             const fmt = signature ++ "\n\nExpected value to be a string, object, or iterable" ++
                 "\n\nReceived: <red>{any}<r>\n";
-            return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
+            return globalThis.throwPretty(fmt, .{value.toJestPrettyFormat(globalThis)});
         }
     } else if (std.math.isNan(actual_length)) {
         return globalThis.throw("Received value has non-number length property: {}", .{actual_length});
@@ -57,7 +55,7 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
         const signature = comptime getSignature("toBeEmpty", "", true);
         const fmt = signature ++ "\n\nExpected value <b>not<r> to be a string, object, or iterable" ++
             "\n\nReceived: <red>{any}<r>\n";
-        return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
+        return globalThis.throwPretty(fmt, .{value.toJestPrettyFormat(globalThis)});
     }
 
     if (not) pass = !pass;
@@ -67,13 +65,13 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
         const signature = comptime getSignature("toBeEmpty", "", true);
         const fmt = signature ++ "\n\nExpected value <b>not<r> to be empty" ++
             "\n\nReceived: <red>{any}<r>\n";
-        return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
+        return globalThis.throwPretty(fmt, .{value.toJestPrettyFormat(globalThis)});
     }
 
     const signature = comptime getSignature("toBeEmpty", "", false);
     const fmt = signature ++ "\n\nExpected value to be empty" ++
         "\n\nReceived: <red>{any}<r>\n";
-    return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
+    return globalThis.throwPretty(fmt, .{value.toJestPrettyFormat(globalThis)});
 }
 
 const bun = @import("bun");

@@ -1,4 +1,4 @@
-/// <reference path="../js/builtins.d.ts" />
+/// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
 
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
@@ -6,7 +6,7 @@ import type { RouteMetadata, ServerEntryPoint } from "bun:app";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
 // import { AsyncLocalStorage } from "node:async_hooks";
-const { AsyncLocalStorage } = require("node:async_hooks") as {} as {
+const { AsyncLocalStorage } = require("node:async_hooks") as {
   AsyncLocalStorage: typeof import("node:async_hooks").AsyncLocalStorage;
 };
 

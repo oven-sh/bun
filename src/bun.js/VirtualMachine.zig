@@ -61,7 +61,6 @@ is_printing_plugin: bool = false,
 is_shutting_down: bool = false,
 plugin_runner: ?PluginRunner = null,
 is_main_thread: bool = false,
-last_reported_error_for_dedupe: JSValue = .zero,
 exit_handler: ExitHandler = .{},
 
 default_tls_reject_unauthorized: ?bool = null,
@@ -202,10 +201,7 @@ pub fn allowRejectionHandledWarning(this: *VirtualMachine) callconv(.C) bool {
     return this.unhandledRejectionsMode() != .bun;
 }
 pub fn unhandledRejectionsMode(this: *VirtualMachine) api.UnhandledRejections {
-    return this.transpiler.options.transform_options.unhandled_rejections orelse switch (bun.FeatureFlags.breaking_changes_1_3) {
-        false => .bun,
-        true => .throw,
-    };
+    return this.transpiler.options.transform_options.unhandled_rejections orelse .bun;
 }
 
 pub fn initRequestBodyValue(this: *VirtualMachine, body: jsc.WebCore.Body.Value) !*Body.Value.HiveRef {
@@ -837,6 +833,7 @@ pub fn onExit(this: *VirtualMachine) void {
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
+    bun.assert(this.isShuttingDown());
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
@@ -1957,17 +1954,8 @@ pub fn printException(
     }
 }
 
-pub fn runErrorHandlerWithDedupe(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
-    if (this.last_reported_error_for_dedupe == result and !this.last_reported_error_for_dedupe.isEmptyOrUndefinedOrNull())
-        return;
-
-    this.runErrorHandler(result, exception_list);
-}
-
 pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
     @branchHint(.cold);
-    if (!result.isEmptyOrUndefinedOrNull())
-        this.last_reported_error_for_dedupe = result;
 
     const prev_had_errors = this.had_errors;
     this.had_errors = false;
@@ -2320,7 +2308,7 @@ pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_n
 /// We cannot hold it from Zig code because it relies on C++ ARIA to automatically release the lock
 /// and it is not safe to copy the lock itself
 /// So we have to wrap entry points to & from JavaScript with an API lock that calls out to C++
-pub inline fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
+pub fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
     this.global.vm().holdAPILock(ctx, jsc.OpaqueWrap(Context, function));
 }
 
@@ -3248,8 +3236,23 @@ fn printErrorInstance(
     }
 
     for (errors_to_append.items) |err| {
+        // Check for circular references to prevent infinite recursion in cause chains
+        if (formatter.map_node == null) {
+            formatter.map_node = ConsoleObject.Formatter.Visited.Pool.get(default_allocator);
+            formatter.map_node.?.data.clearRetainingCapacity();
+            formatter.map = formatter.map_node.?.data;
+        }
+
+        const entry = formatter.map.getOrPut(err) catch unreachable;
+        if (entry.found_existing) {
+            try writer.writeAll("\n");
+            try writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", allow_ansi_color));
+            continue;
+        }
+
         try writer.writeAll("\n");
         try this.printErrorInstance(.js, err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
+        _ = formatter.map.remove(err);
     }
 }
 

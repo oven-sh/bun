@@ -654,8 +654,8 @@ pub const OperatingSystem = enum(u16) {
         else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
     };
 
-    pub fn isMatch(this: OperatingSystem) bool {
-        return (@intFromEnum(this) & @intFromEnum(current)) != 0;
+    pub fn isMatch(this: OperatingSystem, target: OperatingSystem) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
     }
 
     pub inline fn has(this: OperatingSystem, other: u16) bool {
@@ -696,7 +696,7 @@ pub const OperatingSystem = enum(u16) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(operating_system.combine().isMatch());
+        return jsc.JSValue.jsBoolean(operating_system.combine().isMatch(current));
     }
 };
 
@@ -719,6 +719,10 @@ pub const Libc = enum(u8) {
         return (@intFromEnum(this) & other) != 0;
     }
 
+    pub fn isMatch(this: Libc, target: Libc) bool {
+        return (@intFromEnum(this) & @intFromEnum(target)) != 0;
+    }
+
     pub fn negatable(this: Libc) Negatable(Libc) {
         return .{ .added = this, .removed = .none };
     }
@@ -738,7 +742,7 @@ pub const Libc = enum(u8) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(libc.combine().isMatch());
+        return jsc.JSValue.jsBoolean(libc.combine().isMatch(current));
     }
 };
 
@@ -793,8 +797,8 @@ pub const Architecture = enum(u16) {
         return (@intFromEnum(this) & other) != 0;
     }
 
-    pub fn isMatch(this: Architecture) bool {
-        return @intFromEnum(this) & @intFromEnum(current) != 0;
+    pub fn isMatch(this: Architecture, target: Architecture) bool {
+        return @intFromEnum(this) & @intFromEnum(target) != 0;
     }
 
     pub fn negatable(this: Architecture) Negatable(Architecture) {
@@ -813,7 +817,7 @@ pub const Architecture = enum(u16) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(architecture.combine().isMatch());
+        return jsc.JSValue.jsBoolean(architecture.combine().isMatch(current));
     }
 };
 
@@ -928,7 +932,8 @@ pub const PackageManifest = struct {
         // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
         // - v0.0.4: fixed bug with cpu & os tag not being added correctly
         // - v0.0.5: added bundled dependencies
-        pub const version = "bun-npm-manifest-cache-v0.0.5\n";
+        // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
+        pub const version = "bun-npm-manifest-cache-v0.0.6\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {

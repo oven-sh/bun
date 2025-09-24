@@ -186,10 +186,10 @@ const State = struct {
         self.history.unlock();
     }
 
-    fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self) void {
         defer self.* = undefined;
         var history = self.history.intoUnprotected();
-        defer history.deinit();
+        defer history.deinit(self.parent);
 
         const count = history.allocations.count();
         if (count == 0) return;

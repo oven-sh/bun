@@ -190,7 +190,7 @@ JSValue NodeVMSyntheticModule::evaluate(JSGlobalObject* globalObject)
 
     ArgList args;
 
-    return AsyncContextFrame::call(globalObject, m_syntheticEvaluationSteps.get(), m_moduleWrapper.get(), args);
+    RELEASE_AND_RETURN(scope, AsyncContextFrame::call(globalObject, m_syntheticEvaluationSteps.get(), m_moduleWrapper.get(), args));
 }
 
 void NodeVMSyntheticModule::setExport(JSGlobalObject* globalObject, WTF::String exportName, JSValue value)

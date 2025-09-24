@@ -55,6 +55,7 @@ export const sharedTypes: Record<string, string> = {
   "JSC::CustomGetterSetter": "bun.jsc.CustomGetterSetter",
   "JSC::SourceProvider": "bun.jsc.SourceProvider",
   "JSC::CallFrame": "bun.jsc.CallFrame",
+  "JSC::JSObject": "bun.jsc.JSObject",
 };
 
 export const bannedTypes: Record<string, string> = {

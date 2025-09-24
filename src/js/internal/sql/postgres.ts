@@ -1292,11 +1292,6 @@ class PostgresAdapter
                     if (typeof columnValue === "undefined") {
                       binding_values.push(null);
                     } else {
-                      if ($isArray(columnValue)) {
-                        throw new SyntaxError(
-                          "It is not possible to bind array type values ​​without using sql.array helper",
-                        );
-                      }
                       binding_values.push(columnValue);
                     }
                   }
@@ -1316,11 +1311,6 @@ class PostgresAdapter
                   if (typeof columnValue === "undefined") {
                     binding_values.push(null);
                   } else {
-                    if ($isArray(columnValue)) {
-                      throw new SyntaxError(
-                        "It is not possible to bind array type values ​​without using sql.array helper",
-                      );
-                    }
                     binding_values.push(columnValue);
                   }
                 }
@@ -1352,11 +1342,6 @@ class PostgresAdapter
                     if (typeof value_from_key === "undefined") {
                       binding_values.push(null);
                     } else {
-                      if ($isArray(value_from_key)) {
-                        throw new SyntaxError(
-                          "It is not possible to bind array type values ​​without using sql.array helper",
-                        );
-                      }
                       binding_values.push(value_from_key);
                     }
                   }
@@ -1365,11 +1350,6 @@ class PostgresAdapter
                   if (typeof value === "undefined") {
                     binding_values.push(null);
                   } else {
-                    if ($isArray(value)) {
-                      throw new SyntaxError(
-                        "It is not possible to bind array type values ​​without using sql.array helper",
-                      );
-                    }
                     binding_values.push(value);
                   }
                 }
@@ -1397,11 +1377,6 @@ class PostgresAdapter
                 if (typeof columnValue === "undefined") {
                   binding_values.push(null);
                 } else {
-                  if ($isArray(columnValue)) {
-                    throw new SyntaxError(
-                      "It is not possible to bind array type values ​​without using sql.array helper",
-                    );
-                  }
                   binding_values.push(columnValue);
                 }
               }
@@ -1415,9 +1390,6 @@ class PostgresAdapter
             if (typeof value === "undefined") {
               binding_values.push(null);
             } else {
-              if ($isArray(value)) {
-                throw new SyntaxError("It is not possible to bind array type values ​​without using sql.array helper");
-              }
               binding_values.push(value);
             }
           }

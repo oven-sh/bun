@@ -47,7 +47,7 @@ pub const SecretsJob = struct {
         const promise = this.promise.get();
         if (promise == .zero) return;
 
-        SecretsJobOptions.Bun__SecretsJobOptions__runFromJS(this.ctx, vm.global, promise);
+        SecretsJobOptions.Bun__SecretsJobOptions__runFromJS(this.ctx, this.vm.global, promise);
     }
 
     fn deinit(this: *SecretsJob) void {

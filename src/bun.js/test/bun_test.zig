@@ -328,6 +328,7 @@ pub const BunTest = struct {
         errdefer group.log("ended in error", .{});
 
         const result, const this_ptr = callframe.argumentsAsArray(2);
+        if (this_ptr.asPtrAddress() == 0) return; // extra handler
 
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
         defer refdata.deref();
@@ -581,13 +582,30 @@ pub const BunTest = struct {
             } else bun.debugAssert(false); // this should be unreachable, we create DoneCallback above
         }
 
-        if (result != null and result.?.asPromise() != null) {
+        if (result) |result_jsvalue| if (result_jsvalue.asPromise()) |promise| {
+            defer result_jsvalue.ensureStillAlive(); // because sometimes we use promise without result
+
             group.log("callTestCallback -> promise: data {}", .{cfg_data});
+            // TODO: supress unhandled rejection error
+            result_jsvalue.then(globalThis, null, bunTestThen, bunTestCatch);
+            drain(globalThis); // drain microtasks to see if the promise is immediately resolved
+            if (dcb_ref == null) {
+                const immediate_status = promise.status(globalThis.vm());
+                if (immediate_status != .pending) {
+                    // immediately resolved
+                    if (immediate_status == .rejected) {
+                        // post error
+                        const value = promise.result(globalThis.vm());
+                        this.onUncaughtException(globalThis, value, true, cfg_data);
+                    }
+                    return cfg_data;
+                }
+            }
+            // not immediately resolved; register 'then' to handle the result when it becomes available
             const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
-            result.?.then(globalThis, this_ref, bunTestThen, bunTestCatch);
-            drain(globalThis);
+            result_jsvalue.then(globalThis, this_ref, bunTestThen, bunTestCatch);
             return null;
-        }
+        };
 
         if (dcb_ref) |_| {
             // completed asynchronously

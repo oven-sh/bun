@@ -62,8 +62,9 @@ negative_routes: std.ArrayList([:0]const u8) = std.ArrayList([:0]const u8).init(
 user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteBuilder).init(bun.default_allocator),
 
 bake: ?bun.bake.UserOptions = null,
+/// Pointer is allocated by the arena in the manifest
+/// Owned by this struct
 bake_manifest: ?*bun.bake.Manifest = null,
-bake_router: ?*bun.bake.FrameworkRouter = null,
 
 pub const DevelopmentOption = enum {
     development,
@@ -277,6 +278,11 @@ pub fn deinit(this: *ServerConfig) void {
 
     if (this.bake) |*bake| {
         bake.deinit();
+    }
+
+    if (this.bake_manifest) |manifest| {
+        manifest.deinit();
+        this.bake_manifest = null;
     }
 
     for (this.user_routes_to_build.items) |*builder| {
@@ -877,22 +883,24 @@ pub fn fromJS(
                         });
                     }
 
-                    const router = try bun.default_allocator.create(bun.bake.FrameworkRouter);
-                    router.* = try bun.bake.FrameworkRouter.initEmpty(root, types.items, bun.default_allocator);
-                    errdefer bun.default_allocator.destroy(router);
+                    var router: ?bun.ptr.Owned(*bun.bake.FrameworkRouter) = bun.ptr.Owned(*bun.bake.FrameworkRouter).alloc(try bun.bake.FrameworkRouter.initEmpty(root, types.items, bun.default_allocator)) catch bun.outOfMemory();
+                    errdefer if (router) |*r| {
+                        r.get().deinit(bun.default_allocator);
+                        r.deinitShallow();
+                    };
 
                     var manifest = bun.bake.Manifest{
                         .arena = std.heap.ArenaAllocator.init(bun.default_allocator),
+                        .router = bun.take(&router).?,
                     };
                     errdefer manifest.deinit();
-                    manifest.fromFD(fd, router, &log) catch |err| {
+                    manifest.fromFD(fd, &log) catch |err| {
                         if (err == error.InvalidManifest) {
                             return global.throwValue(try log.toJS(global, bun.default_allocator, "Failed to parse manifest.json"));
                         }
                         return global.throwError(err, "Failed to parse manifest.json");
                     };
                     args.bake_manifest = try manifest.allocate();
-                    args.bake_router = router;
                 }
             }
         }

@@ -7,6 +7,7 @@ pub const DevServer = @import("./bake/DevServer.zig");
 pub const FrameworkRouter = @import("./bake/FrameworkRouter.zig");
 
 pub const Manifest = @import("./bake/Manifest.zig");
+pub const ProductionServerState = @import("./bake/ProductionServerState.zig");
 
 /// export default { app: ... };
 pub const api_name = "app";

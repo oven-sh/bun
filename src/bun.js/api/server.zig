@@ -547,9 +547,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         poll_ref: Async.KeepAlive = .{},
 
         cached_hostname: bun.String = bun.String.empty,
-        bake_router: ?bake.FrameworkRouter = null,
-        bake_server_runtime_module: jsc.JSValue = .zero,
-        bake_server_runtime_handler: jsc.Strong.Optional = .empty,
 
         flags: packed struct(u4) {
             deinit_scheduled: bool = false,
@@ -570,6 +567,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         on_clienterror: jsc.Strong.Optional = .empty,
 
         inspector_server_id: jsc.Debugger.DebuggerId = .init(0),
+
+        bake_prod: bun.ptr.Owned(?*bun.bake.ProductionServerState) = .fromRaw(null),
 
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
@@ -1590,72 +1589,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
-        /// Context type for FrameworkRouter in production mode
-        /// Implements the required methods for route scanning
-        pub const ProductionFrameworkRouter = struct {
-            server: *ThisServer,
-            file_id_counter: u32 = 0,
-
-            pub fn init(server: *ThisServer) ProductionFrameworkRouter {
-                return .{ .server = server };
-            }
-
-            /// Generate a file ID for a route file
-            /// In production, we don't need to track actual files since they're bundled
-            pub fn getFileIdForRouter(
-                this: *ProductionFrameworkRouter,
-                abs_path: []const u8,
-                associated_route: bun.bake.FrameworkRouter.Route.Index,
-                file_kind: bun.bake.FrameworkRouter.Route.FileKind,
-            ) !bun.bake.FrameworkRouter.OpaqueFileId {
-                _ = abs_path;
-                _ = associated_route;
-                _ = file_kind;
-                // In production, we just need unique IDs for the route structure
-                // The actual files are already bundled
-                const id = this.file_id_counter;
-                this.file_id_counter += 1;
-                return bun.bake.FrameworkRouter.OpaqueFileId.init(id);
-            }
-
-            /// Handle route syntax errors
-            pub fn onRouterSyntaxError(
-                this: *ProductionFrameworkRouter,
-                rel_path: []const u8,
-                log: bun.bake.FrameworkRouter.TinyLog,
-            ) !void {
-                _ = this;
-                // In production, log syntax errors to console
-                // These shouldn't happen in production as routes are pre-validated during build
-                Output.prettyErrorln("<r><red>error<r>: route syntax error in {s}", .{rel_path});
-                log.print(rel_path);
-                Output.flush();
-            }
-
-            /// Handle route collision errors
-            pub fn onRouterCollisionError(
-                this: *ProductionFrameworkRouter,
-                rel_path: []const u8,
-                other_id: bun.bake.FrameworkRouter.OpaqueFileId,
-                file_kind: bun.bake.FrameworkRouter.Route.FileKind,
-            ) !void {
-                _ = this;
-                _ = other_id;
-                // In production, log collision errors
-                // These shouldn't happen in production as routes are pre-validated during build
-                Output.errGeneric("Multiple {s} matching the same route pattern is ambiguous", .{
-                    switch (file_kind) {
-                        .page => "pages",
-                        .layout => "layout",
-                    },
-                });
-                Output.prettyErrorln("  - <blue>{s}<r>", .{rel_path});
-                Output.flush();
-            }
-        };
-
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
+
+            this.bake_prod.deinit();
 
             // This should've already been handled in stopListening
             // However, when the JS VM terminates, it hypothetically might not call stopListening
@@ -1663,10 +1600,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.cached_hostname.deref();
             this.all_closed_promise.deinit();
-            this.bake_server_runtime_handler.deinit();
-            if (this.bake_server_runtime_module != .zero) {
-                this.bake_server_runtime_module.unprotect();
-            }
             for (this.user_routes.items) |*user_route| {
                 user_route.deinit();
             }
@@ -1720,75 +1653,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .dev_server = dev_server,
             });
 
-            // Initialize FrameworkRouter for production Bake builds
-            if (config.bake) |bake_opts| {
-                if (config.bake_manifest != null) {
-                    // Initialize the server runtime module
-                    // Construct path: <manifest_build_output_dir>/_bun/server-runtime.js
-                    const manifest = config.bake_manifest.?;
-                    const build_output_dir = manifest.build_output_dir;
-
-                    // Create absolute path for build output dir
-                    const server_runtime_path = bun.path.joinAbsString(
-                        bake_opts.root,
-                        &.{ build_output_dir, "_bun", "server-runtime.js" },
-                        .auto,
-                    );
-
-                    server.initBakeServerRuntime(server_runtime_path) catch |err| {
-                        Output.errGeneric("Failed to load SSR server runtime: {s}", .{@errorName(err)});
-                        return error.JSError;
-                    };
-
-                    // In production, we need to create a FrameworkRouter to map routes
-                    var router_types = try std.ArrayList(bun.bake.FrameworkRouter.Type).initCapacity(
-                        server.allocator,
-                        bake_opts.framework.file_system_router_types.len,
-                    );
-                    errdefer router_types.deinit();
-
-                    const transpiler = &server.vm.transpiler;
-
-                    for (bake_opts.framework.file_system_router_types) |fsr| {
-                        const buf = bun.path_buffer_pool.get();
-                        defer bun.path_buffer_pool.put(buf);
-                        const joined_root = bun.path.joinAbsStringBuf(bake_opts.root, buf, &.{fsr.root}, .auto);
-                        const entry = transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
-                            continue;
-
-                        try router_types.append(.{
-                            .abs_root = bun.strings.withoutTrailingSlash(entry.abs_path),
-                            .prefix = fsr.prefix,
-                            .ignore_underscores = fsr.ignore_underscores,
-                            .ignore_dirs = fsr.ignore_dirs,
-                            .extensions = fsr.extensions,
-                            .style = fsr.style,
-                            .allow_layouts = fsr.allow_layouts,
-                            // In production, we don't track individual files as they're already bundled
-                            .server_file = bun.bake.FrameworkRouter.OpaqueFileId.init(0),
-                            .client_file = if (fsr.entry_client) |_|
-                                bun.bake.FrameworkRouter.OpaqueFileId.init(1).toOptional()
-                            else
-                                .none,
-                            .server_file_string = .empty,
-                        });
-                    }
-
-                    server.bake_router = try bun.bake.FrameworkRouter.initEmpty(
-                        bake_opts.root,
-                        router_types.items,
-                        server.allocator,
-                    );
-
-                    // Scan the filesystem to populate the router with actual routes
-                    // This uses ProductionFrameworkRouter context to handle route registration
-                    var prod_router = ProductionFrameworkRouter.init(server);
-                    try server.bake_router.?.scanAll(
-                        server.allocator,
-                        &server.vm.transpiler.resolver,
-                        bun.bake.FrameworkRouter.InsertionContext.wrap(ProductionFrameworkRouter, &prod_router),
-                    );
-                }
+            if (config.bake != null and config.development == .production) {
+                var bake_prod = try bake.ProductionServerState.create(
+                    global,
+                    &server.vm.transpiler,
+                    config,
+                    &config.bake.?,
+                );
+                server.bake_prod = bake_prod.toOptional();
             }
 
             if (RequestContext.pool == null) {
@@ -2264,7 +2136,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             prepared.js_request.ensureStillAlive();
 
             if (should_deinit_context) {
-                ctx.deinit();
+                ctx.deref();
+                // ctx.deinit();
                 return;
             }
 
@@ -2737,8 +2610,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             // --- 6. Handle Bake manifest routes (SSG) ---
-            if (this.config.bake_manifest) |manifest| {
-                this.setBakeManifestRoutes(app, manifest);
+            if (this.bake_prod.get()) |prod| {
+                this.setBakeManifestRoutes(app, prod.manifest);
             }
 
             // --- 7. Initialize plugins if needed ---
@@ -2794,7 +2667,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 var iter = star_methods_covered_by_user.iterator();
                 while (iter.next()) |method_to_cover| {
                     // If we have a bake manifest and router for SSR routes, use the SSR handler
-                    if (this.config.bake_manifest != null and this.config.bake_router != null) {
+                    if (this.bake_prod.get() != null) {
                         app.method(method_to_cover, "/*", *ThisServer, this, bakeProductionSSRRouteHandler);
                     } else {
                         switch (this.config.onNodeHTTPRequest) {
@@ -2808,7 +2681,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             } else {
                 // If we have a bake manifest and router for SSR routes, use the SSR handler
-                if (this.config.bake_manifest != null and this.config.bake_router != null) {
+                if (this.bake_prod.get() != null) {
                     app.any("/*", *ThisServer, this, bakeProductionSSRRouteHandler);
                 } else {
                     switch (this.config.onNodeHTTPRequest) {
@@ -2841,56 +2714,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             route_index: usize,
             client_entrypoints_seen: *std.hash_map.HashMap([]const u8, void, bun.StringHashMapContext, 80),
         ) void {
+            // const bake_prod = this.bake_prod.get().?;
             const any_server = AnyServer.from(this);
 
             // For SSG routes with params, we need to build the actual URL path
             // Use the route index to look up the pattern from the framework router
-            const url_path = if (ssg.params.len > 0)
-                this.reconstructPathFromParams(bun.default_allocator, @intCast(route_index), &ssg.params) catch "/"
-            else if (this.bake_router) |router| blk: {
-                // For routes without params, get the static path from the router
-                if (route_index < router.routes.items.len) {
-                    const ssg_route = &router.routes.items[route_index];
-                    // Build path from route parts
-                    var path_buf: [4096]u8 = undefined;
-                    var path_len: usize = 0;
-
-                    var current_route: ?*const bun.bake.FrameworkRouter.Route = ssg_route;
-                    var parts_stack: [32][]const u8 = undefined;
-                    var parts_count: usize = 0;
-
-                    // Collect all text parts from parent routes
-                    while (current_route) |r| : (parts_count += 1) {
-                        if (parts_count >= parts_stack.len) break;
-                        switch (r.part) {
-                            .text => |text| parts_stack[parts_count] = text,
-                            else => {},
-                        }
-                        if (r.parent.unwrap()) |parent_idx| {
-                            current_route = &router.routes.items[parent_idx.get()];
-                        } else {
-                            current_route = null;
-                        }
-                    }
-
-                    // Build path from collected parts (reverse order)
-                    if (parts_count > 0) {
-                        var i = parts_count;
-                        while (i > 0) : (i -= 1) {
-                            path_buf[path_len] = '/';
-                            path_len += 1;
-                            const part = parts_stack[i - 1];
-                            @memcpy(path_buf[path_len .. path_len + part.len], part);
-                            path_len += part.len;
-                        }
-                        break :blk path_buf[0..path_len];
-                    } else {
-                        break :blk "/";
-                    }
-                } else {
-                    break :blk "/";
-                }
-            } else "/";
+            const url_path =
+                this.reconstructPathFromParams(bun.default_allocator, @intCast(route_index), &ssg.params) catch "/";
 
             httplog("(bake_prod) Setting URL path: {s}\n", .{url_path});
 
@@ -2995,11 +2825,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn bakeStaticChunkRequestHandler(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            const manifest = this.config.bake_manifest orelse {
-                resp.writeStatus("404 Not Found");
-                resp.end("", false);
-                return;
-            };
+            const manifest = this.bake_prod.get().?.manifest;
 
             // Get the asset path from the URL (everything after /_bun/)
             const url = req.url();
@@ -3112,7 +2938,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             route_index: u32,
             params: *const bun.BabyList(bun.bake.Manifest.ParamEntry),
         ) ![]const u8 {
-            const router = this.bake_router orelse return error.NoRouter;
+            const router = this.bake_prod.get().?.router();
             if (route_index >= router.routes.items.len) return error.InvalidRouteIndex;
 
             const target_route = &router.routes.items[route_index];
@@ -3211,8 +3037,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn bakeProductionSSRRouteHandlerWithURL(this: *ThisServer, req: *uws.Request, resp: *App.Response, url: []const u8) void {
             // We can assume manifest and router exist since this handler is only registered when they do
-            const manifest = this.config.bake_manifest.?;
-            const router = this.config.bake_router.?;
+            const manifest = this.bake_prod.get().?.manifest;
+            const router = this.bake_prod.get().?.router();
 
             // Try to match the request URL against the router
             var params: bun.bake.FrameworkRouter.MatchedParams = undefined;
@@ -3247,57 +3073,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
-        fn BakeLoadProductionServerCode(global: *jsc.JSGlobalObject, code: bun.String, path: bun.String) bun.JSError!jsc.JSValue {
-            const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.c) jsc.JSValue, .{ .name = "BakeLoadProductionServerCode" }).*;
-            return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, path });
-        }
-
         fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *jsc.JSGlobalObject) jsc.JSValue {
             const f = @extern(*const fn (*jsc.JSGlobalObject) callconv(.c) jsc.JSValue, .{ .name = "Bake__getEnsureAsyncLocalStorageInstanceJSFunction" }).*;
             return f(global);
-        }
-
-        pub fn initBakeServerRuntime(this: *ThisServer, server_runtime_path: []const u8) !void {
-            const global = this.globalThis;
-
-            // Get the production server runtime code
-            const runtime_code = bun.String.static(bun.bake.getProductionRuntime(.server).code);
-
-            // Convert path to bun.String for passing to C++
-            const path_str = bun.String.cloneUTF8(server_runtime_path);
-            defer path_str.deref();
-
-            // Load and execute the production server runtime IIFE
-            const exports_object = BakeLoadProductionServerCode(global, runtime_code, path_str) catch |err| {
-                this.vm.printErrorLikeObjectToConsole(global.takeException(err));
-                Output.errGeneric("Server runtime failed to start", .{});
-                return error.FailedToLoadServerRuntime;
-            };
-
-            if (!exports_object.isObject()) {
-                Output.errGeneric("Server runtime failed to load - expected an object", .{});
-                return error.ServerRuntimeModuleNotFound;
-            }
-
-            // Store in the server for later use
-            this.bake_server_runtime_module = exports_object;
-            exports_object.protect();
-
-            // Extract and store the handleRequest function from the exports object
-            const handle_request_fn = exports_object.get(global, "handleRequest") catch null orelse {
-                Output.errGeneric("Server runtime module is missing 'handleRequest' export", .{});
-                return error.ServerRuntimeModuleNotFound;
-            };
-
-            if (!handle_request_fn.isCallable()) {
-                Output.errGeneric("Server runtime module's 'handleRequest' export is not a function", .{});
-                return error.ServerRuntimeModuleNotFound;
-            }
-
-            // Store a strong reference to the handleRequest function
-            this.bake_server_runtime_handler = .create(handle_request_fn, global);
-
-            handle_request_fn.ensureStillAlive();
         }
 
         pub fn onBakeFrameworkSSRRequest(
@@ -3311,30 +3089,18 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (comptime Environment.enable_logs)
                 httplog("[Bake SSR] {s} - {s}", .{ req.method(), req.url() });
 
+            const bake_prod = this.bake_prod.get().?;
+
             // Get the handleRequest function from the server runtime
-            const server_request_callback = this.bake_server_runtime_handler.get() orelse {
-                // Server runtime not initialized
-                resp.writeStatus("500 Internal Server Error");
-                resp.writeHeader("Content-Type", "text/plain");
-                resp.end("SSR server runtime not initialized", false);
-                return;
-            };
+            const server_request_callback = bake_prod.bake_server_runtime_handler.get();
 
             const global = this.globalThis;
             const allocator = this.allocator;
 
             // Get the router type server entrypoint from the manifest
-            const router = this.config.bake_router orelse {
-                resp.writeStatus("500 Internal Server Error");
-                resp.end("Router not configured", false);
-                return;
-            };
+            const router = this.bake_prod.get().?.router();
 
-            const manifest = this.config.bake_manifest orelse {
-                resp.writeStatus("500 Internal Server Error");
-                resp.end("Manifest not configured", false);
-                return;
-            };
+            const manifest = this.bake_prod.get().?.manifest;
 
             // Look up the route to get its router type
             const framework_route = &router.routes.items[route_index.get()];

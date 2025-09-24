@@ -3,6 +3,7 @@
 #include "headers-handwritten.h"
 #include "BunBuiltinNames.h"
 #include "WebCoreJSBuiltins.h"
+#include "BakeProductionSSRRouteList.h"
 
 namespace Bun {
 using namespace JSC;
@@ -45,6 +46,11 @@ struct BakeAdditionsToGlobalObject {
         m_bakeEnsureAsyncLocalStorage.initLater(
             [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
                 init.set(JSFunction::create(init.vm, init.owner, 1, String("bakeSetAsyncLocalStorage"_s), jsFunctionBakeEnsureAsyncLocalStorage, ImplementationVisibility::Public, NoIntrinsic));
+            });
+
+        m_BakeProductionSSRRouteInfoClassStructure.initLater(
+            [](LazyClassStructure::Initializer& init) {
+                Bun::createBakeProductionSSRRouteInfoStructure(init);
             });
     }
 
@@ -93,6 +99,7 @@ struct BakeAdditionsToGlobalObject {
     }
 
     LazyClassStructure m_JSBakeResponseClassStructure;
+    LazyClassStructure m_BakeProductionSSRRouteInfoClassStructure;
 
 private:
     WriteBarrier<JSFunction> m_wrapComponent;

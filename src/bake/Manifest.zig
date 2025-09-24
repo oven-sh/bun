@@ -7,6 +7,10 @@ pub const CURRENT_VERSION = bun.Semver.Version{
 };
 
 version: bun.Semver.Version = CURRENT_VERSION,
+
+/// All allocations except for the router are handled with this arena
+arena: std.heap.ArenaAllocator,
+
 /// Routes which are encoded in the manifest.
 ///
 /// The indices correspond to the `route_index` in the manifest.
@@ -17,7 +21,9 @@ routes: []Route = &[_]Route{},
 build_output_dir: []const u8 = "dist",
 /// Router types with their server entrypoints
 router_types: []RouterType = &[_]RouterType{},
-arena: std.heap.ArenaAllocator,
+
+/// All memory allocated with bun.default_allocator here
+router: bun.ptr.Owned(*FrameworkRouter),
 
 pub const RouterType = struct {
     /// Path to the server entrypoint module for this router type
@@ -32,19 +38,22 @@ pub fn allocate(_self: Manifest) !*Manifest {
 }
 
 pub fn deinit(self: *Manifest) void {
+    self.router.get().deinit(bun.default_allocator);
+    self.router.deinitShallow();
     self.arena.deinit();
 }
 
-pub fn fromFD(self: *Manifest, fd: bun.FileDescriptor, router: *FrameworkRouter, log: *logger.Log) !void {
+pub fn fromFD(self: *Manifest, fd: bun.FileDescriptor, log: *logger.Log) !void {
     const source = fd.stdFile().readToEndAlloc(self.arena.allocator(), std.math.maxInt(usize)) catch |e| {
         try log.addErrorFmt(null, logger.Loc.Empty, log.msgs.allocator, "Failed to read manifest.json: {s}", .{@errorName(e)});
         return error.InvalidManifest;
     };
     const json_source = logger.Source.initPathString("dist/manifest.json", source);
-    try self.initFromJSON(&json_source, router, log);
+    try self.initFromJSON(&json_source, log);
 }
 
-pub fn initFromJSON(self: *Manifest, source: *const logger.Source, router: *FrameworkRouter, log: *logger.Log) !void {
+pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log) !void {
+    const router: *FrameworkRouter = self.router.get();
     const allocator = self.arena.allocator();
 
     var temp_arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -317,7 +326,7 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, router: *Fram
 
                 // Insert the static route properly
                 break :blk router.insert(
-                    allocator,
+                    bun.default_allocator,
                     FrameworkRouter.Type.Index.init(@intCast(route_type_index)),
                     .static,
                     .{ .route_path = lookup_path },
@@ -339,7 +348,7 @@ pub fn initFromJSON(self: *Manifest, source: *const logger.Source, router: *Fram
             } else {
                 // Dynamic route
                 break :blk router.insert(
-                    allocator,
+                    bun.default_allocator,
                     FrameworkRouter.Type.Index.init(@intCast(route_type_index)),
                     .dynamic,
                     encoded_pattern,
@@ -743,7 +752,7 @@ pub const ParamEntry = struct {
     }
 };
 
-const Styles = bun.BabyList([]const u8);
+pub const Styles = bun.BabyList([]const u8);
 
 const std = @import("std");
 

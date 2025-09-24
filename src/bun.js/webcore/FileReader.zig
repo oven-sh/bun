@@ -1,3 +1,4 @@
+const mlog = @import("../../mlog.zig").log;
 const FileReader = @This();
 
 const log = Output.scoped(.FileReader, .visible);
@@ -175,6 +176,8 @@ pub fn setup(
 }
 
 pub fn onStart(this: *FileReader) streams.Start {
+    mlog("FileReader onStart()\n", .{});
+
     this.reader.setParent(this);
     const was_lazy = this.lazy != .none;
     var pollable = false;
@@ -218,6 +221,7 @@ pub fn onStart(this: *FileReader) streams.Start {
         _ = this.parent().incrementCount();
         this.waiting_for_onReaderDone = true;
         if (this.start_offset) |offset| {
+            mlog("FileReader starting with offset: fd={}, offset={}, pollable={}\n", .{ this.fd, offset, pollable });
             switch (this.reader.startFileOffset(this.fd, pollable, offset)) {
                 .result => {},
                 .err => |e| {
@@ -225,6 +229,7 @@ pub fn onStart(this: *FileReader) streams.Start {
                 },
             }
         } else {
+            mlog("FileReader starting: fd={}, pollable={}, max_size={?}\n", .{ this.fd, pollable, this.max_size });
             switch (this.reader.start(this.fd, pollable)) {
                 .result => {},
                 .err => |e| {
@@ -304,6 +309,7 @@ pub fn deinit(this: *FileReader) void {
 pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {
     var buf = init_buf;
     log("onReadChunk() = {d} ({s}) - read_inside_on_pull: {s}", .{ buf.len, @tagName(state), @tagName(this.read_inside_on_pull) });
+    mlog("FileReader onReadChunk(len={d}, state={s} - read_inside_on_pull: {s})\n", .{ buf.len, @tagName(state), @tagName(this.read_inside_on_pull) });
 
     if (this.done) {
         this.reader.close();
@@ -312,10 +318,14 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
     var close = false;
     defer if (close) this.reader.close();
     var hasMore = state != .eof;
+    mlog("FileReader onReadChunk: hasMore={} (state={s})\n", .{ hasMore, @tagName(state) });
 
     if (buf.len > 0) {
         if (this.max_size) |max_size| {
-            if (this.total_readed >= max_size) return false;
+            if (this.total_readed >= max_size) {
+                mlog("FileReader onReadChunk: returning false (max_size reached)\n", .{});
+                return false;
+            }
             const len = @min(max_size - this.total_readed, buf.len);
             if (buf.len > len) {
                 buf = buf[0..len];
@@ -327,9 +337,12 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
                 hasMore = false;
             }
         }
+    } else {
+        mlog("FileReader onReadChunk: 0-byte read, hasMore={}, reader.isDone={}\n", .{ hasMore, this.reader.isDone() });
     }
 
     const reader_buffer = this.reader.buffer();
+    mlog("FileReader onReadChunk: read_inside_on_pull={s}, buf.len={d}\n", .{ @tagName(this.read_inside_on_pull), buf.len });
     if (this.read_inside_on_pull != .none) {
         switch (this.read_inside_on_pull) {
             .js => |in_progress| {
@@ -375,6 +388,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
             } else {
                 this.pending.result = .{ .done = {} };
             }
+            mlog("FileReader onReadChunk: returning false (0-byte read in pending state)\n", .{});
             return false;
         }
 
@@ -394,6 +408,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
                 .{ .into_array_and_done = into_array }
             else
                 .{ .into_array = into_array };
+            mlog("FileReader onReadChunk: returning {} (pending_view path)\n", .{!was_done});
             return !was_done;
         }
 
@@ -407,6 +422,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
                 reader_buffer.clearRetainingCapacity();
                 this.pending.result = .{ .temporary = .fromBorrowedSliceDangerous(buf) };
             }
+            mlog("FileReader onReadChunk: returning {} (slice in reader buffer)\n", .{!was_done});
             return !was_done;
         }
 
@@ -415,6 +431,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
                 .{ .temporary_and_done = .fromBorrowedSliceDangerous(buf) }
             else
                 .{ .temporary = .fromBorrowedSliceDangerous(buf) };
+            mlog("FileReader onReadChunk: returning {} (slice not in buffered)\n", .{!was_done});
             return !was_done;
         }
 
@@ -427,6 +444,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
             .{ .owned_and_done = .moveFromList(&buffered) }
         else
             .{ .owned = .moveFromList(&buffered) };
+        mlog("FileReader onReadChunk: returning {} (buffered path)\n", .{!was_done});
         return !was_done;
     } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
         bun.handleOom(this.buffered.appendSlice(bun.default_allocator, buf));
@@ -436,9 +454,11 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
     }
 
     // For pipes, we have to keep pulling or the other process will block.
-    return this.read_inside_on_pull != .temporary and
+    const should_continue = this.read_inside_on_pull != .temporary and
         !(this.buffered.items.len + reader_buffer.items.len >= this.highwater_mark and
             !this.reader.flags.pollable);
+    mlog("FileReader onReadChunk: final return should_continue={}, read_inside_on_pull={s}, buffered_len={d}\n", .{ should_continue, @tagName(this.read_inside_on_pull), this.buffered.items.len });
+    return should_continue;
 }
 
 fn isPulling(this: *const FileReader) bool {
@@ -446,6 +466,7 @@ fn isPulling(this: *const FileReader) bool {
 }
 
 pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Result {
+    mlog("FileReader onPull(buffer_len={d}) called\n", .{buffer.len});
     array.ensureStillAlive();
     defer array.ensureStillAlive();
     const drained = this.drain();
@@ -461,20 +482,25 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
             this.buffered.clearAndFree(bun.default_allocator);
 
             if (this.reader.isDone()) {
+                mlog("FileReader onPull(buffer_len={d}) returning INTO_ARRAY_AND_DONE with {d} bytes\n", .{buffer.len, drained.len});
                 return .{ .into_array_and_done = .{ .value = array, .len = drained.len } };
             } else {
+                mlog("FileReader onPull(buffer_len={d}) returning INTO_ARRAY with {d} bytes\n", .{buffer.len, drained.len});
                 return .{ .into_array = .{ .value = array, .len = drained.len } };
             }
         }
 
         if (this.reader.isDone()) {
+            mlog("FileReader onPull(buffer_len={d}) returning OWNED_AND_DONE with {d} bytes\n", .{buffer.len, drained.len});
             return .{ .owned_and_done = drained };
         } else {
+            mlog("FileReader onPull(buffer_len={d}) returning OWNED with {d} bytes\n", .{buffer.len, drained.len});
             return .{ .owned = drained };
         }
     }
 
     if (this.reader.isDone()) {
+        mlog("FileReader onPull(buffer_len={d}) returning DONE (no drained data)\n", .{buffer.len});
         return .{ .done = {} };
     }
 
@@ -521,7 +547,7 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
 
         if (this.reader.isDone()) {
             log("onPull({d}) = done", .{buffer.len});
-
+            mlog("FileReader onPull(buffer_len={d}) returning DONE\n", .{buffer.len});
             return .{ .done = {} };
         }
     }
@@ -530,7 +556,7 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
     this.pending_view = buffer;
 
     log("onPull({d}) = pending", .{buffer.len});
-
+    mlog("FileReader onPull(buffer_len={d}) returning PENDING\n", .{buffer.len});
     return .{ .pending = &this.pending };
 }
 
@@ -563,37 +589,41 @@ fn consumeReaderBuffer(this: *FileReader) void {
 
 pub fn onReaderDone(this: *FileReader) void {
     log("onReaderDone()", .{});
-    if (!this.isPulling()) {
-        this.consumeReaderBuffer();
-        if (this.pending.state == .pending) {
-            if (this.buffered.items.len > 0) {
-                this.pending.result = .{ .owned_and_done = bun.ByteList.moveFromList(&this.buffered) };
-            } else {
-                this.pending.result = .{ .done = {} };
-            }
-            this.buffered = .{};
-            this.pending.run();
-        } else if (this.buffered.items.len > 0) {
-            const this_value = this.parent().this_jsvalue;
-            const globalThis = this.parent().globalThis;
-            if (this_value != .zero) {
-                if (Source.js.onDrainCallbackGetCached(this_value)) |cb| {
-                    const buffered = this.buffered;
-                    this.buffered = .{};
-                    this.parent().incrementCount();
-                    defer _ = this.parent().decrementCount();
-                    this.eventLoop().js.runCallback(
-                        cb,
-                        globalThis,
-                        .js_undefined,
-                        &.{
-                            jsc.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis) catch |err| {
-                                this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
-                                return;
-                            },
+    mlog("FileReader onReaderDone()\n", .{});
+
+    if (this.isPulling()) {
+        return;
+    }
+
+    this.consumeReaderBuffer();
+    if (this.pending.state == .pending) {
+        if (this.buffered.items.len > 0) {
+            this.pending.result = .{ .owned_and_done = bun.ByteList.moveFromList(&this.buffered) };
+        } else {
+            this.pending.result = .{ .done = {} };
+        }
+        this.buffered = .{};
+        this.pending.run();
+    } else if (this.buffered.items.len > 0) {
+        const this_value = this.parent().this_jsvalue;
+        const globalThis = this.parent().globalThis;
+        if (this_value != .zero) {
+            if (Source.js.onDrainCallbackGetCached(this_value)) |cb| {
+                const buffered = this.buffered;
+                this.buffered = .{};
+                this.parent().incrementCount();
+                defer _ = this.parent().decrementCount();
+                this.eventLoop().js.runCallback(
+                    cb,
+                    globalThis,
+                    .js_undefined,
+                    &.{
+                        jsc.ArrayBuffer.fromBytes(buffered.items, .Uint8Array).toJS(globalThis) catch |err| {
+                            this.pending.result = .{ .err = .{ .WeakJSValue = globalThis.takeException(err) } };
+                            return;
                         },
-                    );
-                }
+                    },
+                );
             }
         }
     }

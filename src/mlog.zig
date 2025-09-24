@@ -18,6 +18,8 @@ const Logger = struct {
             file.close();
             Logger.log_file = null;
         }
+
+        std.debug.print("Saved output to {s}.\n", .{Logger.name});
     }
 
     fn getAndOpenFile() *std.fs.File {
@@ -43,7 +45,7 @@ const Logger = struct {
                 Logger.name,
                 .{
                     .read = true,
-                    .truncate = true,
+                    .truncate = false,
                 },
             ) catch
             @panic("Failed to create mlog.txt: {any}\n");
@@ -62,8 +64,6 @@ const Logger = struct {
         std.fmt.format(writer, "[{}] (pid {}) " ++ fmt, .{ nanos, Logger.proc_id } ++ args) catch {
             @panic("Failed to write to mlog.txt: {any}\n");
         };
-
-        std.debug.print("Saved output to {s}.\n", .{name_buf});
     }
 };
 

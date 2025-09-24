@@ -1,3 +1,4 @@
+const mlog = @import("../mlog.zig").log;
 const RareData = @This();
 
 websocket_deflate: ?*WebSocketDeflate.RareData = null,
@@ -376,6 +377,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 
 pub fn stdin(rare: *RareData) *Blob.Store {
     bun.analytics.Features.@"Bun.stdin" += 1;
+    mlog("RareData stdin() called - creating/returning stdin Blob.Store\n", .{});
     return rare.stdin_store orelse brk: {
         var mode: bun.Mode = 0;
         const fd = bun.FD.fromUV(0);
@@ -397,6 +399,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
                 },
             },
         });
+        mlog("RareData stdin() created new Blob.Store for fd=0, is_atty={?}, mode={?}\n", .{ store.data.file.is_atty, mode });
         rare.stdin_store = store;
         break :brk store;
     };

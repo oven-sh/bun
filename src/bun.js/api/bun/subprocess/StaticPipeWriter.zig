@@ -63,7 +63,14 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         }
 
         pub fn start(this: *This) bun.sys.Maybe(void) {
-            mlog("StaticPipeWriter(0x{x}) start()\n", .{@intFromPtr(this)});
+            mlog(
+                "StaticPipeWriter(0x{x}, writer={s}) start() LIFECYCLE: buffer_size={d}\n",
+                .{
+                    @intFromPtr(this),
+                    @typeName(@TypeOf(this.writer)),
+                    this.source.slice().len,
+                },
+            );
             log("StaticPipeWriter(0x{x}) start()", .{@intFromPtr(this)});
             this.ref();
             this.buffer = this.source.slice();
@@ -87,19 +94,25 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
 
         pub fn onWrite(this: *This, amount: usize, status: bun.io.WriteStatus) void {
             log("StaticPipeWriter(0x{x}) onWrite(amount={d} {})", .{ @intFromPtr(this), amount, status });
+            mlog("StaticPipeWriter(0x{x}) onWrite(amount={d} {}) LIFECYCLE: buffer_remaining_before={d}\n", .{ @intFromPtr(this), amount, status, this.buffer.len });
             this.buffer = this.buffer[@min(amount, this.buffer.len)..];
+            const remaining_after = this.buffer.len;
+            mlog("StaticPipeWriter(0x{x}) LIFECYCLE: buffer_remaining_after={d} will_close={}\n", .{ @intFromPtr(this), remaining_after, (status == .end_of_file or remaining_after == 0) });
             if (status == .end_of_file or this.buffer.len == 0) {
+                mlog("StaticPipeWriter(0x{x}) LIFECYCLE: closing writer (finished sending all data)\n", .{@intFromPtr(this)});
                 this.writer.close();
             }
         }
 
         pub fn onError(this: *This, err: bun.sys.Error) void {
             log("StaticPipeWriter(0x{x}) onError(err={any})", .{ @intFromPtr(this), err });
+            mlog("StaticPipeWriter(0x{x}) onError(err={any})\n", .{ @intFromPtr(this), err });
             this.source.detach();
         }
 
         pub fn onClose(this: *This) void {
             log("StaticPipeWriter(0x{x}) onClose()", .{@intFromPtr(this)});
+            mlog("StaticPipeWriter(0x{x}) onClose() LIFECYCLE: stdin writer closed, notifying subprocess\n", .{@intFromPtr(this)});
             this.source.detach();
             this.process.onCloseIO(.stdin);
         }

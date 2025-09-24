@@ -1,3 +1,4 @@
+const mlog = @import("../../mlog.zig").log;
 const ReadableStream = @This();
 
 value: JSValue,
@@ -116,6 +117,7 @@ pub fn toAnyBlob(
 }
 
 pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+    mlog("ReadableStream(0x{x}) done()\n", .{@intFromPtr(this)});
     jsc.markBinding(@src());
     // done is called when we are done consuming the stream
     // cancel actually mark the stream source as done
@@ -136,6 +138,7 @@ pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
 }
 
 pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+    mlog("ReadableStream(0x{x}) cancel()\n", .{@intFromPtr(this)});
     jsc.markBinding(@src());
     // cancel the stream
     ReadableStream__cancel(this.value, globalThis);
@@ -144,6 +147,7 @@ pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
 }
 
 pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+    mlog("ReadableStream(0x{x}) abort()\n", .{@intFromPtr(this)});
     jsc.markBinding(@src());
     // for now we are just calling cancel should be fine
     this.cancel(globalThis);
@@ -313,6 +317,8 @@ pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommend
             return reader.toReadableStream(globalThis);
         },
         .file => {
+            const fd = if (store.data.file.pathlike == .fd) store.data.file.pathlike.fd else bun.invalid_fd;
+            mlog("ReadableStream.fromBlobCopyRef FILE case: fd={}, start_offset={}, max_size={?}, blob_size={}\n", .{ fd, blob.offset, if (blob.size != Blob.max_size) blob.size else null, blob.size });
             var reader = webcore.FileReader.Source.new(.{
                 .globalThis = globalThis,
                 .context = .{
@@ -326,7 +332,7 @@ pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommend
                 },
             });
             store.ref();
-
+            mlog("ReadableStream.fromBlobCopyRef created FileReader.Source, returning stream\n", .{});
             return reader.toReadableStream(globalThis);
         },
         .s3 => |*s3| {

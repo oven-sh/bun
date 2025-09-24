@@ -3,6 +3,7 @@
 //! objects that reference the filesystem (Blob.Store.File). This is how
 //! operations like writing `Store.File` to another `Store.File` knows to use a
 //! basic file copy instead of a naive read write loop.
+const mlog = @import("../../mlog.zig").log;
 
 const Blob = @This();
 
@@ -1997,6 +1998,7 @@ pub fn getStream(
 
         recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
     }
+    mlog("Blob.stream() creating ReadableStream for blob, chunk_size={}, store_type={s}\n", .{ recommended_chunk_size, if (this.store) |store| @tagName(store.data) else "null" });
     const stream = try jsc.WebCore.ReadableStream.fromBlobCopyRef(
         globalThis,
         this,

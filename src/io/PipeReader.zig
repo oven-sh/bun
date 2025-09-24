@@ -751,6 +751,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn from(to: *WindowsBufferedReader, other: anytype, parent: anytype) void {
+        mlog("WindowsBufferedReader from(to=0x{d})\n", .{@intFromPtr(to)});
         bun.assert(other.source != null and to.source == null);
         to.* = .{
             .vtable = to.vtable,
@@ -772,11 +773,13 @@ pub const WindowsBufferedReader = struct {
         return source.getFd();
     }
 
-    pub fn watch(_: *WindowsBufferedReader) void {
+    pub fn watch(this: *WindowsBufferedReader) void {
+        mlog("WindowsBufferedReader watch(0x{d})\n", .{@intFromPtr(this)});
         // No-op on windows.
     }
 
     pub fn setParent(this: *WindowsBufferedReader, parent: anytype) void {
+        mlog("WindowsBufferedReader setParent(0x{d})\n", .{@intFromPtr(this)});
         this.parent = parent;
         if (!this.flags.is_done) {
             if (this.source) |source| {
@@ -862,6 +865,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn startWithCurrentPipe(this: *WindowsBufferedReader) bun.sys.Maybe(void) {
+        mlog("WindowsBufferedReader startWithCurrentPipe(0x{d})\n", .{@intFromPtr(this)});
         bun.assert(!this.source.?.isClosed());
         this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
@@ -870,11 +874,13 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn startWithPipe(this: *WindowsBufferedReader, pipe: *uv.Pipe) bun.sys.Maybe(void) {
+        mlog("WindowsBufferedReader startWithPipe(0x{d})\n", .{@intFromPtr(this)});
         this.source = .{ .pipe = pipe };
         return this.startWithCurrentPipe();
     }
 
     pub fn start(this: *WindowsBufferedReader, fd: bun.FileDescriptor, _: bool) bun.sys.Maybe(void) {
+        mlog("WindowsBufferedReader start(0x{d}, fd={})\n", .{ @intFromPtr(this), fd });
         bun.assert(this.source == null);
         const source = switch (Source.open(uv.Loop.get(), fd)) {
             .err => |err| return .{ .err = err },
@@ -886,12 +892,14 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn startFileOffset(this: *WindowsBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.sys.Maybe(void) {
+        mlog("WindowsBufferedReader startFileOffset(0x{d}, fd={}, poll={}, offset={})\n", .{ @intFromPtr(this), fd, poll, offset });
         this._offset = offset;
         this.flags.use_pread = true;
         return this.start(fd, poll);
     }
 
     pub fn deinit(this: *WindowsBufferedReader) void {
+        mlog("WindowsBufferedReader deinit(0x{d})\n", .{@intFromPtr(this)});
         MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
@@ -903,6 +911,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.sys.Maybe(void) {
+        mlog("WindowsBufferedReader setRawMode(0x{d}, value={})\n", .{ @intFromPtr(this), value });
         const source = this.source orelse return .{
             .err = .{
                 .errno = @intFromEnum(bun.sys.E.BADF),
@@ -925,7 +934,14 @@ pub const WindowsBufferedReader = struct {
         const nread_int = nread.int();
 
         bun.sys.syslog("onStreamRead(0x{d}) = {d}", .{ @intFromPtr(this), nread_int });
-        mlog("onStreamRead(0x{d}) = {d}\n", .{ @intFromPtr(this), nread_int });
+        mlog("WindowsBufferedReader onStreamRead(0x{d}) = {d}\n", .{ @intFromPtr(this), nread_int });
+
+        // DEBUG: Track cumulative reads to diagnose partial read issue after libuv 1.51.0 upgrade
+        const current_buffer_size = this._buffer.items.len;
+        const bytes_this_read = if (nread_int > 0) @as(usize, @intCast(nread_int)) else 0;
+        const total_after_read = current_buffer_size + bytes_this_read;
+        mlog("WindowsBufferedReader READ_TRACKING(0x{d}) this_read={d} buffer_before={d} total_after={d} flags(done={} paused={})\n",
+             .{ @intFromPtr(this), bytes_this_read, current_buffer_size, total_after_read, this.flags.is_done, this.flags.is_paused });
 
         // NOTE: pipes/tty need to call stopReading on errors (yeah)
         switch (nread_int) {
@@ -949,6 +965,10 @@ pub const WindowsBufferedReader = struct {
                 const len: usize = @intCast(nread_int);
                 var slice = buf.slice();
                 this.onRead(.{ .result = len }, slice[0..len], .progress);
+
+                // DEBUG: Track state after onRead to see if it affects further reading
+                mlog("WindowsBufferedReader POST_READ(0x{d}) flags_after_onRead(done={} paused={}) buffer_final_size={d}\n",
+                     .{ @intFromPtr(this), this.flags.is_done, this.flags.is_paused, this._buffer.items.len });
             },
         }
     }
@@ -1015,6 +1035,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn startReading(this: *WindowsBufferedReader) bun.sys.Maybe(void) {
+        mlog("WindowsBufferedReader startReading(0x{d})\n", .{@intFromPtr(this)});
         if (this.flags.is_done or !this.flags.is_paused) return .success;
         this.flags.is_paused = false;
         const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.sys.E.BADF, .read) };
@@ -1042,6 +1063,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn stopReading(this: *WindowsBufferedReader) bun.sys.Maybe(void) {
+        mlog("WindowsBufferedReader stopReading(0x{d})\n", .{@intFromPtr(this)});
         if (this.flags.is_done or this.flags.is_paused) return .success;
         this.flags.is_paused = true;
         const source = this.source orelse return .success;
@@ -1057,6 +1079,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn closeImpl(this: *WindowsBufferedReader, comptime callDone: bool) void {
+        mlog("WindowsBufferedReader closeImpl(0x{d}, callDone={})\n", .{ @intFromPtr(this), callDone });
         if (this.source) |source| {
             switch (source) {
                 .sync_file, .file => |file| {
@@ -1091,6 +1114,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn close(this: *WindowsBufferedReader) void {
+        mlog("WindowsBufferedReader close(0x{d})\n", .{@intFromPtr(this)});
         _ = this.stopReading();
         this.closeImpl(true);
     }
@@ -1112,6 +1136,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn onRead(this: *WindowsBufferedReader, amount: bun.sys.Maybe(usize), slice: []u8, hasMore: ReadState) void {
+        mlog("WindowsBufferedReader onRead(0x{d}, slice.len={})\n", .{ @intFromPtr(this), slice.len });
         if (amount == .err) {
             this.onError(amount.err);
             return;
@@ -1142,14 +1167,17 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn pause(this: *WindowsBufferedReader) void {
+        mlog("WindowsBufferedReader pause(0x{d})\n", .{@intFromPtr(this)});
         _ = this.stopReading();
     }
 
     pub fn unpause(this: *WindowsBufferedReader) void {
+        mlog("WindowsBufferedReader unpause(0x{d})\n", .{@intFromPtr(this)});
         _ = this.startReading();
     }
 
     pub fn read(this: *WindowsBufferedReader) void {
+        mlog("WindowsBufferedReader read(0x{d})\n", .{@intFromPtr(this)});
         // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
         this.unpause();
     }

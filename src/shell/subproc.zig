@@ -1107,6 +1107,7 @@ pub const PipeReader = struct {
             .out_type = out_type,
         });
         log("PipeReader(0x{x}, {s}) create()", .{ @intFromPtr(this), @tagName(this.out_type) });
+        mlog("PipeReader(0x{x}, {s}) create()\n", .{ @intFromPtr(this), @tagName(this.out_type) });
 
         if (capture) |cap| {
             this.captured_writer.writer = cap.refSelf();
@@ -1132,6 +1133,7 @@ pub const PipeReader = struct {
     }
 
     pub fn start(this: *PipeReader, process: *ShellSubprocess, event_loop: jsc.EventLoopHandle) bun.sys.Maybe(void) {
+        mlog("PipeReader(0x{x}, {s}) start()\n", .{ @intFromPtr(this), @tagName(this.out_type) });
         // this.ref();
         this.process = process;
         this.event_loop = event_loop;
@@ -1160,10 +1162,10 @@ pub const PipeReader = struct {
     pub const toJS = toReadableStream;
 
     pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
-        mlog("Reading a chunk...\n", .{});
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
         this.buffered_output.append(chunk);
         log("PipeReader(0x{x}, {s}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), @tagName(this.out_type), chunk.len, @tagName(has_more) });
+        mlog("PipeReader(0x{x}, {s}) onReadChunk(chunk_len={d}, has_more={s})\n", .{ @intFromPtr(this), @tagName(this.out_type), chunk.len, @tagName(has_more) });
 
         this.captured_writer.doWrite(chunk);
 
@@ -1271,6 +1273,7 @@ pub const PipeReader = struct {
     }
 
     pub fn toReadableStream(this: *PipeReader, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+        mlog("PipeReader(0x{x}, {s}) toReadableStream()\n", .{ @intFromPtr(this), @tagName(this.out_type) });
         defer this.deinit();
 
         switch (this.state) {

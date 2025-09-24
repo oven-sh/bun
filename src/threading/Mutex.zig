@@ -48,7 +48,7 @@ pub fn unlock(self: *Mutex) void {
     self.impl.unlock();
 }
 
-pub fn deinit(_: *Mutex) void {}
+pub const deinit = void;
 
 const Impl = if (builtin.mode == .Debug and !builtin.single_threaded)
     DebugImpl

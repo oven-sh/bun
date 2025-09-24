@@ -532,48 +532,55 @@ pub const BunTest = struct {
         }
     }
 
-    fn drain(globalThis: *jsc.JSGlobalObject) void {
-        const bun_vm = globalThis.bunVM();
-        bun_vm.drainMicrotasks();
-        var count = bun_vm.unhandled_error_counter;
-        bun_vm.global.handleRejectedPromises();
-        while (bun_vm.unhandled_error_counter > count) {
-            count = bun_vm.unhandled_error_counter;
-            bun_vm.drainMicrotasks();
-            bun_vm.global.handleRejectedPromises();
-        }
-    }
-
     /// if sync, the result is returned. if async, null is returned.
     pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg_callback: jsc.JSValue, cfg_done_parameter: bool, cfg_data: BunTest.RefDataValue, timeout: *const bun.timespec) ?RefDataValue {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
+        const vm = globalThis.bunVM();
 
-        var done_arg: ?jsc.JSValue = null;
+        // Don't use ?jsc.JSValue to make it harder for the conservative stack
+        // scanner to miss it.
+        var done_arg: jsc.JSValue = .zero;
+        var done_callback: jsc.JSValue = .zero;
 
-        var done_callback: ?jsc.JSValue = null;
         if (cfg_done_parameter) {
             group.log("callTestCallback -> appending done callback param: data {}", .{cfg_data});
             done_callback = DoneCallback.createUnbound(globalThis);
-            done_arg = DoneCallback.bind(done_callback.?, globalThis) catch |e| blk: {
+            done_arg = DoneCallback.bind(done_callback, globalThis) catch |e| blk: {
                 this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg_data);
-                break :blk jsc.JSValue.js_undefined; // failed to bind done callback
+                break :blk .zero; // failed to bind done callback
             };
         }
 
         this.updateMinTimeout(globalThis, timeout);
-        const result: ?jsc.JSValue = cfg_callback.call(globalThis, .js_undefined, if (done_arg) |done| &.{done} else &.{}) catch blk: {
+        const result: jsc.JSValue = vm.eventLoop().runCallbackWithResultAndForcefullyDrainMicrotasks(cfg_callback, globalThis, .js_undefined, if (done_arg != .zero) &.{done_arg} else &.{}) catch blk: {
             globalThis.clearTerminationException();
             this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg_data);
             group.log("callTestCallback -> error", .{});
-            break :blk null;
+            break :blk .zero;
         };
 
+        done_callback.ensureStillAlive();
+
+        // Drain unhandled promise rejections.
+        while (true) {
+            // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
+            if (result != .zero)
+                if (result.asPromise()) |promise|
+                    if (promise.status(globalThis.vm()) == .rejected)
+                        promise.setHandled(globalThis.vm());
+
+            const prev_unhandled_count = vm.unhandled_error_counter;
+            globalThis.handleRejectedPromises();
+            if (vm.unhandled_error_counter == prev_unhandled_count)
+                break;
+        }
+
         var dcb_ref: ?*RefData = null;
-        if (done_callback) |dcb| {
-            if (DoneCallback.fromJS(dcb)) |dcb_data| {
-                if (dcb_data.called or result == null) {
+        if (done_callback != .zero and result != .zero) {
+            if (DoneCallback.fromJS(done_callback)) |dcb_data| {
+                if (dcb_data.called) {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     dcb_ref = ref(this_strong, cfg_data);
@@ -582,45 +589,42 @@ pub const BunTest = struct {
             } else bun.debugAssert(false); // this should be unreachable, we create DoneCallback above
         }
 
-        if (result) |result_jsvalue| if (result_jsvalue.asPromise()) |promise| {
-            defer result_jsvalue.ensureStillAlive(); // because sometimes we use promise without result
+        if (result != .zero) {
+            if (result.asPromise()) |promise| {
+                defer result.ensureStillAlive(); // because sometimes we use promise without result
 
-            group.log("callTestCallback -> promise: data {}", .{cfg_data});
-            const vm = globalThis.bunVM();
+                group.log("callTestCallback -> promise: data {}", .{cfg_data});
 
-            vm.drainMicrotasks();
+                switch (promise.status(globalThis.vm())) {
+                    .pending => {
+                        // not immediately resolved; register 'then' to handle the result when it becomes available
+                        const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
+                        result.then(globalThis, this_ref, bunTestThen, bunTestCatch);
+                        return null;
+                    },
+                    .fulfilled => {
+                        // Do not register a then callback when it's already fulfilled.
+                        return cfg_data;
+                    },
+                    .rejected => {
+                        const value = promise.result(globalThis.vm());
+                        this.onUncaughtException(globalThis, value, true, cfg_data);
 
-            switch (promise.status(globalThis.vm())) {
-                .pending => {
-                    // not immediately resolved; register 'then' to handle the result when it becomes available
-                    const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
-                    result_jsvalue.then(globalThis, this_ref, bunTestThen, bunTestCatch);
-                    return null;
-                },
-                .fulfilled => {
-                    // Do not register a then callback when it's already fulfilled.
-                    return cfg_data;
-                },
-                .rejected => {
-                    // Prevent the promise from entering the promise rejection queue.
-                    promise.setHandled(globalThis.vm());
+                        // We previously marked it as handled above.
 
-                    const value = promise.result(globalThis.vm());
-                    this.onUncaughtException(globalThis, value, true, cfg_data);
-                    return cfg_data;
-                },
+                        return cfg_data;
+                    },
+                }
             }
-        };
+        }
 
         if (dcb_ref) |_| {
             // completed asynchronously
             group.log("callTestCallback -> wait for done callback", .{});
-            drain(globalThis);
             return null;
         }
 
         group.log("callTestCallback -> sync", .{});
-        drain(globalThis);
         return cfg_data;
     }
 

@@ -1,6 +1,6 @@
 import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query, SQLQueryResultMode } from "./query";
-import type { DatabaseAdapter, OnConnected, SQLHelper, SQLResultArray } from "./shared";
+import type { DatabaseAdapter, OnConnected, SQLHelper, SQLResultArray, SQLArrayParameter } from "./shared";
 
 const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
 const {
@@ -735,7 +735,9 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
     return connection;
   }
-
+  array(values: any[], typeNameOrID?: number | string): SQLArrayParameter {
+    throw new Error("SQLite doesn't support arrays");
+  }
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
     let BEGIN = "BEGIN";
 

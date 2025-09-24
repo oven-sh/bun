@@ -631,6 +631,21 @@ declare module "bun" {
     reserve(): Promise<ReservedSQL>;
 
     /**
+     * Creates a new SQL array parameter
+     * @param values - The values to create the array parameter from
+     * @param typeNameOrTypeID - The type name or type ID to create the array parameter from, if omitted it will default to JSON
+     * @returns A new SQL array parameter
+     *
+     * @example
+     * ```ts
+     * const array = sql.array([1, 2, 3], "INT");
+     * await sql`CREATE TABLE users_posts (user_id INT, posts_id INT[])`;
+     * await sql`INSERT INTO users_posts (user_id, posts_id) VALUES (${user.id}, ${array})`;
+     * ```
+     */
+    array(values: any[], typeNameOrTypeID?: number | string): SQLArrayParameter;
+
+    /**
      * Begins a new transaction.
      *
      * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.

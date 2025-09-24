@@ -8,6 +8,21 @@ declare global {
 }
 
 export type { SQLResultArray };
+class SQLArrayParameter {
+  serializedValues: string;
+  arrayType: string;
+  constructor(serializedValues: string, arrayType: string) {
+    this.serializedValues = serializedValues;
+    this.arrayType = arrayType;
+  }
+  toString() {
+    return this.serializedValues;
+  }
+  toJSON() {
+    return this.serializedValues;
+  }
+}
+
 class SQLResultArray<T> extends PublicArray<T> {
   public count!: number | null;
   public command!: string | null;
@@ -828,6 +843,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
 
   getTransactionCommands(options?: string): TransactionCommands;
+  array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;
   getDistributedTransactionCommands?(name: string): TransactionCommands | null;
 
   validateTransactionOptions?(options: string): { valid: boolean; error?: string };
@@ -850,7 +866,7 @@ export default {
   SQLHelper,
   normalizeSSLMode,
   SQLResultArray,
-
+  SQLArrayParameter,
   // @ts-expect-error we're exporting a const enum which works in our builtins
   // generator but not in typescript officially
   SSLMode,

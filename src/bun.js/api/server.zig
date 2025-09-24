@@ -1653,12 +1653,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .dev_server = dev_server,
             });
 
-            if (config.bake != null and config.development == .production) {
+            if (server.config.bake != null and server.config.development == .production) {
                 var bake_prod = try bake.ProductionServerState.create(
                     global,
                     &server.vm.transpiler,
-                    config,
-                    &config.bake.?,
+                    &server.config,
+                    &server.config.bake.?,
                 );
                 server.bake_prod = bake_prod.toOptional();
             }

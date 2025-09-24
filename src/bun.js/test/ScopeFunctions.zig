@@ -196,11 +196,9 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     var base = this.cfg;
     base.line_no = line_no;
     base.test_id_for_debugger = test_id_for_debugger;
-    if (bun.jsc.Jest.Jest.runner) |runner| {
-        // Check if this file should run concurrently based on global flag or glob pattern
-        if (bunTest.file_id < runner.files.len and runner.shouldFileRunConcurrently(bunTest.file_id)) {
-            base.self_concurrent = true;
-        }
+    // Use the file's default concurrent setting (determined once when entering the file)
+    if (bunTest.default_concurrent) {
+        base.self_concurrent = true;
     }
 
     switch (this.mode) {

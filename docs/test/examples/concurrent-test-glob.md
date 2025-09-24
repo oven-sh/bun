@@ -53,20 +53,21 @@ test("uses previous state", () => {
 ```typescript
 import { test, expect } from "bun:test";
 
-// These tests automatically run concurrently due to filename matching the glob
-// Each test is independent and can run in parallel
+// These tests automatically run concurrently due to filename matching the glob pattern.
+// Using test() is equivalent to test.concurrent() when the file matches concurrentTestGlob.
+// Each test is independent and can run in parallel.
 
-test.concurrent("fetch user data", async () => {
+test("fetch user data", async () => {
   const response = await fetch("/api/user/1");
   expect(response.ok).toBe(true);
 });
 
-test.concurrent("fetch posts", async () => {
+test("fetch posts", async () => {
   const response = await fetch("/api/posts");
   expect(response.ok).toBe(true);
 });
 
-test.concurrent("fetch comments", async () => {
+test("fetch comments", async () => {
   const response = await fetch("/api/comments");
   expect(response.ok).toBe(true);
 });

@@ -1808,7 +1808,9 @@ pub const TestCommand = struct {
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
-            bun_test_root.enterFile(file_id, reporter);
+            // Determine if this file should run tests concurrently based on glob pattern
+            const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);
+            bun_test_root.enterFile(file_id, reporter, should_run_concurrent);
             defer bun_test_root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);

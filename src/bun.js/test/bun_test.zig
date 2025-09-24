@@ -114,14 +114,14 @@ pub const BunTestRoot = struct {
         bun.assert(this.active_file == null);
     }
 
-    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) void {
+    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool) void {
         group.begin(@src());
         defer group.end();
 
         bun.assert(this.active_file.get() == null);
 
         this.active_file = .new(undefined);
-        this.active_file.get().?.init(this.gpa, this, file_id, reporter);
+        this.active_file.get().?.init(this.gpa, this, file_id, reporter, default_concurrent);
     }
     pub fn exitFile(this: *BunTestRoot) void {
         group.begin(@src());
@@ -156,6 +156,8 @@ pub const BunTest = struct {
     reporter: ?*test_command.CommandLineReporter,
     timer: bun.api.Timer.EventLoopTimer = .{ .next = .epoch, .tag = .BunTest },
     result_queue: ResultQueue,
+    /// Whether tests in this file should default to concurrent execution
+    default_concurrent: bool = false,
 
     phase: enum {
         collection,
@@ -165,7 +167,7 @@ pub const BunTest = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) void {
+    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool) void {
         group.begin(@src());
         defer group.end();
 
@@ -187,6 +189,7 @@ pub const BunTest = struct {
             .execution = .init(this.gpa),
             .reporter = reporter,
             .result_queue = .init(this.gpa),
+            .default_concurrent = default_concurrent,
         };
     }
     pub fn deinit(this: *BunTest) void {

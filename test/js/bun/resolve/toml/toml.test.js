@@ -156,12 +156,29 @@ lt1 = 24:32:00
   expect(() => Bun.TOML.parse(toml)).toThrow("Expected hour to be in the range [00,23].");
 });
 
-// todo
+it("handles-invalid-date: hour too large", () => {
+  const Bun = globalThis.Bun;
+  const toml = `
+[invalid.time]
+ldt1 = 2025-01-01T24:32:00
+`;
+  expect(() => Bun.TOML.parse(toml)).toThrow("Expected hour to be in the range [00,23].");
+});
+
 it("handles-invalid-time: minute too large", () => {
   const Bun = globalThis.Bun;
   const toml = `
 [invalid.time]
 lt1 = 12:60:00
+`;
+  expect(() => Bun.TOML.parse(toml)).toThrow("Expected minutes to be in the range [00,59].");
+});
+
+it("handles-invalid-date: minute too large", () => {
+  const Bun = globalThis.Bun;
+  const toml = `
+[invalid.time]
+ldt1 = 2024-01-01T12:60:00
 `;
   expect(() => Bun.TOML.parse(toml)).toThrow("Expected minutes to be in the range [00,59].");
 });
@@ -175,11 +192,29 @@ lt1 = 21:32:61
   expect(() => Bun.TOML.parse(toml)).toThrow("Expected seconds to be in the range [00,60].");
 });
 
+it("handles-invalid-date: seconds too large", () => {
+  const Bun = globalThis.Bun;
+  const toml = `
+[invalid.time]
+ldt1 = 2024-01-01T21:32:61
+`;
+  expect(() => Bun.TOML.parse(toml)).toThrow("Expected seconds to be in the range [00,60].");
+});
+
 it("handles-invalid-time: malformed fraction", () => {
   const Bun = globalThis.Bun;
   const toml = `
 [invalid.time]
 lt1 = 14:32:00.999f
+`;
+  expect(() => Bun.TOML.parse(toml)).toThrow("Expected t_equal but found end of file");
+});
+
+it("handles-invalid-date: malformed fraction", () => {
+  const Bun = globalThis.Bun;
+  const toml = `
+[invalid.time]
+ldt1 = 2025-01-01T14:32:00.999f
 `;
   expect(() => Bun.TOML.parse(toml)).toThrow("Expected t_equal but found end of file");
 });

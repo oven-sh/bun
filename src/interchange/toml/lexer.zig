@@ -1288,6 +1288,11 @@ pub const Lexer = struct {
         var year_found: u16 = 0;
         var month_found: u8 = 0;
         var day_found: u8 = 0;
+        var hour_found: u8 = 0;
+        var minute_found: u8 = 0;
+        var second_found: u8 = 0;
+        var offset_hour_found: u8 = 0;
+        var offset_minute_found: u8 = 0;
 
         // State machine variables
         var expect_maybe_numeric = true;
@@ -1358,7 +1363,11 @@ pub const Lexer = struct {
                     // time
                     if (hour > 0) {
                         hour -= 1;
+                        hour_found += shiftLeftBase10(u8, lexer.code_point, hour);
                         if (hour == 0) {
+                            if (hour_found > 23) {
+                                try lexer.invalidValueError(Error.InvalidDate, "Expected hour to be in the range [00,23].", .{});
+                            }
                             expect_maybe_numeric = false;
                             expect_colon = true;
                         }
@@ -1367,7 +1376,11 @@ pub const Lexer = struct {
 
                     if (minute > 0) {
                         minute -= 1;
+                        minute_found += shiftLeftBase10(u8, lexer.code_point, minute);
                         if (minute == 0) {
+                            if (minute_found > 59) {
+                                try lexer.invalidValueError(Error.InvalidDate, "Expected minutes to be in the range [00,59].", .{});
+                            }
                             expect_maybe_numeric = false;
                             expect_colon = true;
                         }
@@ -1376,7 +1389,12 @@ pub const Lexer = struct {
 
                     if (second > 0) {
                         second -= 1;
+                        second_found += shiftLeftBase10(u8, lexer.code_point, second);
                         if (second == 0) {
+                            // Allow leap second 60 (RFC 3339 flexibility)
+                            if (second_found > 60) {
+                                try lexer.invalidValueError(Error.InvalidDate, "Expected seconds to be in the range [00,60].", .{});
+                            }
                             expect_maybe_numeric = true;
                             expect_maybe_dot = true;
                             expect_maybe_offset = true;
@@ -1413,7 +1431,11 @@ pub const Lexer = struct {
 
                         if (offset_hour > 0) {
                             offset_hour -= 1;
+                            offset_hour_found += shiftLeftBase10(u8, lexer.code_point, offset_hour);
                             if (offset_hour == 0) {
+                                if (offset_hour_found > 23) {
+                                    try lexer.invalidValueError(Error.InvalidDate, "Expected offset hour to be in the range [00,23].", .{});
+                                }
                                 expect_maybe_numeric = false;
                                 expect_colon = true;
                             }
@@ -1422,7 +1444,11 @@ pub const Lexer = struct {
 
                         if (offset_minute > 0) {
                             offset_minute -= 1;
+                            offset_minute_found += shiftLeftBase10(u8, lexer.code_point, offset_minute);
                             if (offset_minute == 0) {
+                                if (offset_minute_found > 59) {
+                                    try lexer.invalidValueError(Error.InvalidDate, "Expected offset minutes to be in the range [00,59].", .{});
+                                }
                                 maybe_complete = true;
                             }
                             continue;

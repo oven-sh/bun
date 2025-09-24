@@ -146,7 +146,8 @@ it("date followed by EOF", () => {
   const toml = `
 [date.eof]
 ldt1 = 2024-01-01T12:59:00`;
-  expect(() => Bun.TOML.parse(toml).date.eof.ldt1.toEqual("2024-01-01T12:59:00"));
+  const parsed = Bun.TOML.parse(toml);
+  expect(parsed.date.eof.ldt1).toEqual("2024-01-01T12:59:00");
 });
 
 it("time followed by EOF", () => {
@@ -154,7 +155,8 @@ it("time followed by EOF", () => {
   const toml = `
 [time.eof]
 lt1 = 12:59:00`;
-  expect(() => Bun.TOML.parse(toml).time.eof.ldt1.toEqual("12:59:00"));
+  const parsed = Bun.TOML.parse(toml);
+  expect(parsed.time.eof.lt1).toEqual("12:59:00");
 });
 
 // Invalid Date/Datetime/Time testing.

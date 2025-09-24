@@ -29,7 +29,9 @@ function checkToml(toml) {
   expect(toml.calendar["odt6"]).toBe("1979-05-27T00:32:00.99-07:00");
   expect(toml.calendar["odt7"]).toBe("1979-05-27T00:32:00.999-07:00");
   expect(toml.calendar["odt8"]).toBe("1979-05-27T00:32:00.999-07:00");
-  expect(toml.calendar["odt9"]).toBe("1979-05-27 07:32:00Z");
+  expect(toml.calendar["odt9"]).toBe("1979-05-27T00:32:00.999+07:00");
+  expect(toml.calendar["odt10"]).toBe("1979-05-27 07:32:00Z");
+  expect(toml.calendar["odt11"]).toBe("1979-05-27T00:32:00.999+07:00");
 
   expect(toml.calendar["ldt1"]).toBe("1979-05-27T07:32:00.9");
   expect(toml.calendar["ldt2"]).toBe("1979-05-27T07:32:00.99");

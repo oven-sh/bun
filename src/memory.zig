@@ -53,7 +53,7 @@ fn exemptedFromDeinit(comptime T: type) bool {
         else => {
             _ = T.deinit; // no deinit method? add one, set to void, or add an exemption
             return false;
-        };
+        },
     };
 }
 

@@ -203,37 +203,15 @@ pub const Entry = struct {
     fn encodeSourceMapPath(
         side: bake.Side,
         utf8_input: []const u8,
-        writer: *std.ArrayList(u8),
+        array_list: *std.ArrayList(u8),
     ) error{ OutOfMemory, IncompleteUTF8 }!void {
         // On the client, percent encode everything so it works in the browser
         if (side == .client) {
-            return bun.strings.percentEncodeWrite(utf8_input, writer);
+            return bun.strings.percentEncodeWrite(utf8_input, array_list);
         }
 
-        // On the server, escape special characters for JSON
-        var remaining = utf8_input;
-        while (remaining.len > 0) {
-            if (bun.strings.indexOfAny(remaining, "\"\\\n\r\t")) |index| {
-                // Write everything before the special character
-                if (index > 0) {
-                    try writer.appendSlice(remaining[0..index]);
-                }
-                // Write the escaped character
-                switch (remaining[index]) {
-                    '"' => try writer.appendSlice("\\\""),
-                    '\\' => try writer.appendSlice("\\\\"),
-                    '\n' => try writer.appendSlice("\\n"),
-                    '\r' => try writer.appendSlice("\\r"),
-                    '\t' => try writer.appendSlice("\\t"),
-                    else => unreachable,
-                }
-                remaining = remaining[index + 1 ..];
-            } else {
-                // No special characters found, write the rest
-                try writer.appendSlice(remaining);
-                break;
-            }
-        }
+        const writer = array_list.writer();
+        try bun.js_printer.writePreQuotedString(utf8_input, @TypeOf(writer), writer, '"', false, true, .utf8);
     }
 
     fn joinVLQ(map: *const Entry, kind: ChunkKind, j: *StringJoiner, arena: Allocator, side: bake.Side) !void {

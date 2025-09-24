@@ -400,10 +400,40 @@ pub const BufferedWriter = struct {
     }
 
     pub fn writeHTMLAttributeValue(this: *BufferedWriter, bytes: []const u8) Allocator.Error!void {
+        var current_offset: u32 = 0;
         var items = bytes;
+
         while (items.len > 0) {
-            // TODO: SIMD
-            if (strings.indexOfAny(items, "\"<>")) |j| {
+            var local_match_idx: ?u32 = null;
+
+            if (comptime bun.Environment.enableSIMD) {
+                const vector_size = @sizeOf(AsciiVector);
+
+                if (items.len >= vector_size) {
+                    const vec: AsciiVector = items[0..vector_size].*;
+                    const cmp: AsciiVectorU1 =
+                        @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('"')))) |
+                        @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('<')))) |
+                        @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('>'))));
+
+                    if (@reduce(.Max, cmp) > 0) {
+                        const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
+                        local_match_idx = @ctz(bitmask);
+                    } else {
+                        _ = try this.writeAll(items[0..vector_size]);
+                        items = items[vector_size..];
+                        current_offset += vector_size;
+                        continue; // loop again with the next chunk
+                    }
+                }
+            }
+
+            if (local_match_idx == null) {
+                // SIMD didn't do it's job, so we have to do it slowly
+                local_match_idx = strings.indexOfAny(items, "\"<>");
+            }
+
+            if (local_match_idx) |j| {
                 _ = try this.writeAll(items[0..j]);
                 _ = switch (items[j]) {
                     '"' => try this.writeAll("&quot;"),
@@ -413,11 +443,12 @@ pub const BufferedWriter = struct {
                 };
 
                 items = items[j + 1 ..];
-                continue;
+                current_offset += j + 1;
+            } else {
+                // no escape chars found
+                _ = try this.writeAll(items);
+                break;
             }
-
-            _ = try this.writeAll(items);
-            break;
         }
     }
 
@@ -462,6 +493,12 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const js_lexer = bun.js_lexer;
 const strings = bun.strings;
+
+const AsciiVector = strings.AsciiVector;
+const AsciiVectorU1 = strings.AsciiVectorU1;
+
+const immutable = @import("immutable");
+const AsciiVectorInt = immutable.AsciiVectorInt;
 
 const DynamicOwned = bun.ptr.DynamicOwned;
 const Owned = bun.ptr.Owned;

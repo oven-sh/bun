@@ -1,5 +1,3 @@
-"use client";
-
 import { useSyncExternalStore, type SetStateAction } from "react";
 
 export interface Store<T> {

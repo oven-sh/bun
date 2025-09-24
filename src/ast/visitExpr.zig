@@ -43,7 +43,6 @@ pub fn VisitExpr(
             "useMemo",
             "useImperativeHandle",
             "useInsertionEffect",
-            "useSyncExternalStore",
             "useTransition",
             "useDeferredValue",
         };

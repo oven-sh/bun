@@ -16,7 +16,6 @@ leak:JSC::Parser<JSC::Lexer<unsigned char>>::parseFunctionExpression
 leak:JSC::Parser<JSC::Lexer<unsigned char>>::parsePrimaryExpression
 leak:JSC::Parser<JSC::Lexer<unsigned char>>::parseStatement
 leak:JSCInitialize
-leak:getaddrinfo_send_reply
 leak:start_wqthread
 leak:CRYPTO_set_thread_local
 leak:BIO_new

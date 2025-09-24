@@ -538,6 +538,7 @@ pub fn onPull(this: *FileReader, buffer: []u8, array: jsc.JSValue) streams.Resul
     this.pending_view = buffer;
 
     log("onPull({d}) = pending", .{buffer.len});
+
     return .{ .pending = &this.pending };
 }
 
@@ -570,7 +571,6 @@ fn consumeReaderBuffer(this: *FileReader) void {
 
 pub fn onReaderDone(this: *FileReader) void {
     log("onReaderDone()", .{});
-
     if (!this.isPulling()) {
         this.consumeReaderBuffer();
         if (this.pending.state == .pending) {

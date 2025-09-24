@@ -204,12 +204,14 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     var base = this.cfg;
     base.line_no = line_no;
     base.test_id_for_debugger = test_id_for_debugger;
-    if (bun.jsc.Jest.Jest.runner) |runner| if (runner.concurrent) {
+    // Use the file's default concurrent setting (determined once when entering the file)
+    // or the global concurrent flag from the runner
+    if (bunTest.default_concurrent or (bun.jsc.Jest.Jest.runner != null and bun.jsc.Jest.Jest.runner.?.concurrent)) {
         // Only set to concurrent if still inheriting
         if (base.self_concurrent == .inherit) {
             base.self_concurrent = .yes;
         }
-    };
+    }
 
     switch (this.mode) {
         .describe => {

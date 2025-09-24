@@ -141,6 +141,22 @@ q1 = 1
   expect(parsed.items).toEqual([{ q1: 1 }]);
 });
 
+it("date followed by EOF", () => {
+  const Bun = globalThis.Bun;
+  const toml = `
+[date.eof]
+ldt1 = 2024-01-01T12:59:00`;
+  expect(() => Bun.TOML.parse(toml).date.eof.ldt1.toEqual("2024-01-01T12:59:00"));
+});
+
+it("time followed by EOF", () => {
+  const Bun = globalThis.Bun;
+  const toml = `
+[time.eof]
+lt1 = 12:59:00`;
+  expect(() => Bun.TOML.parse(toml).time.eof.ldt1.toEqual("12:59:00"));
+});
+
 // Invalid Date/Datetime/Time testing.
 // All of these are expected to throw, so it's simplest to just define them inline rather than creating a file for each.
 it("handles-invalid-time: not enough hours", () => {
@@ -232,9 +248,7 @@ it("handles-invalid-date: not enough date digits", () => {
 [invalid.format]
 ld1 = 1979-05-2
 `;
-  // This error message is presently generated from the outer scope, as the date is too short to be considered a date,
-  // but is not very intuitive.
-  expect(() => Bun.TOML.parse(toml)).toThrow("Expected key but found -");
+  expect(() => Bun.TOML.parse(toml)).toThrow("Datetime doesn't have enough characters.");
 });
 
 it("handles-invalid-date: too many day digits", () => {

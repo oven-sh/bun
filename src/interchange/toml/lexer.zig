@@ -763,8 +763,8 @@ pub const Lexer = struct {
                     const content_left = lexer.source.contents.len - start_idx;
                     const min_time_length = 8;
                     const min_date_length = 10;
-                    if (content_left > min_time_length) {
-                        if (content_left > min_date_length) {
+                    if (content_left >= min_time_length) {
+                        if (content_left >= min_date_length) {
                             // If the 5th code point is '-' and it's not preceeded by an E/e,
                             // it must be a date or an error.
                             if (isMaybeDate(lexer.source.contents[start_idx .. start_idx + 5])) {

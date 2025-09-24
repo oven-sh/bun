@@ -118,6 +118,27 @@ if (isDockerEnabled()) {
       }
     });
 
+    test("should handle numeric values with many digits", async () => {
+      await using sql = postgres(options);
+      // handle numbers big than 10,4 with zeros at the end and start, starting with 0. or not
+      for (let value of [
+        "1234.00005678912345670000",
+        "1234.12345678912345670000",
+        "1234.12345678912345678912",
+        "1234.12345678912345678900",
+        "0.00005678912345670000",
+        "0.12345678912345670000",
+        "0.12345678912345678912",
+        "0.12345678912345678900",
+      ]) {
+        const [{ x }] = await sql`select CAST(${value} as NUMERIC(30,20)) as x`;
+        expect(x).toBe(value);
+      }
+      // zero specifically
+      const [{ x }] = await sql`select CAST(${"0.00000000000000000000"} as NUMERIC(30,20)) as x`;
+      expect(x).toBe("0");
+    });
+
     describe("Time/TimeZ", () => {
       test("PostgreSQL TIME and TIMETZ types are handled correctly", async () => {
         const db = postgres(options);

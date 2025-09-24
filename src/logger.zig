@@ -1609,7 +1609,6 @@ const Output = bun.Output;
 const StringBuilder = bun.StringBuilder;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
-const js = bun.jsc;
 const jsc = bun.jsc;
 const strings = bun.strings;
 const Index = bun.ast.Index;

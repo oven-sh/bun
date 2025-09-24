@@ -79,7 +79,7 @@ describe("pipeline stack edge cases", () => {
       .ensureTempDir()
       .runAsTest("cd | pwd - cd doesn't affect next command in pipeline");
 
-    TestBuilder.command`cd / | cd /tmp | pwd`
+    TestBuilder.command`mkdir foo; mkdir foo/bar; cd foo | cd foo/bar | pwd`
       .stdout(s => s.includes("$TEMP_DIR"))
       .ensureTempDir()
       .runAsTest("cd | cd | pwd - multiple cd's don't affect");

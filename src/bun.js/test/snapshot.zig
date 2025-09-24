@@ -53,7 +53,8 @@ pub const Snapshots = struct {
         return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
     }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
-        switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
+        const bunTest = expect.bunTest() orelse return error.SnapshotFailed;
+        switch (try this.getSnapshotFile(bunTest.file_id)) {
             .result => {},
             .err => |err| {
                 return switch (err.syscall) {
@@ -201,7 +202,7 @@ pub const Snapshots = struct {
         try gpres.value_ptr.append(value);
     }
 
-    const inline_snapshot_dbg = bun.Output.scoped(.inline_snapshot, false);
+    const inline_snapshot_dbg = bun.Output.scoped(.inline_snapshot, .visible);
     pub fn writeInlineSnapshots(this: *Snapshots) !bool {
         var arena_backing = bun.ArenaAllocator.init(this.allocator);
         defer arena_backing.deinit();

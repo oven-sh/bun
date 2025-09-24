@@ -1546,11 +1546,11 @@ const LineRange = struct {
     start: u32,
     end: u32,
 };
-pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) std.BoundedArray(LineRange, line_range_count) {
+pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) bun.BoundedArray(LineRange, line_range_count) {
     const remaining = text;
     if (remaining.len == 0) return .{};
 
-    var ranges = std.BoundedArray(LineRange, line_range_count){};
+    var ranges = bun.BoundedArray(LineRange, line_range_count){};
 
     var current_line: u32 = 0;
     const first_newline_or_nonascii_i = strings.indexOfNewlineOrNonASCIICheckStart(text, 0, true) orelse {
@@ -1644,7 +1644,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
         };
 
         if (ranges.len == line_range_count and current_line <= target_line) {
-            var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+            var new_ranges = bun.BoundedArray(LineRange, line_range_count){};
             new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
             ranges = new_ranges;
         }
@@ -1658,7 +1658,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
     }
 
     if (ranges.len == line_range_count and current_line <= target_line) {
-        var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+        var new_ranges = bun.BoundedArray(LineRange, line_range_count){};
         new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
         ranges = new_ranges;
     }
@@ -1667,10 +1667,10 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
 }
 
 /// Get N lines from the start of the text
-pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?std.BoundedArray([]const u8, line_range_count) {
+pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?bun.BoundedArray([]const u8, line_range_count) {
     const ranges = indexOfLineRanges(text, line, line_range_count);
     if (ranges.len == 0) return null;
-    var results = std.BoundedArray([]const u8, line_range_count){};
+    var results = bun.BoundedArray([]const u8, line_range_count){};
     results.len = ranges.len;
 
     for (results.slice()[0..ranges.len], ranges.slice()) |*chunk, range| {
@@ -2239,6 +2239,7 @@ pub const convertUTF8toUTF16InBuffer = unicode.convertUTF8toUTF16InBuffer;
 pub const convertUTF8toUTF16InBufferZ = unicode.convertUTF8toUTF16InBufferZ;
 pub const copyLatin1IntoASCII = unicode.copyLatin1IntoASCII;
 pub const copyLatin1IntoUTF16 = unicode.copyLatin1IntoUTF16;
+pub const copyCP1252IntoUTF16 = unicode.copyCP1252IntoUTF16;
 pub const copyLatin1IntoUTF8 = unicode.copyLatin1IntoUTF8;
 pub const copyLatin1IntoUTF8StopOnNonASCII = unicode.copyLatin1IntoUTF8StopOnNonASCII;
 pub const copyU16IntoU8 = unicode.copyU16IntoU8;
@@ -2251,7 +2252,7 @@ pub const copyUTF16IntoUTF8WithBufferImpl = unicode.copyUTF16IntoUTF8WithBufferI
 pub const decodeCheck = unicode.decodeCheck;
 pub const decodeWTF8RuneT = unicode.decodeWTF8RuneT;
 pub const decodeWTF8RuneTMultibyte = unicode.decodeWTF8RuneTMultibyte;
-pub const elementLengthLatin1IntoUTF16 = unicode.elementLengthLatin1IntoUTF16;
+pub const elementLengthCP1252IntoUTF16 = unicode.elementLengthCP1252IntoUTF16;
 pub const elementLengthLatin1IntoUTF8 = unicode.elementLengthLatin1IntoUTF8;
 pub const elementLengthUTF16IntoUTF8 = unicode.elementLengthUTF16IntoUTF8;
 pub const elementLengthUTF8IntoUTF16 = unicode.elementLengthUTF8IntoUTF16;
@@ -2262,9 +2263,9 @@ pub const eqlUtf16 = unicode.eqlUtf16;
 pub const isAllASCII = unicode.isAllASCII;
 pub const isValidUTF8 = unicode.isValidUTF8;
 pub const isValidUTF8WithoutSIMD = unicode.isValidUTF8WithoutSIMD;
-pub const latin1ToCodepointAssumeNotASCII = unicode.latin1ToCodepointAssumeNotASCII;
-pub const latin1ToCodepointBytesAssumeNotASCII = unicode.latin1ToCodepointBytesAssumeNotASCII;
-pub const latin1ToCodepointBytesAssumeNotASCII16 = unicode.latin1ToCodepointBytesAssumeNotASCII16;
+pub const cp1252ToCodepointAssumeNotASCII = unicode.cp1252ToCodepointAssumeNotASCII;
+pub const cp1252ToCodepointBytesAssumeNotASCII = unicode.cp1252ToCodepointBytesAssumeNotASCII;
+pub const cp1252ToCodepointBytesAssumeNotASCII16 = unicode.cp1252ToCodepointBytesAssumeNotASCII16;
 pub const literal = unicode.literal;
 pub const nonASCIISequenceLength = unicode.nonASCIISequenceLength;
 pub const replaceLatin1WithUTF8 = unicode.replaceLatin1WithUTF8;
@@ -2344,7 +2345,7 @@ pub const withoutTrailingSlash = paths_.withoutTrailingSlash;
 pub const withoutTrailingSlashWindowsPath = paths_.withoutTrailingSlashWindowsPath;
 pub const basename = paths_.basename;
 
-pub const log = bun.Output.scoped(.STR, true);
+pub const log = bun.Output.scoped(.STR, .hidden);
 pub const grapheme = @import("./immutable/grapheme.zig");
 pub const CodePoint = i32;
 

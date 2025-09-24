@@ -341,16 +341,23 @@ pub const struct_evp_pkey_ctx_st = opaque {};
 pub const EVP_PKEY_CTX = struct_evp_pkey_ctx_st;
 pub const struct_evp_md_pctx_ops = opaque {};
 pub const struct_env_md_ctx_st = extern struct {
+    // md_data contains the hash-specific context
+    md_data: extern union {
+        data: [208]u8,
+        alignment: u64,
+    },
+    // digest is the underlying digest function, or NULL if not set
     digest: ?*const EVP_MD,
-    md_data: ?*anyopaque,
+    // pctx is an opaque pointer to additional context
     pctx: ?*EVP_PKEY_CTX,
+    // pctx_ops points to a vtable that contains functions to manipulate pctx
     pctx_ops: ?*const struct_evp_md_pctx_ops,
 };
 pub const EVP_MD_CTX = struct_env_md_ctx_st;
 pub const struct_evp_aead_st = opaque {};
 pub const EVP_AEAD = struct_evp_aead_st;
 pub const union_evp_aead_ctx_st_state = extern union {
-    @"opaque": [580]u8,
+    @"opaque": [560]u8,
     alignment: u64,
 };
 pub const struct_evp_aead_ctx_st = extern struct {
@@ -435,11 +442,11 @@ pub const struct_sha256_state_st = extern struct {
 pub const SHA256_CTX = struct_sha256_state_st;
 pub const struct_sha512_state_st = extern struct {
     h: [8]u64,
-    Nl: u64,
-    Nh: u64,
+    num: u16,
+    md_len: u16,
+    bytes_so_far_high: u32,
+    bytes_so_far_low: u64,
     p: [128]u8,
-    num: c_uint,
-    md_len: c_uint,
 };
 pub const SHA512_CTX = struct_sha512_state_st;
 const struct_unnamed_5 = extern struct {

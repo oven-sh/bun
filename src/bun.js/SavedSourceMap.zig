@@ -105,12 +105,12 @@ pub const MissingSourceMapNoteInfo = struct {
 };
 
 pub fn putBakeSourceProvider(this: *SavedSourceMap, opaque_source_provider: *BakeSourceProvider, path: []const u8) void {
-    this.putValue(path, Value.init(opaque_source_provider)) catch bun.outOfMemory();
+    bun.handleOom(this.putValue(path, Value.init(opaque_source_provider)));
 }
 
 pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
     const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
-    this.putValue(path, Value.init(source_provider)) catch bun.outOfMemory();
+    bun.handleOom(this.putValue(path, Value.init(source_provider)));
 }
 
 pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
@@ -235,7 +235,7 @@ fn getWithContent(
                 if (parse.map) |map| {
                     map.ref();
                     // The mutex is not locked. We have to check the hash table again.
-                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+                    bun.handleOom(this.putValue(path, Value.init(map)));
 
                     return parse;
                 }
@@ -262,7 +262,7 @@ fn getWithContent(
                 if (parse.map) |map| {
                     map.ref();
                     // The mutex is not locked. We have to check the hash table again.
-                    this.putValue(path, Value.init(map)) catch bun.outOfMemory();
+                    bun.handleOom(this.putValue(path, Value.init(map)));
 
                     return parse;
                 }
@@ -298,13 +298,13 @@ pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
 pub fn resolveMapping(
     this: *SavedSourceMap,
     path: []const u8,
-    line: i32,
-    column: i32,
+    line: bun.Ordinal,
+    column: bun.Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
     const parse = this.getWithContent(path, switch (source_handling) {
         .no_source_contents => .mappings_only,
-        .source_contents => .{ .all = .{ .line = line, .column = column } },
+        .source_contents => .{ .all = .{ .line = @max(line.zeroBased(), 0), .column = @max(column.zeroBased(), 0) } },
     });
     const map = parse.map orelse return null;
 

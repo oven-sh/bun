@@ -3,7 +3,7 @@ import { bunEnv, bunExe } from "harness";
 
 test("test timeout kills dangling processes", async () => {
   Bun.spawnSync({
-    cmd: [bunExe(), "--eval", "Bun.sleepSync(500); console.log('This should not be printed!');"],
+    cmd: [bunExe(), "--eval", "Bun.sleepSync(5000); console.log('This should not be printed!');"],
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

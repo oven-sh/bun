@@ -50,7 +50,7 @@ export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, inpu
         .base64 => constructFromU8(input, len, bun.default_allocator, .base64),
         else => unreachable,
     };
-    return jsc.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+    return jsc.JSValue.createBuffer(globalObject, slice);
 }
 
 export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
@@ -65,7 +65,7 @@ export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input
         .latin1 => constructFromU16(input, len, bun.default_allocator, .latin1),
         else => unreachable,
     };
-    return jsc.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+    return jsc.JSValue.createBuffer(globalObject, slice);
 }
 
 // for SQL statement
@@ -126,13 +126,15 @@ pub fn toBunStringFromOwnedSlice(input: []u8, encoding: Encoding) bun.String {
             return bun.String.createExternalGloballyAllocated(.latin1, input);
         },
         .ucs2, .utf16le => {
-            // Avoid incomplete characters
-            if (input.len / 2 == 0) {
+            // Avoid incomplete characters - if input length is 0 or odd, handle gracefully
+            const usable_len = if (input.len % 2 != 0) input.len - 1 else input.len;
+
+            if (usable_len == 0) {
                 bun.default_allocator.free(input);
                 return bun.String.empty;
             }
 
-            const as_u16 = std.mem.bytesAsSlice(u16, input);
+            const as_u16 = std.mem.bytesAsSlice(u16, input[0..usable_len]);
             return bun.String.createExternalGloballyAllocated(.utf16, @alignCast(as_u16));
         },
 

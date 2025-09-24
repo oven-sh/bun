@@ -612,11 +612,10 @@ Date)
       `,
     );
   });
-  it("should error trying to update outside of a test", () => {
-    tester.testError(
-      { msg: "error: Snapshot matchers cannot be used outside of a test" },
-      /*js*/ `
-        expect("1").toMatchInlineSnapshot();
+  it("updating outside of a test", () => {
+    tester.test(
+      v => /*js*/ `
+        expect("1").toMatchInlineSnapshot(${v("", bad, '`"1"`')});
       `,
     );
   });

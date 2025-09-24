@@ -120,6 +120,7 @@ static inline JSC::EncodedJSValue functionPerformanceNowBody(VM& vm)
     double result = time / 1000000.0;
 
     // https://github.com/oven-sh/bun/issues/5604
+    // Must be EncodeAsDouble because the DOMJIT signature has SpecDoubleReal.
     return JSValue::encode(jsDoubleNumber(result));
 }
 
@@ -284,7 +285,7 @@ void JSPerformance::finishCreation(VM& vm)
     this->putDirect(
         vm,
         JSC::Identifier::fromString(vm, "timeOrigin"_s),
-        jsDoubleNumber(Bun__readOriginTimerStart(reinterpret_cast<Zig::GlobalObject*>(this->globalObject())->bunVM())),
+        jsNumber(Bun__readOriginTimerStart(reinterpret_cast<Zig::GlobalObject*>(this->globalObject())->bunVM())),
         PropertyAttribute::ReadOnly | 0);
 }
 

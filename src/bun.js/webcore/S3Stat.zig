@@ -1,5 +1,5 @@
 pub const S3Stat = struct {
-    const log = bun.Output.scoped(.S3Stat, false);
+    const log = bun.Output.scoped(.S3Stat, .visible);
     pub const js = jsc.Codegen.JSS3Stat;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;

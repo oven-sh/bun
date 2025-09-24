@@ -1,5 +1,16 @@
 import { test, expect } from "bun:test";
 
+function normalizeInspectError(e: any) {
+  let str = Bun.inspect(e, { colors: true });
+
+  str = str.slice(str.indexOf("error"));
+  return str
+    .replaceAll(import.meta.dirname, "<test-dir>")
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\\", "/")
+    .replaceAll(process.cwd(), "<cwd>");
+}
+
 test("example 1", () => {
   expect("a\nb\nc\n d\ne").toEqual("a\nd\nc\nd\ne");
 });
@@ -295,4 +306,52 @@ test("completely different long value does not truncate", () => {
     received[i] = length - i - 1;
   }
   expect(received).toEqual(expected);
+});
+
+test("whitespace-only difference", () => {
+  expect("hello\nworld ").toEqual("hello\nworld");
+});
+
+test.skipIf(!Bun.enableANSIColors)("whitespace-only difference (ANSI)", () => {
+  try {
+    expect("hello\nworld ").toEqual("hello\nworld");
+  } catch (e) {
+    expect(normalizeInspectError(e)).toMatchInlineSnapshot(`
+      "error\x1B[0m\x1B[2m:\x1B[0m \x1B[1m\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+        \x1B[0m\x1B[2m"hello\x1B[0m
+      \x1B[32m- \x1B[0m\x1B[32mworld\x1B[0m\x1B[32m"\x1B[0m
+      \x1B[31m+ \x1B[0m\x1B[31mworld\x1B[0m\x1B[31m\x1B[7m \x1B[0m\x1B[31m"\x1B[0m
+
+      \x1B[32m- Expected  - 1\x1B[0m
+      \x1B[31m+ Received  + 1\x1B[0m
+      \x1B[0m
+      \x1B[0m      \x1B[2mat \x1B[0m\x1B[0m\x1B[2m<anonymous>\x1B[0m\x1B[2m (\x1B[0m\x1B[0m\x1B[36m<test-dir>/diffexample.fixture.ts\x1B[0m\x1B[2m:\x1B[0m\x1B[33m317\x1B[0m\x1B[2m:\x1B[33m29\x1B[0m\x1B[2m)\x1B[0m
+      "
+    `);
+  }
+});
+
+test("mix of whitespace-only and non-whitespace-only differences", () => {
+  expect("hello\nworld ").toEqual("Hello\nworld ");
+});
+
+test.skipIf(!Bun.enableANSIColors)("mix of whitespace-only and non-whitespace-only differences (ANSI)", () => {
+  try {
+    expect("hello\nworld ").toEqual("Hello\nworld ");
+  } catch (e) {
+    expect(normalizeInspectError(e)).toMatchInlineSnapshot(`
+      "error\x1B[0m\x1B[2m:\x1B[0m \x1B[1m\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
+
+      \x1B[32m- \x1B[0m\x1B[32m"\x1B[0m\x1B[32mH\x1B[0m\x1B[32mello\x1B[0m
+      \x1B[31m+ \x1B[0m\x1B[31m"\x1B[0m\x1B[31mh\x1B[0m\x1B[31mello\x1B[0m
+        \x1B[0m\x1B[2mworld "\x1B[0m
+
+      \x1B[32m- Expected  - 1\x1B[0m
+      \x1B[31m+ Received  + 1\x1B[0m
+      \x1B[0m
+      \x1B[0m      \x1B[2mat \x1B[0m\x1B[0m\x1B[2m<anonymous>\x1B[0m\x1B[2m (\x1B[0m\x1B[0m\x1B[36m<test-dir>/diffexample.fixture.ts\x1B[0m\x1B[2m:\x1B[0m\x1B[33m341\x1B[0m\x1B[2m:\x1B[33m29\x1B[0m\x1B[2m)\x1B[0m
+      "
+    `);
+  }
 });

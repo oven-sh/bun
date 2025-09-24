@@ -272,7 +272,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
 
-    const glob = bun.default_allocator.create(Glob) catch bun.outOfMemory();
+    const glob = bun.handleOom(alloc.create(Glob));
     glob.* = .{ .pattern = pat_str };
 
     return glob;

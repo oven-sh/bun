@@ -25,7 +25,7 @@ pub const PackageInstall = struct {
         contents_hash: u64,
     };
 
-    const debug = Output.scoped(.install, true);
+    const debug = Output.scoped(.install, .hidden);
 
     pub const Summary = struct {
         fail: u32 = 0,
@@ -519,7 +519,7 @@ pub const PackageInstall = struct {
                 &[_]bun.OSPathSlice{comptime bun.OSPathLiteral("node_modules")}
             else
                 &[_]bun.OSPathSlice{},
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
 
         if (!Environment.isWindows) {
             state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
@@ -750,7 +750,7 @@ pub const PackageInstall = struct {
             const allocation_size =
                 (src.len) + 1 + (dest.len) + 1;
 
-            const combined = bun.default_allocator.alloc(u16, allocation_size) catch bun.outOfMemory();
+            const combined = bun.handleOom(bun.default_allocator.alloc(u16, allocation_size));
             var remaining = combined;
             @memcpy(remaining[0..src.len], src);
             remaining[src.len] = 0;
@@ -1180,7 +1180,7 @@ pub const PackageInstall = struct {
                     }
                 };
                 var task = UninstallTask.new(.{
-                    .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
+                    .absolute_path = bun.handleOom(bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto))),
                 });
                 PackageManager.get().incrementPendingTasks(1);
                 PackageManager.get().thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));

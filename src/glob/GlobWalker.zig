@@ -25,7 +25,7 @@ const isWindows = @import("builtin").os.tag == .windows;
 
 // const Codepoint = u32;
 
-const log = bun.Output.scoped(.Glob, false);
+const log = bun.Output.scoped(.Glob, .visible);
 
 const CursorState = struct {
     cursor: CodepointIterator.Cursor = .{},

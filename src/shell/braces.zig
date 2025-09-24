@@ -1,4 +1,4 @@
-const log = bun.Output.scoped(.BRACES, false);
+const log = bun.Output.scoped(.BRACES, .visible);
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)

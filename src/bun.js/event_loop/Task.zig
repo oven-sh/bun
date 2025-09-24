@@ -516,7 +516,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
 // const ShellIOReaderAsyncDeinit = shell.Interpreter.IOReader.AsyncDeinit;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.WaiterThread.ProcessQueue.ResultTask else opaque {};
 
-const log = bun.Output.scoped(.Task, true);
+const log = bun.Output.scoped(.Task, .hidden);
 
 const Fetch = @import("../webcore/fetch.zig");
 const FetchTasklet = Fetch.FetchTasklet;

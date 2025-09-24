@@ -98,7 +98,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
 }
 
 pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
-const log = bun.Output.scoped(.EventLoop, false);
+const log = bun.Output.scoped(.EventLoop, .hidden);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     while (!done.*) {
@@ -216,7 +216,7 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     if (this.next_immediate_tasks.capacity > 0) {
         // this would only occur if we were recursively running tickImmediateTasks.
         @branchHint(.unlikely);
-        this.immediate_tasks.appendSlice(bun.default_allocator, this.next_immediate_tasks.items) catch bun.outOfMemory();
+        bun.handleOom(this.immediate_tasks.appendSlice(bun.default_allocator, this.next_immediate_tasks.items));
         this.next_immediate_tasks.deinit(bun.default_allocator);
     }
 
@@ -326,8 +326,8 @@ pub fn usocketsLoop(this: *const EventLoop) *uws.Loop {
 }
 
 pub fn autoTick(this: *EventLoop) void {
-    var loop = this.usocketsLoop();
-    var ctx = this.virtual_machine;
+    const loop = this.usocketsLoop();
+    const ctx = this.virtual_machine;
 
     this.tickImmediateTasks(ctx);
     if (comptime Environment.isPosix) {
@@ -349,6 +349,8 @@ pub fn autoTick(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
+
+    ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     this.runImminentGCTimer();
 
@@ -378,8 +380,8 @@ pub fn autoTick(this: *EventLoop) void {
 }
 
 pub fn tickPossiblyForever(this: *EventLoop) void {
-    var ctx = this.virtual_machine;
-    var loop = this.usocketsLoop();
+    const ctx = this.virtual_machine;
+    const loop = this.usocketsLoop();
 
     if (comptime Environment.isPosix) {
         const pending_unref = ctx.pending_unref_counter;
@@ -428,6 +430,8 @@ pub fn autoTickActive(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
+
+    ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     if (loop.isActive()) {
         this.processGCTimer();
@@ -525,21 +529,7 @@ pub fn enqueueTask(this: *EventLoop, task: Task) void {
 }
 
 pub fn enqueueImmediateTask(this: *EventLoop, task: *Timer.ImmediateObject) void {
-    this.immediate_tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
-}
-
-pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
-    // TODO: make this more efficient!
-    const loop = this.virtual_machine.uwsLoop();
-    var timer = uws.Timer.createFallthrough(loop, task.ptr());
-    timer.set(task.ptr(), callTask, timeout, 0);
-}
-
-pub fn callTask(timer: *uws.Timer) callconv(.C) void {
-    const task = Task.from(timer.as(*anyopaque));
-    defer timer.deinit(true);
-
-    VirtualMachine.get().enqueueTask(task);
+    bun.handleOom(this.immediate_tasks.append(bun.default_allocator, task));
 }
 
 pub fn ensureWaker(this: *EventLoop) void {

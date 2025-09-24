@@ -26,25 +26,27 @@ pub fn Parse(
         pub const parseTypeScriptImportEqualsStmt = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypescriptEnumStmt;
 
-        pub inline fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors) anyerror!Expr {
-            return try p.parseExprCommon(level, errors, Expr.EFlags.none);
+        pub inline fn parseExprOrBindings(p: *P, level: Level, errors: ?*DeferredErrors, expr: *Expr) anyerror!void {
+            return p.parseExprCommon(level, errors, Expr.EFlags.none, expr);
         }
 
         pub inline fn parseExpr(p: *P, level: Level) anyerror!Expr {
-            return try p.parseExprCommon(level, null, Expr.EFlags.none);
+            var expr: Expr = undefined;
+            try p.parseExprCommon(level, null, Expr.EFlags.none, &expr);
+            return expr;
         }
 
-        pub inline fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags) anyerror!Expr {
-            return try p.parseExprCommon(level, null, flags);
+        pub inline fn parseExprWithFlags(p: *P, level: Level, flags: Expr.EFlags, expr: *Expr) anyerror!void {
+            return p.parseExprCommon(level, null, flags, expr);
         }
 
-        pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
+        pub fn parseExprCommon(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags, expr: *Expr) anyerror!void {
             if (!p.stack_check.isSafeToRecurse()) {
                 try bun.throwStackOverflow();
             }
 
             const had_pure_comment_before = p.lexer.has_pure_comment_before and !p.options.ignore_dce_annotations;
-            var expr = try p.parsePrefix(level, errors, flags);
+            expr.* = try p.parsePrefix(level, errors, flags);
 
             // There is no formal spec for "__PURE__" comments but from reverse-
             // engineering, it looks like they apply to the next CallExpression or
@@ -52,7 +54,7 @@ pub fn Parse(
             // to the expression "a().b()".
 
             if (had_pure_comment_before and level.lt(.call)) {
-                expr = try p.parseSuffix(expr, @as(Level, @enumFromInt(@intFromEnum(Level.call) - 1)), errors, flags);
+                try p.parseSuffix(expr, @as(Level, @enumFromInt(@intFromEnum(Level.call) - 1)), errors, flags);
                 switch (expr.data) {
                     .e_call => |ex| {
                         ex.can_be_unwrapped_if_unused = .if_unused;
@@ -64,7 +66,7 @@ pub fn Parse(
                 }
             }
 
-            return try p.parseSuffix(expr, level, errors, flags);
+            try p.parseSuffix(expr, level, errors, flags);
         }
 
         pub fn parseYieldExpr(p: *P, loc: logger.Loc) !ExprNodeIndex {
@@ -198,7 +200,7 @@ pub fn Parse(
                 .class_name = name,
                 .extends = extends,
                 .close_brace_loc = close_brace_loc,
-                .ts_decorators = ExprNodeList.init(class_opts.ts_decorators),
+                .ts_decorators = ExprNodeList.fromOwnedSlice(class_opts.ts_decorators),
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
                 .properties = properties.items,
@@ -281,7 +283,7 @@ pub fn Parse(
             }
             const close_paren_loc = p.lexer.loc();
             try p.lexer.expect(.t_close_paren);
-            return ExprListLoc{ .list = ExprNodeList.fromList(args), .loc = close_paren_loc };
+            return ExprListLoc{ .list = ExprNodeList.moveFromList(&args), .loc = close_paren_loc };
         }
 
         pub fn parseJSXPropValueIdentifier(noalias p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
@@ -343,10 +345,13 @@ pub fn Parse(
                 // We don't know yet whether these are arguments or expressions, so parse
                 p.latest_arrow_arg_loc = p.lexer.loc();
 
-                var item = try p.parseExprOrBindings(.comma, &errors);
+                try items_list.ensureUnusedCapacity(1);
+                const item: *Expr = &items_list.unusedCapacitySlice()[0];
+                try p.parseExprOrBindings(.comma, &errors, item);
+                items_list.items.len += 1;
 
                 if (is_spread) {
-                    item = p.newExpr(E.Spread{ .value = item }, loc);
+                    item.* = p.newExpr(E.Spread{ .value = item.* }, loc);
                 }
 
                 // Skip over types
@@ -359,10 +364,8 @@ pub fn Parse(
                 // There may be a "=" after the type (but not after an "as" cast)
                 if (is_typescript_enabled and p.lexer.token == .t_equals and !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())) {
                     try p.lexer.next();
-                    item = Expr.assign(item, try p.parseExpr(.comma));
+                    item.* = Expr.assign(item.*, try p.parseExpr(.comma));
                 }
-
-                items_list.append(item) catch unreachable;
 
                 if (p.lexer.token != .t_comma) {
                     break;
@@ -471,7 +474,10 @@ pub fn Parse(
             if (opts.is_async) {
                 p.logExprErrors(&errors);
                 const async_expr = p.newExpr(E.Identifier{ .ref = try p.storeNameInRef("async") }, loc);
-                return p.newExpr(E.Call{ .target = async_expr, .args = ExprNodeList.init(items) }, loc);
+                return p.newExpr(E.Call{
+                    .target = async_expr,
+                    .args = ExprNodeList.fromOwnedSlice(items),
+                }, loc);
             }
 
             // Is this a chain of expressions and comma operators?
@@ -618,16 +624,17 @@ pub fn Parse(
                                 try p.forbidLexicalDecl(token_range.loc);
                             }
 
-                            const decls = try p.parseAndDeclareDecls(.other, opts);
+                            var decls_list = try p.parseAndDeclareDecls(.other, opts);
+                            const decls: G.Decl.List = .moveFromList(&decls_list);
                             return ExprOrLetStmt{
                                 .stmt_or_expr = js_ast.StmtOrExpr{
                                     .stmt = p.s(S.Local{
                                         .kind = .k_let,
-                                        .decls = G.Decl.List.fromList(decls),
+                                        .decls = decls,
                                         .is_export = opts.is_export,
                                     }, token_range.loc),
                                 },
-                                .decls = decls.items,
+                                .decls = decls.slice(),
                             };
                         }
                     },
@@ -647,19 +654,20 @@ pub fn Parse(
                     }
                     // p.markSyntaxFeature(.using, token_range.loc);
                     opts.is_using_statement = true;
-                    const decls = try p.parseAndDeclareDecls(.constant, opts);
+                    var decls_list = try p.parseAndDeclareDecls(.constant, opts);
+                    const decls: G.Decl.List = .moveFromList(&decls_list);
                     if (!opts.is_for_loop_init) {
-                        try p.requireInitializers(.k_using, decls.items);
+                        try p.requireInitializers(.k_using, decls.slice());
                     }
                     return ExprOrLetStmt{
                         .stmt_or_expr = js_ast.StmtOrExpr{
                             .stmt = p.s(S.Local{
                                 .kind = .k_using,
-                                .decls = G.Decl.List.fromList(decls),
+                                .decls = decls,
                                 .is_export = false,
                             }, token_range.loc),
                         },
-                        .decls = decls.items,
+                        .decls = decls.slice(),
                     };
                 }
             } else if (p.fn_or_arrow_data_parse.allow_await == .allow_expr and strings.eqlComptime(raw, "await")) {
@@ -675,7 +683,7 @@ pub fn Parse(
                 try p.lexer.next();
 
                 const raw2 = p.lexer.raw();
-                const value = if (p.lexer.token == .t_identifier and strings.eqlComptime(raw2, "using")) value: {
+                var value = if (p.lexer.token == .t_identifier and strings.eqlComptime(raw2, "using")) value: {
                     // const using_loc = p.saveExprCommentsHere();
                     const using_range = p.lexer.range();
                     try p.lexer.next();
@@ -686,19 +694,20 @@ pub fn Parse(
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);
                         opts.is_using_statement = true;
-                        const decls = try p.parseAndDeclareDecls(.constant, opts);
+                        var decls_list = try p.parseAndDeclareDecls(.constant, opts);
+                        const decls: G.Decl.List = .moveFromList(&decls_list);
                         if (!opts.is_for_loop_init) {
-                            try p.requireInitializers(.k_await_using, decls.items);
+                            try p.requireInitializers(.k_await_using, decls.slice());
                         }
                         return ExprOrLetStmt{
                             .stmt_or_expr = js_ast.StmtOrExpr{
                                 .stmt = p.s(S.Local{
                                     .kind = .k_await_using,
-                                    .decls = G.Decl.List.fromList(decls),
+                                    .decls = decls,
                                     .is_export = false,
                                 }, token_range.loc),
                             },
-                            .decls = decls.items,
+                            .decls = decls.slice(),
                         };
                     }
                     break :value Expr{
@@ -711,13 +720,15 @@ pub fn Parse(
                 if (p.lexer.token == .t_asterisk_asterisk) {
                     try p.lexer.unexpected();
                 }
-                const expr = p.newExpr(
-                    E.Await{ .value = try p.parseSuffix(value, .prefix, null, .none) },
+                try p.parseSuffix(&value, .prefix, null, .none);
+                var expr = p.newExpr(
+                    E.Await{ .value = value },
                     token_range.loc,
                 );
+                try p.parseSuffix(&expr, .lowest, null, .none);
                 return ExprOrLetStmt{
                     .stmt_or_expr = js_ast.StmtOrExpr{
-                        .expr = try p.parseSuffix(expr, .lowest, null, .none),
+                        .expr = expr,
                     },
                 };
             } else {
@@ -730,12 +741,13 @@ pub fn Parse(
 
             // Parse the remainder of this expression that starts with an identifier
             const ref = try p.storeNameInRef(raw);
-            const expr = p.newExpr(E.Identifier{ .ref = ref }, token_range.loc);
-            return ExprOrLetStmt{
+            var result = ExprOrLetStmt{
                 .stmt_or_expr = js_ast.StmtOrExpr{
-                    .expr = try p.parseSuffix(expr, .lowest, null, .none),
+                    .expr = p.newExpr(E.Identifier{ .ref = ref }, token_range.loc),
                 },
             };
+            try p.parseSuffix(&result.stmt_or_expr.expr, .lowest, null, .none);
+            return result;
         }
 
         pub fn parseBinding(p: *P, comptime opts: ParseBindingOptions) anyerror!Binding {

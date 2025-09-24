@@ -2,7 +2,7 @@ const TextEncoderStreamEncoder = @This();
 
 pending_lead_surrogate: ?u16 = null,
 
-const log = Output.scoped(.TextEncoderStreamEncoder, false);
+const log = Output.scoped(.TextEncoderStreamEncoder, .visible);
 
 pub const js = jsc.Codegen.JSTextEncoderStreamEncoder;
 pub const toJS = js.toJS;

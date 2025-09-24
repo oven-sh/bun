@@ -595,7 +595,10 @@ pub const FD = packed struct(backing_int) {
     pub const truncate = bun.sys.ftruncate;
     pub const unlinkat = bun.sys.unlinkat;
     pub const updateNonblocking = bun.sys.updateNonblocking;
-    pub const write = bun.sys.write;
+    const Error = @import("./sys/Error.zig");
+    pub fn write(fd: bun.FileDescriptor, bytes: []const u8) bun.api.node.Maybe(usize, Error) {
+        return bun.sys.write(fd, bytes);
+    }
     pub const writeNonblocking = bun.sys.writeNonblocking;
     pub const writev = bun.sys.writev;
 

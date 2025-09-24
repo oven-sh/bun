@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/libuv
   COMMIT
-    537d74411e9a5587bc5c6dd9ca04a77976ecb120
+    271d173b6ebd4dfeb692862df2b03af48dcfb16b
 )
 
 if(WIN32)

@@ -1,3 +1,5 @@
+const mlog = @import("../../../../mlog.zig").log;
+
 pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
     return struct {
         const This = @This();
@@ -35,6 +37,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         }
 
         pub fn close(this: *This) void {
+            mlog("StaticPipeWriter(0x{x}) close()\n", .{@intFromPtr(this)});
             log("StaticPipeWriter(0x{x}) close()", .{@intFromPtr(this)});
             this.writer.close();
         }
@@ -60,6 +63,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         }
 
         pub fn start(this: *This) bun.sys.Maybe(void) {
+            mlog("StaticPipeWriter(0x{x}) start()\n", .{@intFromPtr(this)});
             log("StaticPipeWriter(0x{x}) start()", .{@intFromPtr(this)});
             this.ref();
             this.buffer = this.source.slice();

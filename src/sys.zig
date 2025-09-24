@@ -4,6 +4,7 @@
 //!
 //! Sometimes this namespace is referred to as "Syscall", prefer "bun.sys"/"sys"
 
+const mlog = @import("./mlog.zig").log;
 const This = @This();
 
 //
@@ -1550,6 +1551,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             // "WriteFile sets this value to zero before doing any work or error checking."
             var bytes_written: u32 = undefined;
             bun.assert(bytes.len > 0);
+            mlog("We're about to WriteFile({}, {})\n", .{ fd, adjusted_len });
             const rc = kernel32.WriteFile(
                 fd.cast(),
                 bytes.ptr,

@@ -1,3 +1,5 @@
+const mlog = @import("../mlog.zig").log;
+
 // This is a runtime type instead of comptime due to bugs in Zig.
 // https://github.com/ziglang/zig/issues/18664
 const BufferedReaderVTable = struct {
@@ -923,6 +925,7 @@ pub const WindowsBufferedReader = struct {
         const nread_int = nread.int();
 
         bun.sys.syslog("onStreamRead(0x{d}) = {d}", .{ @intFromPtr(this), nread_int });
+        mlog("onStreamRead(0x{d}) = {d}\n", .{ @intFromPtr(this), nread_int });
 
         // NOTE: pipes/tty need to call stopReading on errors (yeah)
         switch (nread_int) {

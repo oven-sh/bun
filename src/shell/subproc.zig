@@ -1,3 +1,4 @@
+const mlog = @import("../mlog.zig").log;
 // const IPC = @import("../bun.js/ipc.zig");
 
 pub const Stdio = util.Stdio;
@@ -1135,6 +1136,7 @@ pub const PipeReader = struct {
         this.process = process;
         this.event_loop = event_loop;
         if (Environment.isWindows) {
+            mlog("Starting with current pipe...\n", .{});
             return this.reader.startWithCurrentPipe();
         }
 
@@ -1158,6 +1160,7 @@ pub const PipeReader = struct {
     pub const toJS = toReadableStream;
 
     pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
+        mlog("Reading a chunk...\n", .{});
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
         this.buffered_output.append(chunk);
         log("PipeReader(0x{x}, {s}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), @tagName(this.out_type), chunk.len, @tagName(has_more) });
@@ -1179,6 +1182,7 @@ pub const PipeReader = struct {
     }
 
     pub fn onReaderDone(this: *PipeReader) void {
+        mlog("The reader is done...\n", .{});
         log("onReaderDone(0x{x}, {s})", .{ @intFromPtr(this), @tagName(this.out_type) });
         const owned = this.toOwnedSlice();
         this.state = .{ .done = owned };

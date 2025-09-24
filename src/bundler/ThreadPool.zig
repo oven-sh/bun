@@ -357,7 +357,7 @@ const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 
 const allocators = bun.allocators;
-const MimallocArena = bun.allocators.MimallocArena;
+const ThreadLocalArena = bun.allocators.MimallocArena;
 
 const BundleV2 = bun.bundle_v2.BundleV2;
 const LinkerContext = bun.bundle_v2.LinkerContext;

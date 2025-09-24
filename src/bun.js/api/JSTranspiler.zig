@@ -793,6 +793,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
     }
 
     var arena = MimallocArena.init();
+    defer arena.deinit();
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
     this.transpiler.setAllocator(allocator);
@@ -1067,6 +1068,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     }
 
     var arena = MimallocArena.init();
+    defer arena.deinit();
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
     var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));

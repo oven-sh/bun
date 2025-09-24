@@ -242,6 +242,7 @@ concurrentTestGlob = "**/concurrent-*.test.ts"
 ```
 
 This is useful for:
+
 - Gradually migrating test suites to concurrent execution
 - Running integration tests concurrently while keeping unit tests sequential
 - Separating fast concurrent tests from tests that require sequential execution

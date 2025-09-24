@@ -29,7 +29,9 @@ concurrentTestGlob = "**/concurrent-*.test.ts"
 ## Test Files
 
 ### Unit Test (Sequential)
+
 `tests/unit/math.test.ts`
+
 ```typescript
 import { test, expect } from "bun:test";
 
@@ -49,7 +51,9 @@ test("uses previous state", () => {
 ```
 
 ### Integration Test (Concurrent)
+
 `tests/integration/concurrent-api.test.ts`
+
 ```typescript
 import { test, expect } from "bun:test";
 

@@ -91,6 +91,7 @@ declare module "bun:test" {
   export namespace jest {
     function restoreAllMocks(): void;
     function clearAllMocks(): void;
+    function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
@@ -180,6 +181,9 @@ declare module "bun:test" {
      * Clear all mock state (calls, results, etc.) without restoring original implementation
      */
     clearAllMocks: typeof jest.clearAllMocks;
+    resetAllMocks: typeof jest.resetAllMocks;
+    useFakeTimers: typeof jest.useFakeTimers;
+    useRealTimers: typeof jest.useRealTimers;
   };
 
   interface FunctionLike {
@@ -226,6 +230,11 @@ declare module "bun:test" {
      * Marks this group of tests to be executed concurrently.
      */
     concurrent: Describe<T>;
+    /**
+     * Marks this group of tests to be executed serially (one after another),
+     * even when the --concurrent flag is used.
+     */
+    serial: Describe<T>;
     /**
      * Runs this group of tests, only if `condition` is true.
      *
@@ -423,7 +432,7 @@ declare module "bun:test" {
       options?: number | TestOptions,
     ): void;
     /**
-     * Skips all other tests, except this test when run with the `--only` option.
+     * Skips all other tests, except this test.
      */
     only: Test<T>;
     /**
@@ -456,6 +465,11 @@ declare module "bun:test" {
      */
     concurrent: Test<T>;
     /**
+     * Forces the test to run serially (not in parallel),
+     * even when the --concurrent flag is used.
+     */
+    serial: Test<T>;
+    /**
      * Runs this test, if `condition` is true.
      *
      * This is the opposite of `test.skipIf()`.
@@ -487,6 +501,13 @@ declare module "bun:test" {
      * @param condition if the test should run concurrently
      */
     concurrentIf(condition: boolean): Test<T>;
+    /**
+     * Forces the test to run serially (not in parallel), if `condition` is true.
+     * This applies even when the --concurrent flag is used.
+     *
+     * @param condition if the test should run serially
+     */
+    serialIf(condition: boolean): Test<T>;
     /**
      * Returns a function that runs for each item in `table`.
      *

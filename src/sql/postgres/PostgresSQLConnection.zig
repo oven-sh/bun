@@ -1725,11 +1725,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
         .ErrorResponse => {
             var err: protocol.ErrorResponse = undefined;
             try err.decodeInternal(Context, reader);
+            errdefer err.deinit();
 
             if (this.status == .connecting or this.status == .sent_startup_message) {
-                defer {
-                    err.deinit();
-                }
+                defer err.deinit();
                 this.failWithJSValue(err.toJS(this.globalObject));
 
                 // it shouldn't enqueue any requests while connecting
@@ -1742,11 +1741,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 return error.ExpectedRequest;
             };
             var is_error_owned = true;
-            defer {
-                if (is_error_owned) {
-                    err.deinit();
-                }
-            }
+            defer if (is_error_owned) err.deinit();
             if (request.statement) |stmt| {
                 if (stmt.status == PostgresSQLStatement.Status.parsing) {
                     stmt.status = PostgresSQLStatement.Status.failed;

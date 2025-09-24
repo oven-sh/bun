@@ -149,12 +149,7 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
     if (nonDuplicatedCount > jsc.JSObject.maxInlineCapacity()) {
         this.cached_structure.set(globalObject, null, ids);
     } else {
-        this.cached_structure.set(globalObject, jsc.JSObject.createStructure(
-            globalObject,
-            owner,
-            @truncate(ids.len),
-            ids.ptr,
-        ), null);
+        this.cached_structure.set(globalObject, jsc.JSObject.createStructure(globalObject, owner, @truncate(ids.len), ids.ptr), null);
     }
 
     return this.cached_structure;

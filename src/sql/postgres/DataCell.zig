@@ -155,7 +155,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                         const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
                         defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                         const unescaped = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
-                        try array.append(bun.default_allocator, SQLDataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.cloneUTF8(unescaped).value.WTFStringImpl else null }, .free_value = 1 });
+                        try array.append(bun.default_allocator, SQLDataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.cloneUTF8(unescaped) else .dead }, .free_value = 1 });
                         slice = trySlice(slice, current_idx + 1);
                         continue;
                     },
@@ -164,7 +164,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                 const str_bytes = slice[1..current_idx];
                 if (str_bytes.len == 0) {
                     // empty string
-                    try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = null }, .free_value = 1 });
+                    try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = .dead }, .free_value = 1 });
                     slice = trySlice(slice, current_idx + 1);
                     continue;
                 }
@@ -172,7 +172,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                 const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
                 defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                 const string_bytes = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
-                try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.cloneUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
+                try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.cloneUTF8(string_bytes) else .dead }, .free_value = 1 });
 
                 slice = trySlice(slice, current_idx + 1);
                 continue;
@@ -243,9 +243,9 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                         } else {
                             // the only escape sequency possible here is \b
                             if (bun.strings.eqlComptime(element, "\\b")) {
-                                try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8("\x08").value.WTFStringImpl }, .free_value = 1 });
+                                try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.static("\x08") }, .free_value = 1 });
                             } else {
-                                try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 0 });
+                                try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element) else .dead }, .free_value = 0 });
                             }
                         }
                         slice = trySlice(slice, current_idx);
@@ -405,7 +405,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                                         if (bigint) {
                                             try array.append(bun.default_allocator, SQLDataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
                                         } else {
-                                            try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                            try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element) else .dead }, .free_value = 1 });
                                         }
                                         slice = trySlice(slice, current_idx);
                                         continue;
@@ -536,7 +536,7 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                 // .int8 is a 64-bit integer always string
                 return SQLDataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, bytes, 0) catch 0 } };
             } else {
-                return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes) else .dead }, .free_value = 1 };
             }
         },
         .float8 => {
@@ -566,14 +566,14 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
 
                 // if is binary format lets display as a string because JS cant handle it in a safe way
                 const result = parseBinaryNumeric(bytes, &numeric_buffer) catch return error.UnsupportedNumericFormat;
-                return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(result.slice()).value.WTFStringImpl }, .free_value = 1 };
+                return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(result.slice()) }, .free_value = 1 };
             } else {
                 // nice text is actually what we want here
-                return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) String.cloneUTF8(bytes) else .dead }, .free_value = 1 };
             }
         },
         .jsonb, .json => {
-            return SQLDataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+            return SQLDataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.cloneUTF8(bytes) else .dead }, .free_value = 1 };
         },
         .bool => {
             if (binary) {
@@ -614,7 +614,7 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                     var buffer: [32]u8 = undefined;
                     const len = Postgres__formatTime(microseconds, &buffer, buffer.len);
 
-                    return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(buffer[0..len]).value.WTFStringImpl }, .free_value = 1 };
+                    return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(buffer[0..len]) }, .free_value = 1 };
                 } else if (tag == .timetz and bytes.len == 12) {
                     // PostgreSQL sends timetz as microseconds since midnight (8 bytes) + timezone offset in seconds (4 bytes)
                     const microseconds = @byteSwap(@as(i64, @bitCast(bytes[0..8].*)));
@@ -624,13 +624,13 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                     var buffer: [48]u8 = undefined;
                     const len = Postgres__formatTimeTz(microseconds, tz_offset_seconds, &buffer, buffer.len);
 
-                    return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(buffer[0..len]).value.WTFStringImpl }, .free_value = 1 };
+                    return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(buffer[0..len]) }, .free_value = 1 };
                 } else {
                     return error.InvalidBinaryData;
                 }
             } else {
                 // Text format - just return as string
-                return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes) else .dead }, .free_value = 1 };
             }
         },
 
@@ -697,7 +697,7 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
             return try parseArray(bytes, bigint, tag, globalObject, null, false);
         },
         else => {
-            return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+            return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes) else .dead }, .free_value = 1 };
         },
     }
 }

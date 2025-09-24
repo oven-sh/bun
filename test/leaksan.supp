@@ -87,9 +87,6 @@ leak:WebCore__DOMURL__fileSystemPath
 leak:bun.js.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:WebWorker__updatePtr
 leak:bun.js.node.zlib.NativeZlib.Context.init
-leak:sql.postgres.PostgresSQLStatement.structure
-leak:sql.postgres.DataCell.parseArray__anon
-leak:sql.postgres.protocol.FieldMessage.FieldMessage.init
 leak:JSC::intlCollatorAvailableLocales
 leak:Bun__canonicalizeIP
 leak:dlopen

@@ -8,7 +8,6 @@ pub const JSObject = opaque {
     extern fn JSC__JSObject__getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue;
     extern fn JSC__JSObject__putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, len: usize) void;
     extern fn Bun__JSObject__getCodePropertyVMInquiry(global: *JSGlobalObject, obj: *JSObject) JSValue;
-    extern fn JSC__createStructure(global: *jsc.JSGlobalObject, owner: *jsc.JSCell, length: u32, names: [*]ExternColumnIdentifier) jsc.JSValue;
     extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
 
     pub fn toJS(obj: *JSObject) JSValue {
@@ -118,7 +117,7 @@ pub const JSObject = opaque {
 
     pub fn createStructure(global: *JSGlobalObject, owner: jsc.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
         jsc.markBinding(@src());
-        return JSC__createStructure(global, owner.asCell(), length, names);
+        return bun.cpp.JSC__createStructure(global, owner.asCell(), names, length);
     }
 
     const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;

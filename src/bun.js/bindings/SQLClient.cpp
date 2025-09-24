@@ -60,7 +60,7 @@ typedef struct TypedArrayDataCell {
 
 typedef union DataCellValue {
     uint8_t null_value;
-    WTF::StringImpl* string;
+    BunString string;
     double number;
     int32_t integer;
     int64_t bigint;
@@ -69,7 +69,7 @@ typedef union DataCellValue {
     double date;
     double date_with_time_zone;
     size_t bytea[2];
-    WTF::StringImpl* json;
+    BunString json;
     DataCellArray array;
     TypedArrayDataCell typed_array;
     DataCellRaw raw;
@@ -146,8 +146,8 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return uint8Array;
     }
     case DataCellTag::String: {
-        if (cell.value.string) {
-            return jsString(vm, WTF::String(cell.value.string));
+        if (cell.value.string.tag != BunStringTag::Dead) {
+            return jsString(vm, cell.value.string.transferToWTFString());
         }
         return jsEmptyString(vm);
     }
@@ -186,8 +186,8 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return uint8Array;
     }
     case DataCellTag::Json: {
-        if (cell.value.json) {
-            auto str = WTF::String(cell.value.json);
+        if (cell.value.json.tag != BunStringTag::Dead) {
+            auto str = cell.value.json.transferToWTFString();
             JSC::JSValue json = JSC::JSONParse(globalObject, str);
             return json;
         }
@@ -428,7 +428,7 @@ extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
     return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags), BunResultMode(result_mode), namesPtr, namesCount));
 }
 
-extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, uint32_t capacity, ExternColumnIdentifier* namesPtr)
+extern "C" [[ZIG_EXPORT(nothrow)]] EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, Bun::ExternColumnIdentifier* namesPtr, size_t capacity)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -439,7 +439,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
     for (uint32_t i = 0; i < capacity; i++) {
         ExternColumnIdentifier& name = names[i];
         if (name.isNamedColumn()) {
-            propertyNames.add(Identifier::fromString(vm, name.name.toWTFString()));
+            propertyNames.add(Identifier::fromString(vm, name.name.transferToWTFString()));
         }
         nonDuplicateCount += !name.isDuplicateColumn();
         if (nonDuplicateCount == JSFinalObject::maxInlineCapacity) {

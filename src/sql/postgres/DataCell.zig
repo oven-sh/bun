@@ -750,6 +750,7 @@ fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummeric
     const weight = try reader.readInt(i16, .big);
     const sign = try reader.readInt(u16, .big);
     const dscale = try reader.readInt(i16, .big);
+    log("ndigits: {d}, weight: {d}, sign: {d}, dscale: {d}", .{ ndigits, weight, sign, dscale });
 
     // Handle special cases
     switch (sign) {
@@ -786,6 +787,7 @@ fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummeric
 
         while (idx <= weight) : (idx += 1) {
             const digit = if (idx < ndigits) try reader.readInt(u16, .big) else 0;
+            log("digit: {d}", .{digit});
             var digit_str: [4]u8 = undefined;
             const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
             if (!first_non_zero) {
@@ -810,12 +812,14 @@ fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummeric
         var idx: isize = scale_start;
         const end: usize = result.items.len + @as(usize, @intCast(dscale));
         while (idx < dscale) : (idx += 4) {
-            if (idx >= 0 and idx < ndigits) {
+            if (idx >= 0 and idx < dscale) {
                 const digit = reader.readInt(u16, .big) catch 0;
+                log("dscale digit: {d}", .{digit});
                 var digit_str: [4]u8 = undefined;
                 const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
                 try result.appendSlice(digit_str[0..digit_len]);
             } else {
+                log("dscale digit: 0000", .{});
                 try result.appendSlice("0000");
             }
         }
@@ -986,6 +990,8 @@ const debug = bun.Output.scoped(.Postgres, .visible);
 // External C++ formatting functions
 extern fn Postgres__formatTime(microseconds: i64, buffer: [*]u8, bufferSize: usize) usize;
 extern fn Postgres__formatTimeTz(microseconds: i64, tzOffsetSeconds: i32, buffer: [*]u8, bufferSize: usize) usize;
+
+const log = bun.Output.scoped(.PostgresDataCell, .visible);
 
 const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");

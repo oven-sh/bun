@@ -55,6 +55,7 @@ pub const TestRunner = struct {
     only: bool = false,
     run_todo: bool = false,
     concurrent: bool = false,
+    concurrent_test_glob: ?[]const []const u8 = null,
     last_file: u64 = 0,
     bail: u32 = 0,
 
@@ -97,6 +98,26 @@ pub const TestRunner = struct {
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
         return this.filter_regex != null;
+    }
+
+    pub fn shouldFileRunConcurrently(this: *const TestRunner, file_id: File.ID) bool {
+        // Check if global concurrent flag is set
+        if (this.concurrent) return true;
+
+        // If no glob patterns are set, don't run concurrently
+        const glob_patterns = this.concurrent_test_glob orelse return false;
+
+        // Get the file path from the file_id
+        if (file_id >= this.files.len) return false;
+        const file_path = this.files.items(.source)[file_id].path.text;
+
+        // Check if the file path matches any of the glob patterns
+        const glob = @import("../../glob.zig");
+        for (glob_patterns) |pattern| {
+            const result = glob.match(this.allocator, pattern, file_path);
+            if (result == .match) return true;
+        }
+        return false;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) struct { file_id: File.ID } {
@@ -210,12 +231,15 @@ pub const Jest = struct {
             Expect.js.getConstructor(globalObject),
         );
 
-        const vi = JSValue.createEmptyObject(globalObject, 5);
+        const vi = JSValue.createEmptyObject(globalObject, 8);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
         vi.put(globalObject, ZigString.static("mock"), mockModuleFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
+        vi.put(globalObject, ZigString.static("resetAllMocks"), clearAllMocks);
         vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
+        vi.put(globalObject, ZigString.static("useFakeTimers"), useFakeTimers);
+        vi.put(globalObject, ZigString.static("useRealTimers"), useRealTimers);
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 

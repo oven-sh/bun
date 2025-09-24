@@ -56,8 +56,15 @@ export function renderToHtml(
       // `renderToPipeableStream` is what actually generates HTML.
       // Here is where React is told what script tags to inject.
       let pipe: (stream: NodeJS.WritableStream) => void;
+
+      stream = new RscInjectionStream(rscPayload, controller);
+
       ({ pipe, abort } = renderToPipeableStream(<Root />, {
         bootstrapModules,
+        onShellReady() {
+          // The shell (including <head>) has been fully rendered
+          stream?.onShellReady();
+        },
         onError(error) {
           if (!signal.aborted) {
             // Abort the rendering and close the stream
@@ -71,7 +78,6 @@ export function renderToHtml(
         },
       }));
 
-      stream = new RscInjectionStream(rscPayload, controller);
       pipe(stream);
 
       return stream.finished;
@@ -142,6 +148,8 @@ class RscInjectionStream extends EventEmitter {
   rscHasEnded = false;
   /** Shared state for decoding RSC data into UTF-8 strings */
   decoder = new TextDecoder("utf-8", { fatal: true });
+  /** Track if the shell (including head) has been fully rendered */
+  shellReady = false;
 
   /** Resolved when all data is written */
   finished: Promise<void>;
@@ -170,6 +178,10 @@ class RscInjectionStream extends EventEmitter {
     });
   }
 
+  onShellReady() {
+    this.shellReady = true;
+  }
+
   write(data: Uint8Array<ArrayBuffer>) {
     if (import.meta.env.DEV && process.env.VERBOSE_SSR)
       console.write(
@@ -182,6 +194,25 @@ class RscInjectionStream extends EventEmitter {
           ) +
           "\n",
       );
+
+    // if (import.meta.env.DEV && this.shellReady) {
+    //   const chunk = this.decoder.decode(data, { stream: true });
+    //   const headElementMatch = chunk.match(/<(title|base|meta|link)\b[^>]*>/i);
+
+    //   if (headElementMatch) {
+    //     const element = headElementMatch[1];
+    //     const error = new Error(
+    //       `Cannot render <${element}> after the document shell has been sent. ` +
+    //         `React hoists head elements automatically, but they must be rendered before any Suspense boundaries. ` +
+    //         `Move your <${element}> element to a component that renders synchronously at the root of your app.`,
+    //     );
+
+    //     this.controller.close(error);
+    //     this.reject(error);
+    //     throw error;
+    //   }
+    // }
+
     if (endsWithClosingScript(data)) {
       // The HTML is not done yet, but it's a suitible time to inject RSC data.
       const { controller } = this;

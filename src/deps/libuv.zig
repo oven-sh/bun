@@ -2981,7 +2981,9 @@ fn StreamMixin(comptime Type: type) type {
                         req.readStop();
                         error_cb(context_data, ReturnCodeI64.init(nreads).errEnum() orelse bun.sys.E.CANCELED);
                     } else {
-                        read_cb(context_data, buffer.slice());
+                        const actual_bytes_read = @as(usize, @intCast(nreads));
+                        bun.sys.syslog("libuv uvReadcb: nreads={d} buffer.len={d} actual_bytes={d}", .{ nreads, buffer.len, actual_bytes_read });
+                        read_cb(context_data, buffer.base[0..actual_bytes_read]);
                     }
                 }
             };

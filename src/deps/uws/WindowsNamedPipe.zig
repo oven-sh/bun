@@ -79,29 +79,71 @@ fn onPipeClose(this: *WindowsNamedPipe) void {
 }
 
 fn onReadAlloc(this: *WindowsNamedPipe, suggested_size: usize) []u8 {
+    mlog("WindowsNamedPipe onReadAlloc(0x{d}) suggested_size={}\n", .{ @intFromPtr(this), suggested_size });
     var available = this.incoming.unusedCapacitySlice();
+    mlog("WindowsNamedPipe onReadAlloc(0x{d}) initial_available_len={} incoming_len={} incoming_cap={}\n", .{ @intFromPtr(this), available.len, this.incoming.len, this.incoming.cap });
+
     if (available.len < suggested_size) {
+        mlog("WindowsNamedPipe onReadAlloc(0x{d}) need to expand: available={} < suggested={}\n", .{ @intFromPtr(this), available.len, suggested_size });
         bun.handleOom(this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size));
         available = this.incoming.unusedCapacitySlice();
+        mlog("WindowsNamedPipe onReadAlloc(0x{d}) after expansion: available_len={} incoming_len={} incoming_cap={}\n", .{ @intFromPtr(this), available.len, this.incoming.len, this.incoming.cap });
     }
-    return available.ptr[0..suggested_size];
+
+    const result_slice = available.ptr[0..suggested_size];
+    mlog("WindowsNamedPipe onReadAlloc(0x{d}) returning slice: ptr=0x{d} len={}\n", .{ @intFromPtr(this), @intFromPtr(result_slice.ptr), result_slice.len });
+    return result_slice;
 }
 
 fn onRead(this: *WindowsNamedPipe, buffer: []const u8) void {
     log("onRead ({})", .{buffer.len});
+    mlog("WindowsNamedPipe onRead(0x{d}) buffer.len={} buffer.ptr=0x{d}\n", .{ @intFromPtr(this), buffer.len, @intFromPtr(buffer.ptr) });
+    mlog("WindowsNamedPipe onRead(0x{d}) BEFORE: incoming_len={} incoming_cap={}\n", .{ @intFromPtr(this), this.incoming.len, this.incoming.cap });
+
+    // Log the first and last few bytes of the buffer to see what we received
+    if (buffer.len > 0) {
+        const preview_len = @min(buffer.len, 32);
+        if (preview_len > 0) {
+            mlog("WindowsNamedPipe onRead(0x{d}) buffer first {} bytes content logged\n", .{ @intFromPtr(this), preview_len });
+        }
+
+        if (buffer.len > 64) {
+            const end_preview_len = @min(32, buffer.len);
+            mlog("WindowsNamedPipe onRead(0x{d}) buffer last {} bytes content logged\n", .{ @intFromPtr(this), end_preview_len });
+        }
+    }
+
     this.incoming.len += @as(u32, @truncate(buffer.len));
+    mlog("WindowsNamedPipe onRead(0x{d}) AFTER adding buffer: incoming_len={} incoming_cap={}\n", .{ @intFromPtr(this), this.incoming.len, this.incoming.cap });
+
     bun.assert(this.incoming.len <= this.incoming.cap);
     bun.assert(bun.isSliceInBuffer(buffer, this.incoming.allocatedSlice()));
 
     const data = this.incoming.slice();
+    mlog("WindowsNamedPipe onRead(0x{d}) final data.len={} data.ptr=0x{d}\n", .{ @intFromPtr(this), data.len, @intFromPtr(data.ptr) });
+
+    // Log content of final data to see what gets passed to handlers
+    if (data.len > 0) {
+        const data_preview_len = @min(data.len, 32);
+        mlog("WindowsNamedPipe onRead(0x{d}) final data first {} bytes content logged\n", .{ @intFromPtr(this), data_preview_len });
+
+        if (data.len > 64) {
+            const data_end_preview_len = @min(32, data.len);
+            mlog("WindowsNamedPipe onRead(0x{d}) final data last {} bytes content logged\n", .{ @intFromPtr(this), data_end_preview_len });
+        }
+    }
 
     this.resetTimeout();
 
     if (this.wrapper) |*wrapper| {
+        mlog("WindowsNamedPipe onRead(0x{d}) calling wrapper.receiveData with {} bytes\n", .{ @intFromPtr(this), data.len });
         wrapper.receiveData(data);
     } else {
+        mlog("WindowsNamedPipe onRead(0x{d}) calling handlers.onData with {} bytes\n", .{ @intFromPtr(this), data.len });
         this.handlers.onData(this.handlers.ctx, data);
     }
+
+    mlog("WindowsNamedPipe onRead(0x{d}) resetting incoming.len to 0\n", .{@intFromPtr(this)});
     this.incoming.len = 0;
 }
 
@@ -207,13 +249,18 @@ fn internalWrite(this: *WindowsNamedPipe, encoded_data: []const u8) void {
 }
 
 pub fn resumeStream(this: *WindowsNamedPipe) bool {
+    mlog("WindowsNamedPipe resumeStream(0x{d}) called\n", .{@intFromPtr(this)});
     const stream = this.writer.getStream() orelse {
+        mlog("WindowsNamedPipe resumeStream(0x{d}) failed: no stream\n", .{@intFromPtr(this)});
         return false;
     };
+    mlog("WindowsNamedPipe resumeStream(0x{d}) got stream=0x{d}, calling readStart\n", .{ @intFromPtr(this), @intFromPtr(stream) });
     const readStartResult = stream.readStart(this, onReadAlloc, onReadError, onRead);
     if (readStartResult == .err) {
+        mlog("WindowsNamedPipe resumeStream(0x{d}) readStart failed: {}\n", .{ @intFromPtr(this), readStartResult.err });
         return false;
     }
+    mlog("WindowsNamedPipe resumeStream(0x{d}) readStart succeeded\n", .{@intFromPtr(this)});
     return true;
 }
 
@@ -274,27 +321,37 @@ pub fn from(
     };
 }
 fn onConnect(this: *WindowsNamedPipe, status: uv.ReturnCode) void {
+    mlog("WindowsNamedPipe onConnect(0x{d}) status={}\n", .{ @intFromPtr(this), status.int() });
     if (this.pipe) |pipe| {
+        mlog("WindowsNamedPipe onConnect(0x{d}) unreferencing pipe\n", .{@intFromPtr(this)});
         _ = pipe.unref();
     }
 
     if (status.toError(.connect)) |err| {
+        mlog("WindowsNamedPipe onConnect(0x{d}) connect failed: {}\n", .{ @intFromPtr(this), err });
         this.onError(err);
         return;
     }
 
+    mlog("WindowsNamedPipe onConnect(0x{d}) connect successful, setting disconnected=false\n", .{@intFromPtr(this)});
     this.flags.disconnected = false;
     if (this.start(true)) {
+        mlog("WindowsNamedPipe onConnect(0x{d}) start() successful, isTLS={}\n", .{ @intFromPtr(this), this.isTLS() });
         if (this.isTLS()) {
             if (this.wrapper) |*wrapper| {
+                mlog("WindowsNamedPipe onConnect(0x{d}) TLS: calling wrapper.start()\n", .{@intFromPtr(this)});
                 // trigger onOpen and start the handshake
                 wrapper.start();
             }
         } else {
+            mlog("WindowsNamedPipe onConnect(0x{d}) no TLS: calling onOpen()\n", .{@intFromPtr(this)});
             // trigger onOpen
             this.onOpen();
         }
+    } else {
+        mlog("WindowsNamedPipe onConnect(0x{d}) start() failed\n", .{@intFromPtr(this)});
     }
+    mlog("WindowsNamedPipe onConnect(0x{d}) calling flush()\n", .{@intFromPtr(this)});
     this.flush();
 }
 
@@ -431,27 +488,37 @@ pub fn startTLS(this: *WindowsNamedPipe, ssl_options: jsc.API.ServerConfig.SSLCo
 }
 
 pub fn start(this: *WindowsNamedPipe, is_client: bool) bool {
+    mlog("WindowsNamedPipe start(0x{d}) is_client={}\n", .{ @intFromPtr(this), is_client });
     this.flags.is_client = is_client;
     if (this.pipe == null) {
+        mlog("WindowsNamedPipe start(0x{d}) failed: pipe is null\n", .{@intFromPtr(this)});
         return false;
     }
+    mlog("WindowsNamedPipe start(0x{d}) unreferencing pipe and setting up writer\n", .{@intFromPtr(this)});
     _ = this.pipe.?.unref();
     this.writer.setParent(this);
     const startPipeResult = this.writer.startWithPipe(this.pipe.?);
     if (startPipeResult == .err) {
+        mlog("WindowsNamedPipe start(0x{d}) writer.startWithPipe failed: {}\n", .{ @intFromPtr(this), startPipeResult.err });
         this.onError(startPipeResult.err);
         return false;
     }
+    mlog("WindowsNamedPipe start(0x{d}) writer.startWithPipe succeeded\n", .{@intFromPtr(this)});
+
     const stream = this.writer.getStream() orelse {
+        mlog("WindowsNamedPipe start(0x{d}) writer.getStream() returned null\n", .{@intFromPtr(this)});
         this.onError(bun.sys.Error.fromCode(bun.sys.E.PIPE, .read));
         return false;
     };
+    mlog("WindowsNamedPipe start(0x{d}) got stream=0x{d}, calling readStart\n", .{ @intFromPtr(this), @intFromPtr(stream) });
 
     const readStartResult = stream.readStart(this, onReadAlloc, onReadError, onRead);
     if (readStartResult == .err) {
+        mlog("WindowsNamedPipe start(0x{d}) readStart failed: {}\n", .{ @intFromPtr(this), readStartResult.err });
         this.onError(readStartResult.err);
         return false;
     }
+    mlog("WindowsNamedPipe start(0x{d}) readStart succeeded\n", .{@intFromPtr(this)});
     return true;
 }
 
@@ -574,6 +641,7 @@ pub fn deinit(this: *WindowsNamedPipe) void {
 pub const CertError = UpgradedDuplex.CertError;
 const WrapperType = SSLWrapper(*WindowsNamedPipe);
 const log = bun.Output.scoped(.WindowsNamedPipe, .visible);
+const mlog = @import("../../mlog.zig").log;
 
 const std = @import("std");
 const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;

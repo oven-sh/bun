@@ -176,6 +176,24 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             };
         }
 
+        pub fn copy(this: *const Resolution) Resolution {
+            return switch (this.tag) {
+                .npm => .init(.{ .npm = this.value.npm }),
+                .local_tarball => .init(.{ .local_tarball = this.value.local_tarball }),
+                .folder => .init(.{ .folder = this.value.folder }),
+                .remote_tarball => .init(.{ .remote_tarball = this.value.remote_tarball }),
+                .workspace => .init(.{ .workspace = this.value.workspace }),
+                .symlink => .init(.{ .symlink = this.value.symlink }),
+                .single_file_module => .init(.{ .single_file_module = this.value.single_file_module }),
+                .git => .init(.{ .git = this.value.git }),
+                .github => .init(.{ .github = this.value.github }),
+                .root => .init(.{ .root = {} }),
+                else => {
+                    std.debug.panic("Internal error: unexpected resolution tag: {}", .{this.tag});
+                },
+            };
+        }
+
         pub fn fmt(this: *const This, string_bytes: []const u8, path_sep: bun.fmt.PathFormatOptions.Sep) Formatter {
             return Formatter{
                 .resolution = this,
@@ -377,11 +395,17 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
 
             single_file_module: String,
 
+            pub var zero: Value = @bitCast(std.mem.zeroes([@sizeOf(Value)]u8));
+
             /// To avoid undefined memory between union values, we must zero initialize the union first.
             pub fn init(field: bun.meta.Tagged(Value, Tag)) Value {
-                return switch (field) {
-                    inline else => |v, t| @unionInit(Value, @tagName(t), v),
-                };
+                var value = zero;
+                switch (field) {
+                    inline else => |v, t| {
+                        @field(value, @tagName(t)) = v;
+                    },
+                }
+                return value;
             }
         };
 

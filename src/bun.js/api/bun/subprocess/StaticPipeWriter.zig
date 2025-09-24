@@ -1,5 +1,3 @@
-const mlog = @import("../../../../mlog.zig").log;
-
 pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
     return struct {
         const This = @This();
@@ -144,6 +142,8 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
 }
 
 const log = Output.scoped(.StaticPipeWriter, .hidden);
+
+const mlog = @import("../../../../mlog.zig").log;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

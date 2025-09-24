@@ -4,7 +4,6 @@
 //!
 //! Sometimes this namespace is referred to as "Syscall", prefer "bun.sys"/"sys"
 
-const mlog = @import("./mlog.zig").log;
 const This = @This();
 
 //
@@ -4150,6 +4149,7 @@ pub const File = @import("./sys/File.zig");
 
 const builtin = @import("builtin");
 const sys = @This(); // to avoid ambiguous references.
+const mlog = @import("./mlog.zig").log;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -1,4 +1,3 @@
-const mlog = @import("../mlog.zig").log;
 const log = bun.Output.scoped(.PipeWriter, .hidden);
 
 pub const WriteResult = union(enum) {
@@ -1688,6 +1687,7 @@ pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter el
 
 const std = @import("std");
 const Source = @import("./source.zig").Source;
+const mlog = @import("../mlog.zig").log;
 
 const FileType = @import("./pipes.zig").FileType;
 const PollOrFd = @import("./pipes.zig").PollOrFd;

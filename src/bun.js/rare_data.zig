@@ -1,4 +1,3 @@
-const mlog = @import("../mlog.zig").log;
 const RareData = @This();
 
 websocket_deflate: ?*WebSocketDeflate.RareData = null,
@@ -575,6 +574,7 @@ const std = @import("std");
 const EditorContext = @import("../open.zig").EditorContext;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
+const mlog = @import("../mlog.zig").log;
 
 const bun = @import("bun");
 const Async = bun.Async;

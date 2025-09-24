@@ -1,4 +1,3 @@
-const std = @import("std");
 const c = @cImport({
     @cInclude("stdlib.h");
 });
@@ -68,3 +67,5 @@ const Logger = struct {
 };
 
 pub const log = Logger.log;
+
+const std = @import("std");

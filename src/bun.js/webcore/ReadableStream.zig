@@ -1,4 +1,3 @@
-const mlog = @import("../../mlog.zig").log;
 const ReadableStream = @This();
 
 value: JSValue,
@@ -839,6 +838,8 @@ pub fn NewSource(
         };
     };
 }
+
+const mlog = @import("../../mlog.zig").log;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

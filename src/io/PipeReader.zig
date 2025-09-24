@@ -1,5 +1,3 @@
-const mlog = @import("../mlog.zig").log;
-
 // This is a runtime type instead of comptime due to bugs in Zig.
 // https://github.com/ziglang/zig/issues/18664
 const BufferedReaderVTable = struct {
@@ -940,8 +938,7 @@ pub const WindowsBufferedReader = struct {
         const current_buffer_size = this._buffer.items.len;
         const bytes_this_read = if (nread_int > 0) @as(usize, @intCast(nread_int)) else 0;
         const total_after_read = current_buffer_size + bytes_this_read;
-        mlog("WindowsBufferedReader READ_TRACKING(0x{d}) this_read={d} buffer_before={d} total_after={d} flags(done={} paused={})\n",
-             .{ @intFromPtr(this), bytes_this_read, current_buffer_size, total_after_read, this.flags.is_done, this.flags.is_paused });
+        mlog("WindowsBufferedReader READ_TRACKING(0x{d}) this_read={d} buffer_before={d} total_after={d} flags(done={} paused={})\n", .{ @intFromPtr(this), bytes_this_read, current_buffer_size, total_after_read, this.flags.is_done, this.flags.is_paused });
 
         // NOTE: pipes/tty need to call stopReading on errors (yeah)
         switch (nread_int) {
@@ -967,8 +964,7 @@ pub const WindowsBufferedReader = struct {
                 this.onRead(.{ .result = len }, slice[0..len], .progress);
 
                 // DEBUG: Track state after onRead to see if it affects further reading
-                mlog("WindowsBufferedReader POST_READ(0x{d}) flags_after_onRead(done={} paused={}) buffer_final_size={d}\n",
-                     .{ @intFromPtr(this), this.flags.is_done, this.flags.is_paused, this._buffer.items.len });
+                mlog("WindowsBufferedReader POST_READ(0x{d}) flags_after_onRead(done={} paused={}) buffer_final_size={d}\n", .{ @intFromPtr(this), this.flags.is_done, this.flags.is_paused, this._buffer.items.len });
             },
         }
     }
@@ -1197,6 +1193,7 @@ else
 const MaxBuf = @import("./MaxBuf.zig");
 const std = @import("std");
 const Source = @import("./source.zig").Source;
+const mlog = @import("../mlog.zig").log;
 
 const FileType = @import("./pipes.zig").FileType;
 const PollOrFd = @import("./pipes.zig").PollOrFd;

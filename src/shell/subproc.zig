@@ -1,4 +1,3 @@
-const mlog = @import("../mlog.zig").log;
 // const IPC = @import("../bun.js/ipc.zig");
 
 pub const Stdio = util.Stdio;
@@ -1392,6 +1391,7 @@ pub inline fn assertStdioResult(result: StdioResult) void {
 
 const std = @import("std");
 const util = @import("./util.zig");
+const mlog = @import("../mlog.zig").log;
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");

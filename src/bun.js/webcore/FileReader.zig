@@ -1,4 +1,3 @@
-const mlog = @import("../../mlog.zig").log;
 const FileReader = @This();
 
 const log = Output.scoped(.FileReader, .visible);
@@ -680,6 +679,7 @@ pub const Source = ReadableStream.NewSource(
 );
 
 const std = @import("std");
+const mlog = @import("../../mlog.zig").log;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

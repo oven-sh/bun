@@ -3,7 +3,6 @@
 //! objects that reference the filesystem (Blob.Store.File). This is how
 //! operations like writing `Store.File` to another `Store.File` knows to use a
 //! basic file copy instead of a naive read write loop.
-const mlog = @import("../../mlog.zig").log;
 
 const Blob = @This();
 
@@ -4772,6 +4771,7 @@ const string = []const u8;
 const Environment = @import("../../env.zig");
 const S3File = @import("./S3File.zig");
 const std = @import("std");
+const mlog = @import("../../mlog.zig").log;
 
 const bun = @import("bun");
 const JSError = bun.JSError;

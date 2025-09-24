@@ -930,13 +930,9 @@ pub fn parse(
             if (log.msgs.items.len > 0) {
                 const first_msg = log.msgs.items[0];
                 const error_text = first_msg.data.text;
-                var message_buf: [4096]u8 = undefined;
-                const message = std.fmt.bufPrint(&message_buf, "YAML Parse error: {s}", .{error_text}) catch "YAML Parse error";
-                var str = ZigString.initUTF8(message);
-                return global.throwValue(str.toSyntaxErrorInstance(global));
+                return global.throwValue(global.createSyntaxErrorInstance("YAML Parse error: {s}", .{error_text}));
             }
-            var str = ZigString.static("Failed to parse YAML");
-            return global.throwValue(str.toSyntaxErrorInstance(global));
+            return global.throwValue(global.createSyntaxErrorInstance("Failed to parse YAML", .{}));
         },
     };
 

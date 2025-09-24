@@ -83,8 +83,8 @@ pub const WriteFile = struct {
             .bytes_blob = bytes_blob,
             .onCompleteCtx = onWriteFileContext,
             .onCompleteCallback = onCompleteCallback,
-            .mkdirp_if_not_exists = mkdirp_if_not_exists,
             .task = .{ .callback = &doWriteLoopTask },
+            .mkdirp_if_not_exists = mkdirp_if_not_exists,
         });
         file_blob.store.?.ref();
         bytes_blob.store.?.ref();

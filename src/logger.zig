@@ -1336,15 +1336,6 @@ pub const Log = struct {
 
         if (needs_newline) _ = try to.write("\n");
     }
-
-    pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {
-        var holder = try allocator.create(js.ZigException.Holder);
-        holder.* = js.ZigException.Holder.init();
-        var zig_exception: *js.ZigException = holder.zigException();
-        zig_exception.exception = this;
-        zig_exception.code = js.JSErrorCode.BundlerError;
-        return holder;
-    }
 };
 
 pub inline fn usize2Loc(loc: usize) Loc {

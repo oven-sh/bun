@@ -166,8 +166,8 @@ fn readTextLinux(allocator: std.mem.Allocator) ![]u8 {
 
 // Imports at the bottom (Zig style in Bun codebase)
 
-const std = @import("std");
 const builtin = @import("builtin");
+const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

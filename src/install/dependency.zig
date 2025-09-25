@@ -212,28 +212,58 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
     return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
 }
 
-/// Github allows for the following format of URL:
-/// https://github.com/<org>/<repo>/tarball/<ref>
-/// This is a legacy (but still supported) method of retrieving a tarball of an
-/// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
-/// can have arbitrary number of slashes)
+/// Test whether a string of the form github.com/<dependency-string> is a
+/// tarball.
 ///
-/// This also checks for a github url that ends with ".tar.gz"
+/// This, at best, runs heuristics to determine whether the path is a tarball
+/// or not.
+///
+/// TODO(markovejnovic): Do not solely rely on this function to determine
+/// whether something is a tarball or not. Ask the server.
 pub inline fn isGitHubTarballPath(dependency: string) bool {
-    if (isTarball(dependency)) return true;
+    var url_parts_it = strings.split(dependency, "/");
 
-    var parts = strings.split(dependency, "/");
+    // First let's grab the first URL path.
+    const username = url_parts_it.next() orelse return false;
+    _ = username;
 
-    var n_parts: usize = 0;
+    // Then let's grab the second part
+    const repo_name = url_parts_it.next() orelse {
+        // If we don't find a repo-name, then we're at a user's page or one of
+        // /about, /enterprise, etc. Either way, no tarball here.
 
-    while (parts.next()) |part| {
-        n_parts += 1;
-        if (n_parts == 3) {
-            return strings.eqlComptime(part, "tarball");
-        }
+        // Importantly, repo names may contain the words .tar.gz or .tgz and
+        // we should be really careful to not misinterpret those.
+        return false;
+    };
+    _ = repo_name;
+
+    const third_part = url_parts_it.next() orelse {
+        // If we don't find a third part, then we're definitely at a repo path.
+        // These are never tarballs.
+        return false;
+    };
+
+    // Github allows for the following format of URL:
+    // https://github.com/<org>/<repo>/tarball/<ref>
+    // This is a legacy (but still supported) method of retrieving a
+    // tarball of an entire source tree at some git reference. (ref =
+    // branch, tag, etc. Note: branch can have arbitrary number of slashes)
+    if (strings.eqlComptime(third_part, "tarball")) {
+        // The <ref> is mandatory!! There may actually be any more subpaths
+        // (for weird branch names, or not -- github ignores them)
+        return if (url_parts_it.next()) |_| true else false;
     }
 
-    return false;
+    // We're not done... Branches may end with .tar.gz...
+    if (strings.eqlComptime(third_part, "tree")) {
+        // We're looking at a branch and branches are definitely not tarballs.
+        return false;
+    }
+
+    // Excellent! Now we can test whether the part ends with .tar.gz or not and
+    // we're good to go.
+    return isTarball(dependency);
 }
 
 // This won't work for query string params, but I'll let someone file an issue

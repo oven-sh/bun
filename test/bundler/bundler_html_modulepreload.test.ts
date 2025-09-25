@@ -1,34 +1,39 @@
 import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
+// Helper to extract modulepreload links from HTML
+function getModulePreloads(html: string): string[] {
+  return [...html.matchAll(/rel="modulepreload"[^>]+href="\.\/([^"]+)"/g)]
+    .map(m => m[1]);
+}
+
+// Helper to create simple HTML with script tag
+function createHTML(title: string, scriptSrc: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <title>${title}</title>
+  <script type="module" src="${scriptSrc}"></script>
+</head>
+<body>
+  <h1>${title}</h1>
+</body>
+</html>`;
+}
+
+// Helper to count script tags
+function countScriptTags(html: string): number {
+  return (html.match(/<script[^>]*>/g) || []).length;
+}
+
 describe("bundler", () => {
   // Test that modulepreload links are added for chunk dependencies
   itBundled("html/modulepreload-chunks", {
     outdir: "out/",
     splitting: true,
     files: {
-      "/page1.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Page 1</title>
-    <script type="module" src="./page1.js"></script>
-  </head>
-  <body>
-    <h1>Page 1</h1>
-  </body>
-</html>`,
-      "/page2.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Page 2</title>
-    <script type="module" src="./page2.js"></script>
-  </head>
-  <body>
-    <h1>Page 2</h1>
-  </body>
-</html>`,
+      "/page1.html": createHTML("Page 1", "./page1.js"),
+      "/page2.html": createHTML("Page 2", "./page2.js"),
       "/page1.js": `
 import { shared } from './shared.js';
 import { utils } from './utils.js';
@@ -63,43 +68,22 @@ export function utils() {
       api.expectFile("out/page1.html").toMatch(/rel="modulepreload"/);
       api.expectFile("out/page2.html").toMatch(/rel="modulepreload"/);
 
-      // Extract the chunk names from modulepreload links
-      const page1Preloads = page1Html.match(/rel="modulepreload"[^>]+href="([^"]+)"/g) || [];
-      const page2Preloads = page2Html.match(/rel="modulepreload"[^>]+href="([^"]+)"/g) || [];
-
       // Both should preload the shared chunk
+      const page1Preloads = getModulePreloads(page1Html);
+      const page2Preloads = getModulePreloads(page2Html);
+
       expect(page1Preloads.length).toBeGreaterThan(0);
       expect(page2Preloads.length).toBeGreaterThan(0);
     },
   });
 
-  // Test with nested chunk dependencies - need multiple entry points for splitting
+  // Test with nested chunk dependencies
   itBundled("html/modulepreload-nested-chunks", {
     outdir: "out/",
     splitting: true,
     files: {
-      "/index.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Main</title>
-    <script type="module" src="./main.js"></script>
-  </head>
-  <body>
-    <h1>Main</h1>
-  </body>
-</html>`,
-      "/other.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Other</title>
-    <script type="module" src="./other.js"></script>
-  </head>
-  <body>
-    <h1>Other</h1>
-  </body>
-</html>`,
+      "/index.html": createHTML("Main", "./main.js"),
+      "/other.html": createHTML("Other", "./other.js"),
       "/main.js": `
 import { featureA } from './feature-a.js';
 import { featureB } from './feature-b.js';
@@ -139,11 +123,10 @@ export function deepDep() {
       api.expectFile("out/index.html").toMatch(/rel="modulepreload"/);
       api.expectFile("out/other.html").toMatch(/rel="modulepreload"/);
 
-      // Should have preloads for shared chunks
-      const indexPreloads = indexHtml.match(/rel="modulepreload"/g) || [];
-      const otherPreloads = otherHtml.match(/rel="modulepreload"/g) || [];
-
       // With code splitting and nested dependencies, we should have preloads
+      const indexPreloads = getModulePreloads(indexHtml);
+      const otherPreloads = getModulePreloads(otherHtml);
+
       expect(indexPreloads.length).toBeGreaterThanOrEqual(1);
       expect(otherPreloads.length).toBeGreaterThanOrEqual(1);
     },
@@ -239,60 +222,25 @@ export function initAdmin() {
       expect(indexHtml).toMatch(/rel="modulepreload"/);
 
       // Extract all preloaded chunk filenames
-      const preloadMatches = [...indexHtml.matchAll(/rel="modulepreload"[^>]+href="\.\/([^"]+)"/g)];
-      const preloadedFiles = preloadMatches.map(match => match[1]);
+      const preloadedFiles = getModulePreloads(indexHtml);
 
-      // The dynamically imported chunks should NOT be preloaded
-      // Check that none of the preloaded files contain "heavy" or "admin" in their names
-      const hasHeavyPreload = preloadedFiles.some(f => f.includes('heavy'));
-      const hasAdminPreload = preloadedFiles.some(f => f.includes('admin'));
-
-      expect(hasHeavyPreload).toBe(false);
-      expect(hasAdminPreload).toBe(false);
+      // Dynamic imports should NOT be preloaded
+      expect(preloadedFiles.some(f => f.includes('heavy'))).toBe(false);
+      expect(preloadedFiles.some(f => f.includes('admin'))).toBe(false);
 
       // But there should be some preloads for the static imports
       expect(preloadedFiles.length).toBeGreaterThan(0);
     },
   });
 
-  // Test that exactly the right chunks are preloaded - not too many, not too few
+  // Test that exactly the right chunks are preloaded
   itBundled("html/exact-chunk-preloading", {
     outdir: "out/",
     splitting: true,
     files: {
-      "/page1.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Page 1</title>
-    <script type="module" src="./page1.js"></script>
-  </head>
-  <body>
-    <h1>Page 1</h1>
-  </body>
-</html>`,
-      "/page2.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Page 2</title>
-    <script type="module" src="./page2.js"></script>
-  </head>
-  <body>
-    <h1>Page 2</h1>
-  </body>
-</html>`,
-      "/page3.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Page 3</title>
-    <script type="module" src="./page3.js"></script>
-  </head>
-  <body>
-    <h1>Page 3</h1>
-  </body>
-</html>`,
+      "/page1.html": createHTML("Page 1", "./page1.js"),
+      "/page2.html": createHTML("Page 2", "./page2.js"),
+      "/page3.html": createHTML("Page 3", "./page3.js"),
       "/page1.js": `
 import { shared } from './shared.js';
 import { moduleA } from './module-a.js';
@@ -513,35 +461,20 @@ export function api() { return 'api:' + shared(); }`,
       const indexHtml = api.readFile("out/index.html");
       const otherHtml = api.readFile("out/other.html");
 
-      // Extract script tags and preload links
-      const scriptCount = (indexHtml.match(/<script[^>]*>/g) || []).length;
-      const preloadCount = (indexHtml.match(/rel="modulepreload"/g) || []).length;
-
       // With multiple script tags in HTML, Bun combines them into one entry
-      // This is an optimization to reduce the number of entry chunks
-      expect(scriptCount).toBe(1);
+      expect(countScriptTags(indexHtml)).toBe(1);
+      expect(countScriptTags(otherHtml)).toBe(1);
 
       // Should have modulepreload for shared dependencies
-      expect(preloadCount).toBeGreaterThan(0);
+      const indexPreloads = getModulePreloads(indexHtml);
+      expect(indexPreloads.length).toBeGreaterThan(0);
 
       // Verify the HTML is well-formed
       expect(indexHtml).toMatch(/<script[^>]+type="module"/);
       expect(indexHtml).toMatch(/crossorigin/);
 
-      // Other page should also work correctly
-      const otherScriptCount = (otherHtml.match(/<script[^>]*>/g) || []).length;
-      expect(otherScriptCount).toBe(1);
-
-      // Extract preloads to verify no duplicates
-      const getPreloads = (html: string) =>
-        [...html.matchAll(/href="\.\/([^"]+)"/g)]
-          .filter(m => html.includes(`rel="modulepreload"`) && html.indexOf(m[0]) < html.indexOf('</head>'))
-          .map(m => m[1]);
-
-      const indexPreloads = getPreloads(indexHtml);
-      const uniquePreloads = new Set(indexPreloads);
-
       // No duplicate preloads
+      const uniquePreloads = new Set(indexPreloads);
       expect(indexPreloads.length).toBe(uniquePreloads.size);
     },
   });

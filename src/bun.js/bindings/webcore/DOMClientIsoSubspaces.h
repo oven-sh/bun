@@ -949,6 +949,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBakeResponse;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBakeProductionSSRRouteList;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBakeProductionSSRRouteInfoPrototype;
+    ;
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSConnectionsList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHTTPParser;

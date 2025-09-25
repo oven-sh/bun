@@ -52,6 +52,11 @@ struct BakeAdditionsToGlobalObject {
             [](LazyClassStructure::Initializer& init) {
                 Bun::createBakeProductionSSRRouteInfoStructure(init);
             });
+
+        m_BakeProductionSSRRouteArgsClassStructure.initLater(
+            [](LazyClassStructure::Initializer& init) {
+                Bun::createBakeProductionSSRRouteArgsStructure(init);
+            });
     }
 
     void ensureAsyncLocalStorageInstance(JSGlobalObject* globalObject, JSValue asyncLocalStorage)
@@ -100,6 +105,7 @@ struct BakeAdditionsToGlobalObject {
 
     LazyClassStructure m_JSBakeResponseClassStructure;
     LazyClassStructure m_BakeProductionSSRRouteInfoClassStructure;
+    LazyClassStructure m_BakeProductionSSRRouteArgsClassStructure;
 
 private:
     WriteBarrier<JSFunction> m_wrapComponent;

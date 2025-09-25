@@ -1983,7 +1983,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 if (this.req) |req| {
                                     if (this.resp) |resp| {
                                         // Call the production SSR handler with the render path
-                                        server.bakeProductionSSRRouteHandlerWithURL(req, resp, render_body.path);
+                                        server.bakeProductionSSRRouteHandlerWithURL(req, resp, render_body.path.get());
                                         return;
                                     }
                                 }
@@ -2604,6 +2604,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return true;
             }
             return false;
+        }
+
+        pub fn getBakeProdState(this: *RequestContext) ?*bun.bake.ProductionServerState {
+            if (this.server) |server| {
+                return server.bake_prod.get();
+            }
+
+            return null;
         }
 
         comptime {

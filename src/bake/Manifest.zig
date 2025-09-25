@@ -50,9 +50,11 @@ pub fn fromFD(self: *Manifest, fd: bun.FileDescriptor, log: *logger.Log) !void {
     };
     const json_source = logger.Source.initPathString("dist/manifest.json", source);
     try self.initFromJSON(&json_source, log);
+
+    bun.assertf(self.routes.len == self.router.get().routes.items.len, "Routes length mismatch, self.routes.len: {d}, self.router.get().routes.items.len: {d}", .{ self.routes.len, self.router.get().routes.items.len });
 }
 
-pub fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log) !void {
+fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log) !void {
     const router: *FrameworkRouter = self.router.get();
     const allocator = self.arena.allocator();
 

@@ -175,6 +175,74 @@ pub const ProductionFrameworkRouter = struct {
     }
 };
 
+pub fn routeDataForInitialization(
+    globalObject: *JSGlobalObject,
+    request: *bun.webcore.Request,
+    router_index: usize,
+    router_type_index: usize,
+    out_router_type_main: *JSValue,
+    out_route_modules: *JSValue,
+    out_client_entry_url: *JSValue,
+    out_styles: *JSValue,
+) JSError!void {
+    const server = request.request_context.getBakeProdState() orelse {
+        globalObject.throw("Request context is not a production server state", .{});
+        return .JSError;
+    };
+
+    const rtr = server.router();
+
+    if (router_index >= rtr.types.len) {
+        return globalObject.throw("Router index out of bounds", .{});
+    }
+    if (router_type_index >= rtr.types.len) {
+        return globalObject.throw("Router type index out of bounds", .{});
+    }
+
+    const route = switch (server.manifest.routes[router_index]) {
+        .ssr => |*ssr| ssr,
+        else => {
+            return globalObject.throw("Route is not an SSR route", .{});
+        },
+    };
+
+    const router_type_main = bun.String.init(server.manifest.router_types[router_type_index].server_entrypoint);
+    out_router_type_main.* = router_type_main.toJS(globalObject);
+
+    const route_modules = try jsc.JSValue.createEmptyArray(globalObject, route.modules.len);
+    for (route.modules.slice(), 0..) |module_path, i| {
+        const module_str = bun.String.init(module_path);
+        module_str.toJS(globalObject);
+        try route_modules.putIndex(globalObject, @intCast(i), module_str.toJS(globalObject));
+    }
+    out_route_modules.* = route_modules;
+
+    const client_entry_url = bun.String.init(route.entrypoint).toJS(globalObject);
+    out_client_entry_url.* = client_entry_url;
+
+    const styles = try jsc.JSValue.createEmptyArray(globalObject, route.styles.len);
+    for (route.styles.slice(), 0..) |style_path, i| {
+        const style_str = bun.String.init(style_path);
+        style_str.toJS(globalObject);
+        try styles.putIndex(globalObject, @intCast(i), style_str.toJS(globalObject));
+    }
+    out_styles.* = styles;
+}
+
+export fn Bun__BakeProductionSSRRouteInfo__dataForInitialization(
+    globalObject: *JSGlobalObject,
+    zigRequestPtr: *anyopaque,
+    routerIndex: usize,
+    routerTypeIndex: usize,
+    routerTypeMain: *JSValue,
+    routeModules: *JSValue,
+    clientEntryUrl: *JSValue,
+    styles: *JSValue,
+) callconv(jsc.conv) c_int {
+    const request: *bun.webcore.Request = @ptrCast(zigRequestPtr);
+    routeDataForInitialization(globalObject, request, router_index: usize, router_type_index: usize, out_router_type_main: *JSValue, out_route_modules: *JSValue, out_client_entry_url: *JSValue, out_styles: *JSValue)
+}
+
 const bun = @import("bun");
 const bake = bun.bake;
 const strings = bun.strings;

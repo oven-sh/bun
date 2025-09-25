@@ -2172,8 +2172,8 @@ const resolver = @import("./resolver.zig");
 const std = @import("std");
 
 const Architecture = @import("../install/npm.zig").Architecture;
-const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 const Libc = @import("../install/npm.zig").Libc;
+const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

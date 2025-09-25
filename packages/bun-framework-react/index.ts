@@ -1,11 +1,15 @@
 import type { Framework } from "bun:app";
 
+function resolve(specifier: string) {
+  return require.resolve(specifier);
+}
+
 const framework: Framework = {
   fileSystemRouterTypes: [
     {
       root: "pages",
-      clientEntryPoint: Bun.fileURLToPath(import.meta.resolve("./client.tsx")),
-      serverEntryPoint: Bun.fileURLToPath(import.meta.resolve("./server.tsx")),
+      clientEntryPoint: resolve("./client.tsx"),
+      serverEntryPoint: resolve("./server.tsx"),
       extensions: [".tsx", ".jsx"],
       style: "nextjs-pages",
       layouts: true,
@@ -17,10 +21,10 @@ const framework: Framework = {
   serverComponents: {
     separateSSRGraph: true,
     serverRegisterClientReferenceExport: "registerClientReference",
-    serverRuntimeImportSource: Bun.fileURLToPath(import.meta.resolve("react-server-dom-bun/server")),
+    serverRuntimeImportSource: resolve("./vendor/react-server-dom-bun/server"),
   },
   reactFastRefresh: {
-    importSource: Bun.fileURLToPath(import.meta.resolve("react-refresh/runtime")),
+    importSource: resolve("react-refresh/runtime"),
   },
   bundlerOptions: {
     ssr: {

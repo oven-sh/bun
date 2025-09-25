@@ -21,6 +21,7 @@ pub const Error = error{
     BunSectionNotFound,
     InvalidBunSection,
     InsufficientSpace,
+    SizeOfImageMismatch,
 };
 
 // Enums for strip modes and options
@@ -143,6 +144,9 @@ pub const PEFile = struct {
     // Directory indices and DLL characteristics
     const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
     const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
+
+    // Section name constant for exact comparison
+    const BUN_SECTION_NAME = [_]u8{ '.', 'b', 'u', 'n', 0, 0, 0, 0 };
 
     // Safe access helpers for unaligned views
     fn viewAtConst(comptime T: type, buf: []const u8, off: usize) !*align(1) const T {
@@ -305,7 +309,9 @@ pub const PEFile = struct {
                         last_file_end = file_end;
                     }
                 }
-                const va_end = section.virtual_address + (try alignUpU32(section.virtual_size, optional_header.section_alignment));
+                // Use effective virtual size (max of virtual_size and size_of_raw_data)
+                const vs_effective = @max(section.virtual_size, section.size_of_raw_data);
+                const va_end = section.virtual_address + (try alignUpU32(vs_effective, optional_header.section_alignment));
                 if (va_end > last_va_end) {
                     last_va_end = va_end;
                 }
@@ -395,46 +401,37 @@ pub const PEFile = struct {
             return error.UnexpectedOverlayPresent;
     }
 
-    /// Recompute PE checksum
+    /// Recompute PE checksum according to Windows spec
     fn recomputePEChecksum(self: *PEFile) !void {
-        const opt = try self.getOptionalHeaderMut();
         const data = self.data.items;
+        const checksum_off = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
 
-        // Simple PE checksum algorithm
-        var sum: u32 = 0;
+        // Zero checksum field before summing
+        @memset(self.data.items[checksum_off .. checksum_off + 4], 0);
+
+        var sum: u64 = 0;
         var i: usize = 0;
 
-        // Calculate checksum offset
-        const checksum_offset = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
-
-        while (i < data.len) {
-            var word: u16 = 0;
-
-            // Skip the checksum field itself (4 bytes)
-            if (i == checksum_offset) {
-                i += 4;
-                continue;
-            }
-
-            if (i + 1 < data.len) {
-                word = std.mem.readInt(u16, data[i..][0..2], .little);
-            } else {
-                word = data[i];
-            }
-
-            sum = (sum & 0xFFFF) + @as(u32, word) + (sum >> 16);
-            if (sum > 0xFFFF) {
-                sum = (sum & 0xFFFF) + (sum >> 16);
-            }
-
-            i += 2;
+        // Sum 16-bit words
+        while (i + 1 < data.len) : (i += 2) {
+            const w: u16 = @as(u16, data[i]) | (@as(u16, data[i + 1]) << 8);
+            sum += w;
+            sum = (sum & 0xffff) + (sum >> 16); // fold periodically
+        }
+        // Odd trailing byte
+        if ((data.len & 1) != 0) {
+            sum += data[data.len - 1];
         }
 
-        // Final fold and add file size
-        sum = (sum & 0xFFFF) + (sum >> 16);
-        sum += @intCast(data.len);
+        // Final folds + add length
+        sum = (sum & 0xffff) + (sum >> 16);
+        sum = (sum & 0xffff) + (sum >> 16);
+        sum += @as(u64, @intCast(data.len));
+        sum = (sum & 0xffff) + (sum >> 16);
+        const final_sum: u32 = @intCast((sum & 0xffff) + (sum >> 16));
 
-        opt.checksum = sum;
+        const opt = try self.getOptionalHeaderMut();
+        opt.checksum = final_sum;
     }
 
     /// Add a new section to the PE file for storing Bun module data
@@ -454,10 +451,10 @@ pub const PEFile = struct {
         // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
         const opt = try self.getOptionalHeaderMut();
 
-        // 3. Duplicate .bun guard
+        // 3. Duplicate .bun guard - compare all 8 bytes exactly
         const section_headers = try self.getSectionHeaders();
         for (section_headers) |section| {
-            if (strings.eqlComptime(section.name[0..4], ".bun")) {
+            if (std.mem.eql(u8, section.name[0..8], &BUN_SECTION_NAME)) {
                 return error.SectionExists;
             }
         }
@@ -495,7 +492,9 @@ pub const PEFile = struct {
             if (file_end > last_file_end) {
                 last_file_end = file_end;
             }
-            const va_end = section.virtual_address + (try alignUpU32(section.virtual_size, opt.section_alignment));
+            // Use effective virtual size (max of virtual_size and size_of_raw_data)
+            const vs_effective = @max(section.virtual_size, section.size_of_raw_data);
+            const va_end = section.virtual_address + (try alignUpU32(vs_effective, opt.section_alignment));
             if (va_end > last_va_end) {
                 last_va_end = va_end;
             }
@@ -530,8 +529,8 @@ pub const PEFile = struct {
         };
 
         const new_sh_off = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
-        // Bounds check (must be true given step 4)
-        if (new_sh_off + @sizeOf(SectionHeader) > self.data.items.len) {
+        // Bounds check against first_raw (not file length)
+        if (new_sh_off + @sizeOf(SectionHeader) > first_raw) {
             return error.InsufficientHeaderSpace;
         }
         std.mem.copyForwards(u8, self.data.items[new_sh_off .. new_sh_off + @sizeOf(SectionHeader)], std.mem.asBytes(&sh));
@@ -573,7 +572,7 @@ pub const PEFile = struct {
     pub fn getBunSectionData(self: *const PEFile) ![]const u8 {
         const section_headers = try self.getSectionHeaders();
         for (section_headers) |section| {
-            if (strings.eqlComptime(section.name[0..4], ".bun")) {
+            if (std.mem.eql(u8, section.name[0..8], &BUN_SECTION_NAME)) {
                 if (section.size_of_raw_data < @sizeOf(u32)) {
                     return error.InvalidBunSection;
                 }
@@ -602,7 +601,7 @@ pub const PEFile = struct {
     pub fn getBunSectionLength(self: *const PEFile) !u32 {
         const section_headers = try self.getSectionHeaders();
         for (section_headers) |section| {
-            if (strings.eqlComptime(section.name[0..4], ".bun")) {
+            if (std.mem.eql(u8, section.name[0..8], &BUN_SECTION_NAME)) {
                 if (section.size_of_raw_data < @sizeOf(u32)) {
                     return error.InvalidBunSection;
                 }
@@ -677,23 +676,24 @@ pub const PEFile = struct {
                     return error.InvalidSectionData;
                 }
 
-                // Check for overlaps with other sections
+                // Check for overlaps with other sections using correct interval test
                 for (section_headers[i + 1 ..]) |other| {
                     if (other.size_of_raw_data > 0) {
-                        const section_end = section.pointer_to_raw_data + section.size_of_raw_data;
+                        const section_start = section.pointer_to_raw_data;
+                        const section_end = section_start + section.size_of_raw_data;
                         const other_start = other.pointer_to_raw_data;
-                        const other_end = other.pointer_to_raw_data + other.size_of_raw_data;
-                        if ((section.pointer_to_raw_data >= other_start and section.pointer_to_raw_data < other_end) or
-                            (section_end > other_start and section_end <= other_end))
-                        {
+                        const other_end = other_start + other.size_of_raw_data;
+                        // Standard overlap test: max(start) < min(end)
+                        if (@max(section_start, other_start) < @min(section_end, other_end)) {
                             return error.InvalidPEFile; // Section raw ranges overlap
                         }
                     }
                 }
             }
 
-            // Track max virtual address end
-            const va_end = section.virtual_address + (try alignUpU32(section.virtual_size, optional_header.section_alignment));
+            // Track max virtual address end using effective virtual size
+            const vs_effective = @max(section.virtual_size, section.size_of_raw_data);
+            const va_end = section.virtual_address + (try alignUpU32(vs_effective, optional_header.section_alignment));
             if (va_end > max_va_end) {
                 max_va_end = va_end;
             }
@@ -702,7 +702,7 @@ pub const PEFile = struct {
         // Verify size_of_image equals alignUp(max(VA + alignUp(VS, SA)), SA)
         const expected_size_of_image = try alignUpU32(max_va_end, optional_header.section_alignment);
         if (optional_header.size_of_image != expected_size_of_image) {
-            // This is a warning, not necessarily an error, but could be fixed
+            return error.SizeOfImageMismatch;
         }
 
         // Security directory should be 0,0 post-change (if we modified it)
@@ -718,15 +718,14 @@ pub const utils = struct {
     pub fn isPE(data: []const u8) bool {
         if (data.len < @sizeOf(PEFile.DOSHeader)) return false;
 
-        const dos_header = PEFile.viewAtConst(PEFile.DOSHeader, data, 0) catch return false;
-        if (dos_header.e_magic != PEFile.DOS_SIGNATURE) return false;
+        const dos: *align(1) const PEFile.DOSHeader = @ptrCast(data.ptr);
+        if (dos.e_magic != PEFile.DOS_SIGNATURE) return false;
 
-        // Bound e_lfanew against data.len
-        if (dos_header.e_lfanew < @sizeOf(PEFile.DOSHeader)) return false;
-        if (data.len < dos_header.e_lfanew + @sizeOf(PEFile.PEHeader)) return false;
+        const off = dos.e_lfanew;
+        if (off < @sizeOf(PEFile.DOSHeader) or off > data.len -| @sizeOf(PEFile.PEHeader)) return false;
 
-        const pe_header = PEFile.viewAtConst(PEFile.PEHeader, data, dos_header.e_lfanew) catch return false;
-        return pe_header.signature == PEFile.PE_SIGNATURE;
+        const pe: *align(1) const PEFile.PEHeader = @ptrCast(data[off..].ptr);
+        return pe.signature == PEFile.PE_SIGNATURE;
     }
 };
 

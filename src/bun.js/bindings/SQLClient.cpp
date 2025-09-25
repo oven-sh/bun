@@ -284,7 +284,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     }
 }
 
-static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, size_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, size_t namesCount)
+static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, uint32_t namesCount)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -397,7 +397,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, size_t coun
         return jsUndefined();
     }
 }
-static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, size_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, size_t namesCount)
+static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, uint32_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, uint32_t namesCount)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -421,13 +421,13 @@ static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCel
 extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
     JSC::JSGlobalObject* globalObject,
     EncodedJSValue encodedArrayValue,
-    EncodedJSValue encodedStructureValue, DataCell* cells, uint32_t count, uint32_t flags, uint8_t result_mode, ExternColumnIdentifier* namesPtr, uint32_t namesCount)
+    EncodedJSValue encodedStructureValue, DataCell* cells, uint32_t count, Bun::BunStructureFlags flags, uint8_t result_mode, ExternColumnIdentifier* namesPtr, uint32_t namesCount)
 {
     JSValue arrayValue = JSValue::decode(encodedArrayValue);
     JSValue structureValue = JSValue::decode(encodedStructureValue);
     auto* array = arrayValue ? jsDynamicCast<JSC::JSArray*>(arrayValue) : nullptr;
     auto* structure = jsDynamicCast<JSC::Structure*>(structureValue);
-    return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags), BunResultMode(result_mode), namesPtr, namesCount));
+    return JSValue::encode(toJS(array, structure, cells, count, globalObject, flags, BunResultMode(result_mode), namesPtr, namesCount));
 }
 
 extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, uint32_t capacity, ExternColumnIdentifier* namesPtr)

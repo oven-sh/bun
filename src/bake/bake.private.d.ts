@@ -46,13 +46,13 @@ declare type UnloadedESM = [
   deps: EncodedDependencyArray,
   exportKeys: string[],
   starImports: Id[],
-  load: (mod: import("../../src/bake/hmr-module.ts").HMRModule) => Promise<void>,
+  load: (mod: import("./hmr-module.ts").HMRModule) => Promise<void>,
   isAsync: boolean,
 ];
 declare type EncodedDependencyArray = (string | number)[];
 declare type UnloadedCommonJS = (
-  hmr: import("../../src/bake/hmr-module.ts").HMRModule,
-  module: import("../../src/bake/hmr-module.ts").HMRModule["cjs"],
+  hmr: import("./hmr-module.ts").HMRModule,
+  module: import("./hmr-module.ts").HMRModule["cjs"],
   exports: unknown,
 ) => unknown;
 declare type CommonJSModule = {

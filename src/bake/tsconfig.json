@@ -8,12 +8,6 @@
     },
     "jsx": "react-jsx"
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    "../runtime.js",
-    "../runtime.bun.js",
-    "../../packages/bun-framework-react/bake.private.d.ts"
-  ],
+  "include": ["**/*.ts", "**/*.tsx", "../runtime.js", "../runtime.bun.js", "bake.private.d.ts"],
   "references": [{ "path": "../../packages/bun-types" }]
 }

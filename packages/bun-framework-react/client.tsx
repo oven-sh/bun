@@ -1,8 +1,8 @@
 import { onServerSideReload } from "bun:app/client";
 import { hydrateRoot } from "react-dom/client";
-import { initialRscPayloadThen } from "./client/app.ts";
-import { router } from "./client/constants.ts";
-import { Root } from "./client/root.tsx";
+import { initialRscPayloadThen } from "./src/client/app.ts";
+import { router } from "./src/client/constants.ts";
+import { Root } from "./src/client/root.tsx";
 
 hydrateRoot(document, <Root />, {
   onUncaughtError(e) {

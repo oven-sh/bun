@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-react",
-  "version": "0.0.0",
+  "version": "0.0.0-canary.2",
   "description": "React framework integration with RSC, for the Bun Rendering API",
   "type": "module",
   "exports": {
@@ -9,7 +9,7 @@
     "./ssr.tsx": "./ssr.tsx",
     "./server.tsx": "./server.tsx",
     "./client.tsx": "./client.tsx",
-    "./*": "./src/*.tsx"
+    "./*": "./src/components/*.tsx"
   },
   "dependencies": {
     "react": "0.0.0-experimental-e2332183-20250924",
@@ -20,6 +20,13 @@
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9"
   },
+  "files": [
+    "./vendor",
+    "./src",
+    "./*.ts",
+    "./*.tsx",
+    "./README.md"
+  ],
   "keywords": [
     "bun",
     "react",

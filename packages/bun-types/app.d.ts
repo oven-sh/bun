@@ -1381,7 +1381,6 @@ declare module "bun:app" {
      * The loaded module of the page itself.
      */
     readonly pageModule: any;
-    readonly request?: Request | undefined;
     /**
      * The loaded module of all of the route layouts. The first one is the
      * inner-most, the last is the root layout.
@@ -1407,7 +1406,7 @@ declare module "bun:app" {
      */
     readonly params: null | Record<string, string | string[]>;
 
-    readonly request: Request | undefined;
+    readonly request?: Request | undefined;
 
     /**
      * A list of js files that the route will need to be interactive.

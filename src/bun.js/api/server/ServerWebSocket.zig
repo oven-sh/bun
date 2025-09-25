@@ -438,10 +438,7 @@ pub fn publish(
     }
 
     {
-        var js_string = message_value.toString(globalThis);
-        if (globalThis.hasException()) {
-            return .zero;
-        }
+        var js_string = try message_value.toJSString(globalThis);
         const view = js_string.view(globalThis);
         const slice = view.toSlice(bun.default_allocator);
         defer slice.deinit();
@@ -505,10 +502,7 @@ pub fn publishText(
         return globalThis.throw("publishText requires a non-empty message", .{});
     }
 
-    var js_string = message_value.toString(globalThis);
-    if (globalThis.hasException()) {
-        return .zero;
-    }
+    var js_string = try message_value.toJSString(globalThis);
     const view = js_string.view(globalThis);
     const slice = view.toSlice(bun.default_allocator);
     defer slice.deinit();
@@ -756,10 +750,7 @@ pub fn send(
     }
 
     {
-        var js_string = message_value.toString(globalThis);
-        if (globalThis.hasException()) {
-            return .zero;
-        }
+        var js_string = try message_value.toJSString(globalThis);
         const view = js_string.view(globalThis);
         const slice = view.toSlice(bun.default_allocator);
         defer slice.deinit();
@@ -814,10 +805,7 @@ pub fn sendText(
         return globalThis.throw("sendText expects a string", .{});
     }
 
-    var js_string = message_value.toString(globalThis);
-    if (globalThis.hasException()) {
-        return .zero;
-    }
+    var js_string = try message_value.toJSString(globalThis);
     const view = js_string.view(globalThis);
     const slice = view.toSlice(bun.default_allocator);
     defer slice.deinit();
@@ -997,7 +985,7 @@ inline fn sendPing(
                     },
                 }
             } else if (value.isString()) {
-                var string_value = value.toString(globalThis).toSlice(globalThis, bun.default_allocator);
+                var string_value = (try value.toJSString(globalThis)).toSlice(globalThis, bun.default_allocator);
                 defer string_value.deinit();
                 const buffer = string_value.slice();
 

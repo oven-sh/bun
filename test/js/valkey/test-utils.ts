@@ -1,6 +1,6 @@
 import { RedisClient, type SpawnOptions } from "bun";
 import { afterAll, beforeAll, expect } from "bun:test";
-import { bunEnv, isCI, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, dockerExe, isCI, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
 import * as dockerCompose from "../../docker/index.ts";
@@ -8,7 +8,7 @@ import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 
-const dockerCLI = Bun.which("docker") as string;
+const dockerCLI = dockerExe() as string;
 export const isEnabled =
   !!dockerCLI &&
   (() => {

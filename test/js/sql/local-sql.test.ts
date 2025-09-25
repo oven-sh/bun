@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
@@ -9,7 +9,7 @@ import net from "net";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
-const dockerCLI = Bun.which("docker") as string;
+const dockerCLI = dockerExe() as string;
 
 async function findRandomPort() {
   return new Promise((resolve, reject) => {

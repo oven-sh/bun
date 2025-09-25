@@ -161,10 +161,10 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return jsNumber(cell.value.unsigned_integer);
         break;
     case DataCellTag::Bigint:
-        return JSC::JSBigInt::createFrom(globalObject, cell.value.bigint);
+        RELEASE_AND_RETURN(scope, JSC::JSBigInt::createFrom(globalObject, cell.value.bigint));
         break;
     case DataCellTag::UnsignedBigint:
-        return JSC::JSBigInt::createFrom(globalObject, cell.value.unsigned_bigint);
+        RELEASE_AND_RETURN(scope, JSC::JSBigInt::createFrom(globalObject, cell.value.unsigned_bigint));
         break;
     case DataCellTag::Boolean:
         return jsBoolean(cell.value.boolean);
@@ -189,6 +189,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         if (cell.value.json) {
             auto str = WTF::String(cell.value.json);
             JSC::JSValue json = JSC::JSONParse(globalObject, str);
+            RETURN_IF_EXCEPTION(scope, {});
             return json;
         }
         return jsNull();
@@ -198,14 +199,10 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         uint32_t length = cell.value.array.length;
         for (uint32_t i = 0; i < length; i++) {
             JSValue result = toJS(vm, globalObject, cell.value.array.cells[i]);
-            if (result.isEmpty()) [[unlikely]] {
-                return {};
-            }
-
+            RETURN_IF_EXCEPTION(scope, {});
             args.append(result);
         }
-
-        return JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
+        RELEASE_AND_RETURN(scope, JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args));
     }
     case DataCellTag::TypedArray: {
         JSC::JSType type = static_cast<JSC::JSType>(cell.value.typed_array.type);
@@ -287,7 +284,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     }
 }
 
-static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, uint32_t namesCount)
+static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, size_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, size_t namesCount)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -343,6 +340,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 //   -> { "8": 1, "2": 2, "3": 3 }
                 //  8 > count
                 object->putDirectIndex(globalObject, cell.index, value);
+                RETURN_IF_EXCEPTION(scope, {});
             }
         } else {
             uint32_t structureOffsetIndex = 0;
@@ -356,6 +354,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                     ASSERT(!cell.isNamedColumn());
                     ASSERT(!cell.isDuplicateColumn());
                     object->putDirectIndex(globalObject, cell.index, value);
+                    RETURN_IF_EXCEPTION(scope, {});
                 } else if (cell.isNamedColumn()) {
                     JSValue value = toJS(vm, globalObject, cell);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -387,6 +386,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
             JSValue value = toJS(vm, globalObject, cell);
             RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, i, value);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         return array;
     }
@@ -397,22 +397,24 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
         return jsUndefined();
     }
 }
-static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, uint32_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, uint32_t namesCount)
+static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, size_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode, ExternColumnIdentifier* namesPtr, size_t namesCount)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = toJS(structure, cells, count, globalObject, flags, result_mode, namesPtr, namesCount);
-    if (value.isEmpty())
-        return {};
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (array) {
         array->push(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
         return array;
     }
 
     auto* newArray = JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);
-    if (!newArray)
-        return {};
+    RETURN_IF_EXCEPTION(scope, {});
 
     newArray->putDirectIndex(globalObject, 0, value);
+    RETURN_IF_EXCEPTION(scope, {});
     return newArray;
 }
 

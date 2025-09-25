@@ -480,8 +480,8 @@ function ffiRunner(fast) {
       expect(identity_ptr(second_ptr)).toBe(second_ptr);
       expect(new CString(ptr(Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0])), 4).toString()).toBe("abc");
       expect(new CString(ptr(Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0])), 4, 2).toString()).toBe("ab");
-      expect(new CString(ptr(Buffer.from([97, 98, 99, 240, 159, 171, 160, 0])), 4).byteOffset).toBe(0);
-      expect(new CString(ptr(Buffer.from([97, 98, 99, 240, 159, 171, 160, 0])), 4).byteLength).toBe(7);
+      expect(new CString(ptr(Buffer.from([97, 98, 99, 240, 159, 171, 160, 0]))).byteOffset).toBe(0);
+      expect(new CString(ptr(Buffer.from([97, 98, 99, 240, 159, 171, 160, 0]))).byteLength).toBe(7);
     });
 
     it("CFunction", () => {

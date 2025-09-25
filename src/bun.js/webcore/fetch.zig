@@ -302,6 +302,8 @@ pub const FetchTasklet = struct {
         this.abort_reason.deinit();
         this.check_server_identity.deinit();
         this.clearAbortSignal();
+        // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
+        this.clearSink();
     }
 
     pub fn deinit(this: *FetchTasklet) void {
@@ -1240,7 +1242,6 @@ pub const FetchTasklet = struct {
 
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
-        this.clearSink();
         defer this.deref();
         if (err) |jsError| {
             if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {

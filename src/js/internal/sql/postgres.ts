@@ -188,7 +188,7 @@ function arrayValueSerializer(type: string, is_numeric: boolean, is_json: boolea
 function getArrayType(typeNameOrID: number | string | undefined = undefined): string {
   const typeOfType = typeof typeNameOrID;
   if (typeOfType === "number") {
-    return getPostgresArrayType(typeNameOrID as number);
+    return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
   }
   if (typeOfType === "string") {
     return (typeNameOrID as string)?.toUpperCase();

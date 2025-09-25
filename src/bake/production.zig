@@ -102,6 +102,7 @@ pub fn buildCommand(ctx: bun.cli.Command.Context) !void {
             if (vm.exit_handler.exit_code == 0) {
                 vm.exit_handler.exit_code = 1;
             }
+            vm.onExit();
             vm.globalExit();
         },
         else => |e| return e,

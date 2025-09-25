@@ -2047,7 +2047,15 @@ pub fn Package(comptime SemverIntType: type) type {
                         }
                     }
                     comptime assertNoUninitializedPadding(@TypeOf(value));
-                    try writer.writeAll(std.mem.sliceAsBytes(value));
+                    if (comptime strings.eqlComptime(field.name, "resolution")) {
+                        // copy each resolution to make sure the union is zero initialized
+                        for (value) |val| {
+                            const copy = val.copy();
+                            try writer.writeAll(std.mem.asBytes(&copy));
+                        }
+                    } else {
+                        try writer.writeAll(std.mem.sliceAsBytes(value));
+                    }
                 }
 
                 const really_end_at = try stream.getPos();

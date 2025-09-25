@@ -7,7 +7,7 @@ declare global {
   }
 }
 
-export type { SQLResultArray };
+export type { SQLResultArray, SQLArrayParameter };
 class SQLArrayParameter {
   serializedValues: string;
   arrayType: string;

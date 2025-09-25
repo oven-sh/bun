@@ -735,7 +735,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
     return connection;
   }
-  array(values: any[], typeNameOrID?: number | string): SQLArrayParameter {
+  array(_values: any[], _typeNameOrID?: number | string): SQLArrayParameter {
     throw new Error("SQLite doesn't support arrays");
   }
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {

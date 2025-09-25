@@ -549,7 +549,7 @@ class MySQLAdapter
       connection.queries.delete(handler);
     }
   }
-  array(values: any[], typeNameOrID?: number | string): SQLArrayParameter {
+  array(_values: any[], _typeNameOrID?: number | string): SQLArrayParameter {
     throw new Error("MySQL doesn't support arrays");
   }
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {

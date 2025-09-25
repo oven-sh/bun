@@ -68,7 +68,9 @@ describe("crypto.hash", () => {
     "sha3-384",
     "sha3-512",
     "shake128",
+    "shake-128",
     "shake256",
+    "shake-256",
   ].forEach(method => {
     test(`output matches crypto.createHash(${method})`, () => {
       for (const outputEncoding of ["buffer", "hex", "base64", undefined]) {

@@ -488,6 +488,8 @@ const CryptoHasherZig = struct {
         .{ "sha3-512", std.crypto.hash.sha3.Sha3_512 },
         .{ "shake128", std.crypto.hash.sha3.Shake128 },
         .{ "shake256", std.crypto.hash.sha3.Shake256 },
+        .{ "shake-128", std.crypto.hash.sha3.Shake128 },
+        .{ "shake-256", std.crypto.hash.sha3.Shake256 },
     };
 
     inline fn digestLength(Algorithm: type) comptime_int {

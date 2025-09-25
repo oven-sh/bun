@@ -39,6 +39,9 @@ pub const Algorithm = enum {
     shake128,
     shake256,
 
+    pub const @"shake-128": Algorithm = .shake128;
+    pub const @"shake-256": Algorithm = .shake256;
+
     pub fn md(this: Algorithm) ?*const BoringSSL.EVP_MD {
         return switch (this) {
             .blake2b256 => BoringSSL.EVP_blake2b256(),
@@ -98,7 +101,9 @@ pub const Algorithm = enum {
         .{ "sha3-384", .@"sha3-384" },
         .{ "sha3-512", .@"sha3-512" },
         .{ "shake128", .shake128 },
+        .{ "shake-128", .shake128 },
         .{ "shake256", .shake256 },
+        .{ "shake-256", .shake256 },
         // .{ "md5-sha1", .@"MD5-SHA1" },
         // .{ "dsa-sha", .@"DSA-SHA" },
         // .{ "dsa-sha1", .@"DSA-SHA1" },

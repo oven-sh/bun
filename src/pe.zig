@@ -369,7 +369,8 @@ pub const PEFile = struct {
             try self.data.resize(sec_off);
         } else {
             const tail_len = file_len - end_raw;
-            std.mem.copyForwards(u8, data[sec_off .. sec_off + tail_len], data[end_raw..file_len]);
+            // Use copyBackwards for potentially overlapping memory regions
+            std.mem.copyBackwards(u8, self.data.items[sec_off .. sec_off + tail_len], self.data.items[end_raw..file_len]);
             try self.data.resize(sec_off + tail_len);
         }
 
@@ -406,13 +407,13 @@ pub const PEFile = struct {
         // Calculate checksum offset
         const checksum_offset = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
 
-        while (i < data.len) : (i += 2) {
+        while (i < data.len) {
             var word: u16 = 0;
 
-            // Skip the checksum field itself
+            // Skip the checksum field itself (4 bytes)
             if (i == checksum_offset) {
                 i += 4;
-                if (i >= data.len) break;
+                continue;
             }
 
             if (i + 1 < data.len) {
@@ -425,6 +426,8 @@ pub const PEFile = struct {
             if (sum > 0xFFFF) {
                 sum = (sum & 0xFFFF) + (sum >> 16);
             }
+
+            i += 2;
         }
 
         // Final fold and add file size
@@ -498,6 +501,10 @@ pub const PEFile = struct {
             }
         }
 
+        // Check for overflow before adding 4
+        if (data_to_embed.len > std.math.maxInt(u32) - 4) {
+            return error.Overflow;
+        }
         const payload_len = @as(u32, @intCast(data_to_embed.len + 4)); // 4 for LE length prefix
         const raw_size = try alignUpU32(payload_len, opt.file_alignment);
         const new_va = try alignUpU32(last_va_end, opt.section_alignment);
@@ -545,7 +552,9 @@ pub const PEFile = struct {
         if (opt_after.size_of_headers < new_size_of_headers) {
             opt_after.size_of_headers = new_size_of_headers;
         }
-        opt_after.size_of_image = try alignUpU32(new_va + (try alignUpU32(sh.virtual_size, opt_after.section_alignment)), opt_after.section_alignment);
+        // Calculate size_of_image: aligned end of last section
+        const section_va_end = new_va + sh.virtual_size;
+        opt_after.size_of_image = try alignUpU32(section_va_end, opt_after.section_alignment);
 
         // Security directory must be zero (signature invalidated by change)
         const dd_ptr: *align(1) DataDirectory = &opt_after.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];

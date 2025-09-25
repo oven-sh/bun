@@ -1,11 +1,8 @@
 import { npa } from "bun:internal-for-testing";
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 const TEST_DEPENDENCIES_BY_TYPE = {
-  "dist_tag": [
-    "package",
-    "@scoped/package",
-  ],
+  "dist_tag": ["package", "@scoped/package"],
   "npm": [
     "@scoped/package@1.0.0",
     "@scoped/package@1.0.0-beta.1",
@@ -21,9 +18,7 @@ const TEST_DEPENDENCIES_BY_TYPE = {
     "https://gitlab.com/inkscape/inkscape/-/archive/INKSCAPE_1_4/inkscape-INKSCAPE_1_4.tar.gz",
     "https://registry.npmjs.org/no-deps/-/no-deps-2.0.0.tgz",
   ],
-  "folder": [
-    "file:./path/to/folder",
-  ],
+  "folder": ["file:./path/to/folder"],
   "git": [
     "bitbucket.com:dylan-conway/public-install-test",
     "bitbucket.org:dylan-conway/public-install-test",
@@ -43,7 +38,6 @@ const TEST_DEPENDENCIES_BY_TYPE = {
   ],
 };
 
-
 const ALL_TEST_DEPENDENCIES = Object.values(TEST_DEPENDENCIES_BY_TYPE).flat();
 
 test.each(ALL_TEST_DEPENDENCIES)("npa %s", dep => {
@@ -52,8 +46,9 @@ test.each(ALL_TEST_DEPENDENCIES)("npa %s", dep => {
 
 describe("Dependency resolution", () => {
   describe("Resolves to the correct type", () => {
-    const testSeries = Object.entries(TEST_DEPENDENCIES_BY_TYPE)
-      .flatMap(([key, depStrs]) => depStrs.map(dep => [dep, key]));
+    const testSeries = Object.entries(TEST_DEPENDENCIES_BY_TYPE).flatMap(([key, depStrs]) =>
+      depStrs.map(dep => [dep, key]),
+    );
 
     test.each(testSeries)("%s resolves as %s", (depStr, expectedType) => {
       expect(npa(depStr).version.type).toBe(expectedType);

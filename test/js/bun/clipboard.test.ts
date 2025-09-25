@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 test("Bun.clipboard exists", () => {
   expect(Bun.clipboard).toBeDefined();
@@ -6,22 +6,24 @@ test("Bun.clipboard exists", () => {
   expect(typeof Bun.clipboard.readText).toBe("function");
 });
 
-test("writeText and readText work", async () => {
-  const text = "Hello from Bun clipboard!";
-  await Bun.clipboard.writeText(text);
-  const result = await Bun.clipboard.readText();
-  expect(result).toBe(text);
-});
+describe.skipIf(!process.env.DISPLAY && process.platform === "linux")("clipboard operations", () => {
+  test("writeText and readText work", () => {
+    const text = "Hello from Bun clipboard!";
+    Bun.clipboard.writeText(text);
+    const result = Bun.clipboard.readText();
+    expect(result).toBe(text);
+  });
 
-test("handles empty string", async () => {
-  await Bun.clipboard.writeText("");
-  const result = await Bun.clipboard.readText();
-  expect(result).toBe("");
-});
+  test("handles empty string", () => {
+    Bun.clipboard.writeText("");
+    const result = Bun.clipboard.readText();
+    expect(result).toBe("");
+  });
 
-test("handles unicode", async () => {
-  const text = "Hello 世界 🚀";
-  await Bun.clipboard.writeText(text);
-  const result = await Bun.clipboard.readText();
-  expect(result).toBe(text);
+  test("handles unicode", () => {
+    const text = "Hello 世界 🚀";
+    Bun.clipboard.writeText(text);
+    const result = Bun.clipboard.readText();
+    expect(result).toBe(text);
+  });
 });

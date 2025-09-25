@@ -12,7 +12,7 @@ pub fn writeText(globalObject: *JSGlobalObject, callframe: *jsc.CallFrame) JSErr
         return globalObject.throw("Failed to write to clipboard: {s}", .{@errorName(err)});
     };
 
-    return JSPromise.resolvedPromiseValue(globalObject, .undefined);
+    return .js_undefined;
 }
 
 pub fn readText(globalObject: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {
@@ -21,7 +21,7 @@ pub fn readText(globalObject: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValu
     };
     defer bun.default_allocator.free(text);
 
-    return JSPromise.resolvedPromiseValue(globalObject, ZigString.fromUTF8(text).toJS(globalObject));
+    return ZigString.fromUTF8(text).toJS(globalObject);
 }
 
 fn writeTextNative(text: []const u8) !void {
@@ -156,14 +156,12 @@ fn readTextLinux(allocator: std.mem.Allocator) ![]u8 {
     return result.stdout;
 }
 
+// Imports at the bottom (Zig style in Bun codebase)
 const std = @import("std");
-
 const bun = @import("bun");
 const Environment = bun.Environment;
-
+const JSError = bun.JSError;
 const jsc = bun.jsc;
-const JSError = jsc.JSError;
 const JSGlobalObject = jsc.JSGlobalObject;
-const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;

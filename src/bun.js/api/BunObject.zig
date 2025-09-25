@@ -49,6 +49,7 @@ pub const BunObject = struct {
 
     // --- Lazy property callbacks ---
     pub const CryptoHasher = toJSLazyPropertyCallback(Crypto.CryptoHasher.getter);
+    pub const clipboard = toJSLazyPropertyCallback(Bun.getClipboardObject);
     pub const CSRF = toJSLazyPropertyCallback(Bun.getCSRFObject);
     pub const FFI = toJSLazyPropertyCallback(Bun.FFIObject.getter);
     pub const FileSystemRouter = toJSLazyPropertyCallback(Bun.getFileSystemRouter);
@@ -63,7 +64,6 @@ pub const BunObject = struct {
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
-    pub const clipboard = toJSLazyPropertyCallback(Bun.getClipboardObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
     pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);

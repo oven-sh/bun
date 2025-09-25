@@ -6,11 +6,11 @@ import {
   createClient,
   ctx,
   DEFAULT_REDIS_URL,
-  TLS_REDIS_URL,
   expectType,
   isEnabled,
   randomCoinFlip,
   setupDockerContainer,
+  TLS_REDIS_URL,
 } from "./test-utils";
 
 for (const connectionType of [ConnectionType.TCP, ConnectionType.TLS]) {

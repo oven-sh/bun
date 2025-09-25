@@ -371,41 +371,20 @@ pub const Runner = struct {
 
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
-                        switch (_entry.value_ptr.*.data) {
-                            .e_object, .e_array => {
-                                this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
-                                return error.MacroFailed;
-                            },
-                            else => {},
-                        }
                         return _entry.value_ptr.*;
                     }
 
                     var iter = try jsc.JSArrayIterator.init(value, this.global);
-                    if (iter.len == 0) {
-                        const result = Expr.init(
-                            E.Array,
-                            E.Array{
-                                .items = ExprNodeList.empty,
-                                .was_originally_macro = true,
-                            },
-                            this.caller.loc,
-                        );
-                        _entry.value_ptr.* = result;
-                        return result;
-                    }
+
+                    // Process all array items
                     var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
-                    var out = Expr.init(
+                    errdefer this.allocator.free(array);
+                    const expr = Expr.init(
                         E.Array,
-                        E.Array{
-                            .items = ExprNodeList.empty,
-                            .was_originally_macro = true,
-                        },
+                        E.Array{ .items = ExprNodeList.empty, .was_originally_macro = true },
                         this.caller.loc,
                     );
-                    _entry.value_ptr.* = out;
-
-                    errdefer this.allocator.free(array);
+                    _entry.value_ptr.* = expr;
                     var i: usize = 0;
                     while (try iter.next()) |item| {
                         array[i] = try this.run(item);
@@ -413,24 +392,27 @@ pub const Runner = struct {
                             continue;
                         i += 1;
                     }
-                    out.data.e_array.items = ExprNodeList.fromOwnedSlice(array);
-                    _entry.value_ptr.* = out;
-                    return out;
+
+                    expr.data.e_array.items = ExprNodeList.fromOwnedSlice(array);
+                    expr.data.e_array.items.len = @truncate(i);
+                    return expr;
                 },
                 // TODO: optimize this
                 jsc.ConsoleObject.Formatter.Tag.Object => {
                     this.is_top_level = false;
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
-                        switch (_entry.value_ptr.*.data) {
-                            .e_object, .e_array => {
-                                this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
-                                return error.MacroFailed;
-                            },
-                            else => {},
-                        }
                         return _entry.value_ptr.*;
                     }
+
+                    // Reserve a placeholder to break cycles.
+                    const expr = Expr.init(
+                        E.Object,
+                        E.Object{ .properties = G.Property.List{}, .was_originally_macro = true },
+                        this.caller.loc,
+                    );
+                    _entry.value_ptr.* = expr;
+
                     // SAFETY: tag ensures `value` is an object.
                     const obj = value.getObject() orelse unreachable;
                     var object_iter = try jsc.JSPropertyIterator(.{
@@ -439,36 +421,28 @@ pub const Runner = struct {
                     }).init(this.global, obj);
                     defer object_iter.deinit();
 
-                    const out = _entry.value_ptr;
-                    out.* = Expr.init(
-                        E.Object,
-                        E.Object{
-                            .properties = bun.handleOom(
-                                G.Property.List.initCapacity(this.allocator, object_iter.len),
-                            ),
-                            .was_originally_macro = true,
-                        },
-                        this.caller.loc,
+                    // Build properties list
+                    var properties = bun.handleOom(
+                        G.Property.List.initCapacity(this.allocator, object_iter.len),
                     );
-                    const properties = &out.data.e_object.properties;
                     errdefer properties.clearAndFree(this.allocator);
 
                     while (try object_iter.next()) |prop| {
-                        bun.assertf(
-                            object_iter.i == properties.len,
-                            "`properties` unexpectedly modified (length {d}, expected {d})",
-                            .{ properties.len, object_iter.i },
-                        );
-                        properties.appendAssumeCapacity(G.Property{
+                        const object_value = try this.run(object_iter.value);
+
+                        properties.append(this.allocator, G.Property{
                             .key = Expr.init(
                                 E.String,
                                 E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable),
                                 this.caller.loc,
                             ),
-                            .value = try this.run(object_iter.value),
-                        });
+                            .value = object_value,
+                        }) catch |err| bun.handleOom(err);
                     }
-                    return out.*;
+
+                    expr.data.e_object.properties = properties;
+
+                    return expr;
                 },
 
                 .JSON => {

@@ -17,10 +17,10 @@ const framework: Framework = {
   serverComponents: {
     separateSSRGraph: true,
     serverRegisterClientReferenceExport: "registerClientReference",
-    serverRuntimeImportSource: "react-server-dom-bun/server",
+    serverRuntimeImportSource: Bun.fileURLToPath(import.meta.resolve("react-server-dom-bun/server")),
   },
   reactFastRefresh: {
-    importSource: "react-refresh/runtime",
+    importSource: Bun.fileURLToPath(import.meta.resolve("react-refresh/runtime")),
   },
   bundlerOptions: {
     ssr: {

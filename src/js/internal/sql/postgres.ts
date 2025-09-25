@@ -1217,6 +1217,11 @@ class PostgresAdapter
   }
 
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
+    // This function handles array values in single fields:
+    // - JSON/JSONB are the only field types that can be arrays themselves, so we serialize them
+    // - SQL array field types (e.g., INTEGER[], TEXT[]) require the sql.array() helper
+    // - All other types are handled natively
+
     if (typeof strings === "string") {
       // identifier or unsafe query
       return [strings, values || []];
@@ -1313,6 +1318,10 @@ class PostgresAdapter
                   if (typeof columnValue === "undefined") {
                     binding_values.push(null);
                   } else if ($isArray(columnValue)) {
+                    // Handle array values in single fields:
+                    // - JSON/JSONB fields can be an array
+                    // - For dedicated SQL array field types (e.g., INTEGER[], TEXT[]),
+                    //   users should use the sql.array() helper instead
                     binding_values.push(serializeArray(columnValue, "JSON"));
                   } else {
                     binding_values.push(columnValue);

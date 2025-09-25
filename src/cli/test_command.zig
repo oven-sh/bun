@@ -1301,6 +1301,7 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .concurrent = ctx.test_options.concurrent,
+                .randomize = ctx.test_options.randomize,
                 .concurrent_test_glob = ctx.test_options.concurrent_test_glob,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,

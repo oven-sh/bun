@@ -339,6 +339,7 @@ pub const Command = struct {
         run_todo: bool = false,
         only: bool = false,
         concurrent: bool = false,
+        randomize: bool = false,
         concurrent_test_glob: ?[]const []const u8 = null,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},

@@ -182,6 +182,14 @@ comptime {
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
 }
 
+/// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
+pub fn runCallbackWithResultAndForcefullyDrainMicrotasks(this: *EventLoop, callback: jsc.JSValue, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, arguments: []const jsc.JSValue) !jsc.JSValue {
+    const result = try callback.call(globalObject, thisValue, arguments);
+    result.ensureStillAlive();
+    try this.drainMicrotasksWithGlobal(globalObject, globalObject.bunVM().jsc_vm);
+    return result;
+}
+
 pub fn runCallbackWithResult(this: *EventLoop, callback: jsc.JSValue, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, arguments: []const jsc.JSValue) jsc.JSValue {
     this.enter();
     defer this.exit();

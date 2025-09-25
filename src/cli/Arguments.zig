@@ -104,6 +104,9 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+    clap.parseParam("--use-system-ca                   Use the system's trusted certificate authorities") catch unreachable,
+    clap.parseParam("--use-openssl-ca                  Use OpenSSL's default CA store") catch unreachable,
+    clap.parseParam("--use-bundled-ca                  Use bundled CA store") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     clap.parseParam("--sql-preconnect                  Preconnect to PostgreSQL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
@@ -194,6 +197,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--concurrent                     Treat all tests as `test.concurrent()` tests") catch unreachable,
+    clap.parseParam("--randomize                      Run tests in random order") catch unreachable,
     clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
     clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
@@ -502,6 +506,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.concurrent = args.flag("--concurrent");
+        ctx.test_options.randomize = args.flag("--randomize");
     }
 
     ctx.args.absolute_working_dir = cwd;
@@ -760,6 +765,33 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--zero-fill-buffers")) {
             Bun__Node__ZeroFillBuffers = true;
         }
+        const use_system_ca = args.flag("--use-system-ca");
+        const use_openssl_ca = args.flag("--use-openssl-ca");
+        const use_bundled_ca = args.flag("--use-bundled-ca");
+
+        // Disallow any combination > 1
+        if (@as(u8, @intFromBool(use_system_ca)) + @as(u8, @intFromBool(use_openssl_ca)) + @as(u8, @intFromBool(use_bundled_ca)) > 1) {
+            Output.prettyErrorln("<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca", .{});
+            Global.exit(1);
+        }
+
+        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        if (use_bundled_ca) {
+            Bun__Node__CAStore = .bundled;
+        } else if (use_openssl_ca) {
+            Bun__Node__CAStore = .openssl;
+        } else if (use_system_ca) {
+            Bun__Node__CAStore = .system;
+        } else {
+            if (bun.getenvZ("NODE_USE_SYSTEM_CA")) |val| {
+                if (val.len > 0 and val[0] == '1') {
+                    Bun__Node__CAStore = .system;
+                }
+            }
+        }
+
+        // Back-compat boolean used by native code until fully migrated
+        Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
     }
 
     if (opts.port != null and opts.origin == null) {
@@ -1264,6 +1296,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
+
+pub const BunCAStore = enum(u8) { bundled, openssl, system };
+pub export var Bun__Node__CAStore: BunCAStore = .bundled;
+pub export var Bun__Node__UseSystemCA = false;
 
 const string = []const u8;
 

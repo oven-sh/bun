@@ -48,7 +48,7 @@ function getFilteredUnused(result: Map<string, boolean>): string[] {
       if (filterFileArgs.length > 0) return filterFileArgs.some(arg => fullPath.includes(arg));
       return !excludedPaths.has(fullPath);
     })
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    .sort((a, b) => a.localeCompare(b));
 }
 
 async function main() {

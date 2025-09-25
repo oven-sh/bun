@@ -758,8 +758,8 @@ pub const Stringifier = struct {
             } else {
                 any = true;
             }
-            try writer.writeAll(" \"os\": ");
-            try Negatable(Npm.OperatingSystem).toJson(meta.os, writer);
+            try writer.writeAll(" \"libc\": ");
+            try Negatable(Npm.Libc).toJson(meta.libc, writer);
         }
 
         if (meta.os != .all) {

@@ -145,6 +145,29 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 try endTag.before(slice, true);
         }
 
+        fn addChunkPreloads(
+            this: *@This(),
+            chunk_index: u32,
+            preloaded_chunks: *std.AutoHashMap(u32, void),
+            array: *std.ArrayList([]const u8),
+            allocator: std.mem.Allocator,
+        ) void {
+            // Skip if already processed
+            if (preloaded_chunks.get(chunk_index) != null) return;
+            bun.handleOom(preloaded_chunks.put(chunk_index, {}));
+
+            const target_chunk = &this.chunks[chunk_index];
+            const preload = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"modulepreload\" crossorigin href=\"{s}\">", .{target_chunk.unique_key}));
+            bun.handleOom(array.append(preload));
+
+            // Recursively process all static dependencies
+            for (target_chunk.cross_chunk_imports.slice()) |import| {
+                // Skip dynamic imports - they shouldn't be preloaded
+                if (import.import_kind == .dynamic) continue;
+                this.addChunkPreloads(import.chunk_index, preloaded_chunks, array, allocator);
+            }
+        }
+
         fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) std.ArrayList([]const u8) {
             var array = std.ArrayList([]const u8).init(allocator);
             // Put CSS before JS to reduce changes of flash of unstyled content
@@ -157,31 +180,12 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 var preloaded_chunks = std.AutoHashMap(u32, void).init(allocator);
                 defer preloaded_chunks.deinit();
 
-                // Add modulepreload links for statically imported chunks only
-                // Dynamic imports should NOT be preloaded as they may not be used immediately
+                // Recursively add modulepreload links for all statically imported chunks
+                // This prevents waterfall loading by fetching all dependencies in parallel
                 for (js_chunk.cross_chunk_imports.slice()) |import| {
                     // Skip dynamic imports - they shouldn't be preloaded
                     if (import.import_kind == .dynamic) continue;
-
-                    if (preloaded_chunks.get(import.chunk_index) == null) {
-                        bun.handleOom(preloaded_chunks.put(import.chunk_index, {}));
-                        const imported_chunk = &this.chunks[import.chunk_index];
-                        const preload = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"modulepreload\" crossorigin href=\"{s}\">", .{imported_chunk.unique_key}));
-                        bun.handleOom(array.append(preload));
-
-                        // Recursively add preloads for nested static dependencies
-                        for (imported_chunk.cross_chunk_imports.slice()) |nested_import| {
-                            // Skip dynamic imports in nested dependencies too
-                            if (nested_import.import_kind == .dynamic) continue;
-
-                            if (preloaded_chunks.get(nested_import.chunk_index) == null) {
-                                bun.handleOom(preloaded_chunks.put(nested_import.chunk_index, {}));
-                                const nested_chunk = &this.chunks[nested_import.chunk_index];
-                                const nested_preload = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"modulepreload\" crossorigin href=\"{s}\">", .{nested_chunk.unique_key}));
-                                bun.handleOom(array.append(nested_preload));
-                            }
-                        }
-                    }
+                    this.addChunkPreloads(import.chunk_index, &preloaded_chunks, &array, allocator);
                 }
 
                 // type="module" scripts do not block rendering, so it is okay to put them in head

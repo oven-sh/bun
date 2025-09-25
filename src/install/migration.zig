@@ -586,7 +586,6 @@ pub fn migrateNPMLockfile(
     }
 
     var resolutions = this.packages.items(.resolution);
-    _ = this.packages.items(.meta);
     var dependencies_list = this.packages.items(.dependencies);
     var resolution_list = this.packages.items(.resolutions);
 

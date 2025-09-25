@@ -613,9 +613,16 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
   }
 }
 
+const fileCache = new Map<string, string[]>();
+async function readFileCached(file: string): Promise<string[]> {
+  if (!fileCache.has(file)) {
+    const fileContent = await Bun.file(file).text();
+    fileCache.set(file, fileContent.split("\n"));
+  }
+  return fileCache.get(file)!;
+}
 async function renderError(position: Srcloc, message: string, label: string, color: string) {
-  const fileContent = await Bun.file(position.file).text();
-  const lines = fileContent.split("\n");
+  const lines = await readFileCached(position.file);
   const line = lines[position.start.line - 1];
   if (line === undefined) return;
 

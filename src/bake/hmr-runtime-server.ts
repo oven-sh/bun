@@ -63,14 +63,12 @@ server_exports = {
     bundleNewRoute,
     newRouteParams,
   ) {
-    console.log("Handling request", req.url);
     if (!asyncLocalStorageWasSet) {
       asyncLocalStorageWasSet = true;
       setAsyncLocalStorage(responseOptionsALS);
     }
 
     while (true) {
-      console.log("Hello in here");
       if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
         console.log("handleRequest", {
           routeModules,

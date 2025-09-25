@@ -13,11 +13,37 @@ declare module "bun:app" {
 
   interface Config {
     /**
-     * The framework definition
+     * Specifies the framework configuration for this Bake application.
+     *
+     * This is THE CORE PROPERTY that determines how your app is structured and bundled.
+     * It can be:
+     * - A Framework object with full configuration (for advanced customization)
+     * - A string package name prefixed with "bun-framework-" (e.g., "bun-framework-react")
+     * - Any npm package name that exports a Framework configuration object
+     *
+     * When a string is provided:
+     * 1. Bun first attempts to resolve "bun-framework-{name}"
+     * 2. If that fails, it tries resolving "{name}" directly
+     * 3. The resolved module MUST export a Framework object as default export
+     * 4. The framework module is loaded and evaluated synchronously at config time
+     *
+     * The framework controls:
+     * - File system routing behavior (how files map to routes)
+     * - Server Components configuration
+     * - React Fast Refresh settings
+     * - Built-in module replacements
+     * - Default bundler options
      *
      * @example
      * ```ts
+     * // Using a pre-built framework
      * export default {app: {framework: "bun-framework-react"}};
+     *
+     * // Using a custom framework object
+     * export default {app: {framework: customFrameworkConfig}};
+     *
+     * // Using a custom npm package
+     * export default {app: {framework: "my-custom-bake-framework"}};
      * ```
      */
     framework: FrameworkDefinitionLike;
@@ -25,21 +51,102 @@ declare module "bun:app" {
     // Note: To contribute to 'bun-framework-react', it can be run from this file:
     // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
     /**
-     * A subset of the options from Bun.build can be configured. While the framework
-     * can also set these options, this property overrides and merges with them.
+     * Overrides and extends the bundler options provided by the framework.
      *
-     * @default {}
+     * This property allows fine-tuning of the bundler behavior beyond what the framework sets.
+     * Options specified here OVERRIDE and MERGE with framework defaults using the following rules:
+     * - Primitive values (booleans, strings) override framework values
+     * - Objects (define, loader) merge with framework values
+     * - Arrays (conditions, drop) concatenate with framework values
+     *
+     * You can configure different options for:
+     * - Top-level: applies to both client and server builds
+     * - `client`: only affects browser bundle generation
+     * - `server`: only affects server-side bundle generation
+     * - `ssr`: only affects SSR graph when separateSSRGraph is enabled
+     *
+     * Hierarchy: client/server/ssr options override top-level options
+     *
+     * @default {} (uses framework defaults)
+     *
+     * @example
+     * ```ts
+     * bundlerOptions: {
+     *   // Applied to all builds
+     *   define: { "process.env.API_URL": "\"https://api.example.com\"" },
+     *
+     *   // Client-only minification
+     *   client: { minify: true },
+     *
+     *   // Server-only conditions
+     *   server: { conditions: ["node", "production"] }
+     * }
+     * ```
      */
     bundlerOptions?: BundlerOptions | undefined;
 
     /**
-     * These plugins are applied after `framework.plugins`
+     * Additional Bun build plugins to apply during bundling.
+     *
+     * These plugins are executed AFTER framework-provided plugins, allowing you to:
+     * - Override framework plugin behavior
+     * - Add custom transformations
+     * - Implement project-specific build logic
+     *
+     * Plugins are executed in the following order:
+     * 1. Framework plugins (framework.plugins)
+     * 2. User plugins (this property)
+     *
+     * Each plugin must have:
+     * - A unique `name` property (non-empty string)
+     * - A `setup()` function that configures the plugin behavior
+     *
+     * Plugin setup can be async - Bun will wait for all plugin promises to resolve
+     * before starting the build process.
+     *
+     * @default undefined (no additional plugins)
+     *
+     * @example
+     * ```ts
+     * plugins: [{
+     *   name: "my-custom-plugin",
+     *   setup(build) {
+     *     build.onLoad({ filter: /\.svg$/ }, async (args) => {
+     *       // Custom SVG handling
+     *     });
+     *   }
+     * }]
+     * ```
      */
     plugins?: Bun.BunPlugin[] | undefined;
   }
 
   /**
-   * Bake only allows a subset of options from `Bun.build`
+   * Subset of Bun.build options available for Bake configuration.
+   *
+   * Only specific build options are exposed because Bake manages many aspects
+   * of the build process internally for optimal hot-reloading and SSR support.
+   *
+   * Available options:
+   * - `conditions`: Package.json export conditions for module resolution
+   * - `define`: Global constant replacements at compile time
+   * - `loader`: File extension to loader mappings
+   * - `ignoreDCEAnnotations`: Disable dead code elimination annotations
+   * - `drop`: Remove specific code patterns (console.*, debugger)
+   *
+   * Explicitly NOT available (and why):
+   * - `format`: Locked to "internal_bake_dev" in dev, "esm" in production
+   * - `entrypoints/outfile/outdir`: Managed by Bake's routing system
+   * - `sourcemap`: Always "external" in dev for debugging, configurable in production
+   * - `minifyIdentifiers`: Not allowed in dev (breaks generated code)
+   * - `publicPath`: Set via framework configuration
+   * - `emitDCEAnnotations`: Not useful for app bundles
+   * - `banner/footer`: Not compatible with multi-file builds
+   * - `external`: Would break module imports
+   * - `plugins`: Use framework.plugins or top-level plugins instead
+   *
+   * @internal Implementation note: These restrictions ensure consistent behavior
+   * across dev/prod and client/server boundaries
    */
   type BuildConfigSubset = Pick<
     Bun.BuildConfig,
@@ -59,33 +166,211 @@ declare module "bun:app" {
   >;
 
   type BundlerOptions = BuildConfigSubset & {
-    /** Customize the build options of the client-side build */
+    /**
+     * Client-specific bundler configuration.
+     *
+     * Controls how JavaScript/TypeScript is bundled for browser execution.
+     * These settings OVERRIDE the top-level bundler options for client builds.
+     *
+     * Client bundles:
+     * - Target browser environments
+     * - Include HMR runtime in development
+     * - Support React Fast Refresh when configured
+     * - Generate code splitting chunks in production
+     * - Use "browser" condition in package.json exports
+     * - Minify by default in production
+     *
+     * Common use cases:
+     * - Adding browser-specific polyfills via `define`
+     * - Removing server-only code via `drop`
+     * - Setting browser-specific module conditions
+     *
+     * @example
+     * ```ts
+     * client: {
+     *   define: { "process.env.IS_CLIENT": "true" },
+     *   drop: ["console"], // Remove console.logs in client
+     * }
+     * ```
+     */
     client?: BuildConfigSubset;
-    /** Customize the build options of the server build */
+
+    /**
+     * Server-specific bundler configuration.
+     *
+     * Controls how code is bundled for server-side execution (SSR and API routes).
+     * These settings OVERRIDE the top-level bundler options for server builds.
+     *
+     * Server bundles:
+     * - Target Bun runtime (Node.js compatible)
+     * - Include "node" and "bun" conditions
+     * - Support server components when configured
+     * - Never include HMR runtime
+     * - Can access file system and Node.js APIs
+     * - Include "react-server" condition when server components enabled
+     *
+     * Common use cases:
+     * - Setting server-only environment variables
+     * - Including Node.js-specific modules
+     * - Configuring database connection strings
+     *
+     * @example
+     * ```ts
+     * server: {
+     *   define: { "process.env.DATABASE_URL": '"postgresql://..."' },
+     *   conditions: ["node", "production"]
+     * }
+     * ```
+     */
     server?: BuildConfigSubset;
-    /** Customize the build options of the separated SSR graph */
+
+    /**
+     * SSR-specific bundler configuration (Server-Side Rendering).
+     *
+     * ONLY USED when `serverComponents.separateSSRGraph` is true.
+     * Controls bundling for the separate SSR module graph.
+     *
+     * When separateSSRGraph is enabled:
+     * - SSR uses a different React version than server components
+     * - Client components are bundled separately for SSR
+     * - Allows server components and SSR to coexist with different React versions
+     * - SSR graph does NOT include "react-server" condition
+     *
+     * This separation enables:
+     * - Server components using React's async components
+     * - SSR using standard React for client component rendering
+     * - Both running in the same process without conflicts
+     *
+     * If separateSSRGraph is false, these options are IGNORED.
+     *
+     * @example
+     * ```ts
+     * ssr: {
+     *   conditions: ["node"], // No "react-server" for SSR
+     *   define: { "process.env.IS_SSR": "true" }
+     * }
+     * ```
+     */
     ssr?: BuildConfigSubset;
   };
 
   /**
-   * A "Framework" in our eyes is simply a set of bundler options that a
-   * framework author would set in order to integrate framework code with the
-   * application. Many of the configuration options are paths, which are
-   * resolved as import specifiers.
+   * Framework configuration object that defines how Bake processes your application.
+   *
+   * A Framework is a set of conventions and configurations that tell Bake:
+   * - How to discover and route files (file system routing)
+   * - How to handle server/client boundaries (server components)
+   * - How to enable hot reloading features (React Fast Refresh)
+   * - What bundler settings to apply
+   *
+   * Framework authors use this to create reusable configurations that work
+   * with specific UI libraries (React, Vue, Svelte, etc.) or implement
+   * custom routing conventions.
+   *
+   * All path properties are resolved as import specifiers, meaning they can be:
+   * - Relative paths ("./my-module")
+   * - Node modules ("react-refresh/runtime")
+   * - Built-in modules (defined in builtInModules)
+   *
+   * Resolution happens in this order:
+   * 1. Check builtInModules for the exact path
+   * 2. Resolve as a normal import from the project root
+   *
+   * @example
+   * ```ts
+   * const myFramework: Framework = {
+   *   fileSystemRouterTypes: [{
+   *     root: "src/pages",
+   *     style: "nextjs-pages",
+   *     // ... other routing config
+   *   }],
+   *   reactFastRefresh: { importSource: "react-refresh/runtime" },
+   *   serverComponents: { ... }
+   * }
+   * ```
    */
   interface Framework {
     /**
-     * Customize the bundler options. Plugins in this array are merged with
-     * any plugins the user has.
-     * @default {}
+     * Default bundler options provided by the framework.
+     *
+     * These options serve as BASE DEFAULTS that users can override via
+     * their own bundlerOptions in the app config.
+     *
+     * Merging behavior:
+     * - User's top-level bundlerOptions OVERRIDE framework bundlerOptions
+     * - User's client/server/ssr options OVERRIDE framework's respective options
+     * - Objects (define, loader) are MERGED (user values win)
+     * - Arrays (conditions, drop) are CONCATENATED
+     * - Primitives are REPLACED
+     *
+     * Framework authors should set sensible defaults here that make their
+     * framework "just work" without requiring user configuration.
+     *
+     * Common framework defaults:
+     * - React frameworks: set JSX runtime to automatic
+     * - Node frameworks: add "node" condition
+     * - SSR frameworks: configure server and client differently
+     *
+     * @default {} (no framework-specific bundler options)
+     *
+     * @example
+     * ```ts
+     * bundlerOptions: {
+     *   // React framework defaults
+     *   define: { "process.env.NODE_ENV": '"development"' },
+     *   client: {
+     *     conditions: ["browser"],
+     *   },
+     *   server: {
+     *     conditions: ["node"],
+     *   }
+     * }
+     * ```
      */
     bundlerOptions?: BundlerOptions | undefined;
 
     /**
-     * The translation of files to routes is unopinionated and left to framework
-     * authors. This interface allows most flexibility between the already
-     * established conventions while allowing new ideas to be explored too.
-     * @default []
+     * Defines how the file system maps to application routes.
+     *
+     * This is THE CORE of how Bake discovers and bundles your application pages.
+     * Each entry defines a separate routing root with its own conventions.
+     *
+     * Multiple router types can coexist:
+     * - Pages router at "/pages" with Next.js conventions
+     * - API routes at "/api" with different conventions
+     * - Admin panel at "/admin" with custom routing
+     *
+     * Each router type specifies:
+     * - Where to look for files (root directory)
+     * - How to interpret file names as routes (style)
+     * - What files to bundle for client/server
+     * - What to ignore
+     *
+     * The array is processed in order, with first match wins for overlapping routes.
+     *
+     * Empty array means no file-system routing (you handle routing manually).
+     *
+     * @default [] (no file-system routing)
+     *
+     * @example
+     * ```ts
+     * fileSystemRouterTypes: [
+     *   {
+     *     root: 'src/pages',
+     *     style: 'nextjs-pages',
+     *     prefix: '/',
+     *     serverEntryPoint: './server.tsx',
+     *     clientEntryPoint: './client.tsx'
+     *   },
+     *   {
+     *     root: 'src/api',
+     *     style: 'nextjs-app-routes',
+     *     prefix: '/api',
+     *     serverEntryPoint: './api-server.tsx',
+     *     clientEntryPoint: null // API routes are server-only
+     *   }
+     * ]
+     * ```
      */
     fileSystemRouterTypes?: FrameworkFileSystemRouterType[];
 
@@ -112,20 +397,131 @@ declare module "bun:app" {
     // builtInModules?: BuiltInModule[] | undefined;
 
     /**
-     * Bun offers integration for React's Server Components with an interface
-     * that is generic enough to adapt to any framework.
-     * @default undefined
+     * Enables React Server Components (RSC) or similar server/client component boundaries.
+     *
+     * When enabled, Bake processes "use client" and "use server" directives to create
+     * boundaries between server and client code. This enables:
+     * - Components that only run on the server (async components, direct DB access)
+     * - Automatic code splitting at component boundaries
+     * - Streaming server rendering with Suspense
+     * - Server Actions (server-side functions callable from client)
+     *
+     * The bundler creates THREE distinct module graphs:
+     * 1. Server graph: Contains server components and server-only code
+     * 2. Client graph: Contains client components and browser code
+     * 3. SSR graph (optional): Separate graph for SSR when separateSSRGraph=true
+     *
+     * Files with "use client" become client component boundaries:
+     * - Bundled separately for the browser
+     * - On server, replaced with reference stubs that call registerClientReference
+     * - Props are serialized when crossing the boundary
+     *
+     * Files with "use server" become server component boundaries:
+     * - Only run on the server
+     * - Can be async and use server-only APIs
+     * - Results are streamed to the client
+     *
+     * undefined means server components are DISABLED.
+     *
+     * @default undefined (server components disabled)
+     *
+     * @example
+     * ```ts
+     * serverComponents: {
+     *   separateSSRGraph: true, // Use different React for SSR vs RSC
+     *   serverRuntimeImportSource: 'react-server-dom/server',
+     *   serverRegisterClientReferenceExport: 'registerClientReference'
+     * }
+     * ```
      */
     serverComponents?: ServerComponentsOptions | undefined;
 
     /**
-     * While it is unlikely that Fast Refresh is useful outside of React, it can
-     * be enabled regardless.
-     * @default false
+     * Enables React Fast Refresh for hot module replacement with state preservation.
+     *
+     * Fast Refresh provides a superior development experience by:
+     * - Preserving component state during code changes
+     * - Only re-rendering changed components
+     * - Recovering from runtime errors gracefully
+     * - Providing clear error boundaries
+     *
+     * Three ways to configure:
+     * - `true`: Use default React Fast Refresh ("react-refresh/runtime")
+     * - `false` or undefined: Disable Fast Refresh
+     * - Object: Customize the runtime import source
+     *
+     * How it works:
+     * 1. In development, Bake injects refresh registration calls
+     * 2. Every React component is registered with a unique ID
+     * 3. On hot update, components are patched in-place
+     * 4. State and refs are preserved across updates
+     *
+     * Only functions starting with uppercase letters are registered
+     * (React component convention).
+     *
+     * While designed for React, the transform could theoretically work with
+     * other frameworks that follow similar component conventions.
+     *
+     * @default false (Fast Refresh disabled)
+     *
+     * @example
+     * ```ts
+     * // Use default React Fast Refresh
+     * reactFastRefresh: true
+     *
+     * // Use custom Fast Refresh implementation
+     * reactFastRefresh: {
+     *   importSource: '@my/custom-refresh-runtime'
+     * }
+     *
+     * // Disable Fast Refresh
+     * reactFastRefresh: false
+     * ```
      */
     reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
 
-    /** Framework bundler plugins load before the user-provided ones. */
+    /**
+     * Framework-provided bundler plugins.
+     *
+     * These plugins are executed BEFORE user plugins, establishing the base
+     * transformation pipeline for the framework.
+     *
+     * Execution order:
+     * 1. Framework plugins (this property) - run first
+     * 2. User plugins (from app config) - run second
+     *
+     * This order ensures:
+     * - Framework establishes core behavior
+     * - Users can override or extend framework behavior
+     * - Framework plugins can't accidentally break user customizations
+     *
+     * Common framework plugin uses:
+     * - Transform framework-specific file types
+     * - Inject framework runtime code
+     * - Handle special imports (e.g., "virtual:framework")
+     * - Set up framework-specific optimizations
+     *
+     * Each plugin must have:
+     * - Unique `name` property
+     * - `setup()` function
+     *
+     * Plugins are initialized synchronously during config parsing.
+     * Async operations in setup() will block the build start.
+     *
+     * @default undefined (no framework plugins)
+     *
+     * @example
+     * ```ts
+     * plugins: [{
+     *   name: 'framework-mdx',
+     *   setup(build) {
+     *     build.onLoad({ filter: /\.mdx$/ }, async (args) => {
+     *       // Transform MDX to JSX
+     *     });
+     *   }
+     * }]
+     * ```
+     */
     plugins?: Bun.BunPlugin[] | undefined;
 
     // /**
@@ -150,72 +546,105 @@ declare module "bun:app" {
    */
   interface ServerComponentsOptions {
     /**
-     * If you are unsure what to set this to for a custom server components
-     * framework, choose 'false'.
+     * Controls whether SSR uses a separate module graph from server components.
      *
-     * When set `true`, bundling "use client" components for SSR will be
-     * placed in a separate bundling graph without the `react-server`
-     * condition. All imports that stem from here get re-bundled for this
-     * second graph, regardless if they actually differ via this condition.
+     * THIS IS A CRITICAL DECISION that affects your entire application architecture.
      *
-     * The built in framework config for React enables this flag so that
-     * server components and client components utilize their own versions of
-     * React, despite running in the same process. This facilitates different
-     * aspects of the server and client react runtimes, such as `async`
-     * components only being available on the server.
+     * When `true` (React's approach):
+     * - THREE separate module graphs: Server, Client, and SSR
+     * - Server components use "react-server" condition (async React)
+     * - SSR uses standard React (no "react-server" condition)
+     * - Client components are bundled TWICE (once for client, once for SSR)
+     * - Allows React 19+ async components on server, standard React for SSR
+     * - More complex but enables full React Server Components features
+     * - Higher memory usage (multiple React versions in memory)
      *
-     * To cross from the server graph to the SSR graph, use the bun_bake_graph
-     * import attribute:
+     * When `false` (simpler approach):
+     * - TWO module graphs: Server+SSR combined, Client separate
+     * - Both server components and SSR use the same React
+     * - Client components bundled once, used for both client and SSR
+     * - Cannot use React async components (they require separation)
+     * - Simpler mental model and less memory usage
+     * - Works for basic "use client" boundaries without full RSC
      *
-     *     import * as ReactDOM from 'react-dom/server' with { bunBakeGraph: 'ssr' };
+     * To cross between graphs when true, use import attributes:
+     * ```ts
+     * import * as ReactDOM from 'react-dom/server' with { bunBakeGraph: 'ssr' };
+     * ```
      *
-     * Since these models are so subtley different, there is no default value
-     * provided for this.
+     * NO DEFAULT PROVIDED - you must explicitly choose based on your needs.
+     * If unsure, choose `false` for simplicity unless you need React async components.
      */
     separateSSRGraph: boolean;
-    /** Server components runtime for the server */
+    /**
+     * Import source for the server components runtime.
+     *
+     * This module provides the functions that handle client/server boundaries:
+     * - `registerClientReference`: Marks client components on the server
+     * - `registerServerReference`: Marks server actions
+     * - Component serialization/deserialization logic
+     * - Streaming protocols for RSC payloads
+     *
+     * The module MUST export the functions specified in:
+     * - `serverRegisterClientReferenceExport` (default: "registerClientReference")
+     * - (Future) `serverRegisterServerReferenceExport` for server actions
+     *
+     * Common values:
+     * - React: "react-server-dom-webpack/server" or "react-server-dom-bun/server"
+     * - Custom: Your own RSC runtime implementation
+     *
+     * This import is resolved at build time and bundled into the server.
+     * Resolution follows normal module resolution rules (node_modules, relative paths).
+     *
+     * @example "react-server-dom-webpack/server"
+     * @example "./my-rsc-runtime"
+     * @example "@my-org/rsc-runtime"
+     */
     serverRuntimeImportSource: string;
     /**
-     * When server code imports client code, a stub module is generated, where
-     * every export calls this export from `serverRuntimeImportSource`. This
-     * is used to implement client components on the server.
+     * Name of the export from serverRuntimeImportSource that registers client components.
      *
-     * When separateSSRGraph is enabled, the call looks like:
+     * This function is called in generated stub modules when server code imports client code.
+     * Every "use client" component gets wrapped with this function on the server.
      *
-     *     export const ClientComp = registerClientReference(
-     *         // A function which may be passed through, it throws an error
-     *         function () { throw new Error('Cannot call client-component on the server') },
+     * The function signature differs based on `separateSSRGraph`:
      *
-     *         // The file path. In production, these use hashed strings for
-     *         // compactness and code privacy.
-     *         "src/components/Client.tsx",
+     * When `separateSSRGraph: true` (opaque references):
+     * ```ts
+     * export const Button = registerClientReference(
+     *   function() { throw new Error('Cannot call client component on server') },
+     *   "src/Button.tsx",     // Source file ID (minified in prod: "a1")
+     *   "Button"              // Export name (minified in prod: "b")
+     * );
+     * ```
+     * The last two params are OPAQUE STRINGS looked up in the manifest.
      *
-     *         // The instance id. This is not guaranteed to match the export
-     *         // name the user has given.
-     *         "ClientComp",
-     *     );
+     * When `separateSSRGraph: false` (direct references):
+     * ```ts
+     * export const Button = registerClientReference(
+     *   function() { ... },
+     *   "/_bun/client-123.js", // Actual client bundle URL
+     *   "Button"               // Actual export name in bundle
+     * );
+     * ```
+     * The last two params are DIRECT REFERENCES for client loading.
      *
-     * When separateSSRGraph is disabled, the call looks like:
+     * The difference is crucial:
+     * - With SSR graph: Abstract references requiring manifest lookup
+     * - Without SSR graph: Concrete URLs for immediate loading
      *
-     *     export const ClientComp = registerClientReference(
-     *         function () { ... original user implementation here ... },
+     * Your runtime must implement this function to handle the boundary.
      *
-     *         // The file path of the client-side file to import in the browser.
-     *         "/_bun/d41d8cd0.js",
-     *
-     *         // The export within the client-side file to load. This is
-     *         // not guaranteed to match the export name the user has given.
-     *        "ClientComp",
-     *     );
-     *
-     * While subtle, the parameters in `separateSSRGraph` mode are opaque
-     * strings that have to be looked up in the server manifest. While when
-     * there isn't a separate SSR graph, the two parameters are the actual
-     * URLs to load on the client; The manifest is not required for anything.
-     *
-     * Additionally, the bundler will assemble a component manifest to be used
-     * during rendering.
      * @default "registerClientReference"
+     *
+     * @example
+     * ```ts
+     * // React's implementation
+     * serverRegisterClientReferenceExport: "registerClientReference"
+     *
+     * // Custom implementation
+     * serverRegisterClientReferenceExport: "createClientBoundary"
+     * ```
      */
     serverRegisterClientReferenceExport?: string | undefined;
     // /**
@@ -257,68 +686,346 @@ declare module "bun:app" {
   /** This API is similar, but unrelated to `Bun.FileSystemRouter`  */
   interface FrameworkFileSystemRouterType {
     /**
-     * Relative to project root. For example: `src/pages`.
+     * Root directory to scan for route files, relative to project root.
+     *
+     * This is WHERE Bake looks for files that become routes.
+     * The path is relative to your project root (where package.json lives).
+     *
+     * Bake recursively scans this directory for files matching:
+     * - Extensions specified in `extensions` property
+     * - Style conventions specified in `style` property
+     * - Excluding directories in `ignoreDirs`
+     * - Excluding underscored files if `ignoreUnderscores` is true
+     *
+     * The directory structure maps to URL structure based on `style`.
+     * For example, with "nextjs-pages" style:
+     * - `src/pages/index.tsx` → `/`
+     * - `src/pages/about.tsx` → `/about`
+     * - `src/pages/blog/[slug].tsx` → `/blog/:slug`
+     *
+     * This directory MUST exist at build time or Bake will error.
+     *
+     * @example "src/pages"
+     * @example "app"
+     * @example "routes"
      */
     root: string;
 
     /**
-     * The prefix to serve this directory on.
+     * URL prefix for all routes from this router.
+     *
+     * This prepends a path segment to all discovered routes.
+     * Useful for mounting route groups at specific paths.
+     *
+     * How it works:
+     * - Route: `pages/users.tsx`
+     * - Without prefix: `/users`
+     * - With prefix "/api": `/api/users`
+     * - With prefix "/v2": `/v2/users`
+     *
+     * Rules:
+     * - Must start with "/"
+     * - No trailing slash (use "/api", not "/api/")
+     * - Empty string treated as "/"
+     * - Prefixes stack when using multiple routers
+     *
+     * Common patterns:
+     * - API versioning: prefix: "/api/v1"
+     * - Admin routes: prefix: "/admin"
+     * - Localization: prefix: "/en-US"
+     *
      * @default "/"
+     *
+     * @example
+     * ```ts
+     * // Mount API routes at /api
+     * { root: "src/api", prefix: "/api" }
+     *
+     * // Version your API
+     * { root: "src/api/v2", prefix: "/api/v2" }
+     * ```
      */
     prefix?: string | undefined;
 
     /**
-     * This file is the entrypoint of the server application. This module must
-     * `export default` a fetch function, which takes a request and the
-     * bundled route module, and returns a response. See `ServerEntryPoint`
+     * Path to the server-side rendering entry point.
      *
-     * When `serverComponents` is configured, this can access the component
-     * manifest using the special 'bun:app/server' import:
+     * This file orchestrates HOW routes are rendered on the server.
+     * It must export a ServerEntryPoint object with a `render` function.
      *
-     *     import { serverManifest } from 'bun:app/server'
+     * The render function receives:
+     * 1. The incoming Request
+     * 2. RouteMetadata (matched route module, params, layouts)
+     * 3. Optional AsyncLocalStorage for request context
+     *
+     * And must return a Response (usually HTML).
+     *
+     * This is where you:
+     * - Call your framework's SSR function (e.g., ReactDOMServer.renderToString)
+     * - Inject the rendered HTML into an HTML template
+     * - Add <script> tags for client hydration
+     * - Handle errors and 404s
+     * - Set response headers (Cache-Control, etc.)
+     *
+     * When server components are enabled, import manifests here:
+     * ```ts
+     * import { serverManifest, ssrManifest } from 'bun:app/server'
+     * ```
+     *
+     * Path resolution:
+     * - Relative paths resolved from project root
+     * - Node modules resolved normally
+     * - Must exist at build time
+     *
+     * @example "./server.tsx"
+     * @example "./src/entry.server.tsx"
+     * @example "my-framework/server"
      */
     serverEntryPoint: string;
 
     /**
-     * This file is the true entrypoint of the client application. If null,
-     * undefined, or unspecified, a client will not be bundled, and the route
-     * will not receive bundling for client-side interactivity.
+     * Path to the client-side hydration entry point.
      *
-     * @default undefined
+     * This file controls HOW routes become interactive in the browser.
+     * If not provided, routes are server-only (no client JavaScript).
+     *
+     * When provided, this file:
+     * - Runs once when the page loads
+     * - Hydrates server-rendered HTML
+     * - Sets up client-side routing
+     * - Initializes your framework (React, Vue, etc.)
+     *
+     * Setting to null/undefined means:
+     * - No client bundle generated
+     * - No JavaScript sent to browser
+     * - Pure server-rendered HTML
+     * - Good for static content, forms, APIs
+     *
+     * The file typically:
+     * 1. Imports your framework's hydration function
+     * 2. Finds the root element
+     * 3. Hydrates with the same component tree as server
+     *
+     * Example React client entry:
+     * ```ts
+     * import { hydrateRoot } from 'react-dom/client';
+     * import { App } from './App';
+     *
+     * hydrateRoot(document.getElementById('root'), <App />);
+     * ```
+     *
+     * Path resolution same as serverEntryPoint.
+     *
+     * @default undefined (no client hydration)
+     *
+     * @example "./client.tsx"
+     * @example null // Explicitly no client
+     * @example "my-framework/client"
      */
     clientEntryPoint?: string | null | undefined;
 
     /**
-     * Do not traverse into directories and files that start with an `_`.  Do
-     * not index pages that start with an `_`. Does not prevent stuff like
-     * `_layout.tsx` from being recognized.
-     * @default false
+     * Whether to ignore files and directories starting with underscore.
+     *
+     * When true:
+     * - Skips directories starting with "_" entirely (won't traverse)
+     * - Ignores files starting with "_" as routes
+     * - EXCEPTION: Special files like "_layout.tsx" still work (framework-specific)
+     *
+     * This follows the convention that underscore = private/internal.
+     *
+     * Common uses for underscore files:
+     * - Shared components: "_components/Button.tsx"
+     * - Utilities: "_utils/helpers.ts"
+     * - Partial templates: "_header.tsx"
+     *
+     * Why exceptions exist:
+     * Some frameworks use underscore for special files:
+     * - Next.js: "_app.tsx", "_document.tsx"
+     * - Remix/SvelteKit: "_layout.tsx"
+     * These are recognized by name, not as routes.
+     *
+     * @default false (underscores are treated normally)
+     *
+     * @example
+     * ```ts
+     * // With ignoreUnderscores: true
+     * // pages/_utils/helper.ts → IGNORED
+     * // pages/_secret.tsx → IGNORED
+     * // pages/_layout.tsx → RECOGNIZED (special case)
+     * // pages/public.tsx → ROUTED to /public
+     * ```
      */
     ignoreUnderscores?: boolean;
 
     /**
+     * Directories to completely skip when scanning for routes.
+     *
+     * These directories are NEVER traversed, even if they contain
+     * valid route files. Use this to exclude:
+     * - Dependencies (node_modules)
+     * - Version control (.git, .svn)
+     * - Build outputs (dist, .next)
+     * - Tests (__tests__, tests)
+     * - Config directories (.vscode, .idea)
+     *
+     * Matching is by exact name at any level:
+     * - "node_modules" matches "./node_modules" and "./src/node_modules"
+     * - ".git" matches "./.git" and "./submodule/.git"
+     *
+     * Performance tip: Add directories with many files that aren't routes.
+     * This speeds up route discovery significantly.
+     *
+     * Patterns NOT supported (use exact names only):
+     * - Wildcards: "test*" won't work
+     * - Paths: "src/ignore" won't work
+     * - Regex: Not supported
+     *
      * @default ["node_modules", ".git"]
+     *
+     * @example
+     * ```ts
+     * // Ignore test directories
+     * ignoreDirs: ["node_modules", ".git", "__tests__", "tests"]
+     *
+     * // Ignore build artifacts
+     * ignoreDirs: ["node_modules", ".git", "dist", ".next", ".nuxt"]
+     * ```
      */
     ignoreDirs?: string[] | undefined;
 
     /**
-     * Extensions to match on. '*' - any extension
-     * @default (set of all valid JavaScript/TypeScript extensions)
+     * File extensions to consider as potential routes.
+     *
+     * Controls which files Bake examines when building routes.
+     * Only files with these extensions are processed.
+     *
+     * Two modes:
+     * 1. Array of extensions: Only match specified extensions
+     * 2. "*": Match ALL files (use with caution)
+     *
+     * Extension format:
+     * - Include the dot: ".tsx" not "tsx"
+     * - Case sensitive: ".tsx" won't match ".TSX"
+     * - Full extension: ".test.ts" is different from ".ts"
+     *
+     * Common patterns:
+     * - React: [".tsx", ".jsx"]
+     * - Vue: [".vue"]
+     * - Mixed: [".tsx", ".jsx", ".mdx"]
+     * - API routes: [".ts", ".js"]
+     *
+     * Performance impact:
+     * - Fewer extensions = faster scanning
+     * - "*" is slowest (examines everything)
+     * - Be specific to avoid processing non-route files
+     *
+     * @default [".jsx", ".tsx", ".js", ".ts", ".cjs", ".cts", ".mjs", ".mts"]
+     *
+     * @example
+     * ```ts
+     * // React/Next.js apps
+     * extensions: [".tsx", ".jsx"]
+     *
+     * // API routes only
+     * extensions: [".ts"]
+     *
+     * // Include MDX pages
+     * extensions: [".tsx", ".jsx", ".mdx"]
+     *
+     * // Match everything (careful!)
+     * extensions: "*"
+     * ```
      */
     extensions?: string[] | "*" | undefined;
 
     /**
-     * 'nextjs-app' builds routes out of directories with `page.tsx` and
-     * `layout.tsx` 'nextjs-pages' builds routes out of any `.tsx` file and
-     * layouts with `_layout.tsx`.
+     * Routing convention to use for mapping files to URLs.
      *
-     * Eventually, an API will be added to add custom styles.
+     * This determines HOW file names and paths become route patterns.
+     * Different styles follow different framework conventions.
+     *
+     * Built-in styles:
+     *
+     * "nextjs-pages" (Next.js Pages Router style):
+     * - Any `.tsx` file becomes a route
+     * - `index.tsx` → `/`
+     * - `about.tsx` → `/about`
+     * - `[id].tsx` → `/:id` (dynamic)
+     * - `[...slug].tsx` → `/*` (catch-all)
+     * - `_layout.tsx` wraps child routes
+     *
+     * "nextjs-app-ui" (Next.js App Router UI routes):
+     * - Only `page.tsx` files become routes
+     * - `layout.tsx` wraps children
+     * - `loading.tsx` shows during loading
+     * - `error.tsx` handles errors
+     * - Folders define URL structure
+     *
+     * "nextjs-app-routes" (Next.js App Router API routes):
+     * - Only `route.ts` files become endpoints
+     * - Must export GET, POST, etc. functions
+     * - No layouts or UI components
+     *
+     * CustomFileSystemRouterFunction:
+     * - Your own function to classify files
+     * - Receives file path, returns route info
+     * - Maximum flexibility for custom conventions
+     *
+     * @example
+     * ```ts
+     * // Next.js Pages style
+     * style: "nextjs-pages"
+     *
+     * // Custom function
+     * style: (path) => {
+     *   if (path.endsWith('.route.tsx'))
+     *     return { pattern: path.replace('.route.tsx', ''), type: 'route' }
+     *   return null;
+     * }
+     * ```
      */
     style: "nextjs-pages" | "nextjs-app-ui" | "nextjs-app-routes" | CustomFileSystemRouterFunction;
 
     /**
-     * If true, this will track route layouts and provide them as an array during SSR.
-     * @default false
+     * Whether to collect and provide layout components to the render function.
+     *
+     * When true:
+     * - Bake identifies layout files based on the `style`
+     * - Collects all layouts from route to root
+     * - Provides them in RouteMetadata.layouts array
+     * - Ordered from innermost to outermost
+     *
+     * This enables nested layouts where each level wraps its children:
+     * ```
+     * pages/
+     *   _layout.tsx         (root layout)
+     *   dashboard/
+     *     _layout.tsx       (dashboard layout)
+     *     settings.tsx      (settings page)
+     * ```
+     *
+     * Result for /dashboard/settings:
+     * ```ts
+     * routeMetadata.layouts = [
+     *   dashboardLayout,  // innermost
+     *   rootLayout        // outermost
+     * ]
+     * ```
+     *
+     * Your render function typically nests them:
+     * ```tsx
+     * let element = <Page />;
+     * for (const layout of layouts) {
+     *   element = <layout.default>{element}</layout.default>;
+     * }
+     * ```
+     *
+     * When false:
+     * - layouts array is empty
+     * - You handle layout logic yourself
+     *
+     * @default false (layouts not collected)
      */
     layouts?: boolean | undefined;
 
@@ -385,15 +1092,99 @@ declare module "bun:app" {
   }
 
   interface ServerEntryPoint {
+    /**
+     * Whether this server supports streaming responses.
+     *
+     * When true:
+     * - Response can be sent in chunks as rendered
+     * - Enables React 18+ streaming SSR (renderToPipeableStream)
+     * - Better Time to First Byte (TTFB)
+     * - Progressive page loading
+     * - Suspense boundaries can stream in later
+     *
+     * When false/undefined:
+     * - Complete response generated before sending
+     * - Uses traditional SSR (renderToString)
+     * - Simple but higher TTFB
+     * - All content ready at once
+     *
+     * Implementation requirements for streaming:
+     * - Return ReadableStream or Response with stream body
+     * - Handle backpressure properly
+     * - Manage error boundaries during streaming
+     *
+     * @default undefined (no streaming)
+     */
     readonly streaming?: boolean;
+
+    /**
+     * Rendering mode for this server.
+     *
+     * "ssr" (Server-Side Rendering):
+     * - Dynamic rendering per request
+     * - Can access request headers, cookies
+     * - Fresh data on every request
+     * - Higher server load
+     * - Good for personalized content
+     *
+     * "static" (Static Site Generation):
+     * - Pre-rendered at build time
+     * - Same HTML for all requests
+     * - Can't access request data
+     * - Cacheable, fast serving
+     * - Good for public content
+     *
+     * This hint helps Bake optimize:
+     * - Static mode may prerender routes
+     * - SSR mode keeps routes dynamic
+     * - Affects caching strategies
+     *
+     * @default undefined (framework decides)
+     */
     readonly mode?: "ssr" | "static";
 
     /**
-     * Bun passes the route's module as an opaque argument `routeModule`. The
-     * framework implementation decides and enforces the shape of the module.
+     * The core rendering function that turns routes into HTTP responses.
      *
-     * A common pattern would be to enforce the object is `{ default:
-     * ReactComponent }`
+     * This is THE HEART of server-side rendering. It's called for every
+     * request that matches a route, and must return an HTTP Response.
+     *
+     * Parameters:
+     *
+     * @param request - The incoming HTTP request
+     *   - Contains URL, method, headers, body
+     *   - Use for auth, cookies, content negotiation
+     *   - Same Request object from Fetch API
+     *
+     * @param routeMetadata - Information about the matched route
+     *   - `.pageModule`: The route's exported module
+     *   - `.params`: Dynamic route parameters
+     *   - `.layouts`: Parent layout components (if enabled)
+     *   - `.modules`: Client JS files needed
+     *   - `.styles`: CSS files needed
+     *
+     * @param storage - Optional AsyncLocalStorage for request context
+     *   - Thread-safe request-scoped storage
+     *   - Share data across async operations
+     *   - Used for streaming SSR coordination
+     *
+     * @returns Response or Promise<Response>
+     *   - HTML response for pages
+     *   - JSON for API routes
+     *   - Redirects, errors, etc.
+     *
+     * Typical implementation:
+     * 1. Extract route component from metadata
+     * 2. Render component to HTML string/stream
+     * 3. Inject into HTML template
+     * 4. Add <script> tags for hydration
+     * 5. Return Response with appropriate headers
+     *
+     * The routeMetadata.pageModule shape is framework-specific.
+     * Common patterns:
+     * - React: `{ default: Component }`
+     * - API: `{ GET, POST, DELETE, ... }`
+     * - Custom: Whatever your framework needs
      */
     render: (
       request: Request,
@@ -402,50 +1193,143 @@ declare module "bun:app" {
     ) => Bun.MaybePromise<Response>;
 
     /**
-     * Prerendering does not use a request, and is allowed to generate
-     * multiple responses. This is used for static site generation, but not
-     * not named `staticRender` as it is invoked during a dynamic build to
-     * allow deterministic routes to be prerendered.
+     * Pre-renders routes at build time for static generation.
      *
-     * Note that `import.meta.env.STATIC` will be inlined to true during a
-     * static build.
+     * Called during BUILD, not at request time. Generates static
+     * HTML/assets that can be served without running application code.
+     *
+     * When this runs:
+     * - Static builds: All routes
+     * - Dynamic builds: Routes without parameters
+     * - Hybrid builds: Specified routes only
+     *
+     * No request object because:
+     * - Runs at build time, not request time
+     * - Can't access cookies, headers, etc.
+     * - Must generate generic content
+     *
+     * Can generate multiple files:
+     * - index.html (main page)
+     * - data.json (for client navigation)
+     * - Multiple language versions
+     * - Different formats (AMP, etc.)
+     *
+     * Returns null to skip prerendering this route.
+     *
+     * `import.meta.env.STATIC` is true during static builds,
+     * allowing conditional logic:
+     * ```ts
+     * if (import.meta.env.STATIC) {
+     *   // Use build-time data
+     * } else {
+     *   // Use runtime data
+     * }
+     * ```
+     *
+     * @param routeMetadata - Same as render(), minus request
+     * @returns PrerenderResult with generated files, or null to skip
      */
     prerender?: (routeMetadata: RouteMetadata) => Bun.MaybePromise<PrerenderResult | null>;
 
     // TODO: prerenderWithoutProps (for partial prerendering)
     /**
-     * For prerendering routes with dynamic parameters, such as `/blog/:slug`,
-     * this will be called to get the list of parameters to prerender. This
-     * allows static builds to render every page at build time.
+     * Generates parameter combinations for dynamic routes during static builds.
      *
-     * `getParams` may return an object with an array of pages. For example,
-     * to generate two pages, `/blog/hello` and `/blog/world`:
+     * This tells Bake WHICH versions of dynamic routes to pre-render.
+     * Only called for routes with parameters (e.g., `/blog/:slug`, `/user/:id`).
      *
-     *      return {
-     *          pages: [{ slug: 'hello' }, { slug: 'world' }],
-     *          exhaustive: true,
-     *      }
+     * For route `/blog/[slug].tsx`, this might return:
+     * ```ts
+     * {
+     *   pages: [
+     *     { slug: 'hello-world' },
+     *     { slug: 'about-us' },
+     *     { slug: 'contact' }
+     *   ],
+     *   exhaustive: true
+     * }
+     * ```
      *
-     * "exhaustive" tells Bun that the list is complete. If it is not, a
-     * static site cannot be generated as it would otherwise be missing
-     * routes. A non-exhaustive list can speed up build times by only
-     * specifying a few important pages (such as 10 most recent), leaving the
-     * rest to be generated on-demand at runtime.
+     * This generates:
+     * - `/blog/hello-world`
+     * - `/blog/about-us`
+     * - `/blog/contact`
      *
-     * To stream results, `getParams` may return an async iterator, which Bun
-     * will start rendering as more parameters are provided:
+     * The `exhaustive` flag is CRITICAL:
+     * - `true`: These are ALL possible values
+     *   - Static builds will error on unknown routes
+     *   - Fastest serving (everything pre-built)
+     *   - Use for closed sets (products, categories)
      *
-     *     export async function* getParams(meta: Bake.ParamsMetadata) {
-     *         yield { slug: await fetchSlug() };
-     *         yield { slug: await fetchSlug() };
-     *         return { exhaustive: false };
-     *     }
+     * - `false`: More values exist
+     *   - Unknown routes handled at runtime
+     *   - Hybrid static/dynamic serving
+     *   - Use for open sets (user content, timestamps)
+     *
+     * Three return formats:
+     *
+     * 1. Object with pages array:
+     * ```ts
+     * return { pages: [...], exhaustive: true }
+     * ```
+     *
+     * 2. Async iterator (for large datasets):
+     * ```ts
+     * async function* getParams() {
+     *   for (const slug of await fetchSlugs()) {
+     *     yield { slug };
+     *   }
+     *   return { exhaustive: false };
+     * }
+     * ```
+     *
+     * 3. Regular iterator (synchronous):
+     * ```ts
+     * function* getParams() {
+     *   yield* slugArray.map(slug => ({ slug }));
+     * }
+     * ```
+     *
+     * Performance tip: Yield results as available for parallel rendering.
+     *
+     * @param paramsMetadata - Route and layout information
+     * @returns Iterator or object with parameter combinations
      */
     getParams?: (paramsMetadata: ParamsMetadata) => Bun.MaybePromise<GetParamIterator>;
 
     /**
-     * When a dynamic build uses static assets, Bun can map content types in
-     * the user's `Accept` header to the different static files.
+     * Maps Accept header content types to static file paths.
+     *
+     * Enables content negotiation for pre-rendered files.
+     * When a request comes in, Bake checks the Accept header
+     * and serves the appropriate pre-rendered version.
+     *
+     * Use cases:
+     * - Serve WebP to supported browsers, JPEG to others
+     * - Provide JSON data for API clients, HTML for browsers
+     * - Deliver AMP pages to AMP crawlers
+     * - Return RSS/Atom feeds for feed readers
+     *
+     * How it works:
+     * 1. Request has Accept: "application/json, text/html"
+     * 2. Check this mapping for matches
+     * 3. Serve pre-rendered file if found
+     * 4. Fall back to normal rendering if not
+     *
+     * The paths are relative to the prerendered output.
+     *
+     * @example
+     * ```ts
+     * contentTypeToStaticFile: {
+     *   'application/json': 'data.json',
+     *   'application/ld+json': 'structured-data.json',
+     *   'application/rss+xml': 'feed.rss',
+     *   'text/html': 'index.html',
+     *   'application/vnd.amp+html': 'amp.html'
+     * }
+     * ```
+     *
+     * @default undefined (no content negotiation)
      */
     contentTypeToStaticFile?: Record<string, string>;
   }

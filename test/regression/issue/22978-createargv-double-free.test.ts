@@ -5,7 +5,7 @@ test("process.argv with many arguments doesn't double-free", async () => {
   // The stack fallback buffer in createArgv is 32 * @sizeOf(jsc.ZigString)
   // We need more than 32 arguments to trigger heap allocation
   // Adding 40 arguments to ensure we exceed the stack buffer
-  const manyArgs = Array.from({ length: 40 }, (_, i) => `arg${i}`);
+  const manyArgs = Array.from({ length: 129 }, (_, i) => `arg${i}`);
 
   using dir = tempDir("argv-test", {
     "check-argv.js": `

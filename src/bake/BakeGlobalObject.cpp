@@ -20,19 +20,23 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     JSC::JSValue parameters,
     const JSC::SourceOrigin& sourceOrigin)
 {
-    WTF::String keyString = moduleNameValue->getString(global);
-    if (keyString.startsWith("bake:/"_s)) {
-        auto& vm = JSC::getVM(global);
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto keyString = moduleNameValue->value(global);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (keyString->isEmpty()) {
+        throwTypeError(global, scope, "import('') specifier cannot be empty"_s);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (keyString->startsWith("bake:/"_s)) {
         return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
             JSC::jsUndefined(), parameters, JSC::jsUndefined());
     }
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
-        auto& vm = JSC::getVM(global);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
         WTF::String refererString = sourceOrigin.string();
-        WTF::String keyString = moduleNameValue->getString(global);
 
         if (!keyString) {
             auto promise = JSC::JSInternalPromise::create(vm, global->internalPromiseStructure());
@@ -136,7 +140,9 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
         if (global->m_perThreadData) [[likely]] {
             BunString source = BakeProdLoad(global->m_perThreadData, Bun::toString(moduleKey));
             if (source.tag != BunStringTag::Dead) {
-                JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
+                WTF::URL url = WTF::URL(moduleKey);
+                ASSERT(url.isValid());
+                JSC::SourceOrigin origin = JSC::SourceOrigin(WTFMove(url));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
                     globalObject,
                     source.toWTFString(),

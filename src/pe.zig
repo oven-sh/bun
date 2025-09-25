@@ -401,37 +401,67 @@ pub const PEFile = struct {
             return error.UnexpectedOverlayPresent;
     }
 
-    /// Recompute PE checksum according to Windows spec
+    /// Calculate checksum words using Windows one's-complement algorithm
+    fn calcCheckSumWords(data: []const u8) u16 {
+        // One's-complement sum over (len+1)/2 16-bit little-endian words
+        var sum: u32 = 0;
+        const n_words = (data.len + 1) / 2;
+
+        var i: usize = 0;
+        while (i < n_words) : (i += 1) {
+            const byte_index = i * 2;
+
+            var w: u16 = 0;
+            if (byte_index + 1 < data.len) {
+                // little-endian 16-bit
+                w = @as(u16, data[byte_index]) | (@as(u16, data[byte_index + 1]) << 8);
+            } else {
+                // odd trailing byte, pad high byte with 0
+                w = data[byte_index];
+            }
+
+            sum += w;
+            // fold carry into low 16 each step (one's-complement addition)
+            if ((sum & 0xFFFF0000) != 0) {
+                sum = (sum & 0xFFFF) + (sum >> 16);
+            }
+        }
+
+        // Final fold to 16 bits (lo + hi)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+        return @intCast(sum & 0xFFFF);
+    }
+
+    /// Subtract word with borrow for checksum calculation
+    fn subtractWordWithBorrow(sum16: u32, sub16: u32) u32 {
+        // Emulate 16-bit subtract with borrow into a 32-bit container
+        if ((sum16 & 0xFFFF) >= (sub16 & 0xFFFF)) {
+            return (sum16 - (sub16 & 0xFFFF)) & 0xFFFF;
+        } else {
+            // borrow wraps around 16-bit (one's-complement)
+            return (((sum16 & 0xFFFF) - (sub16 & 0xFFFF)) & 0xFFFF) - 1;
+        }
+    }
+
+    /// Recompute PE checksum exactly as Windows CheckSumMappedFile does
     fn recomputePEChecksum(self: *PEFile) !void {
         const data = self.data.items;
-        const checksum_off = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
 
-        // Zero checksum field before summing
-        @memset(self.data.items[checksum_off .. checksum_off + 4], 0);
+        // 1) Sum words over entire file (rounded up), one's-complement style
+        var calc: u32 = calcCheckSumWords(data); // 16-bit result in low word
 
-        var sum: u64 = 0;
-        var i: usize = 0;
-
-        // Sum 16-bit words
-        while (i + 1 < data.len) : (i += 2) {
-            const w: u16 = @as(u16, data[i]) | (@as(u16, data[i + 1]) << 8);
-            sum += w;
-            sum = (sum & 0xffff) + (sum >> 16); // fold periodically
-        }
-        // Odd trailing byte
-        if ((data.len & 1) != 0) {
-            sum += data[data.len - 1];
-        }
-
-        // Final folds + add length
-        sum = (sum & 0xffff) + (sum >> 16);
-        sum = (sum & 0xffff) + (sum >> 16);
-        sum += @as(u64, @intCast(data.len));
-        sum = (sum & 0xffff) + (sum >> 16);
-        const final_sum: u32 = @intCast((sum & 0xffff) + (sum >> 16));
-
+        // 2) Subtract existing 32-bit checksum (low word then high word with borrow)
         const opt = try self.getOptionalHeaderMut();
-        opt.checksum = final_sum;
+        const hdr_sum: u32 = opt.checksum;
+
+        calc = subtractWordWithBorrow(calc, hdr_sum & 0xFFFF);
+        calc = subtractWordWithBorrow(calc, (hdr_sum >> 16) & 0xFFFF);
+
+        // 3) Add file length (bytes); do NOT fold again
+        calc = (calc & 0xFFFF) + @as(u32, @intCast(data.len));
+
+        // 4) Store the 32-bit checksum exactly like Windows does
+        opt.checksum = calc;
     }
 
     /// Add a new section to the PE file for storing Bun module data

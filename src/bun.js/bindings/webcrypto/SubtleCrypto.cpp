@@ -520,8 +520,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                 },
                 [](auto& bufferSource) -> std::optional<KeyData> {
                     return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
-                }
-            ),
+                }),
             keyDataVariant);
     case SubtleCrypto::KeyFormat::Jwk:
         return std::visit(
@@ -533,8 +532,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                 [&promise](auto&) -> std::optional<KeyData> {
                     promise->reject(Exception { TypeError });
                     return std::nullopt;
-                }
-            ),
+                }),
             keyDataVariant);
     }
 
@@ -834,8 +832,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
                             return;
                         }
                         promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
-                    }
-                ),
+                    }),
                 keyOrKeyPair);
         }
     };

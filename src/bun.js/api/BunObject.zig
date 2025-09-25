@@ -63,6 +63,7 @@ pub const BunObject = struct {
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
+    pub const clipboard = toJSLazyPropertyCallback(Bun.getClipboardObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
     pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);
@@ -128,6 +129,7 @@ pub const BunObject = struct {
 
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
+        @export(&BunObject.clipboard, .{ .name = lazyPropertyCallbackName("clipboard") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
         @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
@@ -1271,6 +1273,22 @@ pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 
 pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return YAMLObject.create(globalThis);
+}
+
+pub fn getClipboardObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    const clipboard = @import("./clipboard.zig");
+    const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
+    obj.put(
+        globalThis,
+        jsc.ZigString.static("writeText"),
+        jsc.createCallback(globalThis, jsc.ZigString.static("writeText"), 1, clipboard.writeText),
+    );
+    obj.put(
+        globalThis,
+        jsc.ZigString.static("readText"),
+        jsc.createCallback(globalThis, jsc.ZigString.static("readText"), 0, clipboard.readText),
+    );
+    return obj;
 }
 
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {

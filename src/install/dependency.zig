@@ -252,7 +252,7 @@ pub inline fn isGitHubTarballPath(dependency: string) bool {
     if (strings.eqlComptime(third_part, "tarball")) {
         // The <ref> is mandatory!! There may actually be any more subpaths
         // (for weird branch names, or not -- github ignores them)
-        return if (url_parts_it.next()) |_| true else false;
+        return if (url_parts_it.next()) |ref| ref.len > 0 else false;
     }
 
     // We're not done... Branches may end with .tar.gz...

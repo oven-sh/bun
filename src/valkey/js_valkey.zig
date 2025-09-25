@@ -362,6 +362,7 @@ pub const JSValkeyClient = struct {
                         },
                     },
                 },
+                .tls = if (options.tls != .none) options.tls else if (uri.isTLS()) .enabled else .none,
                 .database = database,
                 .allocator = this_allocator,
                 .flags = .{
@@ -438,6 +439,7 @@ pub const JSValkeyClient = struct {
                         },
                     },
                 },
+                .tls = if (this.client.tls != .none) this.client.tls else if (this.client.protocol.isTLS()) .enabled else .none,
                 .database = this.client.database,
                 .allocator = new_alloc,
                 .flags = .{

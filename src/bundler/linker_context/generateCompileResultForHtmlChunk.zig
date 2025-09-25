@@ -157,17 +157,23 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 var preloaded_chunks = std.AutoHashMap(u32, void).init(allocator);
                 defer preloaded_chunks.deinit();
 
-                // Add modulepreload links for all chunks that this JS chunk imports
-                // This allows the browser to fetch them in parallel instead of waterfall
+                // Add modulepreload links for statically imported chunks only
+                // Dynamic imports should NOT be preloaded as they may not be used immediately
                 for (js_chunk.cross_chunk_imports.slice()) |import| {
+                    // Skip dynamic imports - they shouldn't be preloaded
+                    if (import.import_kind == .dynamic) continue;
+
                     if (preloaded_chunks.get(import.chunk_index) == null) {
                         bun.handleOom(preloaded_chunks.put(import.chunk_index, {}));
                         const imported_chunk = &this.chunks[import.chunk_index];
                         const preload = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"modulepreload\" crossorigin href=\"{s}\">", .{imported_chunk.unique_key}));
                         bun.handleOom(array.append(preload));
 
-                        // Recursively add preloads for nested dependencies
+                        // Recursively add preloads for nested static dependencies
                         for (imported_chunk.cross_chunk_imports.slice()) |nested_import| {
+                            // Skip dynamic imports in nested dependencies too
+                            if (nested_import.import_kind == .dynamic) continue;
+
                             if (preloaded_chunks.get(nested_import.chunk_index) == null) {
                                 bun.handleOom(preloaded_chunks.put(nested_import.chunk_index, {}));
                                 const nested_chunk = &this.chunks[nested_import.chunk_index];

@@ -12,6 +12,54 @@ declare module "bun" {
     release(): void;
   }
 
+  type ArrayType =
+    | "BOOLEAN"
+    | "BYTEA"
+    | "CHAR"
+    | "NAME"
+    | "TEXT"
+    | "CHAR"
+    | "VARCHAR"
+    | "SMALLINT"
+    | "INT2VECTOR"
+    | "INTEGER"
+    | "INT"
+    | "BIGINT"
+    | "REAL"
+    | "DOUBLE PRECISION"
+    | "NUMERIC"
+    | "MONEY"
+    | "OID"
+    | "TID"
+    | "XID"
+    | "CID"
+    | "JSON"
+    | "JSONB"
+    | "JSONPATH"
+    | "XML"
+    | "POINT"
+    | "LSEG"
+    | "PATH"
+    | "BOX"
+    | "POLYGON"
+    | "LINE"
+    | "CIRCLE"
+    | "CIDR"
+    | "MACADDR"
+    | "INET"
+    | "MACADDR8"
+    | "DATE"
+    | "TIME"
+    | "TIMESTAMP"
+    | "TIMESTAMPTZ"
+    | "INTERVAL"
+    | "TIMETZ"
+    | "BIT"
+    | "VARBIT"
+    | "ACLITEM"
+    | "PG_DATABASE"
+    | (string & {});
+
   /**
    * Represents a SQL array parameter
    */
@@ -23,7 +71,7 @@ declare module "bun" {
     /**
      * The type of the array parameter
      */
-    arrayType: string;
+    arrayType: ArrayType;
   }
 
   /**
@@ -657,7 +705,7 @@ declare module "bun" {
      * await sql`INSERT INTO users_posts (user_id, posts_id) VALUES (${user.id}, ${array})`;
      * ```
      */
-    array(values: any[], typeNameOrTypeID?: number | string): SQLArrayParameter;
+    array(values: any[], typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;
 
     /**
      * Begins a new transaction.

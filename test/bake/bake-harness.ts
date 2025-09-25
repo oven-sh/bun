@@ -1,4 +1,3 @@
-/// <reference path="../../src/bake/bake.d.ts" />
 /* Dev server tests can be run with `bun test` or in interactive mode with `bun run test.ts "name filter"`
  *
  * Env vars:
@@ -9,17 +8,18 @@
  * To write files to a stable location:
  * export BUN_DEV_SERVER_TEST_TEMP="/Users/clo/scratch/dev"
  */
-import { Bake, BunFile, Subprocess } from "bun";
-import fs, { readFileSync, realpathSync } from "node:fs";
-import path from "node:path";
-import os from "node:os";
-import assert from "node:assert";
+import { BunFile, Subprocess } from "bun";
+import * as Bake from "bun:app";
 import { Matchers } from "bun:test";
+import assert from "node:assert";
 import { EventEmitter } from "node:events";
+import fs, { readFileSync, realpathSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 // @ts-ignore
-import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles, runBunInstall } from "harness";
 import { expect } from "bun:test";
+import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs, runBunInstall, tempDirWithFiles } from "harness";
+import { dedent } from "../bundler/expectBundled.ts";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
 const isDebugBuild = Bun.version.includes("debug");
@@ -1506,16 +1506,15 @@ const counts: Record<string, number> = {};
 console.log("Dev server testing directory:", tempDir);
 
 async function writeAll(root: string, files: FileObject) {
-  const promises: Promise<any>[] = [];
+  const promises: Promise<number>[] = [];
   for (const [file, contents] of Object.entries(files)) {
     const filename = path.join(root, file);
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     const formattedContents =
       typeof contents === "string" ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\")) : contents;
-    // @ts-expect-error the type of Bun.write is too strict
     promises.push(Bun.write(filename, formattedContents));
   }
-  await Promise.all(promises);
+  return await Promise.all(promises);
 }
 
 class OutputLineStream extends EventEmitter {

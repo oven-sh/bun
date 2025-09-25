@@ -136,23 +136,51 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             var html_appender = std.heap.stackFallback(256, bun.default_allocator);
             const allocator = html_appender.get();
             const slices = this.getHeadTags(allocator);
-            defer for (slices.slice()) |slice|
-                allocator.free(slice);
-            for (slices.slice()) |slice|
+            defer {
+                for (slices.items) |slice|
+                    allocator.free(slice);
+                slices.deinit();
+            }
+            for (slices.items) |slice|
                 try endTag.before(slice, true);
         }
 
-        fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) bun.BoundedArray([]const u8, 2) {
-            var array: bun.BoundedArray([]const u8, 2) = .{};
+        fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) std.ArrayList([]const u8) {
+            var array = std.ArrayList([]const u8).init(allocator);
             // Put CSS before JS to reduce changes of flash of unstyled content
             if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
                 const link_tag = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}));
-                array.appendAssumeCapacity(link_tag);
+                bun.handleOom(array.append(link_tag));
             }
             if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                // Track chunks we've already added to avoid duplicates
+                var preloaded_chunks = std.AutoHashMap(u32, void).init(allocator);
+                defer preloaded_chunks.deinit();
+
+                // Add modulepreload links for all chunks that this JS chunk imports
+                // This allows the browser to fetch them in parallel instead of waterfall
+                for (js_chunk.cross_chunk_imports.slice()) |import| {
+                    if (preloaded_chunks.get(import.chunk_index) == null) {
+                        bun.handleOom(preloaded_chunks.put(import.chunk_index, {}));
+                        const imported_chunk = &this.chunks[import.chunk_index];
+                        const preload = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"modulepreload\" crossorigin href=\"{s}\">", .{imported_chunk.unique_key}));
+                        bun.handleOom(array.append(preload));
+
+                        // Recursively add preloads for nested dependencies
+                        for (imported_chunk.cross_chunk_imports.slice()) |nested_import| {
+                            if (preloaded_chunks.get(nested_import.chunk_index) == null) {
+                                bun.handleOom(preloaded_chunks.put(nested_import.chunk_index, {}));
+                                const nested_chunk = &this.chunks[nested_import.chunk_index];
+                                const nested_preload = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"modulepreload\" crossorigin href=\"{s}\">", .{nested_chunk.unique_key}));
+                                bun.handleOom(array.append(nested_preload));
+                            }
+                        }
+                    }
+                }
+
                 // type="module" scripts do not block rendering, so it is okay to put them in head
                 const script = bun.handleOom(std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}));
-                array.appendAssumeCapacity(script);
+                bun.handleOom(array.append(script));
             }
             return array;
         }
@@ -238,7 +266,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             var html_appender = std.heap.stackFallback(256, bun.default_allocator);
             const allocator = html_appender.get();
             const slices = html_loader.getHeadTags(allocator);
-            for (slices.slice()) |slice| {
+            defer slices.deinit();
+            for (slices.items) |slice| {
                 bun.handleOom(html_loader.output.appendSlice(slice));
                 allocator.free(slice);
             }

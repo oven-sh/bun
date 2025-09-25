@@ -16,7 +16,6 @@ import { EventEmitter } from "node:events";
 import fs, { readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-// @ts-ignore
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs, runBunInstall, tempDirWithFiles } from "harness";
 import { dedent } from "../bundler/expectBundled.ts";

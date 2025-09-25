@@ -133,6 +133,7 @@ pub const JSValkeyClient = struct {
                         },
                     },
                 },
+                .tls = if (options.tls != .none) options.tls else if (uri.isTLS()) .enabled else .none,
                 .database = database,
                 .allocator = bun.default_allocator,
                 .flags = .{
@@ -523,7 +524,7 @@ pub const JSValkeyClient = struct {
     fn connect(this: *JSValkeyClient) !void {
         this.client.flags.needs_to_open_socket = false;
         const vm = this.client.vm;
-
+        debug("Connecting to Valkey {}", .{this.client.tls});
         const ctx: *uws.SocketContext, const deinit_context: bool =
             switch (this.client.tls) {
                 .none => .{

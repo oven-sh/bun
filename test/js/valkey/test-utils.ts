@@ -82,10 +82,9 @@ export const DEFAULT_REDIS_OPTIONS = {
 export const TLS_REDIS_OPTIONS = {
   ...DEFAULT_REDIS_OPTIONS,
   db: 1,
-  tls: true,
-  tls_cert_file: path.join(import.meta.dir, "docker-unified", "server.crt"),
-  tls_key_file: path.join(import.meta.dir, "docker-unified", "server.key"),
-  tls_ca_file: path.join(import.meta.dir, "docker-unified", "server.crt"),
+  tls: {
+    ca: Bun.file(path.join(import.meta.dir, "docker-unified", "server.crt")),
+  },
 };
 
 export const UNIX_REDIS_OPTIONS = {
@@ -165,7 +164,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
     REDIS_PORT = port;
     REDIS_TLS_PORT = tlsPort;
     REDIS_HOST = redisInfo.host;
-    REDIS_UNIX_SOCKET = unixSocketProxy.path;  // Use the proxy socket
+    REDIS_UNIX_SOCKET = unixSocketProxy.path; // Use the proxy socket
     DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
     TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
     UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
@@ -223,12 +222,12 @@ import { tmpdir } from "os";
  * Create a new client with specific connection type
  */
 export function createClient(
-    connectionType: ConnectionType = ConnectionType.TCP,
-    customOptions = {},
-    dbId: number | undefined = undefined,
+  connectionType: ConnectionType = ConnectionType.TCP,
+  customOptions = {},
+  dbId: number | undefined = undefined,
 ) {
   let url: string;
-  const mkUrl = (baseUrl: string) => dbId ? `${baseUrl}/${dbId}`: baseUrl;
+  const mkUrl = (baseUrl: string) => (dbId ? `${baseUrl}/${dbId}` : baseUrl);
 
   let options: any = {};
   context.id++;

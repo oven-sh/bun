@@ -793,6 +793,7 @@ pub const ValkeyClient = struct {
 
     /// Handle socket open event
     pub fn onOpen(this: *ValkeyClient, socket: uws.AnySocket) void {
+        debug("Socket opened {}", .{socket == .SocketTLS});
         this.socket = socket;
         this.write_buffer.clearAndFree(this.allocator);
         this.read_buffer.clearAndFree(this.allocator);

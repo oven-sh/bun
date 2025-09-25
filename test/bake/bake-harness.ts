@@ -1724,7 +1724,7 @@ function testImpl<T extends DevServerTest>(
         // Also ensure bun-framework-react has its dependencies installed
         const frameworkDir = path.join(__dirname, "../../packages/bun-framework-react");
         if (!fs.existsSync(path.join(frameworkDir, "node_modules"))) {
-          await runBunInstall(bunEnv, frameworkDir);
+          await runBunInstall(bunEnv, frameworkDir, { allowWarnings: true });
         }
       }
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {

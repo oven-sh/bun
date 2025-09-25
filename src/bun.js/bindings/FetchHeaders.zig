@@ -8,6 +8,7 @@ pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__createEmpty() *FetchHeaders;
     extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*const anyopaque) *FetchHeaders;
     extern fn WebCore__FetchHeaders__createFromUWS(arg1: *anyopaque) *FetchHeaders;
+    extern fn WebCore__FetchHeaders__createValueNotJS(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) *FetchHeaders;
     extern fn WebCore__FetchHeaders__createValue(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSValue;
     extern fn WebCore__FetchHeaders__deref(arg0: *FetchHeaders) void;
     extern fn WebCore__FetchHeaders__fastGet_(arg0: *FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;
@@ -57,6 +58,22 @@ pub const FetchHeaders = opaque {
         }
 
         try this.put(name_, value, global);
+    }
+
+    pub fn create(
+        global: *JSGlobalObject,
+        names: [*c]api.StringPointer,
+        values: [*c]api.StringPointer,
+        buf: *const ZigString,
+        count_: u32,
+    ) *FetchHeaders {
+        return WebCore__FetchHeaders__createValueNotJS(
+            global,
+            names,
+            values,
+            buf,
+            count_,
+        );
     }
 
     pub fn from(

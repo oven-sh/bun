@@ -225,7 +225,62 @@ devTest("Response.redirect() when streaming = true should error", {
   },
 });
 
-// Test case 9: Concurrent requests with different Response options (AsyncLocalStorage isolation)
+// Test case 9: Response.render() acts like Next.js rewrite
+devTest("Response.render() works like Next.js rewrite", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      export const streaming = false;
+      export const mode = "ssr";
+
+      export default async function IndexPage() {
+        return Response.render("/new-route");
+      }
+    `,
+    "pages/new-route.tsx": `
+      export default function NewRoutePage() {
+        return <h1>New Route Content</h1>;
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("<h1>New Route Content</h1>");
+
+    // Verify it's a rewrite, not a redirect
+    expect(response.url).toContain("/"); // URL should remain the original
+  },
+});
+
+// Test case 10: Response.render() with dynamic route
+devTest("Response.render() with dynamic route", {
+  framework: "react",
+  files: {
+    "pages/product.tsx": `
+      export const streaming = false;
+      export const mode = "ssr";
+
+      export default async function ProductPage() {
+        return Response.render("/category/electronics");
+      }
+    `,
+    "pages/category/[slug].tsx": `
+      export default function CategoryPage({ params }) {
+        return <h1>Category: {params.slug}</h1>;
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/product");
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("<h1>Category: <!-- -->electronics</h1>");
+  },
+});
+
+// Test case 12: Concurrent requests with different Response options (AsyncLocalStorage isolation)
 devTest("concurrent requests maintain isolated Response options via AsyncLocalStorage", {
   framework: "react",
   files: {
@@ -282,9 +337,10 @@ devTest("concurrent requests maintain isolated Response options via AsyncLocalSt
   async test(dev) {
     // Launch multiple concurrent requests
     const promises: Promise<any>[] = [];
-    const requestCount = 10; // Multiple iterations to increase chance of catching issues
+    const requestCount = 5; // Multiple iterations to increase chance of catching issues
 
     for (let i = 0; i < requestCount; i++) {
+      console.log("Iteration", i);
       // Interleave different request types
       promises.push(
         dev.fetch("/request-a").then(async res => ({

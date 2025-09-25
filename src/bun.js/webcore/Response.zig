@@ -120,7 +120,7 @@ pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globa
             var any_blob = body.useAsAnyBlob();
             return any_blob.toArrayBufferTransfer(globalObject) catch return .zero;
         },
-        .Error, .Locked, .Render => return .js_undefined,
+        .Error, .Locked => return .js_undefined,
     }
 }
 

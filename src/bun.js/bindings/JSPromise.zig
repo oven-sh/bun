@@ -95,6 +95,14 @@ pub const JSPromise = opaque {
 
         pub const empty: Strong = .{ .strong = .empty };
 
+        pub fn rejectWithoutSwap(this: *Strong, globalThis: *jsc.JSGlobalObject, val: JSError!jsc.JSValue) void {
+            (this.strong.get() orelse return).asPromise().?.reject(globalThis, val catch globalThis.tryTakeException().?);
+        }
+
+        pub fn resolveWithoutSwap(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) void {
+            (this.strong.get() orelse return).asPromise().?.resolve(globalThis, val);
+        }
+
         pub fn reject(this: *Strong, globalThis: *jsc.JSGlobalObject, val: JSError!jsc.JSValue) void {
             this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
         }
@@ -151,6 +159,12 @@ pub const JSPromise = opaque {
             const prom = this.strong.swap().asPromise().?;
             this.strong.deinit();
             return prom;
+        }
+
+        pub fn take(this: *Strong) Strong {
+            const ret = this.*;
+            this.* = .empty;
+            return ret;
         }
 
         pub fn deinit(this: *Strong) void {

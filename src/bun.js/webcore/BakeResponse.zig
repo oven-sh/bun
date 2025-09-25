@@ -98,26 +98,24 @@ pub fn constructRender(
     }
 
     // Get the path string
-    const path_str = try path_arg.toSlice(globalThis, bun.default_allocator);
+    const path_str = try path_arg.toBunString(globalThis);
+    defer path_str.deref();
 
-    // Duplicate the path string so it persists
-    const path_copy = bun.default_allocator.dupe(u8, path_str.slice()) catch {
-        path_str.deinit();
-        return globalThis.throwOutOfMemory();
-    };
-    path_str.deinit();
+    const path_utf8 = path_str.toUTF8(bun.default_allocator);
+    defer path_utf8.deinit();
 
     // Create a Response with Render body
     const response = bun.new(Response, Response{
         .body = Body{
-            .value = .{
-                .Render = .{
-                    .path = bun.ptr.Owned([]const u8).fromRaw(path_copy),
-                },
-            },
+            .value = .Empty,
         },
         .init = Response.Init{
             .status_code = 200,
+            .headers = headers: {
+                var headers = bun.webcore.FetchHeaders.createEmpty();
+                try headers.put(.Location, path_utf8.slice(), globalThis);
+                break :headers headers;
+            },
         },
     });
 

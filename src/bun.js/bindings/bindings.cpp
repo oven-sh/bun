@@ -1992,8 +1992,32 @@ void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
     arg0->deref();
 }
 
-JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
+
+
+JSFetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
+    Vector<KeyValuePair<String, String>> pairs;
+    pairs.reserveCapacity(count);
+    ZigString buf = *arg3;
+    for (uint32_t i = 0; i < count; i++) {
+        WTF::String name = Zig::toStringCopy(buf, arg1[i]);
+        WTF::String value = Zig::toStringCopy(buf, arg2[i]);
+        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
+    }
+
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
+
+    JSValue value = WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers));
+
+    JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
+    fetchHeaders->computeMemoryCost();
+    return fetchHeaders;
+}
+
+JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count) {
     auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
     Vector<KeyValuePair<String, String>> pairs;
     pairs.reserveCapacity(count);
@@ -2011,8 +2035,10 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
 
     JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
     fetchHeaders->computeMemoryCost();
-    return JSC::JSValue::encode(value);
+    return JSC::JSValue::encode(fetchHeaders);
 }
+
+
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const ZigString* arg1, ZigString* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());

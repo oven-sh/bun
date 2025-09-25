@@ -228,6 +228,8 @@ pub const JSValkeyClient = struct {
 
     _subscription_ctx: ?SubscriptionCtx,
 
+    _socket_ctx: ?*uws.SocketContext = null,
+
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
         .next = .{
@@ -993,7 +995,7 @@ pub const JSValkeyClient = struct {
         this.client.flags.needs_to_open_socket = false;
         const vm = this.client.vm;
 
-        const ctx: *uws.SocketContext, const deinit_context: bool =
+        const ctx: *uws.SocketContext, const own_ctx: bool =
             switch (this.client.tls) {
                 .none => .{
                     vm.rareData().valkey_context.tcp orelse brk_ctx: {
@@ -1017,6 +1019,9 @@ pub const JSValkeyClient = struct {
                     false,
                 },
                 .custom => |*custom| brk_ctx: {
+                    if (this._socket_ctx) |ctx| {
+                        break :brk_ctx .{ ctx, true };
+                    }
                     // TLS socket, custom config
                     var err: uws.create_bun_socket_error_t = .none;
                     const options = custom.asUSockets();
@@ -1026,13 +1031,12 @@ pub const JSValkeyClient = struct {
                 },
             };
         this.ref();
-        _ = deinit_context;
-        // defer {
-        //     if (deinit_context) {
-        //         // This is actually unref(). uws.Context is reference counted.
-        //         ctx.deinit(true);
-        //     }
-        // }
+
+        if (own_ctx) {
+            // save the context so we deinit it later (if we reconnect we can reuse the same context)
+            this._socket_ctx = ctx;
+        }
+
         this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
@@ -1078,14 +1082,40 @@ pub const JSValkeyClient = struct {
         return memory_cost;
     }
 
+    fn deinitSocketContextNextTick(this: *JSValkeyClient) void {
+        if (this._socket_ctx) |ctx| {
+            this._socket_ctx = null;
+            // socket close can potentially call JS so we need to enqueue the deinit
+            // this should only be the case tls socket with custom config
+            const Holder = struct {
+                ctx: *uws.SocketContext,
+                task: jsc.AnyTask,
+
+                pub fn run(self: *@This()) void {
+                    defer bun.default_allocator.destroy(self);
+                    self.ctx.deinit(true);
+                }
+            };
+            var holder = bun.handleOom(bun.default_allocator.create(Holder));
+            holder.* = .{
+                .ctx = ctx,
+                .task = undefined,
+            };
+            holder.task = jsc.AnyTask.New(Holder, Holder.run).init(holder);
+
+            this.client.vm.enqueueTask(jsc.Task.init(&holder.task));
+        }
+    }
+
     fn deinit(this: *JSValkeyClient) void {
         bun.debugAssert(this.client.socket.isClosed());
-
+        this.deinitSocketContextNextTick();
         this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();
         this.this_value.finalize();
         this.ref_count.assertNoRefs();
+
         bun.destroy(this);
     }
 

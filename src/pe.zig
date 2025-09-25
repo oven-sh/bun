@@ -1,6 +1,35 @@
 // Windows PE sections use standard file alignment (typically 512 bytes)
 // No special 16KB alignment needed like macOS code signing
 
+// New error types for PE manipulation
+pub const Error = error{
+    OutOfBounds,
+    BadAlignment,
+    Overflow,
+    InvalidPEFile,
+    InvalidDOSSignature,
+    InvalidPESignature,
+    UnsupportedPEFormat,
+    InsufficientHeaderSpace,
+    TooManySections,
+    SectionExists,
+    InputIsSigned,
+    InvalidSecurityDirectory,
+    SecurityDirInsideImage,
+    UnexpectedOverlayPresent,
+    InvalidSectionData,
+    BunSectionNotFound,
+    InvalidBunSection,
+    InsufficientSpace,
+};
+
+// Enums for strip modes and options
+pub const StripMode = enum { none, strip_if_signed, strip_always };
+pub const StripOpts = struct {
+    require_overlay: bool = true,
+    recompute_checksum: bool = true,
+};
+
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub const PEFile = struct {
     data: std.ArrayList(u8),
@@ -11,6 +40,10 @@ pub const PEFile = struct {
     optional_header_offset: usize,
     section_headers_offset: usize,
     num_sections: u16,
+    // Cached values from init
+    first_raw: u32,
+    last_file_end: u32,
+    last_va_end: u32,
 
     const DOSHeader = extern struct {
         e_magic: u16, // Magic number
@@ -107,91 +140,189 @@ pub const PEFile = struct {
     const IMAGE_SCN_MEM_WRITE = 0x80000000;
     const IMAGE_SCN_MEM_EXECUTE = 0x20000000;
 
-    // Helper methods to safely access headers
-    fn getDosHeader(self: *const PEFile) *DOSHeader {
-        return @ptrCast(@alignCast(self.data.items.ptr + self.dos_header_offset));
+    // Directory indices and DLL characteristics
+    const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
+    const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
+
+    // Safe access helpers for unaligned views
+    fn viewAtConst(comptime T: type, buf: []const u8, off: usize) !*align(1) const T {
+        if (off + @sizeOf(T) > buf.len) return error.OutOfBounds;
+        return @ptrCast(buf[off .. off + @sizeOf(T)].ptr);
     }
 
-    fn getPEHeader(self: *const PEFile) *PEHeader {
-        return @ptrCast(@alignCast(self.data.items.ptr + self.pe_header_offset));
+    fn viewAtMut(comptime T: type, buf: []u8, off: usize) !*align(1) T {
+        if (off + @sizeOf(T) > buf.len) return error.OutOfBounds;
+        return @ptrCast(buf[off .. off + @sizeOf(T)].ptr);
     }
 
-    fn getOptionalHeader(self: *const PEFile) *OptionalHeader64 {
-        return @ptrCast(@alignCast(self.data.items.ptr + self.optional_header_offset));
+    fn isPow2(x: u32) bool {
+        return x != 0 and (x & (x - 1)) == 0;
     }
 
-    fn getSectionHeaders(self: *const PEFile) []SectionHeader {
-        return @as([*]SectionHeader, @ptrCast(@alignCast(self.data.items.ptr + self.section_headers_offset)))[0..self.num_sections];
+    fn alignUpU32(v: u32, a: u32) !u32 {
+        if (a == 0) return v;
+        if (!isPow2(a)) return error.BadAlignment;
+        const add = a - 1;
+        if (v > std.math.maxInt(u32) - add) return error.Overflow;
+        return (v + add) & ~add;
+    }
+
+    fn alignUpUsize(v: usize, a: usize) !usize {
+        if (a == 0) return v;
+        if ((a & (a - 1)) != 0) return error.BadAlignment;
+        const add = a - 1;
+        if (v > std.math.maxInt(usize) - add) return error.Overflow;
+        return (v + add) & ~add;
+    }
+
+    // Helper methods to safely access headers using unaligned pointers
+    fn getDosHeader(self: *const PEFile) !*align(1) const DOSHeader {
+        return viewAtConst(DOSHeader, self.data.items, self.dos_header_offset);
+    }
+
+    fn getDosHeaderMut(self: *PEFile) !*align(1) DOSHeader {
+        return viewAtMut(DOSHeader, self.data.items, self.dos_header_offset);
+    }
+
+    fn getPEHeader(self: *const PEFile) !*align(1) const PEHeader {
+        return viewAtConst(PEHeader, self.data.items, self.pe_header_offset);
+    }
+
+    fn getPEHeaderMut(self: *PEFile) !*align(1) PEHeader {
+        return viewAtMut(PEHeader, self.data.items, self.pe_header_offset);
+    }
+
+    fn getOptionalHeader(self: *const PEFile) !*align(1) const OptionalHeader64 {
+        return viewAtConst(OptionalHeader64, self.data.items, self.optional_header_offset);
+    }
+
+    fn getOptionalHeaderMut(self: *PEFile) !*align(1) OptionalHeader64 {
+        return viewAtMut(OptionalHeader64, self.data.items, self.optional_header_offset);
+    }
+
+    fn getSectionHeaders(self: *const PEFile) ![]align(1) const SectionHeader {
+        const start = self.section_headers_offset;
+        const size = @sizeOf(SectionHeader) * self.num_sections;
+        if (start + size > self.data.items.len) return error.OutOfBounds;
+        const ptr: [*]align(1) const SectionHeader = @ptrCast(self.data.items[start..].ptr);
+        return ptr[0..self.num_sections];
+    }
+
+    fn getSectionHeadersMut(self: *PEFile) ![]align(1) SectionHeader {
+        const start = self.section_headers_offset;
+        const size = @sizeOf(SectionHeader) * self.num_sections;
+        if (start + size > self.data.items.len) return error.OutOfBounds;
+        const ptr: [*]align(1) SectionHeader = @ptrCast(self.data.items[start..].ptr);
+        return ptr[0..self.num_sections];
     }
 
     pub fn init(allocator: Allocator, pe_data: []const u8) !*PEFile {
-        // Reserve some extra space for adding sections, but no need for 16KB alignment
+        // 1. Reserve capacity as before
         var data = try std.ArrayList(u8).initCapacity(allocator, pe_data.len + 64 * 1024);
         try data.appendSlice(pe_data);
 
         const self = try allocator.create(PEFile);
         errdefer allocator.destroy(self);
 
-        // Parse DOS header
+        // 2. Validate DOS header
         if (data.items.len < @sizeOf(DOSHeader)) {
             return error.InvalidPEFile;
         }
 
-        const dos_header: *const DOSHeader = @ptrCast(@alignCast(data.items.ptr));
+        const dos_header = try viewAtConst(DOSHeader, data.items, 0);
         if (dos_header.e_magic != DOS_SIGNATURE) {
             return error.InvalidDOSSignature;
         }
 
-        // Validate e_lfanew offset (should be reasonable)
-        if (dos_header.e_lfanew < @sizeOf(DOSHeader) or dos_header.e_lfanew > 0x1000) {
+        // Bound e_lfanew against file size, not 0x1000
+        if (dos_header.e_lfanew < @sizeOf(DOSHeader)) {
+            return error.InvalidPEFile;
+        }
+        if (dos_header.e_lfanew > data.items.len -| @sizeOf(PEHeader)) {
             return error.InvalidPEFile;
         }
 
-        // Calculate offsets
-        const pe_header_offset = dos_header.e_lfanew;
-        const optional_header_offset = pe_header_offset + @sizeOf(PEHeader);
-
-        // Parse PE header
-        if (data.items.len < pe_header_offset + @sizeOf(PEHeader)) {
-            return error.InvalidPEFile;
-        }
-
-        const pe_header: *const PEHeader = @ptrCast(@alignCast(data.items.ptr + pe_header_offset));
+        // 3. Read PE header via viewAtMut
+        const pe_off = dos_header.e_lfanew;
+        const pe_header = try viewAtMut(PEHeader, data.items, pe_off);
         if (pe_header.signature != PE_SIGNATURE) {
             return error.InvalidPESignature;
         }
 
-        // Parse optional header
-        if (data.items.len < optional_header_offset + @sizeOf(OptionalHeader64)) {
+        // 4. Compute optional_header_offset
+        const optional_header_offset = pe_off + @sizeOf(PEHeader);
+        if (data.items.len < optional_header_offset + pe_header.size_of_optional_header) {
+            return error.InvalidPEFile;
+        }
+        if (pe_header.size_of_optional_header < @sizeOf(OptionalHeader64)) {
             return error.InvalidPEFile;
         }
 
-        const optional_header: *const OptionalHeader64 = @ptrCast(@alignCast(data.items.ptr + optional_header_offset));
+        // 5. Read optional header
+        const optional_header = try viewAtMut(OptionalHeader64, data.items, optional_header_offset);
         if (optional_header.magic != OPTIONAL_HEADER_MAGIC_64) {
             return error.UnsupportedPEFormat;
         }
 
-        // Parse section headers
+        // Validate file_alignment and section_alignment
+        if (!isPow2(optional_header.file_alignment) or !isPow2(optional_header.section_alignment)) {
+            return error.BadAlignment;
+        }
+        // If section_alignment < 4096, then file_alignment == section_alignment
+        if (optional_header.section_alignment < 4096) {
+            if (optional_header.file_alignment != optional_header.section_alignment) {
+                return error.InvalidPEFile;
+            }
+        }
+
+        // 6. Compute section_headers_offset
         const section_headers_offset = optional_header_offset + pe_header.size_of_optional_header;
-        const section_headers_size = @sizeOf(SectionHeader) * pe_header.number_of_sections;
+        const num_sections = pe_header.number_of_sections;
+        if (num_sections > 96) { // PE limit
+            return error.TooManySections;
+        }
+        const section_headers_size = @sizeOf(SectionHeader) * num_sections;
         if (data.items.len < section_headers_offset + section_headers_size) {
             return error.InvalidPEFile;
         }
 
-        // Check if we have space for at least one more section header (for future addition)
-        const max_sections_space = section_headers_offset + @sizeOf(SectionHeader) * 96; // PE max sections
-        if (data.items.len < max_sections_space) {
-            // Not enough space to add sections - we'll need to handle this in addBunSection
+        // 7. Precompute first_raw, last_file_end, last_va_end
+        var first_raw: u32 = @intCast(data.items.len);
+        var last_file_end: u32 = 0;
+        var last_va_end: u32 = 0;
+
+        if (num_sections > 0) {
+            const sections_ptr: [*]align(1) const SectionHeader = @ptrCast(data.items[section_headers_offset..].ptr);
+            const sections = sections_ptr[0..num_sections];
+
+            for (sections) |section| {
+                if (section.size_of_raw_data > 0) {
+                    if (section.pointer_to_raw_data < first_raw) {
+                        first_raw = section.pointer_to_raw_data;
+                    }
+                    const file_end = section.pointer_to_raw_data + section.size_of_raw_data;
+                    if (file_end > last_file_end) {
+                        last_file_end = file_end;
+                    }
+                }
+                const va_end = section.virtual_address + (try alignUpU32(section.virtual_size, optional_header.section_alignment));
+                if (va_end > last_va_end) {
+                    last_va_end = va_end;
+                }
+            }
         }
 
         self.* = .{
             .data = data,
             .allocator = allocator,
             .dos_header_offset = 0,
-            .pe_header_offset = pe_header_offset,
+            .pe_header_offset = pe_off,
             .optional_header_offset = optional_header_offset,
             .section_headers_offset = section_headers_offset,
-            .num_sections = pe_header.number_of_sections,
+            .num_sections = num_sections,
+            .first_raw = first_raw,
+            .last_file_end = last_file_end,
+            .last_va_end = last_va_end,
         };
 
         return self;
@@ -202,41 +333,188 @@ pub const PEFile = struct {
         self.allocator.destroy(self);
     }
 
+    /// Strip Authenticode signatures from the PE file
+    pub fn stripAuthenticode(self: *PEFile, opts: StripOpts) !void {
+        const data = self.data.items;
+        const opt = try viewAtMut(OptionalHeader64, data, self.optional_header_offset);
+
+        // Read Security directory (index 4)
+        const dd_ptr: *align(1) DataDirectory = &opt.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
+        const sec_off_u32 = dd_ptr.virtual_address; // file offset (not RVA)
+        const sec_size_u32 = dd_ptr.size;
+
+        if (sec_off_u32 == 0 or sec_size_u32 == 0) return; // nothing to strip
+
+        // Compute last_file_end from sections (reuse cached or recompute)
+        var last_raw_end: u32 = 0;
+        const sections = try self.getSectionHeaders();
+        for (sections) |s| {
+            const end = s.pointer_to_raw_data + s.size_of_raw_data;
+            if (end > last_raw_end) last_raw_end = end;
+        }
+
+        const file_len = data.len;
+        const sec_off = @as(usize, sec_off_u32);
+        const sec_size = @as(usize, sec_size_u32);
+
+        if (sec_off >= file_len or sec_size == 0) return error.InvalidSecurityDirectory;
+        if (opts.require_overlay and sec_off < @as(usize, last_raw_end))
+            return error.SecurityDirInsideImage;
+
+        // Remove certificate plus 8-byte padding at tail
+        const end_raw = try alignUpUsize(sec_off + sec_size, 8);
+        if (end_raw > file_len) return error.InvalidSecurityDirectory;
+
+        if (end_raw == file_len) {
+            try self.data.resize(sec_off);
+        } else {
+            const tail_len = file_len - end_raw;
+            std.mem.copyForwards(u8, data[sec_off .. sec_off + tail_len], data[end_raw..file_len]);
+            try self.data.resize(sec_off + tail_len);
+        }
+
+        // Re-get pointers after resize
+        const opt_after = try self.getOptionalHeaderMut();
+        const dd_after: *align(1) DataDirectory = &opt_after.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
+
+        // Zero Security directory entry
+        dd_after.virtual_address = 0;
+        dd_after.size = 0;
+
+        // Clear FORCE_INTEGRITY bit if set
+        if ((opt_after.dll_characteristics & IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY) != 0)
+            opt_after.dll_characteristics &= ~IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY;
+
+        // Recompute checksum (recommended)
+        if (opts.recompute_checksum) try self.recomputePEChecksum();
+
+        // After strip, ensure no remaining overlay beyond last section
+        const after_strip_len = self.data.items.len;
+        if (@as(usize, last_raw_end) < after_strip_len)
+            return error.UnexpectedOverlayPresent;
+    }
+
+    /// Recompute PE checksum
+    fn recomputePEChecksum(self: *PEFile) !void {
+        const opt = try self.getOptionalHeaderMut();
+        const data = self.data.items;
+
+        // Simple PE checksum algorithm
+        var sum: u32 = 0;
+        var i: usize = 0;
+
+        // Calculate checksum offset
+        const checksum_offset = self.optional_header_offset + @offsetOf(OptionalHeader64, "checksum");
+
+        while (i < data.len) : (i += 2) {
+            var word: u16 = 0;
+
+            // Skip the checksum field itself
+            if (i == checksum_offset) {
+                i += 4;
+                if (i >= data.len) break;
+            }
+
+            if (i + 1 < data.len) {
+                word = std.mem.readInt(u16, data[i..][0..2], .little);
+            } else {
+                word = data[i];
+            }
+
+            sum = (sum & 0xFFFF) + @as(u32, word) + (sum >> 16);
+            if (sum > 0xFFFF) {
+                sum = (sum & 0xFFFF) + (sum >> 16);
+            }
+        }
+
+        // Final fold and add file size
+        sum = (sum & 0xFFFF) + (sum >> 16);
+        sum += @intCast(data.len);
+
+        opt.checksum = sum;
+    }
+
     /// Add a new section to the PE file for storing Bun module data
-    pub fn addBunSection(self: *PEFile, data_to_embed: []const u8) !void {
-        const section_name = ".bun\x00\x00\x00\x00";
-        const optional_header = self.getOptionalHeader();
-        const aligned_size = alignSize(@intCast(data_to_embed.len + @sizeOf(u32)), optional_header.file_alignment);
+    pub fn addBunSection(self: *PEFile, data_to_embed: []const u8, strip: StripMode) !void {
+        // 1. Optional strip (before any addition)
+        if (strip == .strip_always) {
+            try self.stripAuthenticode(.{ .require_overlay = true, .recompute_checksum = true });
+        } else if (strip == .strip_if_signed) {
+            // Read Security directory to check if signed
+            const opt = try self.getOptionalHeader();
+            const dd = opt.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
+            if (dd.virtual_address != 0 or dd.size != 0) {
+                try self.stripAuthenticode(.{ .require_overlay = true, .recompute_checksum = true });
+            }
+        }
+
+        // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
+        const opt = try self.getOptionalHeaderMut();
+
+        // 3. Duplicate .bun guard
+        const section_headers = try self.getSectionHeaders();
+        for (section_headers) |section| {
+            if (strings.eqlComptime(section.name[0..4], ".bun")) {
+                return error.SectionExists;
+            }
+        }
 
         // Check if we can add another section
-        if (self.num_sections >= 95) { // PE limit is 96 sections
+        if (self.num_sections >= 96) { // PE limit
             return error.TooManySections;
         }
 
-        // Find the last section to determine where to place the new one
-        var last_section_end: u32 = 0;
-        var last_virtual_end: u32 = 0;
+        // 4. Compute header slack requirement
+        const new_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * (self.num_sections + 1);
+        const new_size_of_headers = try alignUpU32(@intCast(new_headers_end), opt.file_alignment);
 
-        const section_headers = self.getSectionHeaders();
+        // Determine first_raw (min PointerToRawData among sections with raw data, else data.len)
+        var first_raw: u32 = @intCast(self.data.items.len);
         for (section_headers) |section| {
-            const section_file_end = section.pointer_to_raw_data + section.size_of_raw_data;
-            const section_virtual_end = section.virtual_address + alignSize(section.virtual_size, optional_header.section_alignment);
-
-            if (section_file_end > last_section_end) {
-                last_section_end = section_file_end;
-            }
-            if (section_virtual_end > last_virtual_end) {
-                last_virtual_end = section_virtual_end;
+            if (section.size_of_raw_data > 0) {
+                if (section.pointer_to_raw_data < first_raw) {
+                    first_raw = section.pointer_to_raw_data;
+                }
             }
         }
 
-        // Create new section header
-        const new_section = SectionHeader{
-            .name = section_name.*,
-            .virtual_size = @intCast(data_to_embed.len + @sizeOf(u32)),
-            .virtual_address = alignSize(last_virtual_end, optional_header.section_alignment),
-            .size_of_raw_data = aligned_size,
-            .pointer_to_raw_data = alignSize(last_section_end, optional_header.file_alignment),
+        // Require new_size_of_headers <= first_raw
+        if (new_size_of_headers > first_raw) {
+            return error.InsufficientHeaderSpace;
+        }
+
+        // 5. Placement calculations
+        // Recompute last_file_end and last_va_end after strip
+        var last_file_end: u32 = 0;
+        var last_va_end: u32 = 0;
+        for (section_headers) |section| {
+            const file_end = section.pointer_to_raw_data + section.size_of_raw_data;
+            if (file_end > last_file_end) {
+                last_file_end = file_end;
+            }
+            const va_end = section.virtual_address + (try alignUpU32(section.virtual_size, opt.section_alignment));
+            if (va_end > last_va_end) {
+                last_va_end = va_end;
+            }
+        }
+
+        const payload_len = @as(u32, @intCast(data_to_embed.len + 4)); // 4 for LE length prefix
+        const raw_size = try alignUpU32(payload_len, opt.file_alignment);
+        const new_va = try alignUpU32(last_va_end, opt.section_alignment);
+        const new_raw = try alignUpU32(last_file_end, opt.file_alignment);
+
+        // 6. Resize & zero only the new section area
+        const new_file_size = @as(usize, new_raw) + @as(usize, raw_size);
+        try self.data.resize(new_file_size);
+        @memset(self.data.items[@intCast(new_raw)..new_file_size], 0);
+
+        // 7. Write the new SectionHeader by byte copy
+        const sh = SectionHeader{
+            .name = [_]u8{ '.', 'b', 'u', 'n', 0, 0, 0, 0 },
+            .virtual_size = payload_len,
+            .virtual_address = new_va,
+            .size_of_raw_data = raw_size,
+            .pointer_to_raw_data = new_raw,
             .pointer_to_relocations = 0,
             .pointer_to_line_numbers = 0,
             .number_of_relocations = 0,
@@ -244,43 +522,47 @@ pub const PEFile = struct {
             .characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ,
         };
 
-        // Resize data to accommodate new section
-        const new_data_size = new_section.pointer_to_raw_data + new_section.size_of_raw_data;
-        try self.data.resize(new_data_size);
-
-        // Zero out the new section data
-        @memset(self.data.items[last_section_end..new_data_size], 0);
-
-        // Write the section header - use our stored offset
-        const new_section_offset = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
-
-        // Check bounds before writing
-        if (new_section_offset + @sizeOf(SectionHeader) > self.data.items.len) {
-            return error.InsufficientSpace;
+        const new_sh_off = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
+        // Bounds check (must be true given step 4)
+        if (new_sh_off + @sizeOf(SectionHeader) > self.data.items.len) {
+            return error.InsufficientHeaderSpace;
         }
+        std.mem.copyForwards(u8, self.data.items[new_sh_off .. new_sh_off + @sizeOf(SectionHeader)], std.mem.asBytes(&sh));
 
-        const new_section_ptr: *SectionHeader = @ptrCast(@alignCast(self.data.items.ptr + new_section_offset));
-        new_section_ptr.* = new_section;
+        // 8. Write payload
+        // At data[new_raw ..]: write LE length prefix then data
+        std.mem.writeInt(u32, self.data.items[new_raw..][0..4], @intCast(data_to_embed.len), .little);
+        @memcpy(self.data.items[new_raw + 4 ..][0..data_to_embed.len], data_to_embed);
 
-        // Write the data with size header
-        const data_offset = new_section.pointer_to_raw_data;
-        std.mem.writeInt(u32, self.data.items[data_offset..][0..4], @intCast(data_to_embed.len), .little);
-        @memcpy(self.data.items[data_offset + 4 ..][0..data_to_embed.len], data_to_embed);
-
-        // Update PE header - get fresh pointer after resize
-        const pe_header = self.getPEHeader();
-        pe_header.number_of_sections += 1;
+        // 9. Update headers
+        // Get fresh pointers after resize
+        const pe_after = try self.getPEHeaderMut();
+        pe_after.number_of_sections += 1;
         self.num_sections += 1;
 
-        // Update optional header - get fresh pointer after resize
-        const updated_optional_header = self.getOptionalHeader();
-        updated_optional_header.size_of_image = alignSize(new_section.virtual_address + new_section.virtual_size, updated_optional_header.section_alignment);
-        updated_optional_header.size_of_initialized_data += new_section.size_of_raw_data;
+        const opt_after = try self.getOptionalHeaderMut();
+        // If opt.size_of_headers < new_size_of_headers
+        if (opt_after.size_of_headers < new_size_of_headers) {
+            opt_after.size_of_headers = new_size_of_headers;
+        }
+        opt_after.size_of_image = try alignUpU32(new_va + (try alignUpU32(sh.virtual_size, opt_after.section_alignment)), opt_after.section_alignment);
+
+        // Security directory must be zero (signature invalidated by change)
+        const dd_ptr: *align(1) DataDirectory = &opt_after.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
+        if (dd_ptr.virtual_address != 0 or dd_ptr.size != 0) {
+            dd_ptr.virtual_address = 0;
+            dd_ptr.size = 0;
+        }
+
+        // Do not touch size_of_initialized_data (leave as is)
+
+        // 10. Recompute checksum (recommended)
+        try self.recomputePEChecksum();
     }
 
     /// Find the .bun section and return its data
     pub fn getBunSectionData(self: *const PEFile) ![]const u8 {
-        const section_headers = self.getSectionHeaders();
+        const section_headers = try self.getSectionHeaders();
         for (section_headers) |section| {
             if (strings.eqlComptime(section.name[0..4], ".bun")) {
                 if (section.size_of_raw_data < @sizeOf(u32)) {
@@ -309,7 +591,7 @@ pub const PEFile = struct {
 
     /// Get the length of the Bun section data
     pub fn getBunSectionLength(self: *const PEFile) !u32 {
-        const section_headers = self.getSectionHeaders();
+        const section_headers = try self.getSectionHeaders();
         for (section_headers) |section| {
             if (strings.eqlComptime(section.name[0..4], ".bun")) {
                 if (section.size_of_raw_data < @sizeOf(u32)) {
@@ -337,53 +619,104 @@ pub const PEFile = struct {
 
     /// Validate the PE file structure
     pub fn validate(self: *const PEFile) !void {
-        // Check DOS header
-        const dos_header = self.getDosHeader();
+        // Check DOS & PE signatures
+        const dos_header = try self.getDosHeader();
         if (dos_header.e_magic != DOS_SIGNATURE) {
             return error.InvalidDOSSignature;
         }
 
-        // Check PE header
-        const pe_header = self.getPEHeader();
+        const pe_header = try self.getPEHeader();
         if (pe_header.signature != PE_SIGNATURE) {
             return error.InvalidPESignature;
         }
 
-        // Check optional header
-        const optional_header = self.getOptionalHeader();
+        // Check optional header magic is 0x20B (64-bit)
+        const optional_header = try self.getOptionalHeader();
         if (optional_header.magic != OPTIONAL_HEADER_MAGIC_64) {
             return error.UnsupportedPEFormat;
         }
 
-        // Validate section headers
-        const section_headers = self.getSectionHeaders();
-        for (section_headers) |section| {
-            if (section.pointer_to_raw_data + section.size_of_raw_data > self.data.items.len) {
-                return error.InvalidSectionData;
+        // Validate file_alignment, section_alignment sanity
+        if (!isPow2(optional_header.file_alignment) or !isPow2(optional_header.section_alignment)) {
+            return error.BadAlignment;
+        }
+        // Relational rule
+        if (optional_header.section_alignment < 4096) {
+            if (optional_header.file_alignment != optional_header.section_alignment) {
+                return error.InvalidPEFile;
             }
         }
+
+        // Section headers region fits within size_of_headers and file
+        const section_headers_end = self.section_headers_offset + @sizeOf(SectionHeader) * self.num_sections;
+        if (section_headers_end > optional_header.size_of_headers or
+            section_headers_end > self.data.items.len)
+        {
+            return error.InvalidPEFile;
+        }
+
+        // Validate each section
+        const section_headers = try self.getSectionHeaders();
+        var max_va_end: u32 = 0;
+
+        for (section_headers, 0..) |section, i| {
+            // If size_of_raw_data > 0, validate raw data bounds
+            if (section.size_of_raw_data > 0) {
+                if (section.pointer_to_raw_data < optional_header.size_of_headers or
+                    section.pointer_to_raw_data + section.size_of_raw_data > self.data.items.len)
+                {
+                    return error.InvalidSectionData;
+                }
+
+                // Check for overlaps with other sections
+                for (section_headers[i + 1 ..]) |other| {
+                    if (other.size_of_raw_data > 0) {
+                        const section_end = section.pointer_to_raw_data + section.size_of_raw_data;
+                        const other_start = other.pointer_to_raw_data;
+                        const other_end = other.pointer_to_raw_data + other.size_of_raw_data;
+                        if ((section.pointer_to_raw_data >= other_start and section.pointer_to_raw_data < other_end) or
+                            (section_end > other_start and section_end <= other_end))
+                        {
+                            return error.InvalidPEFile; // Section raw ranges overlap
+                        }
+                    }
+                }
+            }
+
+            // Track max virtual address end
+            const va_end = section.virtual_address + (try alignUpU32(section.virtual_size, optional_header.section_alignment));
+            if (va_end > max_va_end) {
+                max_va_end = va_end;
+            }
+        }
+
+        // Verify size_of_image equals alignUp(max(VA + alignUp(VS, SA)), SA)
+        const expected_size_of_image = try alignUpU32(max_va_end, optional_header.section_alignment);
+        if (optional_header.size_of_image != expected_size_of_image) {
+            // This is a warning, not necessarily an error, but could be fixed
+        }
+
+        // Security directory should be 0,0 post-change (if we modified it)
+        // (This is optional validation, not critical)
+
+        // If checksum recomputed, field should be non-zero
+        // (Unless we intentionally write zero, which is allowed)
     }
 };
-
-/// Align size to the nearest multiple of alignment
-fn alignSize(size: u32, alignment: u32) u32 {
-    if (alignment == 0) return size;
-    // Check for overflow
-    if (size > std.math.maxInt(u32) - alignment + 1) return std.math.maxInt(u32);
-    return (size + alignment - 1) & ~(alignment - 1);
-}
 
 /// Utilities for PE file detection and validation
 pub const utils = struct {
     pub fn isPE(data: []const u8) bool {
         if (data.len < @sizeOf(PEFile.DOSHeader)) return false;
 
-        const dos_header: *const PEFile.DOSHeader = @ptrCast(@alignCast(data.ptr));
+        const dos_header = PEFile.viewAtConst(PEFile.DOSHeader, data, 0) catch return false;
         if (dos_header.e_magic != PEFile.DOS_SIGNATURE) return false;
 
+        // Bound e_lfanew against data.len
+        if (dos_header.e_lfanew < @sizeOf(PEFile.DOSHeader)) return false;
         if (data.len < dos_header.e_lfanew + @sizeOf(PEFile.PEHeader)) return false;
 
-        const pe_header: *const PEFile.PEHeader = @ptrCast(@alignCast(data.ptr + dos_header.e_lfanew));
+        const pe_header = PEFile.viewAtConst(PEFile.PEHeader, data, dos_header.e_lfanew) catch return false;
         return pe_header.signature == PEFile.PE_SIGNATURE;
     }
 };

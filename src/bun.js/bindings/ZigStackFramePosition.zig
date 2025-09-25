@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-
 /// Represents a position in source code with line and column information
 pub const ZigStackFramePosition = extern struct {
     line: bun.Ordinal,
@@ -30,3 +27,6 @@ pub const ZigStackFramePosition = extern struct {
         try writer.writeInt(this.column.zeroBased());
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

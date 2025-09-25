@@ -138,8 +138,6 @@ pub const FileCopier = struct {
     }
 };
 
-// @sortImports
-
 const Walker = @import("../../walker_skippable.zig");
 
 const bun = @import("bun");

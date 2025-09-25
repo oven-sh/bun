@@ -1,8 +1,3 @@
-const std = @import("std");
-const BabyList = @import("../baby_list.zig").BabyList;
-const Allocator = std.mem.Allocator;
-const assert = std.debug.assert;
-
 /// This is a string type that stores up to 15 bytes inline on the stack, and heap allocates if it is longer
 pub const SmolStr = packed struct(u128) {
     __len: u32,
@@ -174,7 +169,7 @@ pub const SmolStr = packed struct(u128) {
             if (inlined.len() + 1 > Inlined.max_len) {
                 var baby_list = try BabyList(u8).initCapacity(allocator, inlined.len() + 1);
                 baby_list.appendSliceAssumeCapacity(inlined.slice());
-                try baby_list.push(allocator, char);
+                try baby_list.append(allocator, char);
                 this.__len = baby_list.len;
                 this.__ptr = baby_list.ptr;
                 this.cap = baby_list.cap;
@@ -193,7 +188,7 @@ pub const SmolStr = packed struct(u128) {
             .len = this.__len,
             .cap = this.cap,
         };
-        try baby_list.push(allocator, char);
+        try baby_list.append(allocator, char);
 
         this.__len = baby_list.len;
         this.__ptr = baby_list.ptr;
@@ -222,14 +217,12 @@ pub const SmolStr = packed struct(u128) {
             .len = this.__len,
             .cap = this.cap,
         };
-        try baby_list.append(allocator, values);
+        try baby_list.appendSlice(allocator, values);
 
         this.* = SmolStr.fromBabyList(baby_list);
         return;
     }
 };
-
-const t = std.testing;
 
 test SmolStr {
     // large strings are heap-allocated
@@ -272,3 +265,11 @@ test "Creating an inlined SmolStr does not allocate" {
     try t.expectEqual(5, hello.len());
     try t.expect(hello.isInlined());
 }
+
+const bun = @import("bun");
+const BabyList = bun.collections.BabyList;
+
+const std = @import("std");
+const t = std.testing;
+const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;

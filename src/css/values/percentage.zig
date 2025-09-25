@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -29,7 +27,7 @@ pub const Percentage = struct {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         const x = this.v * 100.0;
         const int_value: ?i32 = if ((x - @trunc(x)) == 0.0)
-            @intFromFloat(this.v)
+            bun.intFromFloat(i32, this.v)
         else
             null;
 
@@ -471,3 +469,6 @@ pub const NumberOrPercentage = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

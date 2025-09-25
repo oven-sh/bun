@@ -1,36 +1,31 @@
 pub const JSRef = union(enum) {
-    weak: JSC.JSValue,
-    strong: JSC.Strong.Optional,
+    weak: jsc.JSValue,
+    strong: jsc.Strong.Optional,
     finalized: void,
 
-    pub fn initWeak(value: JSC.JSValue) @This() {
+    pub fn initWeak(value: jsc.JSValue) @This() {
+        bun.assert(!value.isEmptyOrUndefinedOrNull());
         return .{ .weak = value };
     }
 
-    pub fn initStrong(value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) @This() {
+    pub fn initStrong(value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) @This() {
+        bun.assert(!value.isEmptyOrUndefinedOrNull());
         return .{ .strong = .create(value, globalThis) };
     }
 
     pub fn empty() @This() {
-        return .{ .weak = .zero };
+        return .{ .weak = .js_undefined };
     }
 
-    pub fn get(this: *@This()) JSC.JSValue {
+    pub fn tryGet(this: *const @This()) ?jsc.JSValue {
         return switch (this.*) {
-            .weak => this.weak,
-            .strong => this.strong.get() orelse .zero,
-            .finalized => .zero,
-        };
-    }
-
-    pub fn tryGet(this: *@This()) ?JSC.JSValue {
-        return switch (this.*) {
-            .weak => if (this.weak != .zero) this.weak else null,
+            .weak => if (this.weak.isEmptyOrUndefinedOrNull()) null else this.weak,
             .strong => this.strong.get(),
             .finalized => null,
         };
     }
-    pub fn setWeak(this: *@This(), value: JSC.JSValue) void {
+    pub fn setWeak(this: *@This(), value: jsc.JSValue) void {
+        bun.assert(!value.isEmptyOrUndefinedOrNull());
         switch (this.*) {
             .weak => {},
             .strong => {
@@ -43,7 +38,8 @@ pub const JSRef = union(enum) {
         this.* = .{ .weak = value };
     }
 
-    pub fn setStrong(this: *@This(), value: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+    pub fn setStrong(this: *@This(), value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
+        bun.assert(!value.isEmptyOrUndefinedOrNull());
         if (this.* == .strong) {
             this.strong.set(globalThis, value);
             return;
@@ -51,10 +47,10 @@ pub const JSRef = union(enum) {
         this.* = .{ .strong = .create(value, globalThis) };
     }
 
-    pub fn upgrade(this: *@This(), globalThis: *JSC.JSGlobalObject) void {
+    pub fn upgrade(this: *@This(), globalThis: *jsc.JSGlobalObject) void {
         switch (this.*) {
             .weak => {
-                bun.assert(this.weak != .zero);
+                bun.assert(!this.weak.isEmptyOrUndefinedOrNull());
                 this.* = .{ .strong = .create(this.weak, globalThis) };
             },
             .strong => {},
@@ -64,10 +60,41 @@ pub const JSRef = union(enum) {
         }
     }
 
+    pub fn downgrade(this: *@This()) void {
+        switch (this.*) {
+            .weak => {},
+            .strong => |*strong| {
+                const value = strong.trySwap() orelse .js_undefined;
+                value.ensureStillAlive();
+                strong.deinit();
+                this.* = .{ .weak = value };
+            },
+            .finalized => {
+                bun.debugAssert(false);
+            },
+        }
+    }
+
+    pub fn isEmpty(this: *const @This()) bool {
+        return switch (this.*) {
+            .weak => this.weak.isEmptyOrUndefinedOrNull(),
+            .strong => !this.strong.has(),
+            .finalized => true,
+        };
+    }
+
+    pub fn isNotEmpty(this: *const @This()) bool {
+        return switch (this.*) {
+            .weak => !this.weak.isEmptyOrUndefinedOrNull(),
+            .strong => this.strong.has(),
+            .finalized => false,
+        };
+    }
+
     pub fn deinit(this: *@This()) void {
         switch (this.*) {
             .weak => {
-                this.weak = .zero;
+                this.weak = .js_undefined;
             },
             .strong => {
                 this.strong.deinit();
@@ -75,8 +102,14 @@ pub const JSRef = union(enum) {
             .finalized => {},
         }
     }
+
+    pub fn finalize(this: *@This()) void {
+        this.deinit();
+        this.* = .{ .finalized = {} };
+    }
 };
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
 const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

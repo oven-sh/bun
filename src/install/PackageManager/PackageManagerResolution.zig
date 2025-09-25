@@ -216,7 +216,7 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
     if (any_failed) this.crash();
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -224,7 +224,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const string = bun.string;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

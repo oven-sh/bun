@@ -255,6 +255,10 @@ set(BUN_ZIG_GENERATED_CLASSES_SCRIPT ${CWD}/src/codegen/generate-classes.ts)
 
 absolute_sources(BUN_ZIG_GENERATED_CLASSES_SOURCES ${CWD}/cmake/sources/ZigGeneratedClassesSources.txt)
 
+# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
+absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/sources/CxxSources.txt)
+absolute_sources(BUN_C_SOURCES ${CWD}/cmake/sources/CSources.txt)
+
 set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.cpp
@@ -306,6 +310,27 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CODEGEN_PATH}/GeneratedJS2Native.h
   # Zig will complain if files are outside of the source directory
   ${CWD}/src/bun.js/bindings/GeneratedJS2Native.zig
+)
+
+set(BUN_CPP_OUTPUTS
+  ${CODEGEN_PATH}/cpp.zig
+)
+
+register_command(
+  TARGET
+    bun-cppbind
+  COMMENT
+    "Generating C++ --> Zig bindings"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      ${CWD}/src/codegen/cppbind.ts
+      ${CWD}/src
+      ${CODEGEN_PATH}
+  SOURCES
+    ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
+    ${BUN_CXX_SOURCES}
+  OUTPUTS
+    ${BUN_CPP_OUTPUTS}
 )
 
 register_command(
@@ -537,6 +562,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ERROR_CODE_OUTPUTS}
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
+  ${BUN_CPP_OUTPUTS}
 )
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
@@ -592,7 +618,7 @@ register_command(
       -Doptimize=${ZIG_OPTIMIZE}
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
-      -Denable_asan=$<IF:$<BOOL:${ENABLE_ASAN}>,true,false>
+      -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
@@ -606,9 +632,11 @@ register_command(
   TARGETS
     clone-zig
     clone-zstd
+    bun-cppbind
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
+    ${CWD}/src/install/PackageManager/scanner-entry.ts # Is there a better way to do this?
 )
 
 set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)
@@ -617,10 +645,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 # --- C/C++ Sources ---
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
-
-# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
-absolute_sources(BUN_CXX_SOURCES ${CWD}/cmake/sources/CxxSources.txt)
-absolute_sources(BUN_C_SOURCES ${CWD}/cmake/sources/CSources.txt)
 
 if(WIN32)
   list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
@@ -685,7 +709,7 @@ if(WIN32)
     ${CODEGEN_PATH}/windows-app-info.rc
     @ONLY
   )
-  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc)
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc ${CWD}/src/bun.exe.manifest)
 endif()
 
 # --- Executable ---
@@ -945,6 +969,7 @@ if(WIN32)
       /delayload:WSOCK32.dll
       /delayload:ADVAPI32.dll
       /delayload:IPHLPAPI.dll
+      /delayload:CRYPT32.dll
     )
   endif()
 endif()
@@ -957,6 +982,16 @@ if(APPLE)
     -fno-keep-static-consts
     -Wl,-map,${bun}.linker-map
   )
+
+  if(DEBUG)
+    target_link_options(${bun} PUBLIC
+    # Suppress ALL linker warnings on macOS.
+    # The intent is to only suppress linker alignment warnings.
+    # As of July 21st, 2025 there doesn't seem to be a more specific suppression just for linker alignment warnings.
+    # If you find one, please update this to only be for linker alignment.
+    -Wl,-w
+    )
+  endif()
 
   # don't strip in debug, this seems to be needed so that the Zig std library
   # `*dbHelper` DWARF symbols (used by LLDB for pretty printing) are in the
@@ -1001,7 +1036,6 @@ if(LINUX)
     --ld-path=${LLD_PROGRAM}
     -fno-pic
     -Wl,-no-pie
-    -Wl,-icf=safe
     -Wl,--as-needed
     -Wl,-z,stack-size=12800000
     -Wl,--compress-debug-sections=zlib
@@ -1027,6 +1061,13 @@ if(LINUX)
       -Wl,--gc-sections
     )
   endif()
+
+  if (NOT DEBUG AND NOT ENABLE_ASAN)
+    target_link_options(${bun} PUBLIC
+      -Wl,-icf=safe
+    )
+  endif()
+
 endif()
 
 # --- Symbols list ---
@@ -1085,6 +1126,9 @@ else()
 endif()
 
 include_directories(${WEBKIT_INCLUDE_PATH})
+
+# Include the generated dependency versions header
+include_directories(${CMAKE_BINARY_DIR})
 
 if(NOT WEBKIT_LOCAL AND NOT APPLE)
   include_directories(${WEBKIT_INCLUDE_PATH}/wtf/unicode)
@@ -1145,6 +1189,7 @@ if(WIN32)
     ntdll
     userenv
     dbghelp
+    crypt32
     wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     delayimp.lib
   )
@@ -1166,6 +1211,7 @@ if(NOT BUN_CPP_ONLY)
   endif()
 
   if(bunStrip)
+    # First, strip bun-profile.exe to create bun.exe
     register_command(
       TARGET
         ${bun}
@@ -1186,6 +1232,48 @@ if(NOT BUN_CPP_ONLY)
       OUTPUTS
         ${BUILD_PATH}/${bunStripExe}
     )
+    
+    # Then sign both executables on Windows
+    if(WIN32 AND ENABLE_WINDOWS_CODESIGNING)
+      set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.ps1")
+      
+      # Verify signing script exists
+      if(NOT EXISTS "${SIGN_SCRIPT}")
+        message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
+      endif()
+      
+      # Use PowerShell for Windows code signing (native Windows, no path issues)
+      find_program(POWERSHELL_EXECUTABLE 
+        NAMES pwsh.exe powershell.exe
+        PATHS 
+          "C:/Program Files/PowerShell/7"
+          "C:/Program Files (x86)/PowerShell/7"
+          "C:/Windows/System32/WindowsPowerShell/v1.0"
+        DOC "Path to PowerShell executable"
+      )
+      
+      if(NOT POWERSHELL_EXECUTABLE)
+        set(POWERSHELL_EXECUTABLE "powershell.exe")
+      endif()
+      
+      message(STATUS "Using PowerShell executable: ${POWERSHELL_EXECUTABLE}")
+      
+      # Sign both bun-profile.exe and bun.exe after stripping
+      register_command(
+        TARGET
+          ${bun}
+        TARGET_PHASE
+          POST_BUILD
+        COMMENT
+          "Code signing bun-profile.exe and bun.exe with DigiCert KeyLocker"
+        COMMAND
+          "${POWERSHELL_EXECUTABLE}" "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "${SIGN_SCRIPT}" "-BunProfileExe" "${BUILD_PATH}/${bunExe}" "-BunExe" "${BUILD_PATH}/${bunStripExe}"
+        CWD
+          ${CMAKE_SOURCE_DIR}
+        SOURCES
+          ${BUILD_PATH}/${bunStripExe}
+      )
+    endif()
   endif()
 
   # somehow on some Linux systems we need to disable ASLR for ASAN-instrumented binaries to run

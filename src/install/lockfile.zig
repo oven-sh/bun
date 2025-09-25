@@ -1,3 +1,5 @@
+const Lockfile = @This();
+
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
 
@@ -288,7 +290,7 @@ pub fn loadFromDir(
             }
         };
 
-        bun.Analytics.Features.text_lockfile += 1;
+        bun.analytics.Features.text_lockfile += 1;
 
         return .{
             .ok = .{
@@ -317,7 +319,7 @@ pub fn loadFromDir(
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
-                buffered_writer.flush() catch bun.outOfMemory();
+                bun.handleOom(buffered_writer.flush());
 
                 const text_lockfile_bytes = writer_buf.list.items;
 
@@ -331,7 +333,7 @@ pub fn loadFromDir(
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                bun.Analytics.Features.text_lockfile += 1;
+                bun.analytics.Features.text_lockfile += 1;
             }
         },
         else => {},
@@ -380,8 +382,10 @@ pub fn isResolvedDependencyDisabled(
     dep_id: DependencyID,
     features: Features,
     meta: *const Package.Meta,
+    cpu: Npm.Architecture,
+    os: Npm.OperatingSystem,
 ) bool {
-    if (meta.isDisabled()) return true;
+    if (meta.isDisabled(cpu, os)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
@@ -615,7 +619,7 @@ pub fn cleanWithLogger(
     // preinstall state before linking stage.
     manager.ensurePreinstallStateListCapacity(old.packages.len);
     var preinstall_state = manager.preinstall_state;
-    var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
+    var old_preinstall_state = bun.handleOom(preinstall_state.clone(old.allocator));
     defer old_preinstall_state.deinit(old.allocator);
     @memset(preinstall_state.items, .unknown);
 
@@ -863,7 +867,7 @@ pub fn resolve(
     lockfile: *Lockfile,
     log: *logger.Log,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .resolvable, {}, {}, {});
+    return lockfile.hoist(log, .resolvable, {}, {}, {}, {});
 }
 
 pub fn filter(
@@ -872,8 +876,9 @@ pub fn filter(
     manager: *PackageManager,
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
+    packages_to_install: ?[]const PackageID,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters);
+    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters, packages_to_install);
 }
 
 /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
@@ -884,6 +889,7 @@ pub fn hoist(
     manager: if (method == .filter) *PackageManager else void,
     install_root_dependencies: if (method == .filter) bool else void,
     workspace_filters: if (method == .filter) []const WorkspaceFilter else void,
+    packages_to_install: if (method == .filter) ?[]const PackageID else void,
 ) Tree.SubtreeError!void {
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
@@ -900,6 +906,7 @@ pub fn hoist(
         .manager = manager,
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
+        .packages_to_install = packages_to_install,
     };
 
     try (Tree{}).processSubtree(
@@ -1037,7 +1044,7 @@ pub const Printer = struct {
             break :brk loader;
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
         try env_loader.load(entries_option.entries, &[_][]u8{}, .production, false);
         var log = logger.Log.init(allocator);
         try options.load(
@@ -1061,8 +1068,8 @@ pub const Printer = struct {
         }
     }
 
-    pub const Tree = @import("lockfile/printer/tree_printer.zig");
-    pub const Yarn = @import("lockfile/printer/Yarn.zig");
+    pub const Tree = @import("./lockfile/printer/tree_printer.zig");
+    pub const Yarn = @import("./lockfile/printer/Yarn.zig");
 };
 
 pub fn verifyData(this: *const Lockfile) !void {
@@ -1578,9 +1585,11 @@ pub const FormatVersion = enum(u32) {
     // bun v0.1.7+
     // This change added tarball URLs to npm-resolved packages
     v2 = 2,
+    // Changed semver major/minor/patch to each use u64 instead of u32
+    v3 = 3,
 
     _,
-    pub const current = FormatVersion.v2;
+    pub const current = FormatVersion.v3;
 };
 
 pub const PackageIDSlice = ExternalSlice(PackageID);
@@ -1594,14 +1603,14 @@ pub const DependencyIDList = std.ArrayListUnmanaged(DependencyID);
 pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
-pub const jsonStringify = @import("lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
+pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
 pub const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
-pub const Buffers = @import("lockfile/Buffers.zig");
-pub const Serializer = @import("lockfile/bun.lockb.zig");
-pub const CatalogMap = @import("lockfile/CatalogMap.zig");
-pub const OverrideMap = @import("lockfile/OverrideMap.zig");
-pub const Package = @import("lockfile/Package.zig").Package;
-pub const Tree = @import("lockfile/Tree.zig");
+pub const Buffers = @import("./lockfile/Buffers.zig");
+pub const Serializer = @import("./lockfile/bun.lockb.zig");
+pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
+pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
+pub const Package = @import("./lockfile/Package.zig").Package(u64);
+pub const Tree = @import("./lockfile/Tree.zig");
 
 pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);
@@ -2002,57 +2011,65 @@ pub const PatchedDep = extern struct {
     }
 };
 
-const Lockfile = @This();
 const MetaHash = [std.crypto.hash.sha2.Sha512T256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
+pub const StringPool = String.Builder.StringPool;
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Dependency = @import("./dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const Npm = @import("./npm.zig");
+const Path = @import("../resolver/resolve_path.zig");
+const TextLockfile = @import("./lockfile/bun.lock.zig");
+const migration = @import("./migration.zig");
 const std = @import("std");
+const Crypto = @import("../sha.zig").Hashers;
+const Resolution = @import("./resolution.zig").Resolution;
+const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
+const which = @import("../which.zig").which;
 const Allocator = std.mem.Allocator;
+
+const Fs = @import("../fs.zig");
+const FileSystem = Fs.FileSystem;
+
+const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+
 const bun = @import("bun");
-const default_allocator = bun.default_allocator;
-const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const strings = bun.strings;
-const assert = bun.assert;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const Environment = bun.Environment;
-const File = bun.sys.File;
 const Global = bun.Global;
 const GlobalStringBuilder = bun.StringBuilder;
-const Install = bun.install;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const PackageID = Install.PackageID;
-const PackageInstall = Install.PackageInstall;
-const PackageManager = Install.PackageManager;
-const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
-const PackageNameHash = Install.PackageNameHash;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;
+const z_allocator = bun.z_allocator;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const File = bun.sys.File;
+
 const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
+
+const Install = bun.install;
+const DependencyID = Install.DependencyID;
+const ExternalSlice = Install.ExternalSlice;
+const Features = Install.Features;
+const PackageID = Install.PackageID;
+const PackageInstall = Install.PackageInstall;
+const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
+const PackageNameHash = Install.PackageNameHash;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const initializeStore = Install.initializeStore;
 const invalid_dependency_id = Install.invalid_dependency_id;
 const invalid_package_id = Install.invalid_package_id;
-pub const StringPool = String.Builder.StringPool;
-const DependencyID = Install.DependencyID;
-const ExternalSlice = Install.ExternalSlice;
-const ExternalString = Semver.ExternalString;
-const Features = Install.Features;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
-const DotEnv = @import("../env_loader.zig");
-const Fs = @import("../fs.zig");
-const FileSystem = Fs.FileSystem;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const Path = @import("../resolver/resolve_path.zig");
-const Crypto = @import("../sha.zig").Hashers;
-const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
-const which = @import("../which.zig").which;
-const Dependency = @import("./dependency.zig");
-const TextLockfile = @import("./lockfile/bun.lock.zig");
-const migration = @import("./migration.zig");
-const Resolution = @import("./resolution.zig").Resolution;
+
+const PackageManager = Install.PackageManager;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

@@ -72,6 +72,15 @@ pub const RawWebSocket = opaque {
     pub fn memoryCost(this: *RawWebSocket, ssl_flag: i32) usize {
         return c.uws_ws_memory_cost(ssl_flag, this);
     }
+
+    /// They're the same memory address.
+    ///
+    /// Equivalent to:
+    ///
+    ///   (struct us_socket_t *)socket
+    pub fn asSocket(this: *RawWebSocket) *uws.Socket {
+        return @as(*uws.Socket, @ptrCast(this));
+    }
 };
 
 pub const AnyWebSocket = union(enum) {
@@ -339,12 +348,13 @@ pub const c = struct {
 };
 
 const bun = @import("bun");
-const uws = bun.uws;
-const Opcode = uws.Opcode;
-const SendStatus = uws.SendStatus;
-const uws_app_t = @import("./App.zig").uws_app_t;
 const std = @import("std");
+const uws_app_t = @import("./App.zig").uws_app_t;
+
+const uws = bun.uws;
 const NewApp = uws.NewApp;
+const Opcode = uws.Opcode;
 const Request = uws.Request;
-const uws_res = uws.uws_res;
+const SendStatus = uws.SendStatus;
 const SocketContext = uws.SocketContext;
+const uws_res = uws.uws_res;

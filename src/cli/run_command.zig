@@ -1,30 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const JSC = bun.JSC;
-const OOM = bun.OOM;
-
-const clap = bun.clap;
-const CLI = bun.CLI;
-const Arguments = CLI.Arguments;
-const Command = CLI.Command;
-
-const options = @import("../options.zig");
-
-const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
-const transpiler = bun.transpiler;
-
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
-const Run = @import("../bun_js.zig").Run;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 const NpmArgs = struct {
@@ -32,12 +5,6 @@ const NpmArgs = struct {
     pub const package_name: string = "npm_package_name";
     pub const package_version: string = "npm_package_version";
 };
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
-
-const ShellCompletions = @import("./shell_completions.zig");
-
-const windows = std.os.windows;
 
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
@@ -236,7 +203,7 @@ pub const RunCommand = struct {
         }
     }
 
-    const log = Output.scoped(.RUN, false);
+    const log = Output.scoped(.RUN, .visible);
 
     pub fn runPackageScriptForeground(
         ctx: Command.Context,
@@ -279,7 +246,7 @@ pub const RunCommand = struct {
         }
 
         if (!use_system_shell) {
-            const mini = bun.JSC.MiniEventLoop.initGlobal(env);
+            const mini = bun.jsc.MiniEventLoop.initGlobal(env, cwd);
             const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items, cwd) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
@@ -327,7 +294,7 @@ pub const RunCommand = struct {
             .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
-                .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env, null)),
             },
         }) catch |err| {
             if (!silent) {
@@ -354,6 +321,10 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
 
+                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        bun.crash_handler.suppressReporting();
+                    }
+
                     Global.raiseIgnoringPanicHandler(exit_code.signal);
                 }
 
@@ -372,6 +343,11 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
+
+                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    bun.crash_handler.suppressReporting();
+                }
+
                 Global.raiseIgnoringPanicHandler(signal);
             },
 
@@ -491,7 +467,7 @@ pub const RunCommand = struct {
             .use_execve_on_macos = silent,
 
             .windows = if (Environment.isWindows) .{
-                .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env, null)),
             },
         }) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -545,6 +521,10 @@ pub const RunCommand = struct {
                             });
                         }
 
+                        if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                            bun.crash_handler.suppressReporting();
+                        }
+
                         Global.raiseIgnoringPanicHandler(signal);
                     },
 
@@ -556,6 +536,10 @@ pub const RunCommand = struct {
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });
+                            }
+
+                            if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                                bun.crash_handler.suppressReporting();
                             }
 
                             Global.raiseIgnoringPanicHandler(exit_code.signal);
@@ -607,7 +591,7 @@ pub const RunCommand = struct {
         const args = ctx.args;
 
         var this_transpiler = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null);
-        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
         this_transpiler.options.env.prefix = "";
 
         this_transpiler.resolver.care_about_bin_folder = true;
@@ -655,7 +639,10 @@ pub const RunCommand = struct {
         return try allocator.dupeZ(u8, target_path_buffer[0 .. converted.len + file_name.len :0]);
     }
 
-    pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+    pub fn createFakeTemporaryNodeExecutable(
+        PATH: *std.ArrayList(u8),
+        optional_bun_path: *string,
+    ) (OOM || std.fs.SelfExePathError)!void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 
@@ -790,7 +777,7 @@ pub const RunCommand = struct {
     ) !*DirInfo {
         const args = ctx.args;
         this_transpiler.* = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, env);
-        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
         this_transpiler.env.quiet = true;
         this_transpiler.options.env.prefix = "";
 
@@ -819,7 +806,7 @@ pub const RunCommand = struct {
         this_transpiler.resolver.store_fd = false;
 
         if (env == null) {
-            this_transpiler.env.loadProcess();
+            try this_transpiler.env.loadProcess();
 
             if (this_transpiler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
@@ -923,11 +910,21 @@ pub const RunCommand = struct {
         var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
 
         if (needs_to_force_bun) {
-            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch bun.outOfMemory();
+            createFakeTemporaryNodeExecutable(
+                &new_path,
+                &optional_bun_self_path,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+                else => |other| std.debug.panic(
+                    "unexpected error from createFakeTemporaryNodeExecutable: {}",
+                    .{other},
+                ),
+            };
+
             if (!force_using_bun) {
-                this_transpiler.env.map.put("NODE", bun_node_exe) catch bun.outOfMemory();
-                this_transpiler.env.map.put("npm_node_execpath", bun_node_exe) catch bun.outOfMemory();
-                this_transpiler.env.map.put("npm_execpath", optional_bun_self_path) catch bun.outOfMemory();
+                bun.handleOom(this_transpiler.env.map.put("NODE", bun_node_exe));
+                bun.handleOom(this_transpiler.env.map.put("npm_node_execpath", bun_node_exe));
+                bun.handleOom(this_transpiler.env.map.put("npm_execpath", optional_bun_self_path));
             }
 
             needs_to_force_bun = false;
@@ -976,7 +973,7 @@ pub const RunCommand = struct {
         }
 
         const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_transpiler, ORIGINAL_PATH, cwd, force_using_bun);
-        this_transpiler.env.map.put("PATH", new_path) catch bun.outOfMemory();
+        bun.handleOom(this_transpiler.env.map.put("PATH", new_path));
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -990,7 +987,7 @@ pub const RunCommand = struct {
         const args = ctx.args;
 
         var this_transpiler = transpiler.Transpiler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
-        this_transpiler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
         this_transpiler.options.env.prefix = "";
         this_transpiler.env.quiet = true;
 
@@ -1006,7 +1003,7 @@ pub const RunCommand = struct {
         const root_dir_info = (this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch null) orelse return shell_out;
 
         {
-            this_transpiler.env.loadProcess();
+            try this_transpiler.env.loadProcess();
 
             if (this_transpiler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
@@ -1324,7 +1321,7 @@ pub const RunCommand = struct {
         }
 
         if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
         _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
@@ -1384,7 +1381,7 @@ pub const RunCommand = struct {
         this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
 
         if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
         // check for empty command
@@ -1672,7 +1669,7 @@ pub const RunCommand = struct {
 
 pub const BunXFastPath = struct {
     const shim_impl = @import("../install/windows-shim/bun_shim_impl.zig");
-    const debug = Output.scoped(.BunXFastPath, false);
+    const debug = Output.scoped(.BunXFastPath, .visible);
 
     var direct_launch_buffer: bun.WPathBuffer = undefined;
     var environment_buffer: bun.WPathBuffer = undefined;
@@ -1743,3 +1740,33 @@ pub const BunXFastPath = struct {
         };
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const DotEnv = @import("../env_loader.zig");
+const ShellCompletions = @import("./shell_completions.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const which = @import("../which.zig").which;
+const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
+const windows = std.os.windows;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const clap = bun.clap;
+const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const transpiler = bun.transpiler;
+const Run = bun.bun_js.Run;
+const api = bun.schema.api;
+
+const CLI = bun.cli;
+const Arguments = CLI.Arguments;
+const Command = CLI.Command;

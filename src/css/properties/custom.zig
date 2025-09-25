@@ -1,7 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
 pub const css = @import("../css_parser.zig");
 pub const css_values = @import("../values/values.zig");
 pub const Printer = css.Printer;
@@ -33,8 +29,6 @@ const ComponentParser = css.css_values.color.ComponentParser;
 
 const SupportsCondition = css.SupportsCondition;
 const ColorFallbackKind = css.ColorFallbackKind;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 /// PERF: nullable optimization
 pub const TokenList = struct {
@@ -311,7 +305,7 @@ pub const TokenList = struct {
             }
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn parseInto(
@@ -597,12 +591,12 @@ pub const TokenList = struct {
             last_is_whitespace = false;
         }
 
-        return .{ .result = {} };
+        return .success;
     }
 
     pub fn getFallback(this: *const TokenList, allocator: Allocator, kind: ColorFallbackKind) @This() {
         var tokens = TokenList{};
-        tokens.v.ensureTotalCapacity(allocator, this.v.items.len) catch bun.outOfMemory();
+        bun.handleOom(tokens.v.ensureTotalCapacity(allocator, this.v.items.len));
         tokens.v.items.len = this.v.items.len;
         for (this.v.items, tokens.v.items[0..this.v.items.len]) |*old, *new| {
             new.* = switch (old.*) {
@@ -800,7 +794,7 @@ pub const UnresolvedColor = union(enum) {
     ) PrintErr!void {
         const Helper = struct {
             pub fn conv(c: f32) i32 {
-                return @intFromFloat(bun.clamp(@round(c * 255.0), 0.0, 255.0));
+                return bun.intFromFloat(i32, bun.clamp(@round(c * 255.0), 0.0, 255.0));
             }
         };
 
@@ -996,10 +990,10 @@ pub const UnresolvedColor = union(enum) {
     }
 
     pub fn lightDarkOwned(allocator: Allocator, light: UnresolvedColor, dark: UnresolvedColor) UnresolvedColor {
-        var lightlist = ArrayList(TokenOrValue).initCapacity(allocator, 1) catch bun.outOfMemory();
-        lightlist.append(allocator, TokenOrValue{ .unresolved_color = light }) catch bun.outOfMemory();
-        var darklist = ArrayList(TokenOrValue).initCapacity(allocator, 1) catch bun.outOfMemory();
-        darklist.append(allocator, TokenOrValue{ .unresolved_color = dark }) catch bun.outOfMemory();
+        var lightlist = bun.handleOom(ArrayList(TokenOrValue).initCapacity(allocator, 1));
+        bun.handleOom(lightlist.append(allocator, TokenOrValue{ .unresolved_color = light }));
+        var darklist = bun.handleOom(ArrayList(TokenOrValue).initCapacity(allocator, 1));
+        bun.handleOom(darklist.append(allocator, TokenOrValue{ .unresolved_color = dark }));
         return UnresolvedColor{
             .light_dark = .{
                 .light = css.TokenList{ .v = lightlist },
@@ -1172,7 +1166,7 @@ pub const EnvironmentVariable = struct {
     pub fn getFallback(this: *const EnvironmentVariable, allocator: Allocator, kind: ColorFallbackKind) @This() {
         return EnvironmentVariable{
             .name = this.name,
-            .indices = this.indices.clone(allocator) catch bun.outOfMemory(),
+            .indices = bun.handleOom(this.indices.clone(allocator)),
             .fallback = if (this.fallback) |*fallback| fallback.getFallback(allocator, kind) else null,
         };
     }
@@ -1188,7 +1182,7 @@ pub const EnvironmentVariable = struct {
     pub fn deepClone(this: *const EnvironmentVariable, allocator: Allocator) EnvironmentVariable {
         return .{
             .name = this.name,
-            .indices = this.indices.clone(allocator) catch bun.outOfMemory(),
+            .indices = bun.handleOom(this.indices.clone(allocator)),
             .fallback = if (this.fallback) |*fallback| fallback.deepClone(allocator) else null,
         };
     }
@@ -1554,3 +1548,9 @@ pub fn tryParseColorToken(f: []const u8, state: *const css.ParserState, input: *
 
     return null;
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

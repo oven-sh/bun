@@ -1,37 +1,17 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const FileSystem = bun.fs.FileSystem;
-const install = bun.install;
-const PackageManager = install.PackageManager;
-const Lockfile = install.Lockfile;
-const Command = bun.CLI.Command;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const PackageInstall = install.PackageInstall;
-const Progress = bun.Progress;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const ProgressStrings = PackageManager.ProgressStrings;
-const Bin = install.Bin;
-const PackageInstaller = PackageManager.PackageInstaller;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const PackageID = install.PackageID;
-const TreeContext = PackageInstaller.TreeContext;
-
 pub fn installHoistedPackages(
     this: *PackageManager,
     ctx: Command.Context,
     workspace_filters: []const WorkspaceFilter,
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
+    packages_to_install: ?[]const PackageID,
 ) !PackageInstall.Summary {
-    bun.Analytics.Features.hoisted_bun_install += 1;
+    bun.analytics.Features.hoisted_bun_install += 1;
 
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
-    try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters);
+    try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters, packages_to_install);
 
     defer {
         this.lockfile.buffers.trees = original_trees;
@@ -197,7 +177,7 @@ pub fn installHoistedPackages(
                 .tree_ids_to_trees_the_id_depends_on = tree_ids_to_trees_the_id_depends_on,
                 .completed_trees = completed_trees,
                 .trees = trees: {
-                    const trees = this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len) catch bun.outOfMemory();
+                    const trees = bun.handleOom(this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len));
                     for (0..this.lockfile.buffers.trees.items.len) |i| {
                         trees[i] = .{
                             .binaries = Bin.PriorityQueue.init(this.allocator, .{
@@ -349,6 +329,7 @@ pub fn installHoistedPackages(
             installer.installAvailablePackages(log_level, force);
         }
 
+        // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, .monotonic);
         if (log_level.showProgress()) {
             scripts_node.activate();
@@ -363,6 +344,7 @@ pub fn installHoistedPackages(
         installer.linkRemainingBins(log_level);
         installer.completeRemainingScripts(log_level);
 
+        // .monotonic is okay because this value is only accessed on this thread.
         while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
             this.reportSlowLifecycleScripts();
 
@@ -376,3 +358,28 @@ pub fn installHoistedPackages(
 
     return summary;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const strings = bun.strings;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const Command = bun.cli.Command;
+const FileSystem = bun.fs.FileSystem;
+
+const install = bun.install;
+const Bin = install.Bin;
+const Lockfile = install.Lockfile;
+const PackageID = install.PackageID;
+const PackageInstall = install.PackageInstall;
+
+const PackageManager = install.PackageManager;
+const ProgressStrings = PackageManager.ProgressStrings;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+
+const PackageInstaller = PackageManager.PackageInstaller;
+const TreeContext = PackageInstaller.TreeContext;

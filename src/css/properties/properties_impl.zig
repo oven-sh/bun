@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 pub const css = @import("../css_parser.zig");
 
 const CustomPropertyName = css.css_properties.CustomPropertyName;
@@ -107,3 +105,5 @@ pub const property_mixin = struct {
         }
     }
 };
+
+const bun = @import("bun");

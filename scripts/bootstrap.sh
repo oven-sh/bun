@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 17
+# Version: 18
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1521,6 +1521,9 @@ configure_core_dumps() {
 		if [ -d /sbin ]; then
 			append_to_path /sbin
 		fi
+
+		# install gdb for backtraces
+		install_packages gdb
 		;;
 	esac
 }

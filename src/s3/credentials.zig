@@ -1,14 +1,3 @@
-const bun = @import("bun");
-const picohttp = bun.picohttp;
-const std = @import("std");
-
-const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const ACL = @import("./acl.zig").ACL;
-const StorageClass = @import("./storage_class.zig").StorageClass;
-
-const JSC = bun.JSC;
-const strings = bun.strings;
-
 pub const S3Credentials = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
@@ -46,7 +35,7 @@ pub const S3Credentials = struct {
 
         return hasher.final();
     }
-    pub fn getCredentialsWithOptions(this: S3Credentials, default_options: MultiPartUploadOptions, options: ?JSC.JSValue, default_acl: ?ACL, default_storage_class: ?StorageClass, globalObject: *JSC.JSGlobalObject) bun.JSError!S3CredentialsWithOptions {
+    pub fn getCredentialsWithOptions(this: S3Credentials, default_options: MultiPartUploadOptions, options: ?jsc.JSValue, default_acl: ?ACL, default_storage_class: ?StorageClass, globalObject: *jsc.JSGlobalObject) bun.JSError!S3CredentialsWithOptions {
         bun.analytics.Features.s3 += 1;
         // get ENV config
         var new_credentials = S3CredentialsWithOptions{
@@ -231,32 +220,32 @@ pub const S3Credentials = struct {
         return bun.new(S3Credentials, .{
             .ref_count = .init(),
             .accessKeyId = if (this.accessKeyId.len > 0)
-                bun.default_allocator.dupe(u8, this.accessKeyId) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.accessKeyId))
             else
                 "",
 
             .secretAccessKey = if (this.secretAccessKey.len > 0)
-                bun.default_allocator.dupe(u8, this.secretAccessKey) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.secretAccessKey))
             else
                 "",
 
             .region = if (this.region.len > 0)
-                bun.default_allocator.dupe(u8, this.region) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.region))
             else
                 "",
 
             .endpoint = if (this.endpoint.len > 0)
-                bun.default_allocator.dupe(u8, this.endpoint) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.endpoint))
             else
                 "",
 
             .bucket = if (this.bucket.len > 0)
-                bun.default_allocator.dupe(u8, this.bucket) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.bucket))
             else
                 "",
 
             .sessionToken = if (this.sessionToken.len > 0)
-                bun.default_allocator.dupe(u8, this.sessionToken) catch bun.outOfMemory()
+                bun.handleOom(bun.default_allocator.dupe(u8, this.sessionToken))
             else
                 "",
 
@@ -286,7 +275,7 @@ pub const S3Credentials = struct {
         bun.destroy(this);
     }
 
-    const log = bun.Output.scoped(.AWS, false);
+    const log = bun.Output.scoped(.AWS, .visible);
 
     const DateResult = struct {
         // numeric representation of year, month and day (excluding time components)
@@ -295,10 +284,10 @@ pub const S3Credentials = struct {
     };
 
     fn getAMZDate(allocator: std.mem.Allocator) DateResult {
-        // We can also use Date.now() but would be slower and would add JSC dependency
+        // We can also use Date.now() but would be slower and would add jsc dependency
         // var buffer: [28]u8 = undefined;
         // the code bellow is the same as new Date(Date.now()).toISOString()
-        // JSC.JSValue.getDateNowISOString(globalObject, &buffer);
+        // jsc.JSValue.getDateNowISOString(globalObject, &buffer);
 
         // Create UTC timestamp
         const secs: u64 = @intCast(@divFloor(std.time.milliTimestamp(), 1000));
@@ -327,7 +316,7 @@ pub const S3Credentials = struct {
                 hours,
                 minutes,
                 seconds,
-            }) catch bun.outOfMemory(),
+            }) catch |err| bun.handleOom(err),
         };
     }
 
@@ -509,7 +498,7 @@ pub const S3Credentials = struct {
 
         if (content_md5) |content_md5_val| {
             const len = bun.base64.encodeLen(content_md5_val);
-            const content_md5_as_base64 = bun.default_allocator.alloc(u8, len) catch bun.outOfMemory();
+            const content_md5_as_base64 = bun.handleOom(bun.default_allocator.alloc(u8, len));
             content_md5 = content_md5_as_base64[0..bun.base64.encode(content_md5_as_base64, content_md5_val)];
         }
 
@@ -765,7 +754,7 @@ pub const S3Credentials = struct {
 
             const sigDateRegionServiceReq = brk_sign: {
                 const key = try std.fmt.bufPrint(&tmp_buffer, "{s}{s}{s}", .{ region, service_name, this.secretAccessKey });
-                var cache = (JSC.VirtualMachine.getMainThreadVM() orelse JSC.VirtualMachine.get()).rareData().awsCache();
+                var cache = (jsc.VirtualMachine.getMainThreadVM() orelse jsc.VirtualMachine.get()).rareData().awsCache();
                 if (cache.get(date_result.numeric_day, key)) |cached| {
                     break :brk_sign cached;
                 }
@@ -796,7 +785,7 @@ pub const S3Credentials = struct {
                 const canonical = brk_canonical: {
                     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                     const allocator = stack_fallback.get();
-                    var query_parts: std.BoundedArray([]const u8, 10) = .{};
+                    var query_parts: bun.BoundedArray([]const u8, 10) = .{};
 
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class
 
@@ -838,7 +827,7 @@ pub const S3Credentials = struct {
                     break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\n\nhost\n{s}", .{ method_name, normalizedPath, query_string.items, host, aws_content_hash });
                 };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
-                bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
+                bun.sha.SHA256.hash(canonical, &sha_digest, jsc.VirtualMachine.get().rareData().boringEngine());
 
                 const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, std.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
@@ -847,7 +836,7 @@ pub const S3Credentials = struct {
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 var url_stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                 const url_allocator = url_stack_fallback.get();
-                var url_query_parts: std.BoundedArray([]const u8, 10) = .{};
+                var url_query_parts: bun.BoundedArray([]const u8, 10) = .{};
 
                 // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class, X-Amz-Signature
 
@@ -1030,7 +1019,7 @@ pub const S3Credentials = struct {
                     }
                 };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
-                bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
+                bun.sha.SHA256.hash(canonical, &sha_digest, jsc.VirtualMachine.get().rareData().boringEngine());
 
                 const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, std.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
@@ -1085,14 +1074,14 @@ pub const S3Credentials = struct {
         }
 
         if (session_token) |token| {
-            const session_token_value = bun.default_allocator.dupe(u8, token) catch bun.outOfMemory();
+            const session_token_value = bun.handleOom(bun.default_allocator.dupe(u8, token));
             result.session_token = session_token_value;
             result._headers[result._headers_len] = .{ .name = "x-amz-security-token", .value = session_token_value };
             result._headers_len += 1;
         }
 
         if (content_disposition) |cd| {
-            const content_disposition_value = bun.default_allocator.dupe(u8, cd) catch bun.outOfMemory();
+            const content_disposition_value = bun.handleOom(bun.default_allocator.dupe(u8, cd));
             result.content_disposition = content_disposition_value;
             result._headers[result._headers_len] = .{ .name = "Content-Disposition", .value = content_disposition_value };
             result._headers_len += 1;
@@ -1104,7 +1093,7 @@ pub const S3Credentials = struct {
         }
 
         if (content_md5) |c_md5| {
-            const content_md5_value = bun.default_allocator.dupe(u8, c_md5) catch bun.outOfMemory();
+            const content_md5_value = bun.handleOom(bun.default_allocator.dupe(u8, c_md5));
             result.content_md5 = content_md5_value;
             result._headers[result._headers_len] = .{ .name = "content-md5", .value = content_md5_value };
             result._headers_len += 1;
@@ -1123,12 +1112,12 @@ pub const S3CredentialsWithOptions = struct {
     changed_credentials: bool = false,
     /// indicates if the virtual hosted style is used
     virtual_hosted_style: bool = false,
-    _accessKeyIdSlice: ?JSC.ZigString.Slice = null,
-    _secretAccessKeySlice: ?JSC.ZigString.Slice = null,
-    _regionSlice: ?JSC.ZigString.Slice = null,
-    _endpointSlice: ?JSC.ZigString.Slice = null,
-    _bucketSlice: ?JSC.ZigString.Slice = null,
-    _sessionTokenSlice: ?JSC.ZigString.Slice = null,
+    _accessKeyIdSlice: ?jsc.ZigString.Slice = null,
+    _secretAccessKeySlice: ?jsc.ZigString.Slice = null,
+    _regionSlice: ?jsc.ZigString.Slice = null,
+    _endpointSlice: ?jsc.ZigString.Slice = null,
+    _bucketSlice: ?jsc.ZigString.Slice = null,
+    _sessionTokenSlice: ?jsc.ZigString.Slice = null,
 
     pub fn deinit(this: *@This()) void {
         if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -1139,3 +1128,13 @@ pub const S3CredentialsWithOptions = struct {
         if (this._sessionTokenSlice) |slice| slice.deinit();
     }
 };
+
+const std = @import("std");
+const ACL = @import("./acl.zig").ACL;
+const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
+const StorageClass = @import("./storage_class.zig").StorageClass;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const picohttp = bun.picohttp;
+const strings = bun.strings;

@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub fn OptionalChild(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     if (tyinfo != .pointer) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");
@@ -338,3 +335,42 @@ pub fn SliceChild(comptime T: type) type {
     }
     return T;
 }
+
+/// userland implementation of https://github.com/ziglang/zig/issues/21879
+pub fn useAllFields(comptime T: type, _: VoidFields(T)) void {}
+
+fn VoidFields(comptime T: type) type {
+    const fields = @typeInfo(T).@"struct".fields;
+    var new_fields = fields[0..fields.len].*;
+    for (&new_fields) |*field| {
+        field.type = void;
+        field.default_value_ptr = null;
+    }
+    return @Type(.{ .@"struct" = .{
+        .layout = .auto,
+        .fields = &new_fields,
+        .decls = &.{},
+        .is_tuple = false,
+    } });
+}
+
+pub fn voidFieldTypeDiscardHelper(data: anytype) void {
+    _ = data;
+}
+
+pub fn hasDecl(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, name),
+        else => false,
+    };
+}
+
+pub fn hasField(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum" => @hasField(T, name),
+        else => false,
+    };
+}
+
+const bun = @import("bun");
+const std = @import("std");

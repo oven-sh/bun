@@ -1,19 +1,3 @@
-const std = @import("std");
-const js_ast = bun.JSAst;
-const logger = bun.logger;
-const js_lexer = bun.js_lexer;
-const json_parser = bun.JSON;
-const fs = @import("fs.zig");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-
-const Ref = @import("ast/base.zig").Ref;
-
-const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
-const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;
-const table = @import("./defines-table.zig");
-
 const Globals = struct {
     pub const Undefined = js_ast.E.Undefined{};
     pub const UndefinedPtr = &Globals.Undefined;
@@ -259,7 +243,6 @@ pub const DotDefine = struct {
 
 // var nan_val = try allocator.create(js_ast.E.Number);
 const nan_val = js_ast.E.Number{ .value = std.math.nan(f64) };
-const inf_val = js_ast.E.Number{ .value = std.math.inf(f64) };
 
 pub const Define = struct {
     identifiers: bun.StringHashMap(IdentifierDefine),
@@ -346,6 +329,7 @@ pub const Define = struct {
                 .data = value_define.*,
             });
 
+            define.allocator.free(gpe.value_ptr.*);
             gpe.value_ptr.* = try list.toOwnedSlice();
         } else {
             var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
@@ -360,10 +344,13 @@ pub const Define = struct {
 
     pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray, drop_debugger: bool, omit_unused_global_calls: bool) bun.OOM!*@This() {
         const define = try allocator.create(Define);
-        define.allocator = allocator;
-        define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
-        define.dots = bun.StringHashMap([]DotDefine).init(allocator);
-        define.drop_debugger = drop_debugger;
+        errdefer allocator.destroy(define);
+        define.* = .{
+            .allocator = allocator,
+            .identifiers = bun.StringHashMap(IdentifierDefine).init(allocator),
+            .dots = bun.StringHashMap([]DotDefine).init(allocator),
+            .drop_debugger = drop_debugger,
+        };
         try define.dots.ensureTotalCapacity(124);
 
         const value_define = &DefineData{
@@ -413,4 +400,30 @@ pub const Define = struct {
 
         return define;
     }
+
+    pub fn deinit(this: *Define) void {
+        var diter = this.dots.valueIterator();
+        while (diter.next()) |key| this.allocator.free(key.*);
+        this.dots.clearAndFree();
+        this.identifiers.clearAndFree();
+        this.allocator.destroy(this);
+    }
 };
+
+const string = []const u8;
+
+const fs = @import("./fs.zig");
+const std = @import("std");
+
+const table = @import("./defines-table.zig");
+const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;
+const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
+
+const bun = @import("bun");
+const js_lexer = bun.js_lexer;
+const json_parser = bun.json;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const js_ast = bun.ast;
+const Ref = bun.ast.Ref;

@@ -2,12 +2,10 @@ pub const PrepareCssAstTask = struct {
     task: ThreadPoolLib.Task,
     chunk: *Chunk,
     linker: *LinkerContext,
-    wg: *sync.WaitGroup,
 };
 
 pub fn prepareCssAstsForChunk(task: *ThreadPoolLib.Task) void {
     const prepare_css_asts: *const PrepareCssAstTask = @fieldParentPtr("task", task);
-    defer prepare_css_asts.wg.finish();
     var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", prepare_css_asts.linker));
     defer worker.unget();
 
@@ -35,7 +33,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                                 .names = bun.css.SmallList(bun.css.LayerName, 1).fromBabyListNoDeinit(layers.inner().*),
                                 .loc = bun.css.Location.dummy(),
                             },
-                        }) catch bun.outOfMemory();
+                        }) catch |err| bun.handleOom(err);
                     }
                     var ast = bun.css.BundlerStyleSheet{
                         .rules = rules,
@@ -52,10 +50,10 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                     var conditions: ?*bun.css.ImportConditions = null;
                     if (entry.conditions.len > 0) {
                         conditions = entry.conditions.mut(0);
-                        entry.condition_import_records.push(
+                        entry.condition_import_records.append(
                             allocator,
                             bun.ImportRecord{ .kind = .at, .path = p.*, .range = Logger.Range{} },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
 
                         // Handling a chain of nested conditions is complicated. We can't
                         // necessarily join them together because a) there may be multiple
@@ -84,7 +82,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                                     import_rule.conditionsMut().* = entry.conditions.at(j).*;
                                     rules.v.append(allocator, bun.css.BundlerCssRule{
                                         .import = import_rule,
-                                    }) catch bun.outOfMemory();
+                                    }) catch |err| bun.handleOom(err);
                                     break :rules rules;
                                 },
                                 .composes = .{},
@@ -109,7 +107,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                             )) {
                                 .result => |v| v,
                                 .err => |e| {
-                                    c.log.addErrorFmt(null, Loc.Empty, c.allocator, "Error generating CSS for import: {}", .{e}) catch bun.outOfMemory();
+                                    bun.handleOom(c.log.addErrorFmt(null, Loc.Empty, c.allocator(), "Error generating CSS for import: {}", .{e}));
                                     continue;
                                 },
                             };
@@ -120,11 +118,11 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                     var empty_conditions = bun.css.ImportConditions{};
                     const actual_conditions = if (conditions) |cc| cc else &empty_conditions;
 
-                    entry.condition_import_records.push(allocator, bun.ImportRecord{
+                    entry.condition_import_records.append(allocator, bun.ImportRecord{
                         .kind = .at,
                         .path = p.*,
                         .range = Logger.Range.none,
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
 
                     chunk.content.css.asts[i] = bun.css.BundlerStyleSheet{
                         .rules = rules: {
@@ -133,7 +131,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                             import_rule.conditionsMut().* = actual_conditions.*;
                             rules.v.append(allocator, bun.css.BundlerCssRule{
                                 .import = import_rule,
-                            }) catch bun.outOfMemory();
+                            }) catch |err| bun.handleOom(err);
                             break :rules rules;
                         },
                         .sources = .{},
@@ -223,7 +221,7 @@ fn wrapRulesWithConditions(
                             .loc = bun.css.Location.dummy(),
                         },
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
 
                 break :brk new_rules;
             };
@@ -244,7 +242,7 @@ fn wrapRulesWithConditions(
                             .rules = ast.rules,
                             .loc = bun.css.Location.dummy(),
                         },
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
                     break :brk new_rules;
                 };
             }
@@ -261,28 +259,28 @@ fn wrapRulesWithConditions(
                         .rules = ast.rules,
                         .loc = bun.css.Location.dummy(),
                     },
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
                 break :brk new_rules;
             };
         }
     }
 }
 
-const bun = @import("bun");
-const BabyList = bun.BabyList;
-const DataURL = bun.bundle_v2.DataURL;
-const Logger = bun.logger;
-const Loc = Logger.Loc;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPoolLib = bun.ThreadPool;
-
-const std = @import("std");
-const sync = bun.ThreadPool;
-const ImportRecord = bun.ImportRecord;
-
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const ImportRecord = bun.ImportRecord;
+const ThreadPoolLib = bun.ThreadPool;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
+const DataURL = bun.bundle_v2.DataURL;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+
+const Logger = bun.logger;
+const Loc = Logger.Loc;

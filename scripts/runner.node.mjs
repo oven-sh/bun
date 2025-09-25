@@ -28,9 +28,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { userInfo } from "node:os";
+import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
+import { createInterface } from "node:readline";
+import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import pLimit from "./p-limit.mjs";
 import {
   getAbi,
   getAbiVersion,
@@ -63,21 +66,26 @@ import {
   unzip,
   uploadArtifact,
 } from "./utils.mjs";
+
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
+const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
-const napiTimeout = 10 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
     return 90_000;
   }
-  return 10_000;
+  return 20_000;
 }
+
+process.on("SIGTRAP", () => {
+  console.warn("Test runner received SIGTRAP. Doing nothing.");
+});
 
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
@@ -153,6 +161,10 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: isBuildkite && isLinux,
     },
+    ["parallel"]: {
+      type: "boolean",
+      default: false,
+    },
   },
 });
 
@@ -170,6 +182,56 @@ if (cliOptions.junit) {
 if (options["quiet"]) {
   isQuiet = true;
 }
+
+let newFiles = [];
+let prFileCount = 0;
+if (isBuildkite) {
+  try {
+    console.log("on buildkite: collecting new files from PR");
+    const per_page = 50;
+    for (let i = 1; i <= 5; i++) {
+      const res = await fetch(
+        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+        {
+          headers: {
+            Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
+          },
+        },
+      );
+      const doc = await res.json();
+      console.log(`-> page ${i}, found ${doc.length} items`);
+      if (doc.length === 0) break;
+      if (doc.length < per_page) break;
+      for (const { filename, status } of doc) {
+        prFileCount += 1;
+        if (status !== "added") continue;
+        newFiles.push(filename);
+      }
+    }
+    console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+let coresDir;
+
+if (options["coredump-upload"]) {
+  // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
+  const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
+  coresDir = sysctl.stdout;
+  if (sysctl.ok) {
+    if (coresDir.startsWith("|")) {
+      throw new Error("cores are being piped not saved");
+    }
+    // change /foo/bar/%e-%p.core to /foo/bar
+    coresDir = dirname(sysctl.stdout);
+  } else {
+    throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
+  }
+}
+
+let remapPort = undefined;
 
 /**
  * @typedef {Object} TestExpectation
@@ -237,8 +299,19 @@ function getTestExpectations() {
   return expectations;
 }
 
-const skipArray = (() => {
+const skipsForExceptionValidation = (() => {
   const path = join(cwd, "test/no-validate-exceptions.txt");
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => !line.startsWith("#") && line.length > 0);
+})();
+
+const skipsForLeaksan = (() => {
+  const path = join(cwd, "test/no-validate-leaksan.txt");
   if (!existsSync(path)) {
     return [];
   }
@@ -253,7 +326,16 @@ const skipArray = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipArray.includes(test) || skipArray.includes("test/" + test));
+  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+};
+
+/**
+ * Returns whether we should validate exception checks running the given test
+ * @param {string} test
+ * @returns {boolean}
+ */
+const shouldValidateLeakSan = test => {
+  return !(skipsForLeaksan.includes(test) || skipsForLeaksan.includes("test/" + test));
 };
 
 /**
@@ -338,8 +420,14 @@ async function runTests() {
 
   const okResults = [];
   const flakyResults = [];
+  const flakyResultsTitles = [];
   const failedResults = [];
+  const failedResultsTitles = [];
   const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
+
+  const parallelism = options["parallel"] ? availableParallelism() : 1;
+  console.log("parallelism", parallelism);
+  const limit = pLimit(parallelism);
 
   /**
    * @param {string} title
@@ -350,22 +438,27 @@ async function runTests() {
     const index = ++i;
 
     let result, failure, flaky;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let attempt = 1;
+    for (; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
 
-      result = await startGroup(
-        attempt === 1
-          ? `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`
-          : `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title} ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`,
-        fn,
-      );
+      let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
+      if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
+
+      if (parallelism > 1) {
+        console.log(grouptitle);
+        result = await fn();
+      } else {
+        result = await startGroup(grouptitle, fn);
+      }
 
       const { ok, stdoutPreview, error } = result;
       if (ok) {
         if (failure) {
           flakyResults.push(failure);
+          flakyResultsTitles.push(title);
         } else {
           okResults.push(result);
         }
@@ -375,6 +468,7 @@ async function runTests() {
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
+        if (parallelism > 1) return;
         process.stderr.write(stdoutPreview);
       });
 
@@ -384,6 +478,8 @@ async function runTests() {
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
+        failedResultsTitles.push(title);
+        break;
       }
     }
 
@@ -395,14 +491,15 @@ async function runTests() {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
       const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
-        const content = formatTestToMarkdown({ ...failure, testPath: title });
+        const content = formatTestToMarkdown({ ...failure, testPath: title }, false, attempt - 1);
         if (content) {
           reportAnnotationToBuildKite({ context, label: title, content, style });
         }
       } else {
-        const content = formatTestToMarkdown(failure);
+        const content = formatTestToMarkdown(failure, false, attempt - 1);
         if (content) {
           reportAnnotationToBuildKite({ context, label: title, content, style });
         }
@@ -412,10 +509,10 @@ async function runTests() {
     if (isGithubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
       if (summaryPath) {
-        const longMarkdown = formatTestToMarkdown(failure);
+        const longMarkdown = formatTestToMarkdown(failure, false, attempt - 1);
         appendFileSync(summaryPath, longMarkdown);
       }
-      const shortMarkdown = formatTestToMarkdown(failure, true);
+      const shortMarkdown = formatTestToMarkdown(failure, true, attempt - 1);
       appendFileSync("comment.md", shortMarkdown);
     }
 
@@ -434,48 +531,111 @@ async function runTests() {
   }
 
   if (!failedResults.length) {
-    for (const testPath of tests) {
-      const absoluteTestPath = join(testsPath, testPath);
-      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
-      if (isNodeTest(testPath)) {
-        const testContent = readFileSync(absoluteTestPath, "utf-8");
-        const runWithBunTest =
-          title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
-        const subcommand = runWithBunTest ? "test" : "run";
-        const env = {
-          FORCE_COLOR: "0",
-          NO_COLOR: "1",
-          BUN_DEBUG_QUIET_LOGS: "1",
-        };
-        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
-          env.BUN_JSC_validateExceptionChecks = "1";
-        }
-        await runTest(title, async () => {
-          const { ok, error, stdout } = await spawnBun(execPath, {
-            cwd: cwd,
-            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
-            timeout: getNodeParallelTestTimeout(title),
-            env,
-            stdout: chunk => pipeTestStdout(process.stdout, chunk),
-            stderr: chunk => pipeTestStdout(process.stderr, chunk),
-          });
-          const mb = 1024 ** 3;
-          const stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
-          return {
-            testPath: title,
-            ok: ok,
-            status: ok ? "pass" : "fail",
-            error: error,
-            errors: [],
-            tests: [],
-            stdout: stdout,
-            stdoutPreview: stdoutPreview,
-          };
-        });
+    // TODO: remove windows exclusion here
+    if (isCI && !isWindows) {
+      // bun install has succeeded
+      const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
+      const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
+      console.log("run in", cwd);
+      let exiting = false;
+
+      const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
+        stdio: ["ignore", "pipe", "inherit"],
+        cwd, // run in main repo
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
+      });
+      server.unref();
+      server.on("error", errorResolve);
+      server.on("exit", (code, signal) => {
+        if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
+      });
+      function onBeforeExit() {
+        exiting = true;
+        server.off("error");
+        server.off("exit");
+        server.kill?.();
+      }
+      process.once("beforeExit", onBeforeExit);
+      const lines = createInterface(server.stdout);
+      lines.on("line", line => {
+        portResolve({ port: parseInt(line) });
+      });
+
+      const result = await Promise.race([portPromise, errorPromise.catch(e => e), setTimeoutPromise(5000, "timeout")]);
+      if (typeof result?.port != "number") {
+        process.off("beforeExit", onBeforeExit);
+        server.kill?.();
+        console.warn("ci-remap server did not start:", result);
       } else {
-        await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
+        console.log("crash reports parsed on port", result.port);
+        remapPort = result.port;
       }
     }
+
+    await Promise.all(
+      tests.map(testPath =>
+        limit(() => {
+          const absoluteTestPath = join(testsPath, testPath);
+          const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+          if (isNodeTest(testPath)) {
+            const testContent = readFileSync(absoluteTestPath, "utf-8");
+            const runWithBunTest =
+              title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
+            const subcommand = runWithBunTest ? "test" : "run";
+            const env = {
+              FORCE_COLOR: "0",
+              NO_COLOR: "1",
+              BUN_DEBUG_QUIET_LOGS: "1",
+            };
+            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+              env.BUN_JSC_validateExceptionChecks = "1";
+              env.BUN_JSC_dumpSimulatedThrows = "1";
+            }
+            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+              env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
+              // prettier-ignore
+              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+            }
+            return runTest(title, async () => {
+              const { ok, error, stdout, crashes } = await spawnBun(execPath, {
+                cwd: cwd,
+                args: [
+                  subcommand,
+                  "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
+                  absoluteTestPath,
+                ],
+                timeout: getNodeParallelTestTimeout(title),
+                env,
+                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              });
+              const mb = 1024 ** 3;
+              let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+              if (crashes) stdoutPreview += crashes;
+              return {
+                testPath: title,
+                ok: ok,
+                status: ok ? "pass" : "fail",
+                error: error,
+                errors: [],
+                tests: [],
+                stdout: stdout,
+                stdoutPreview: stdoutPreview,
+              };
+            });
+          } else {
+            return runTest(title, async () =>
+              spawnBunTest(execPath, join("test", testPath), {
+                cwd,
+                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
+                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
+              }),
+            );
+          }
+        }),
+      ),
+    );
   }
 
   if (vendorTests?.length) {
@@ -492,6 +652,16 @@ async function runTests() {
         }
       } else {
         throw new Error(`Unsupported package manager: ${packageManager}`);
+      }
+
+      // build
+      const buildResult = await spawnBun(execPath, {
+        cwd: vendorPath,
+        args: ["run", "build"],
+        timeout: 60_000,
+      });
+      if (!buildResult.ok) {
+        throw new Error(`Failed to build vendor: ${buildResult.error}`);
       }
 
       for (const testPath of testPaths) {
@@ -515,9 +685,12 @@ async function runTests() {
     }
   }
 
+  // tests are all over, close the group from the final test. any further output should print ungrouped.
+  startGroup("End");
+
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
-    const markdown = formatTestToMarkdown(failedResults);
+    const markdown = formatTestToMarkdown(failedResults, false, 0);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
@@ -612,19 +785,6 @@ async function runTests() {
 
   if (options["coredump-upload"]) {
     try {
-      // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
-      const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
-      let coresDir = sysctl.stdout;
-      if (sysctl.ok) {
-        if (coresDir.startsWith("|")) {
-          throw new Error("cores are being piped not saved");
-        }
-        // change /foo/bar/%e-%p.core to /foo/bar
-        coresDir = dirname(sysctl.stdout);
-      } else {
-        throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
-      }
-
       const coresDirBase = dirname(coresDir);
       const coresDirName = basename(coresDir);
       const coreFileNames = readdirSync(coresDir);
@@ -692,14 +852,14 @@ async function runTests() {
 
     if (failedResults.length) {
       console.log(`${getAnsi("red")}Failing Tests:${getAnsi("reset")}`);
-      for (const { testPath } of failedResults) {
+      for (const testPath of failedResultsTitles) {
         console.log(`${getAnsi("red")}- ${testPath}${getAnsi("reset")}`);
       }
     }
 
     if (flakyResults.length) {
       console.log(`${getAnsi("yellow")}Flaky Tests:${getAnsi("reset")}`);
-      for (const { testPath } of flakyResults) {
+      for (const testPath of flakyResultsTitles) {
         console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
       }
     }
@@ -730,6 +890,7 @@ async function runTests() {
  * @property {number} timestamp
  * @property {number} duration
  * @property {string} stdout
+ * @property {number} [pid]
  */
 
 /**
@@ -780,6 +941,25 @@ async function spawnSafe(options) {
   };
   await new Promise(resolve => {
     try {
+      function unsafeBashEscape(str) {
+        if (!str) return "";
+        if (str.includes(" ")) return JSON.stringify(str);
+        return str;
+      }
+      if (process.env.SHOW_SPAWN_COMMANDS) {
+        console.log(
+          "SPAWNING COMMAND:\n" +
+            [
+              "echo -n | " +
+                Object.entries(env)
+                  .map(([key, value]) => `${unsafeBashEscape(key)}=${unsafeBashEscape(value)}`)
+                  .join(" "),
+              unsafeBashEscape(command),
+              ...args.map(unsafeBashEscape),
+            ].join(" ") +
+            " | cat",
+        );
+      }
       subprocess = spawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout,
@@ -891,6 +1071,7 @@ async function spawnSafe(options) {
     stdout: buffer,
     timestamp: timestamp || Date.now(),
     duration: duration || 0,
+    pid: subprocess?.pid,
   };
 }
 
@@ -920,9 +1101,15 @@ function getCombinedPath(execPath) {
 }
 
 /**
+ * @typedef {object} SpawnBunResult
+ * @extends SpawnResult
+ * @property {string} [crashes]
+ */
+
+/**
  * @param {string} execPath Path to bun binary
  * @param {SpawnOptions} options
- * @returns {Promise<SpawnResult>}
+ * @returns {Promise<SpawnBunResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const path = getCombinedPath(execPath);
@@ -941,16 +1128,14 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_DEBUG_QUIET_LOGS: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
-    BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+    ...(typeof remapPort == "number"
+      ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
+      : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
-
-  if (basename(execPath).includes("asan")) {
-    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
-  }
 
   if (isWindows && bunEnv.Path) {
     delete bunEnv.Path;
@@ -968,8 +1153,12 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     }
     bunEnv["TEMP"] = tmpdirPath;
   }
+  if (timeout === undefined) {
+    timeout = spawnBunTimeout;
+  }
   try {
-    return await spawnSafe({
+    const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];
+    const result = await spawnSafe({
       command: execPath,
       args,
       cwd,
@@ -978,6 +1167,87 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stdout,
       stderr,
     });
+    const newCores = options["coredump-upload"] ? readdirSync(coresDir).filter(c => !existingCores.includes(c)) : [];
+    let crashes = "";
+    if (options["coredump-upload"] && (result.signalCode !== null || newCores.length > 0)) {
+      // warn if the main PID crashed and we don't have a core
+      if (result.signalCode !== null && !newCores.some(c => c.endsWith(`${result.pid}.core`))) {
+        crashes += `main process killed by ${result.signalCode} but no core file found\n`;
+      }
+
+      if (newCores.length > 0) {
+        result.ok = false;
+        if (!isAlwaysFailure(result.error)) result.error = "core dumped";
+      }
+
+      for (const coreName of newCores) {
+        const corePath = join(coresDir, coreName);
+        let out = "";
+        const gdb = await spawnSafe({
+          command: "gdb",
+          args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
+          timeout: 240_000,
+          stderr: () => {},
+          stdout(text) {
+            out += text;
+          },
+        });
+        if (!gdb.ok) {
+          crashes += `failed to get backtrace from GDB: ${gdb.error}\n`;
+        } else {
+          crashes += `======== Stack trace from GDB for ${coreName}: ========\n`;
+          for (const line of out.split("\n")) {
+            // filter GDB output since it is pretty verbose
+            if (
+              line.startsWith("Program terminated") ||
+              line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
+              line.startsWith("[Current thread is")
+            ) {
+              crashes += line + "\n";
+            }
+          }
+        }
+      }
+    }
+
+    // Skip this if the remap server didn't work or if Bun exited normally
+    // (tests in which a subprocess crashed should at least set exit code 1)
+    if (typeof remapPort == "number" && result.exitCode !== 0) {
+      try {
+        // When Bun crashes, it exits before the subcommand it runs to upload the crash report has necessarily finished.
+        // So wait a little bit to make sure that the crash report has at least started uploading
+        // (once the server sees the /ack request then /traces will wait for any crashes to finish processing)
+        // There is a bug that if a test causes crash reports but exits with code 0, the crash reports will instead
+        // be attributed to the next test that fails. I'm not sure how to fix this without adding a sleep in between
+        // all tests (which would slow down CI a lot).
+        await setTimeoutPromise(500);
+        const response = await fetch(`http://localhost:${remapPort}/traces`);
+        if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
+        const traces = await response.json();
+        if (traces.length > 0) {
+          result.ok = false;
+          if (!isAlwaysFailure(result.error)) result.error = "crash reported";
+
+          crashes += `${traces.length} crashes reported during this test\n`;
+          for (const t of traces) {
+            if (t.failed_parse) {
+              crashes += "Trace string failed to parse:\n";
+              crashes += t.failed_parse + "\n";
+            } else if (t.failed_remap) {
+              crashes += "Parsed trace failed to remap:\n";
+              crashes += JSON.stringify(t.failed_remap, null, 2) + "\n";
+            } else {
+              crashes += "================\n";
+              crashes += t.remap + "\n";
+            }
+          }
+        }
+      } catch (e) {
+        crashes += "failed to fetch traces: " + e.toString() + "\n";
+      }
+    }
+    if (crashes.length > 0) result.crashes = crashes;
+    return result;
   } finally {
     try {
       rmSync(tmpdirPath, { recursive: true, force: true });
@@ -1022,17 +1292,17 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  *
  * @param {string} execPath
  * @param {string} testPath
- * @param {object} [options]
- * @param {string} [options.cwd]
- * @param {string[]} [options.args]
+ * @param {object} [opts]
+ * @param {string} [opts.cwd]
+ * @param {string[]} [opts.args]
  * @returns {Promise<TestResult>}
  */
-async function spawnBunTest(execPath, testPath, options = { cwd }) {
+async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
-  const absPath = join(options["cwd"], testPath);
+  const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
-  const args = options["args"] ?? [];
+  const args = opts["args"] ?? [];
 
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
 
@@ -1059,19 +1329,27 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
   };
-  if (basename(execPath).includes("asan") && shouldValidateExceptions(relative(cwd, absPath))) {
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
+    env.BUN_JSC_dumpSimulatedThrows = "1";
+  }
+  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
+    env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
+    // prettier-ignore
+    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
 
-  const { ok, error, stdout } = await spawnBun(execPath, {
+  const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
-    cwd: options["cwd"],
+    cwd: opts["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env,
-    stdout: chunk => pipeTestStdout(process.stdout, chunk),
-    stderr: chunk => pipeTestStdout(process.stderr, chunk),
+    stdout: options.stdout,
+    stderr: options.stderr,
   });
-  const { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
+  let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
+  if (crashes) stdoutPreview += crashes;
 
   // If we generated a JUnit file and we're on BuildKite, upload it immediately
   if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
@@ -1100,9 +1378,6 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
-  }
-  if (/napi/i.test(testPath) || /v8/i.test(testPath)) {
-    return napiTimeout;
   }
   return testTimeout;
 }
@@ -1246,11 +1521,12 @@ function parseTestStdout(stdout, testPath) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunInstall(execPath, options) {
-  const { ok, error, stdout, duration } = await spawnBun(execPath, {
+  let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
     timeout: testTimeout,
     ...options,
   });
+  if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
   const testPath = join(relativePath, "package.json");
   const status = ok ? "pass" : "fail";
@@ -1300,7 +1576,11 @@ function isNodeTest(path) {
     return false;
   }
   const unixPath = path.replaceAll(sep, "/");
-  return unixPath.includes("js/node/test/parallel/") || unixPath.includes("js/node/test/sequential/");
+  return (
+    unixPath.includes("js/node/test/parallel/") ||
+    unixPath.includes("js/node/test/sequential/") ||
+    unixPath.includes("js/bun/test/parallel/")
+  );
 }
 
 /**
@@ -1417,20 +1697,30 @@ async function getVendorTests(cwd) {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
-          await spawnSafe({
+          const { ok, error } = await spawnSafe({
             command: "git",
             args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
             timeout: testTimeout,
             cwd,
           });
+          if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
         }
 
-        await spawnSafe({
+        let { ok, error } = await spawnSafe({
           command: "git",
           args: ["fetch", "--depth", "1", "origin", "tag", tag],
           timeout: testTimeout,
           cwd: vendorPath,
         });
+        if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
+
+        ({ ok, error } = await spawnSafe({
+          command: "git",
+          args: ["checkout", tag],
+          timeout: testTimeout,
+          cwd: vendorPath,
+        }));
+        if (!ok) throw new Error(`failed to checkout tag ${tag} for vendor '${name}': ${error}`);
 
         const packageJsonPath = join(vendorPath, "package.json");
         if (!existsSync(packageJsonPath)) {
@@ -1731,9 +2021,10 @@ function getTestLabel() {
 /**
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
+ * @param  {number} retries
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise) {
+function formatTestToMarkdown(result, concise, retries) {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -1776,6 +2067,12 @@ function formatTestToMarkdown(result, concise) {
     }
     if (platform) {
       markdown += ` on ${platform}`;
+    }
+    if (retries > 0) {
+      markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
+    }
+    if (newFiles.includes(testTitle)) {
+      markdown += ` (new)`;
     }
 
     if (concise) {
@@ -1972,7 +2269,7 @@ function getExitCode(outcome) {
   return 1;
 }
 
-// A flaky segfault, sigtrap, or sigill must never be ignored.
+// A flaky segfault, sigtrap, or sigkill must never be ignored.
 // If it happens in CI, it will happen to our users.
 // Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
 function isAlwaysFailure(error) {
@@ -1981,7 +2278,11 @@ function isAlwaysFailure(error) {
     error.includes("segmentation fault") ||
     error.includes("illegal instruction") ||
     error.includes("sigtrap") ||
-    error.includes("error: addresssanitizer")
+    error.includes("sigkill") ||
+    error.includes("error: addresssanitizer") ||
+    error.includes("internal assertion failure") ||
+    error.includes("core dumped") ||
+    error.includes("crash reported")
   );
 }
 

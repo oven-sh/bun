@@ -10,10 +10,18 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             did_have_handshaking_error_while_reject_unauthorized_is_false: bool = false,
         };
 
-        pub fn markSocketAsDead(socket: HTTPSocket) void {
-            if (socket.ext(**anyopaque)) |ctx| {
-                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+        pub fn markTaggedSocketAsDead(socket: HTTPSocket, tagged: ActiveSocket) void {
+            if (tagged.is(PooledSocket)) {
+                Handler.addMemoryBackToPool(tagged.as(PooledSocket));
             }
+
+            if (socket.ext(**anyopaque)) |ctx| {
+                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(dead_socket).ptr());
+            }
+        }
+
+        pub fn markSocketAsDead(socket: HTTPSocket) void {
+            markTaggedSocketAsDead(socket, getTaggedFromSocket(socket));
         }
 
         pub fn terminateSocket(socket: HTTPSocket) void {
@@ -34,7 +42,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (socket.ext(anyopaque)) |ctx| {
                 return getTagged(ctx);
             }
-            return ActiveSocket.init(&dead_socket);
+            return ActiveSocket.init(dead_socket);
         }
 
         pub const PooledSocketHiveAllocator = bun.HiveArray(PooledSocket, pool_size);
@@ -54,7 +62,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         const ActiveSocket = TaggedPointerUnion(.{
-            *DeadSocket,
+            DeadSocket,
             HTTPClient,
             PooledSocket,
         });
@@ -208,11 +216,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     }
                 }
 
-                if (active.get(PooledSocket)) |pooled| {
-                    addMemoryBackToPool(pooled);
-                    return;
-                }
-
                 log("Unexpected open on unknown socket", .{});
                 terminateSocket(socket);
             }
@@ -268,9 +271,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
                 if (socket.isClosed()) {
                     markSocketAsDead(socket);
-                    if (active.get(PooledSocket)) |pooled| {
-                        addMemoryBackToPool(pooled);
-                    }
 
                     return;
                 }
@@ -282,10 +282,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         socket.setTimeoutMinutes(5);
                         return;
                     }
-                }
-
-                if (active.get(PooledSocket)) |pooled| {
-                    addMemoryBackToPool(pooled);
                 }
 
                 terminateSocket(socket);
@@ -302,12 +298,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onClose(comptime ssl, socket);
                 }
-
-                if (tagged.get(PooledSocket)) |pooled| {
-                    addMemoryBackToPool(pooled);
-                }
-
-                return;
             }
 
             fn addMemoryBackToPool(pooled: *PooledSocket) void {
@@ -366,10 +356,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onTimeout(comptime ssl, socket);
-                } else if (tagged.get(PooledSocket)) |pooled| {
-                    // If a socket has been sitting around for 5 minutes
-                    // Let's close it and remove it from the pool.
-                    addMemoryBackToPool(pooled);
                 }
 
                 terminateSocket(socket);
@@ -380,16 +366,14 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 _: c_int,
             ) void {
                 const tagged = getTagged(ptr);
-                markSocketAsDead(socket);
+                markTaggedSocketAsDead(socket, tagged);
                 if (tagged.get(HTTPClient)) |client| {
                     client.onConnectError();
-                } else if (tagged.get(PooledSocket)) |pooled| {
-                    addMemoryBackToPool(pooled);
                 }
                 // us_connecting_socket_close is always called internally by uSockets
             }
             pub fn onEnd(
-                _: *anyopaque,
+                ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
                 // TCP fin must be closed, but we must keep the original tagged
@@ -399,7 +383,14 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 // 1. HTTP Keep-Alive socket: it must be removed from the pool
                 // 2. HTTP Client socket: it might need to be retried
                 // 3. Dead socket: it is already marked as dead
+                const tagged = getTagged(ptr);
+                markTaggedSocketAsDead(socket, tagged);
                 socket.close(.failure);
+
+                if (tagged.get(HTTPClient)) |client| {
+                    client.onClose(comptime ssl, socket);
+                    return;
+                }
             }
         };
 
@@ -488,19 +479,26 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
     };
 }
+
+const DeadSocket = struct {
+    garbage: u8 = 0,
+    pub var dead_socket: DeadSocket = .{};
+};
+
+var dead_socket = &DeadSocket.dead_socket;
+const log = bun.Output.scoped(.HTTPContext, .hidden);
+
+const HTTPCertError = @import("./HTTPCertError.zig");
+const HTTPThread = @import("./HTTPThread.zig");
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+
 const bun = @import("bun");
-const uws = bun.uws;
-const BoringSSL = bun.BoringSSL.c;
-const strings = bun.strings;
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const assert = bun.assert;
-const HTTPThread = @import("./HTTPThread.zig");
-const HTTPCertError = @import("./HTTPCertError.zig");
+const strings = bun.strings;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL.c;
+
 const HTTPClient = bun.http;
 const InitError = HTTPClient.InitError;
-const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
-
-const DeadSocket = opaque {};
-var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
-const log = bun.Output.scoped(.HTTPContext, true);

@@ -7,8 +7,6 @@ pub fn DecoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
     };
 }
 
-// @sortImports
-
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 
 const NewReader = @import("./NewReader.zig").NewReader;

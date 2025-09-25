@@ -1,3 +1,5 @@
+const Tree = @This();
+
 id: Id = invalid_id,
 
 // Should not be used for anything other than name
@@ -244,6 +246,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
+        packages_to_install: if (method == .filter) ?[]const PackageID else void,
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -337,15 +340,15 @@ pub fn isFilteredDependencyOrWorkspace(
     const res = &pkg_resolutions[pkg_id];
     const parent_res = &pkg_resolutions[parent_pkg_id];
 
-    if (pkg_metas[pkg_id].isDisabled()) {
+    if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os)) {
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
             const name = lockfile.str(&pkg_names[pkg_id]);
-            if (!meta.os.isMatch() and !meta.arch.isMatch()) {
+            if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & os mismatch<r>", .{name});
-            } else if (!meta.os.isMatch()) {
+            } else if (!meta.os.isMatch(manager.options.os)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os mismatch<r>", .{name});
-            } else if (!meta.arch.isMatch()) {
+            } else if (!meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu mismatch<r>", .{name});
             }
         }
@@ -490,6 +493,22 @@ pub fn processSubtree(
             )) {
                 continue;
             }
+
+            if (builder.packages_to_install) |packages_to_install| {
+                if (parent_pkg_id == 0) {
+                    var found = false;
+                    for (packages_to_install) |package_to_install| {
+                        if (pkg_id == package_to_install) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        continue;
+                    }
+                }
+            }
         }
 
         const hoisted: HoistDependencyResult = hoisted: {
@@ -519,7 +538,7 @@ pub fn processSubtree(
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
             .placement => |dest| {
-                dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
+                bun.handleOom(dependency_lists[dest.id].append(builder.allocator, dep_id));
                 trees[dest.id].dependencies.len += 1;
                 if (builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{
@@ -640,33 +659,36 @@ pub const FillItem = struct {
 
 pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
 
-const Allocator = std.mem.Allocator;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Dependency = install.Dependency;
-const DependencyID = install.DependencyID;
-const DependencyIDList = Lockfile.DependencyIDList;
-const Environment = bun.Environment;
-const ExternalSlice = Lockfile.ExternalSlice;
-const Lockfile = install.Lockfile;
-const OOM = bun.OOM;
-const Output = bun.Output;
-const PackageID = install.PackageID;
-const PackageIDSlice = Lockfile.PackageIDSlice;
-const PackageManager = bun.install.PackageManager;
-const PackageNameHash = install.PackageNameHash;
-const Path = bun.path;
-const Resolution = install.Resolution;
-const String = bun.Semver.String;
-const Tree = @This();
-const WorkspaceFilter = install.PackageManager.WorkspaceFilter;
-const assert = bun.assert;
-const install = bun.install;
-const invalid_dependency_id = install.invalid_dependency_id;
-const invalid_package_id = install.invalid_package_id;
-const logger = bun.logger;
 const string = []const u8;
-const stringZ = bun.stringZ;
-const z_allocator = bun.z_allocator;
+const stringZ = [:0]const u8;
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
-const std = @import("std");
+const Environment = bun.Environment;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Path = bun.path;
+const assert = bun.assert;
+const logger = bun.logger;
+const z_allocator = bun.z_allocator;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const Dependency = install.Dependency;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
+const PackageNameHash = install.PackageNameHash;
+const Resolution = install.Resolution;
+const invalid_dependency_id = install.invalid_dependency_id;
+const invalid_package_id = install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
+const DependencyIDList = Lockfile.DependencyIDList;
+const ExternalSlice = Lockfile.ExternalSlice;
+const PackageIDSlice = Lockfile.PackageIDSlice;
+
+const PackageManager = bun.install.PackageManager;
+const WorkspaceFilter = install.PackageManager.WorkspaceFilter;

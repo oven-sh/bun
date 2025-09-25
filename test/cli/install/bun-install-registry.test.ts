@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
@@ -26,8 +26,6 @@ import {
 } from "harness";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
-const { iniInternals } = require("bun:internal-for-testing");
-const { loadNpmrc } = iniInternals;
 
 expect.extend({
   toBeValidBin,
@@ -43,12 +41,10 @@ var packageJson: string;
 
 let users: Record<string, string> = {};
 
-beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 5);
-  registry = new VerdaccioRegistry();
-  port = registry.port;
-  await registry.start();
-});
+setDefaultTimeout(1000 * 60 * 5);
+registry = new VerdaccioRegistry();
+port = registry.port;
+await registry.start();
 
 afterAll(async () => {
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
@@ -8483,6 +8479,81 @@ describe("outdated", () => {
     const out = await runBunOutdated(env, packageDir, "--filter", "*");
     expect(out).toContain("no-deps");
     expect(out).toContain("a-dep");
+  });
+
+  test("--recursive flag for outdated", async () => {
+    // First verify the flag appears in help
+    const {
+      stdout: helpOut,
+      stderr: helpErr,
+      exited: helpExited,
+    } = spawn({
+      cmd: [bunExe(), "outdated", "--help"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const help = (await new Response(helpOut).text()) + (await new Response(helpErr).text());
+    expect(await helpExited).toBe(0);
+    expect(help).toContain("--recursive");
+    expect(help).toContain("-r");
+
+    // Setup workspace
+    await setupWorkspace();
+    await runBunInstall(env, packageDir);
+
+    // Test --recursive shows all workspaces
+    const out = await runBunOutdated(env, packageDir, "--recursive");
+    expect(out).toContain("no-deps");
+    expect(out).toContain("a-dep");
+    expect(out).toContain("prereleases-1");
+  });
+
+  test("catalog grouping with multiple workspaces", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          catalog: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "workspace-a", "package.json"),
+        JSON.stringify({
+          name: "workspace-a",
+          dependencies: {
+            "no-deps": "catalog:",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "workspace-b", "package.json"),
+        JSON.stringify({
+          name: "workspace-b",
+          dependencies: {
+            "no-deps": "catalog:",
+          },
+        }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    // Test with filter to show workspace column and grouping
+    const out = await runBunOutdated(env, packageDir, "--filter", "*");
+    // Should show all workspaces with catalog entries
+    expect(out).toContain("workspace-a");
+    expect(out).toContain("workspace-b");
+    expect(out).toContain("no-deps");
+
+    // The catalog grouping should show which workspaces use it
+    expect(out).toMatch(/catalog.*workspace-a.*workspace-b|workspace-b.*workspace-a/);
   });
 });
 

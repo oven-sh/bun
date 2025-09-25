@@ -117,18 +117,19 @@ namespace uWS
     struct ConsumeRequestLineResult {
         char *position;
         bool isAncientHTTP;
+        bool isConnect;
         HTTPHeaderParserError headerParserError;
         public:
         static ConsumeRequestLineResult error(HTTPHeaderParserError error) {
-            return ConsumeRequestLineResult{nullptr, false, error};
+            return ConsumeRequestLineResult{nullptr, false, false, error};
         }
 
-        static ConsumeRequestLineResult success(char *position, bool isAncientHTTP = false) {
-            return ConsumeRequestLineResult{position, isAncientHTTP, HTTP_HEADER_PARSER_ERROR_NONE};
+        static ConsumeRequestLineResult success(char *position, bool isAncientHTTP = false, bool isConnect = false) {
+            return ConsumeRequestLineResult{position, isAncientHTTP, isConnect, HTTP_HEADER_PARSER_ERROR_NONE};
         }
 
-        static ConsumeRequestLineResult shortRead(bool isAncientHTTP = false) {
-            return ConsumeRequestLineResult{nullptr, isAncientHTTP, HTTP_HEADER_PARSER_ERROR_NONE};
+        static ConsumeRequestLineResult shortRead(bool isAncientHTTP = false, bool isConnect = false) {
+            return ConsumeRequestLineResult{nullptr, isAncientHTTP, isConnect, HTTP_HEADER_PARSER_ERROR_NONE};
         }
 
         bool isErrorOrShortRead() {
@@ -220,6 +221,78 @@ namespace uWS
                 }
             }
             return std::string_view(nullptr, 0);
+        }
+
+        struct TransferEncoding {
+            bool has: 1 = false;
+            bool chunked: 1 = false;
+            bool invalid: 1 = false;
+        };
+
+        TransferEncoding getTransferEncoding()
+        {
+            TransferEncoding te;
+            
+            if (!bf.mightHave("transfer-encoding")) {
+                return te;
+            }
+            
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() == 17 && !strncmp(h->key.data(), "transfer-encoding", 17)) {
+                    // Parse comma-separated values, ensuring "chunked" is last if present
+                    const auto value = h->value;
+                    size_t pos = 0;
+                    size_t lastTokenStart = 0;
+                    size_t lastTokenLen = 0;
+        
+                    while (pos < value.length()) {
+                        // Skip leading whitespace
+                        while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
+                            pos++;
+                        }
+                        
+                        // Remember start of this token
+                        size_t tokenStart = pos;
+                        
+                        // Find end of token (until comma or end)
+                        while (pos < value.length() && value[pos] != ',') {
+                            pos++;
+                        }
+                        
+                        // Trim trailing whitespace from token
+                        size_t tokenEnd = pos;
+                        while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
+                            tokenEnd--;
+                        }
+                        
+                        size_t tokenLen = tokenEnd - tokenStart;
+                        if (tokenLen > 0) {
+                            lastTokenStart = tokenStart;
+                            lastTokenLen = tokenLen;
+                        }
+                        
+                        // Move past comma if present
+                        if (pos < value.length() && value[pos] == ',') {
+                            pos++;
+                        }
+                    }
+
+                    if (te.chunked) [[unlikely]] {
+                        te.invalid = true;
+                        return te;
+                    }
+
+                    te.has = lastTokenLen > 0;
+                    
+                    // Check if the last token is "chunked"
+                    if (lastTokenLen == 7 && !strncmp(value.data() + lastTokenStart, "chunked", 7)) [[likely]] {
+                        te.chunked = true;
+                    }
+                    
+                }
+            }
+
+            return te;
         }
 
 
@@ -479,7 +552,10 @@ namespace uWS
                 return ConsumeRequestLineResult::shortRead();
             }
 
-            if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
+
+            bool isHTTPMethod = (__builtin_expect(data[1] == '/', 1));
+            bool isConnect = !isHTTPMethod && (isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1 || ((data - start) == 7 && memcmp(start, "CONNECT", 7) == 0));
+            if (isHTTPMethod || isConnect) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
                 if(!isValidMethod(header.key, useStrictMethodValidation)) {
@@ -505,22 +581,22 @@ namespace uWS
                         if (nextPosition >= end) {
                             /* Whatever we have must be part of the version string */
                             if (memcmp(" HTTP/1.1\r\n", data, std::min<unsigned int>(11, (unsigned int) (end - data))) == 0) {
-                                return ConsumeRequestLineResult::shortRead();
+                                return ConsumeRequestLineResult::shortRead(false, isConnect);
                             } else if (memcmp(" HTTP/1.0\r\n", data, std::min<unsigned int>(11, (unsigned int) (end - data))) == 0) {
                                 /*Indicates that the request line is ancient HTTP*/
-                                return ConsumeRequestLineResult::shortRead(true);
+                                return ConsumeRequestLineResult::shortRead(true, isConnect);
                             }
                             return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                         }
                         if (memcmp(" HTTP/1.1\r\n", data, 11) == 0) {
-                            return ConsumeRequestLineResult::success(nextPosition);
+                            return ConsumeRequestLineResult::success(nextPosition, false, isConnect);
                         } else if (memcmp(" HTTP/1.0\r\n", data, 11) == 0) {
                             /*Indicates that the request line is ancient HTTP*/
-                            return ConsumeRequestLineResult::success(nextPosition, true);
+                            return ConsumeRequestLineResult::success(nextPosition, true, isConnect);
                         }
                         /* If we stand at the post padded CR, we have fragmented input so try again later */
                         if (data[0] == '\r') {
-                            return ConsumeRequestLineResult::shortRead();
+                            return ConsumeRequestLineResult::shortRead(false, isConnect);
                         }
                         /* This is an error */
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
@@ -530,14 +606,14 @@ namespace uWS
 
             /* If we stand at the post padded CR, we have fragmented input so try again later */
             if (data[0] == '\r') {
-                return ConsumeRequestLineResult::shortRead();
+                return ConsumeRequestLineResult::shortRead(false, isConnect);
             }
 
             if (data[0] == 32) {
                 switch (isHTTPorHTTPSPrefixForProxies(data + 1, end)) {
                     // If we haven't received enough data to check if it's http:// or https://, let's try again later
                     case -1:
-                        return ConsumeRequestLineResult::shortRead();
+                        return ConsumeRequestLineResult::shortRead(false, isConnect);
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
@@ -563,7 +639,7 @@ namespace uWS
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
             #ifdef UWS_WITH_PROXY
                 /* ProxyParser is passed as reserved parameter */
@@ -616,6 +692,9 @@ namespace uWS
 
             if(requestLineResult.isAncientHTTP) {
                 isAncientHTTP = true;
+            }
+            if(requestLineResult.isConnect) {
+                isConnectRequest = true;
             }
             /* No request headers found */
             const char * headerStart = (headers[0].key.length() > 0) ? headers[0].key.data() : end;
@@ -726,7 +805,7 @@ namespace uWS
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -737,7 +816,7 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, useStrictMethodValidation, maxHeaderSize);
+            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -771,14 +850,16 @@ namespace uWS
             * the Transfer-Encoding overrides the Content-Length. Such a message might indicate an attempt
             * to perform request smuggling (Section 11.2) or response splitting (Section 11.1) and
             * ought to be handled as an error. */
-            std::string_view transferEncodingString = req->getHeader("transfer-encoding");
-            std::string_view contentLengthString = req->getHeader("content-length");
+            const std::string_view contentLengthString = req->getHeader("content-length");
+            const auto contentLengthStringLen = contentLengthString.length();
+            
+            /* Check Transfer-Encoding header validity and conflicts */
+            HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
 
-            auto transferEncodingStringLen = transferEncodingString.length();
-            auto contentLengthStringLen = contentLengthString.length();
-            if (transferEncodingStringLen && contentLengthStringLen) {
-                /* We could be smart and set an error in the context along with this, to indicate what
-                 * http error response we might want to return */
+            transferEncoding.invalid = transferEncoding.invalid || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked));
+
+            if (transferEncoding.invalid) [[unlikely]] {
+                /* Invalid Transfer-Encoding (multiple headers or chunked not last - request smuggling attempt) */
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
             }
 
@@ -789,7 +870,7 @@ namespace uWS
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {
                 remainingStreamingBytes = toUnsignedInteger(contentLengthString);
-                if (remainingStreamingBytes == UINT64_MAX) {
+                if (remainingStreamingBytes == UINT64_MAX) [[unlikely]] {
                     /* Parser error */
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
                 }
@@ -813,20 +894,8 @@ namespace uWS
             /* RFC 9112 6.3
              * If a message is received with both a Transfer-Encoding and a Content-Length header field,
              * the Transfer-Encoding overrides the Content-Length. */
-            if (transferEncodingStringLen) {
-
-                /* If a proxy sent us the transfer-encoding header that 100% means it must be chunked or else the proxy is
-                 * not RFC 9112 compliant. Therefore it is always better to assume this is the case, since that entirely eliminates
-                 * all forms of transfer-encoding obfuscation tricks. We just rely on the header. */
-
-                /* RFC 9112 6.3
-                 * If a Transfer-Encoding header field is present in a request and the chunked transfer coding is not the
-                 * final encoding, the message body length cannot be determined reliably; the server MUST respond with the
-                 * 400 (Bad Request) status code and then close the connection. */
-
-                /* In this case we fail later by having the wrong interpretation (assuming chunked).
-                 * This could be made stricter but makes no difference either way, unless forwarding the identical message as a proxy. */
-
+            if (transferEncoding.has) {
+                /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
                 if constexpr (!ConsumeMinimally) {
@@ -835,7 +904,7 @@ namespace uWS
                     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
                         dataHandler(user, chunk, chunk.length() == 0);
                     }
-                    if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
+                    if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) [[unlikely]] {
                         // TODO: what happen if we already responded?
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                     }
@@ -854,6 +923,10 @@ namespace uWS
                     length -= emittable;
                     consumedTotal += emittable;
                 }
+            } else if(isConnectRequest) {
+                // This only server to mark that the connect request read all headers
+                // and can starting emitting data
+                remainingStreamingBytes = STATE_IS_CHUNKED;
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
                 dataHandler(user, {}, true);
@@ -869,15 +942,16 @@ namespace uWS
     }
 
 public:
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
-
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
         if (remainingStreamingBytes) {
-
-            /* It's either chunked or with a content-length */
-            if (isParsingChunkedEncoding(remainingStreamingBytes)) {
+            if (isConnectRequest) {
+                dataHandler(user, std::string_view(data, length), false);
+                return HttpParserResult::success(0, user);
+            } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
+                 /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
                 for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
                     dataHandler(user, chunk, chunk.length() == 0);
@@ -888,6 +962,7 @@ public:
                 data = (char *) dataToConsume.data();
                 length = (unsigned int) dataToConsume.length();
             } else {
+                
                 // this is exactly the same as below!
                 // todo: refactor this
                 if (remainingStreamingBytes >= length) {
@@ -918,7 +993,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 return consumed;
@@ -935,8 +1010,11 @@ public:
                 length -= consumedBytes - had;
 
                 if (remainingStreamingBytes) {
-                    /* It's either chunked or with a content-length */
-                    if (isParsingChunkedEncoding(remainingStreamingBytes)) {
+                    if(isConnectRequest) {
+                        dataHandler(user, std::string_view(data, length), false);
+                        return HttpParserResult::success(0, user);
+                    } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
+                        /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
                         for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
                             dataHandler(user, chunk, chunk.length() == 0);
@@ -975,7 +1053,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             return consumed;

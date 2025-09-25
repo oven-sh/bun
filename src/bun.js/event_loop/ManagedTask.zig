@@ -1,5 +1,5 @@
 //! This is a slow, dynamically-allocated one-off task
-//! Use it when you can't add to JSC.Task directly and managing the lifetime of the Task struct is overly complex
+//! Use it when you can't add to jsc.Task directly and managing the lifetime of the Task struct is overly complex
 
 const ManagedTask = @This();
 
@@ -27,7 +27,7 @@ pub fn cancel(this: *ManagedTask) void {
 pub fn New(comptime Type: type, comptime Callback: anytype) type {
     return struct {
         pub fn init(ctx: *Type) Task {
-            var managed = bun.default_allocator.create(ManagedTask) catch bun.outOfMemory();
+            var managed = bun.handleOom(bun.default_allocator.create(ManagedTask));
             managed.* = ManagedTask{
                 .callback = wrap,
                 .ctx = ctx,
@@ -42,5 +42,6 @@ pub fn New(comptime Type: type, comptime Callback: anytype) type {
 }
 
 const bun = @import("bun");
-const JSC = bun.JSC;
-const Task = JSC.Task;
+
+const jsc = bun.jsc;
+const Task = jsc.Task;

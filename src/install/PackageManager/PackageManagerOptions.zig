@@ -71,6 +71,15 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+// Security scanner module path
+security_scanner: ?[]const u8 = null,
+
+/// Override CPU architecture for optional dependencies filtering
+cpu: Npm.Architecture = Npm.Architecture.current,
+
+/// Override OS for optional dependencies filtering
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -277,6 +286,11 @@ pub fn load(
 
         if (config.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (config.security_scanner) |security_scanner| {
+            this.security_scanner = security_scanner;
+            this.do.prefetch_resolved_tarballs = false;
         }
 
         if (config.cafile) |cafile| {
@@ -535,6 +549,10 @@ pub fn load(
 
         this.lockfile_only = cli.lockfile_only;
 
+        if (cli.lockfile_only) {
+            this.do.prefetch_resolved_tarballs = false;
+        }
+
         if (cli.node_linker) |node_linker| {
             this.node_linker = node_linker;
         }
@@ -567,7 +585,12 @@ pub fn load(
             PackageInstall.supported_method = backend;
         }
 
+        // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+        this.cpu = cli.cpu;
+        this.os = cli.os;
+
         this.do.update_to_latest = cli.latest;
+        this.do.recursive = cli.recursive;
 
         if (cli.positionals.len > 0) {
             this.positionals = cli.positionals;
@@ -666,7 +689,9 @@ pub const Do = packed struct(u16) {
     trust_dependencies_from_args: bool = false,
     update_to_latest: bool = false,
     analyze: bool = false,
-    _: u4 = 0,
+    recursive: bool = false,
+    prefetch_resolved_tarballs: bool = true,
+    _: u2 = 0,
 };
 
 pub const Enable = packed struct(u16) {
@@ -687,30 +712,31 @@ pub const Enable = packed struct(u16) {
     _: u7 = 0,
 };
 
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const stringZ = bun.stringZ;
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const CommandLineArguments = @import("./CommandLineArguments.zig");
 const std = @import("std");
-const logger = bun.logger;
-const OOM = bun.OOM;
-const FD = bun.FD;
 
-const Api = bun.Schema.Api;
-const Path = bun.path;
-
+const bun = @import("bun");
 const DotEnv = bun.DotEnv;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Path = bun.path;
 const URL = bun.URL;
+const logger = bun.logger;
+const strings = bun.strings;
+const Api = bun.schema.api;
+
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 
-const Npm = bun.install.Npm;
-
-const patch = bun.install.patch;
 const Features = bun.install.Features;
-const CommandLineArguments = @import("./CommandLineArguments.zig");
-const Subcommand = bun.install.PackageManager.Subcommand;
-const PackageManager = bun.install.PackageManager;
+const Npm = bun.install.Npm;
 const PackageInstall = bun.install.PackageInstall;
+const patch = bun.install.patch;
+
+const PackageManager = bun.install.PackageManager;
+const Subcommand = bun.install.PackageManager.Subcommand;

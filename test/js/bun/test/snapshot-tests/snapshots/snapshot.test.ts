@@ -203,12 +203,14 @@ class SnapshotTester {
     if (!opts.shouldNotError) {
       if (!isFirst) {
         // make sure it fails first:
-        expect((await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.nothrow().quiet()).exitCode).not.toBe(0);
+        expect((await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.nothrow().quiet()).exitCode).toBe(1);
         // make sure the existing snapshot is unchanged:
         expect(await this.getSnapshotContents()).toBe(this.targetSnapshotContents);
       }
       // update snapshots now, using -u flag unless this is the first run
-      await $`cd ${this.dir} && ${bunExe()} test ${isFirst && !opts.forceUpdate ? "" : "-u"} ./snapshot.test.ts`.quiet();
+      await $`cd ${this.dir} && ${bunExe()} test ${isFirst && !opts.forceUpdate ? "" : "-u"} ./snapshot.test.ts`
+        .quiet()
+        .env({ ...bunEnv, CI: "false" });
       // make sure the snapshot changed & didn't grow
       const newContents = await this.getSnapshotContents();
       if (!isFirst) {
@@ -218,7 +220,7 @@ class SnapshotTester {
       this.targetSnapshotContents = newContents;
     }
     // run, make sure snapshot does not change
-    await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.quiet();
+    await $`cd ${this.dir} && ${bunExe()} test ./snapshot.test.ts`.quiet().env({ ...bunEnv, CI: "false" });
     if (!opts.shouldGrow) {
       expect(await this.getSnapshotContents()).toBe(this.targetSnapshotContents);
     } else {
@@ -390,12 +392,12 @@ class InlineSnapshotTester {
 
     const spawnres = Bun.spawnSync({
       cmd: [bunExe(), "test", ...(eopts.update ? ["-u"] : []), thefile],
-      env: bunEnv,
+      env: { ...bunEnv, CI: "false" },
       cwd: this.tmpdir,
       stdio: ["pipe", "pipe", "pipe"],
     });
     expect(spawnres.stderr.toString()).toInclude(eopts.msg);
-    expect(spawnres.exitCode).not.toBe(0);
+    expect(spawnres.exitCode).toBe(1);
     expect(this.readfile(thefile)).toEqual(code);
   }
   test(cb: (v: (a: string, b: string, c: string) => string) => string): void {
@@ -424,19 +426,19 @@ class InlineSnapshotTester {
       // run without update, expect error
       const spawnres = Bun.spawnSync({
         cmd: [bunExe(), "test", thefile],
-        env: bunEnv,
+        env: { ...bunEnv, CI: "false" },
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
       expect(spawnres.stderr.toString()).toInclude("error:");
-      expect(spawnres.exitCode).not.toBe(0);
+      expect(spawnres.exitCode).toBe(1);
       expect(this.readfile(thefile)).toEqual(before_value);
     }
 
     {
       const spawnres = Bun.spawnSync({
         cmd: [bunExe(), "test", ...(use_update ? ["-u"] : []), thefile],
-        env: bunEnv,
+        env: { ...bunEnv, CI: "false" },
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -454,7 +456,7 @@ class InlineSnapshotTester {
     {
       const spawnres = Bun.spawnSync({
         cmd: [bunExe(), "test", thefile],
-        env: bunEnv,
+        env: { ...bunEnv, CI: "false" },
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -472,7 +474,7 @@ class InlineSnapshotTester {
     {
       const spawnres = Bun.spawnSync({
         cmd: [bunExe(), "test", "-u", thefile],
-        env: bunEnv,
+        env: { ...bunEnv, CI: "false" },
         cwd: this.tmpdir,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -612,11 +614,10 @@ Date)
       `,
     );
   });
-  it("should error trying to update outside of a test", () => {
-    tester.testError(
-      { msg: "error: Snapshot matchers cannot be used outside of a test" },
-      /*js*/ `
-        expect("1").toMatchInlineSnapshot();
+  it("updating outside of a test", () => {
+    tester.test(
+      v => /*js*/ `
+        expect("1").toMatchInlineSnapshot(${v("", bad, '`"1"`')});
       `,
     );
   });
@@ -879,7 +880,7 @@ test("indented inline snapshots", () => {
               "a": 2,
                 }
 `);
-  }).toThrowErrorMatchingSnapshot();
+  }).toThrow();
 });
 
 test("error snapshots", () => {
@@ -954,11 +955,11 @@ test("write snapshot from filter", async () => {
       },
     },
   });
-  await $`cd ${dir} && ${bunExe()} test mytests`;
+  await $`cd ${dir} && ${bunExe()} test mytests`.env({ ...bunEnv, CI: "false" });
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
-  await $`cd ${dir} && ${bunExe()} test mytests`;
+  await $`cd ${dir} && ${bunExe()} test mytests`.env({ ...bunEnv, CI: "false" });
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));

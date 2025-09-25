@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-
-const Loader = @import("../options.zig").Loader;
-const ComptimeStringMap = bun.ComptimeStringMap;
-
 const MimeType = @This();
 
 value: string,
@@ -299,7 +291,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
 
                 if (allocated != null and allocator != null) allocated.?.* = true;
                 return MimeType{
-                    .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
+                    .value = if (allocator) |a| bun.handleOom(a.dupe(u8, str_)) else str_,
                     .category = .application,
                 };
             },
@@ -307,7 +299,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                 if (strings.eqlComptimeIgnoreLen(category_, "font")) {
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
+                        .value = if (allocator) |a| bun.handleOom(a.dupe(u8, str_)) else str_,
                         .category = .font,
                     };
                 }
@@ -331,7 +323,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
 
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
+                        .value = if (allocator) |a| bun.handleOom(a.dupe(u8, str_)) else str_,
                         .category = .text,
                     };
                 }
@@ -340,7 +332,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                 if (strings.eqlComptimeIgnoreLen(category_, "image")) {
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
+                        .value = if (allocator) |a| bun.handleOom(a.dupe(u8, str_)) else str_,
                         .category = .image,
                     };
                 }
@@ -348,7 +340,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                 if (strings.eqlComptimeIgnoreLen(category_, "audio")) {
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
+                        .value = if (allocator) |a| bun.handleOom(a.dupe(u8, str_)) else str_,
                         .category = .audio,
                     };
                 }
@@ -356,7 +348,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                 if (strings.eqlComptimeIgnoreLen(category_, "video")) {
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
+                        .value = if (allocator) |a| bun.handleOom(a.dupe(u8, str_)) else str_,
                         .category = .video,
                     };
                 }
@@ -367,7 +359,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
 
     if (allocated != null and allocator != null) allocated.?.* = true;
     return MimeType{
-        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
+        .value = if (allocator) |a| bun.handleOom(a.dupe(u8, str_)) else str_,
         .category = .other,
     };
 }
@@ -1376,6 +1368,8 @@ pub const extensions = ComptimeStringMap(Table, .{
     .{ "tk", .@"application/x-tcl" },
     .{ "tmo", .@"application/vnd.tmobile-livetv" },
     .{ "toml", .@"application/toml" },
+    .{ "yaml", .@"text/yaml" },
+    .{ "yml", .@"text/yaml" },
     .{ "torrent", .@"application/x-bittorrent" },
     .{ "tpl", .@"application/vnd.groove-tool-template" },
     .{ "tpt", .@"application/vnd.trid.tpt" },
@@ -1631,3 +1625,12 @@ pub fn sniff(bytes: []const u8) ?MimeType {
 
     return null;
 }
+
+const string = []const u8;
+
+const std = @import("std");
+const Loader = @import("../options.zig").Loader;
+
+const bun = @import("bun");
+const ComptimeStringMap = bun.ComptimeStringMap;
+const strings = bun.strings;

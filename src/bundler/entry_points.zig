@@ -337,11 +337,13 @@ pub const MacroEntryPoint = struct {
     }
 };
 
-const logger = bun.logger;
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
+const string = []const u8;
+
 const Fs = @import("../fs.zig");
-const js_ast = bun.JSAst;
+const std = @import("std");
+
+const bun = @import("bun");
 const Transpiler = bun.Transpiler;
+const js_ast = bun.ast;
+const logger = bun.logger;
 const strings = bun.strings;

@@ -1,9 +1,5 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Angle = css.css_values.angle.Angle;
@@ -1496,7 +1492,7 @@ pub fn Calc(comptime V: type) type {
                         continue;
                     }
                 } else {
-                    reduced.append(allocator, arg.*) catch bun.outOfMemory();
+                    bun.handleOom(reduced.append(allocator, arg.*));
                     // set to dummy value since we moved it into `reduced`
                     arg.* = This{ .number = 420 };
                     continue;
@@ -1824,7 +1820,7 @@ fn arr2(allocator: std.mem.Allocator, a: anytype, b: anytype) ArrayList(@TypeOf(
         @compileError("arr2: types must match");
     }
     var arr = ArrayList(T){};
-    arr.appendSlice(allocator, &.{ a, b }) catch bun.outOfMemory();
+    bun.handleOom(arr.appendSlice(allocator, &.{ a, b }));
     return arr;
 }
 
@@ -1888,3 +1884,9 @@ pub const Constant = enum {
 fn absf(a: f32) f32 {
     return @abs(a);
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

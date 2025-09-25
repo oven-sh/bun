@@ -1,32 +1,6 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const string = bun.string;
-const strings = bun.strings;
-const log = bun.log;
-const Command = @import("../cli.zig").Command;
-const Fs = @import("../fs.zig");
-const Dependency = @import("../install/dependency.zig");
-const Install = @import("../install/install.zig");
-const PackageID = Install.PackageID;
-const DependencyID = Install.DependencyID;
-const PackageManager = Install.PackageManager;
-const Lockfile = @import("../install/lockfile.zig");
 const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
-const Path = @import("../resolver/resolve_path.zig");
-const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
-const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
-const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
-const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
-const Npm = Install.Npm;
-const PmViewCommand = @import("./pm_view_command.zig");
-const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
-const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
-const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
-
-const File = bun.sys.File;
+pub const ScanCommand = @import("./scan_command.zig").ScanCommand;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -119,6 +93,7 @@ pub const PackageManagerCommand = struct {
             \\
             \\<b>Commands:<r>
             \\
+            \\  <b><green>bun pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities
             \\  <b><green>bun pm<r> <blue>pack<r>                 create a tarball of the current workspace
             \\  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk
             \\  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in
@@ -163,6 +138,10 @@ pub const PackageManagerCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
+
+        // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
+        const is_direct_whoami = if (bun.argv.len > 1) strings.eqlComptime(bun.argv[1], "whoami") else false;
+
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
         var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
@@ -179,12 +158,15 @@ pub const PackageManagerCommand = struct {
         };
         defer ctx.allocator.free(cwd);
 
-        const subcommand = getSubcommand(&pm.options.positionals);
+        const subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
             try pm.setupGlobalDir(ctx);
         }
 
-        if (strings.eqlComptime(subcommand, "pack")) {
+        if (strings.eqlComptime(subcommand, "scan")) {
+            try ScanCommand.execWithManager(ctx, pm, cwd);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "pack")) {
             try PackCommand.execWithManager(ctx, pm);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "whoami")) {
@@ -587,3 +569,34 @@ fn printNodeModulesFolderStructure(
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
     }
 }
+
+const string = []const u8;
+
+const Dependency = @import("../install/dependency.zig");
+const Fs = @import("../fs.zig");
+const Lockfile = @import("../install/lockfile.zig");
+const Path = @import("../resolver/resolve_path.zig");
+const PmViewCommand = @import("./pm_view_command.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
+const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
+const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
+
+const Install = @import("../install/install.zig");
+const DependencyID = Install.DependencyID;
+const Npm = Install.Npm;
+const PackageID = Install.PackageID;
+const PackageManager = Install.PackageManager;
+
+const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
+const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
+const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const log = bun.log;
+const strings = bun.strings;
+const File = bun.sys.File;

@@ -1,19 +1,3 @@
-const JSC = bun.JSC;
-const bun = @import("bun");
-const std = @import("std");
-
-const Environment = bun.Environment;
-const system = std.posix.system;
-
-const Maybe = JSC.Maybe;
-
-const fd_t = std.posix.fd_t;
-const pid_t = std.posix.pid_t;
-const toPosixPath = std.posix.toPosixPath;
-const errno = std.posix.errno;
-const mode_t = std.posix.mode_t;
-const unexpectedErrno = std.posix.unexpectedErrno;
-
 pub const BunSpawn = struct {
     pub const Action = extern struct {
         pub const FileActionType = enum(u8) {
@@ -402,7 +386,7 @@ pub const PosixSpawn = struct {
                 },
                 .INTR => continue,
 
-                else => return JSC.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+                else => return bun.sys.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
             }
         }
     }
@@ -422,12 +406,12 @@ pub const PosixSpawn = struct {
                 },
                 .INTR => continue,
 
-                else => return JSC.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
+                else => return bun.sys.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
             }
         }
     }
 
-    pub const process = @import("process.zig");
+    pub const process = @import("./process.zig");
     pub const Process = process.Process;
     pub const SpawnOptions = process.SpawnOptions;
     pub const Status = process.Status;
@@ -439,5 +423,19 @@ pub const PosixSpawn = struct {
     pub const WindowsSpawnOptions = process.WindowsSpawnOptions;
     pub const Rusage = process.Rusage;
 
-    pub const Stdio = @import("spawn/stdio.zig").Stdio;
+    pub const Stdio = @import("./spawn/stdio.zig").Stdio;
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Maybe = bun.sys.Maybe;
+
+const errno = std.posix.errno;
+const fd_t = std.posix.fd_t;
+const mode_t = std.posix.mode_t;
+const pid_t = std.posix.pid_t;
+const system = std.posix.system;
+const toPosixPath = std.posix.toPosixPath;
+const unexpectedErrno = std.posix.unexpectedErrno;

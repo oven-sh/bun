@@ -13,6 +13,20 @@ declare module "bun" {
   }
 
   /**
+   * Represents a SQL array parameter
+   */
+  interface SQLArrayParameter {
+    /**
+     * The serialized values of the array parameter
+     */
+    serializedValues: string;
+    /**
+     * The type of the array parameter
+     */
+    arrayType: string;
+  }
+
+  /**
    * Represents a client within a transaction context Extends SQL with savepoint
    * functionality
    */

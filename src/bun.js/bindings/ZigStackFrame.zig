@@ -141,17 +141,13 @@ pub const ZigStackFrame = extern struct {
         pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const name = this.function_name;
 
-            const no_src_url = this.source_url.isEmpty();
-            const same_cwd = if (this.enable_color) brk: {
-                if (no_src_url) {
-                    break :brk !this.remapped;
-                } else {
-                    var source_slice_ = this.source_url.toUTF8(bun.default_allocator);
-                    const source_slice = source_slice_.slice();
-                    defer source_slice_.deinit();
+            const no_src_url = this.source_url.isEmpty() or this.remapped;
+            const same_cwd = if (no_src_url) this.remapped else if (this.enable_color) brk: {
+                var source_slice_ = this.source_url.toUTF8(bun.default_allocator);
+                const source_slice = source_slice_.slice();
+                defer source_slice_.deinit();
 
-                    break :brk strings.startsWith(source_slice, this.root_path);
-                }
+                break :brk strings.startsWith(source_slice, this.root_path);
             } else false;
 
             switch (this.code_type) {

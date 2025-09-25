@@ -1083,8 +1083,8 @@ declare module "bun:ffi" {
      * freed.
      */
     ptr: Pointer;
-    byteOffset?: number;
-    byteLength?: number;
+    byteOffset: number;
+    byteLength: number;
 
     /**
      * Get the {@link ptr} as an `ArrayBuffer`

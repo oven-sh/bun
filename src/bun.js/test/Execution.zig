@@ -373,7 +373,6 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
             now.* = bun.timespec.now();
-            _ = next_item.evaluateTimeout(sequence, now);
 
             // the result is available immediately; advance the sequence and run again.
             this.advanceSequence(sequence, group);

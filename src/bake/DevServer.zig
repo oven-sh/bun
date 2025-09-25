@@ -4685,6 +4685,7 @@ const bake = bun.bake;
 const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 const Log = bun.logger.Log;
 const MimeType = bun.http.MimeType;
+const Response = bun.webcore.Response;
 const ThreadLocalArena = bun.allocators.MimallocArena;
 const Transpiler = bun.transpiler.Transpiler;
 const useAllFields = bun.meta.useAllFields;
@@ -4705,7 +4706,6 @@ const VirtualMachine = jsc.VirtualMachine;
 const HTMLBundle = jsc.API.HTMLBundle;
 const AnyBlob = jsc.WebCore.Blob.Any;
 const Plugin = jsc.API.JSBundler.Plugin;
-const Response = bun.webcore.Response;
 
 const BunFrontendDevServerAgent = jsc.Debugger.BunFrontendDevServerAgent;
 const DebuggerId = jsc.Debugger.DebuggerId;

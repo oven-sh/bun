@@ -144,7 +144,8 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::var
 {
     return std::visit([&](auto& value) {
         return convertMarkToTimestamp(value);
-    }, mark);
+    },
+        mark);
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& mark) const
@@ -299,8 +300,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
                 },
                 [&](const String& startMark) -> ExceptionOr<Ref<PerformanceMeasure>> {
                     return measure(measureName, startMark, endMark);
-                }
-            ),
+                }),
             *startOrMeasureOptions);
     }
 

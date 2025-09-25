@@ -152,8 +152,7 @@ size_t MessageEvent::memoryCost() const
             [](const Ref<SerializedScriptValue>& data) -> size_t { return data->memoryCost(); },
             [](const String& string) -> size_t { return string.sizeInBytes(); },
             [](const Ref<Blob>& blob) -> size_t { return blob->memoryCost(); },
-            [](const Ref<ArrayBuffer>& buffer) -> size_t { return buffer->byteLength(); }
-        ),
+            [](const Ref<ArrayBuffer>& buffer) -> size_t { return buffer->byteLength(); }),
         m_data);
 }
 

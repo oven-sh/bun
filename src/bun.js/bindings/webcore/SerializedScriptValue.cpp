@@ -6278,8 +6278,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
             JSValue value = std::visit(
                 WTF::makeVisitor(
                     [](JSValue value) -> JSValue { return value; },
-                    [&](const String& string) -> JSValue { return jsString(vm, string); }
-                ),
+                    [&](const String& string) -> JSValue { return jsString(vm, string); }),
                 property.value);
             object->putDirect(vm, identifier, value);
         }

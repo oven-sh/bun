@@ -65,8 +65,7 @@ JSC::JSValue JSMessageEvent::data(JSC::JSGlobalObject& lexicalGlobalObject) cons
                     return data->deserialize(lexicalGlobalObject, globalObject(), wrapped().ports(), SerializationErrorMode::NonThrowing); },
                 [&lexicalGlobalObject](const String& data) -> JSC::JSValue { return toJS<IDLDOMString>(lexicalGlobalObject, data); },
                 [this, &lexicalGlobalObject](const Ref<Blob>& data) -> JSC::JSValue { return toJS<IDLInterface<Blob>>(lexicalGlobalObject, *globalObject(), data); },
-                [this, &lexicalGlobalObject](const Ref<ArrayBuffer>& data) -> JSC::JSValue { return toJS<IDLInterface<ArrayBuffer>>(lexicalGlobalObject, *globalObject(), data); }
-            ),
+                [this, &lexicalGlobalObject](const Ref<ArrayBuffer>& data) -> JSC::JSValue { return toJS<IDLInterface<ArrayBuffer>>(lexicalGlobalObject, *globalObject(), data); }),
             wrapped().data());
     });
 }

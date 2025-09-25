@@ -1183,6 +1183,7 @@ pub const FetchTasklet = struct {
     pub fn resumeRequestDataStream(this: *FetchTasklet) void {
         // deref when done because we ref inside onWriteRequestDataDrain
         defer this.deref();
+        log("resumeRequestDataStream", .{});
         if (this.sink) |sink| {
             if (this.signal) |signal| {
                 if (signal.aborted()) {
@@ -1204,7 +1205,6 @@ pub const FetchTasklet = struct {
         const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return .done;
         const stream_buffer = thread_safe_stream_buffer.acquire();
         defer thread_safe_stream_buffer.release();
-
         const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
 
         var needs_schedule = false;
@@ -1240,7 +1240,7 @@ pub const FetchTasklet = struct {
 
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
-        this.clearSink();
+
         defer this.deref();
         if (err) |jsError| {
             if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
@@ -1251,9 +1251,16 @@ pub const FetchTasklet = struct {
             }
             this.abortTask();
         } else {
+            if (!this.upgraded_connection) {
+                // If is not upgraded we need to send the terminating chunk
+                const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return;
+                const stream_buffer = thread_safe_stream_buffer.acquire();
+                defer thread_safe_stream_buffer.release();
+                bun.handleOom(stream_buffer.write(http.end_of_chunked_http1_1_encoding_response_body));
+            }
             if (this.http) |http_| {
                 // just tell to write the end of the chunked encoding aka 0\r\n\r\n
-                http.http_thread.scheduleRequestWrite(http_, .endChunked);
+                http.http_thread.scheduleRequestWrite(http_, .end);
             }
         }
     }

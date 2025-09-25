@@ -86,7 +86,6 @@ const WriteMessage = struct {
     pub const Type = enum(u2) {
         data = 0,
         end = 1,
-        endChunked = 2,
     };
 };
 const ShutdownMessage = struct {
@@ -331,7 +330,7 @@ fn drainQueuedWrites(this: *@This()) void {
         defer queued_writes.deinit(bun.default_allocator);
         for (queued_writes.items) |write| {
             const message = write.message_type;
-            const ended = message == .end or message == .endChunked;
+            const ended = message == .end;
 
             if (bun.http.socket_async_http_abort_tracker.get(write.async_http_id)) |socket_ptr| {
                 switch (socket_ptr) {
@@ -345,12 +344,8 @@ fn drainQueuedWrites(this: *@This()) void {
                             if (client.state.original_request_body == .stream) {
                                 var stream = &client.state.original_request_body.stream;
                                 stream.ended = ended;
-                                if (message == .endChunked and client.flags.upgrade_state != .upgraded) {
-                                    // only send the 0-length chunk if the request body is chunked and not upgraded
-                                    client.writeToStream(is_tls, socket, bun.http.end_of_chunked_http1_1_encoding_response_body);
-                                } else {
-                                    client.flushStream(is_tls, socket);
-                                }
+
+                                client.flushStream(is_tls, socket);
                             }
                         }
                     },

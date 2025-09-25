@@ -189,9 +189,7 @@ pub fn ResumableSink(
                     this.status = .paused;
                 },
                 .done => {},
-                .want_more => {
-                    this.status = .started;
-                },
+                .want_more => {},
             }
 
             return .jsBoolean(this.status != .paused);

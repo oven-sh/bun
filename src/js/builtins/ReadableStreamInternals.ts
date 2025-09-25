@@ -1204,7 +1204,10 @@ export function onCloseDirectStream(reason) {
       stream = undefined;
       return thisResult;
     };
-  } else if (this._pendingRead) {
+    // will close after $pull is called
+    return;
+  }
+  if (this._pendingRead) {
     var read = this._pendingRead;
     this._pendingRead = undefined;
     $putByIdDirectPrivate(this, "pull", $noopDoneFunction);

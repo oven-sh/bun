@@ -8,6 +8,13 @@ const rootFolders = {
 const includeModules = new Set(["bun", "cpp"]);
 const excludeGlobs = [new Glob("src/deps/**/*"), new Glob("src/bun.js/bindings/bun-simdutf.zig")];
 const excludePaths = new Set(["src/deps/boringssl.translated.zig", "src/deps/libuv.zig"]);
+const loadFiles = [
+  "coverage/usage-x86_64-macos.txt",
+  "coverage/usage-x86_64-windows.txt",
+  "coverage/usage-x86_64-linux.txt",
+  "coverage/usage-aarch64-macos.txt",
+  "coverage/usage-aarch64-linux.txt",
+];
 
 const filterFileArgs = process.argv.slice(2);
 
@@ -28,14 +35,16 @@ async function addFile(filepath: string, result: Map<string, boolean>) {
   console.timeEnd(filepath);
 }
 
-function getFilteredUnused(result: Map<string, boolean>): string[] {
-  const all = Array.from(result.entries())
+function baseFilterUnused(result: Map<string, boolean>): string[] {
+  return Array.from(result.entries())
     .filter(([, value]) => !value)
-    .map(([source]) => source)
-    .filter(source => {
-      const { module } = getDeclInfo(source);
-      return includeModules.has(module);
-    });
+    .map(([source]) => source);
+}
+function getFilteredUnused(allIn: string[]): string[] {
+  const all = allIn.filter(source => {
+    const { module } = getDeclInfo(source);
+    return includeModules.has(module);
+  });
   const allPaths = all.map(source => {
     const { module, path } = getDeclInfo(source);
     return `${rootFolders[module]}/${path}`;
@@ -52,13 +61,32 @@ function getFilteredUnused(result: Map<string, boolean>): string[] {
 }
 
 async function main() {
-  const result = new Map<string, boolean>();
-  await addFile("coverage/usage-x86_64-macos.txt", result);
-  await addFile("coverage/usage-x86_64-windows.txt", result);
-  await addFile("coverage/usage-x86_64-linux.txt", result);
-  await addFile("coverage/usage-aarch64-macos.txt", result);
-  await addFile("coverage/usage-aarch64-linux.txt", result);
-  const unused = getFilteredUnused(result);
+  let baseFiltered: string[] = [];
+  try {
+    // 1. check if we can use base filtered based on stat
+    let latestLoadFileTime: number = 0;
+    for (const file of loadFiles) {
+      const stat = await Bun.file(file).stat();
+      if (stat.mtime.getTime() > latestLoadFileTime) {
+        latestLoadFileTime = stat.mtime.getTime();
+      }
+    }
+    let baseFilteredFileTime = (await Bun.file("coverage/base-filtered.txt").stat()).mtime.getTime();
+    if (baseFilteredFileTime < latestLoadFileTime) {
+      throw new Error("Base filtered file is older than the latest load file");
+    }
+
+    const baseFilteredFile = await Bun.file("coverage/base-filtered.txt").text();
+    baseFiltered = baseFilteredFile.split("\n");
+  } catch (error) {
+    const result = new Map<string, boolean>();
+    for (const file of loadFiles) {
+      await addFile(file, result);
+    }
+    baseFiltered = baseFilterUnused(result);
+    await Bun.write("coverage/base-filtered.txt", baseFiltered.join("\n"));
+  }
+  const unused = getFilteredUnused(baseFiltered);
 
   for (const source of unused) {
     const { module, path, line, col } = getDeclInfo(source);

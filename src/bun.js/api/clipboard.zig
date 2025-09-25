@@ -157,10 +157,13 @@ fn readTextLinux(allocator: std.mem.Allocator) ![]u8 {
 }
 
 // Imports at the bottom (Zig style in Bun codebase)
+
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const JSError = bun.JSError;
+
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;

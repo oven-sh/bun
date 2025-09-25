@@ -3,8 +3,7 @@ import { itBundled } from "./expectBundled";
 
 // Helper to extract modulepreload links from HTML
 function getModulePreloads(html: string): string[] {
-  return [...html.matchAll(/rel="modulepreload"[^>]+href="\.\/([^"]+)"/g)]
-    .map(m => m[1]);
+  return [...html.matchAll(/rel="modulepreload"[^>]+href="\.\/([^"]+)"/g)].map(m => m[1]);
 }
 
 // Helper to get the main script src
@@ -25,7 +24,7 @@ function checkTagOrder(html: string): { cssFirst: boolean; preloadsBeforeScript:
 
   return {
     cssFirst: cssIndex === -1 || firstPreloadIndex === -1 || cssIndex < firstPreloadIndex,
-    preloadsBeforeScript: firstPreloadIndex === -1 || scriptIndex === -1 || firstPreloadIndex < scriptIndex
+    preloadsBeforeScript: firstPreloadIndex === -1 || scriptIndex === -1 || firstPreloadIndex < scriptIndex,
   };
 }
 
@@ -247,8 +246,8 @@ export function initAdmin() {
       const preloadedFiles = getModulePreloads(indexHtml);
 
       // Dynamic imports should NOT be preloaded
-      expect(preloadedFiles.some(f => f.includes('heavy'))).toBe(false);
-      expect(preloadedFiles.some(f => f.includes('admin'))).toBe(false);
+      expect(preloadedFiles.some(f => f.includes("heavy"))).toBe(false);
+      expect(preloadedFiles.some(f => f.includes("admin"))).toBe(false);
 
       // But there should be some preloads for the static imports
       expect(preloadedFiles.length).toBeGreaterThan(0);
@@ -386,8 +385,7 @@ export function c() { return 'C:' + shared(); }`,
 
       // Extract preloaded chunks
       const getPreloads = (html: string) =>
-        [...html.matchAll(/rel="modulepreload"[^>]+href="\.\/([^"]+)"/g)]
-          .map(m => m[1]);
+        [...html.matchAll(/rel="modulepreload"[^>]+href="\.\/([^"]+)"/g)].map(m => m[1]);
 
       const entry1Preloads = getPreloads(entry1Html);
       const entry2Preloads = getPreloads(entry2Html);

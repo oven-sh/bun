@@ -26,7 +26,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     auto keyString = moduleNameValue->value(global);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (keyString->isEmpty()) {
+    if (keyString->isEmpty()) [[unlikely]] {
         throwTypeError(global, scope, "import('') specifier cannot be empty"_s);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }

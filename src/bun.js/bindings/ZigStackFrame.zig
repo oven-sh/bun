@@ -136,13 +136,12 @@ pub const ZigStackFrame = extern struct {
         is_async: bool,
         root_path: string,
         source_url: String,
-        remapped: bool,
 
         pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const name = this.function_name;
 
-            const no_src_url = this.source_url.isEmpty() or this.remapped;
-            const same_cwd = if (no_src_url) this.remapped else if (this.enable_color) brk: {
+            const no_src_url = this.source_url.isEmpty();
+            const same_cwd = if (no_src_url) false else if (this.enable_color) brk: {
                 var source_slice_ = this.source_url.toUTF8(bun.default_allocator);
                 const source_slice = source_slice_.slice();
                 defer source_slice_.deinit();
@@ -248,7 +247,6 @@ pub const ZigStackFrame = extern struct {
             .is_async = this.is_async,
             .root_path = root_path,
             .source_url = this.source_url,
-            .remapped = this.remapped,
         };
     }
 

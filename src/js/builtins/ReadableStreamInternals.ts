@@ -1204,7 +1204,7 @@ export function onCloseDirectStream(reason) {
       stream = undefined;
       return thisResult;
     };
-    // will close after $pull is called
+    // We will close after the next $pull is called otherwise we would lost the last chunk
     return;
   }
   if (this._pendingRead) {

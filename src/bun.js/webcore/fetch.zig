@@ -1240,7 +1240,7 @@ pub const FetchTasklet = struct {
 
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
-
+        this.clearSink();
         defer this.deref();
         if (err) |jsError| {
             if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {

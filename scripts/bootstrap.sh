@@ -1195,7 +1195,7 @@ install_docker() {
 			execute_sudo amazon-linux-extras install docker
 			;;
 		amzn-* | alpine-*)
-			install_packages docker
+			install_packages docker docker-cli-compose
 			;;
 		*)
 			sh="$(require sh)"

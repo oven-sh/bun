@@ -753,11 +753,13 @@ pub const Stringifier = struct {
 
         // TODO(dylan-conway)
         if (meta.libc != .all) {
-            try writer.writeAll(
-                \\"libc": [
-            );
-            try Negatable(Npm.Libc).toJson(meta.libc, writer);
-            try writer.writeAll("], ");
+            if (any) {
+                try writer.writeByte(',');
+            } else {
+                any = true;
+            }
+            try writer.writeAll(" \"os\": ");
+            try Negatable(Npm.OperatingSystem).toJson(meta.os, writer);
         }
 
         if (meta.os != .all) {

@@ -539,79 +539,67 @@ pub const Command = struct {
         }
 
         const first_arg_name = next_arg;
-        const RootCommandMatcher = strings.ExactSizeMatcher(12);
-
-        return switch (RootCommandMatcher.match(first_arg_name)) {
-            RootCommandMatcher.case("init") => .InitCommand,
-            RootCommandMatcher.case("build"), RootCommandMatcher.case("bun") => .BuildCommand,
-            RootCommandMatcher.case("discord") => .DiscordCommand,
-            RootCommandMatcher.case("upgrade") => .UpgradeCommand,
-            RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
-            RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
-            RootCommandMatcher.case("link") => .LinkCommand,
-            RootCommandMatcher.case("unlink") => .UnlinkCommand,
-            RootCommandMatcher.case("x") => .BunxCommand,
-            RootCommandMatcher.case("repl") => .ReplCommand,
-
-            RootCommandMatcher.case("i"),
-            RootCommandMatcher.case("install"),
-            => brk: {
-                for (args_iter.buf) |arg| {
-                    if (arg.len > 0 and (strings.eqlComptime(arg, "-g") or strings.eqlComptime(arg, "--global"))) {
-                        break :brk .AddCommand;
-                    }
-                }
-
-                break :brk .InstallCommand;
-            },
-            RootCommandMatcher.case("ci") => .InstallCommand,
-            RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
-
-            RootCommandMatcher.case("test") => .TestCommand,
-
-            RootCommandMatcher.case("pm") => .PackageManagerCommand,
-
-            RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
-
-            RootCommandMatcher.case("update") => .UpdateCommand,
-            RootCommandMatcher.case("patch") => .PatchCommand,
-            RootCommandMatcher.case("patch-commit") => .PatchCommitCommand,
-
-            RootCommandMatcher.case("r"),
-            RootCommandMatcher.case("remove"),
-            RootCommandMatcher.case("rm"),
-            RootCommandMatcher.case("uninstall"),
-            => .RemoveCommand,
-
-            RootCommandMatcher.case("run") => .RunCommand,
-            RootCommandMatcher.case("help") => .HelpCommand,
-
-            RootCommandMatcher.case("exec") => .ExecCommand,
-
-            RootCommandMatcher.case("outdated") => .OutdatedCommand,
-            RootCommandMatcher.case("publish") => .PublishCommand,
-            RootCommandMatcher.case("audit") => .AuditCommand,
-            RootCommandMatcher.case("info") => .InfoCommand,
-
+        const RootCommandMap = bun.ComptimeStringMap(Command.Tag, .{
+            .{ "init", .InitCommand },
+            .{ "build", .BuildCommand },
+            .{ "bun", .BuildCommand },
+            .{ "discord", .DiscordCommand },
+            .{ "upgrade", .UpgradeCommand },
+            .{ "completions", .InstallCompletionsCommand },
+            .{ "getcompletes", .GetCompletionsCommand },
+            .{ "link", .LinkCommand },
+            .{ "unlink", .UnlinkCommand },
+            .{ "x", .BunxCommand },
+            .{ "repl", .ReplCommand },
+            .{ "ci", .InstallCommand },
+            .{ "c", .CreateCommand },
+            .{ "create", .CreateCommand },
+            .{ "test", .TestCommand },
+            .{ "pm", .PackageManagerCommand },
+            .{ "add", .AddCommand },
+            .{ "a", .AddCommand },
+            .{ "update", .UpdateCommand },
+            .{ "patch", .PatchCommand },
+            .{ "patch-commit", .PatchCommitCommand },
+            .{ "r", .RemoveCommand },
+            .{ "remove", .RemoveCommand },
+            .{ "rm", .RemoveCommand },
+            .{ "uninstall", .RemoveCommand },
+            .{ "run", .RunCommand },
+            .{ "help", .HelpCommand },
+            .{ "exec", .ExecCommand },
+            .{ "outdated", .OutdatedCommand },
+            .{ "publish", .PublishCommand },
+            .{ "audit", .AuditCommand },
+            .{ "info", .InfoCommand },
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
             // when we add our actual command
-            RootCommandMatcher.case("deploy") => .ReservedCommand,
-            RootCommandMatcher.case("cloud") => .ReservedCommand,
-            RootCommandMatcher.case("config") => .ReservedCommand,
-            RootCommandMatcher.case("use") => .ReservedCommand,
-            RootCommandMatcher.case("auth") => .ReservedCommand,
-            RootCommandMatcher.case("login") => .ReservedCommand,
-            RootCommandMatcher.case("logout") => .ReservedCommand,
-            RootCommandMatcher.case("whoami") => .PackageManagerCommand,
-            RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("list") => .ReservedCommand,
-            RootCommandMatcher.case("why") => .WhyCommand,
+            .{ "deploy", .ReservedCommand },
+            .{ "cloud", .ReservedCommand },
+            .{ "config", .ReservedCommand },
+            .{ "use", .ReservedCommand },
+            .{ "auth", .ReservedCommand },
+            .{ "login", .ReservedCommand },
+            .{ "logout", .ReservedCommand },
+            .{ "whoami", .PackageManagerCommand },
+            .{ "prune", .ReservedCommand },
+            .{ "list", .ReservedCommand },
+            .{ "why", .WhyCommand },
+            .{ "-e", .AutoCommand },
+        });
 
-            RootCommandMatcher.case("-e") => .AutoCommand,
+        // Special case for install/i commands needing to check for global flag
+        if (strings.eql(first_arg_name, "install") or strings.eql(first_arg_name, "i")) {
+            for (args_iter.buf) |arg| {
+                if (arg.len > 0 and (strings.eqlComptime(arg, "-g") or strings.eqlComptime(arg, "--global"))) {
+                    return .AddCommand;
+                }
+            }
+            return .InstallCommand;
+        }
 
-            else => .AutoCommand,
-        };
+        return RootCommandMap.get(first_arg_name) orelse .AutoCommand;
     }
 
     const default_completions_list = [_]string{

@@ -769,7 +769,6 @@ class PostgresAdapter
   }
 
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter {
-    console.log("array", values, typeNameOrID);
     const arrayType = getArrayType(typeNameOrID);
     return new SQLArrayParameter(serializeArray(values, arrayType), arrayType);
   }

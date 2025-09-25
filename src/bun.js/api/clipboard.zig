@@ -45,43 +45,51 @@ fn readTextNative(allocator: std.mem.Allocator) ![]u8 {
 }
 
 // Windows implementation using Win32 APIs
+const windows = if (builtin.os.tag == .windows) @import("std").os.windows else undefined;
+const GMEM_MOVEABLE = 0x0002;
+const CF_UNICODETEXT = 13;
+
+extern "user32" fn OpenClipboard(?*anyopaque) callconv(windows.WINAPI) windows.BOOL;
+extern "user32" fn CloseClipboard() callconv(windows.WINAPI) windows.BOOL;
+extern "user32" fn EmptyClipboard() callconv(windows.WINAPI) windows.BOOL;
+extern "user32" fn SetClipboardData(format: u32, mem: ?windows.HANDLE) callconv(windows.WINAPI) ?windows.HANDLE;
+extern "user32" fn GetClipboardData(format: u32) callconv(windows.WINAPI) ?windows.HANDLE;
+extern "kernel32" fn GlobalAlloc(flags: u32, bytes: usize) callconv(windows.WINAPI) ?windows.HANDLE;
+extern "kernel32" fn GlobalLock(mem: ?windows.HANDLE) callconv(windows.WINAPI) ?*anyopaque;
+extern "kernel32" fn GlobalUnlock(mem: ?windows.HANDLE) callconv(windows.WINAPI) windows.BOOL;
+
 fn writeTextWindows(text: []const u8) !void {
-    const w = std.os.windows;
-
     // Open clipboard
-    if (w.user32.OpenClipboard(null) == 0) return error.OpenFailed;
-    defer _ = w.user32.CloseClipboard();
+    if (OpenClipboard(null) == 0) return error.OpenFailed;
+    defer _ = CloseClipboard();
 
-    _ = w.user32.EmptyClipboard();
+    _ = EmptyClipboard();
 
     // Convert UTF-8 to UTF-16
-    const len = try std.unicode.utf8CountUtf16CodeUnits(text);
+    const len = std.unicode.calcUtf16LeLen(text) catch return error.InvalidUtf8;
     const size = (len + 1) * 2;
 
-    const handle = w.kernel32.GlobalAlloc(w.GMEM_MOVEABLE, size) orelse return error.AllocFailed;
-    const ptr = @as([*]u16, @ptrCast(@alignCast(w.kernel32.GlobalLock(handle) orelse return error.LockFailed)));
-    defer _ = w.kernel32.GlobalUnlock(handle);
+    const handle = GlobalAlloc(GMEM_MOVEABLE, size) orelse return error.AllocFailed;
+    const ptr = @as([*]u16, @ptrCast(@alignCast(GlobalLock(handle) orelse return error.LockFailed)));
+    defer _ = GlobalUnlock(handle);
 
     _ = try std.unicode.utf8ToUtf16Le(ptr[0..len], text);
     ptr[len] = 0;
 
-    if (w.user32.SetClipboardData(w.CF_UNICODETEXT, handle) == null) return error.SetFailed;
+    if (SetClipboardData(CF_UNICODETEXT, handle) == null) return error.SetFailed;
 }
 
 fn readTextWindows(allocator: std.mem.Allocator) ![]u8 {
-    const w = std.os.windows;
+    if (OpenClipboard(null) == 0) return error.OpenFailed;
+    defer _ = CloseClipboard();
 
-    if (w.user32.OpenClipboard(null) == 0) return error.OpenFailed;
-    defer _ = w.user32.CloseClipboard();
-
-    const handle = w.user32.GetClipboardData(w.CF_UNICODETEXT) orelse return allocator.dupe(u8, "");
-    const ptr = @as([*:0]const u16, @ptrCast(@alignCast(w.kernel32.GlobalLock(handle) orelse return error.LockFailed)));
-    defer _ = w.kernel32.GlobalUnlock(handle);
+    const handle = GetClipboardData(CF_UNICODETEXT) orelse return allocator.dupe(u8, "");
+    const ptr = @as([*:0]const u16, @ptrCast(@alignCast(GlobalLock(handle) orelse return error.LockFailed)));
+    defer _ = GlobalUnlock(handle);
 
     const len = std.mem.len(ptr);
-    var buf = std.ArrayList(u8).init(allocator);
-    try std.unicode.utf16leToUtf8(buf.writer(), ptr[0..len]);
-    return buf.toOwnedSlice();
+    const result = std.unicode.utf16LeToUtf8Alloc(allocator, ptr[0..len]) catch return error.InvalidUtf16;
+    return result;
 }
 
 // macOS implementation using pbcopy/pbpaste
@@ -159,6 +167,7 @@ fn readTextLinux(allocator: std.mem.Allocator) ![]u8 {
 // Imports at the bottom (Zig style in Bun codebase)
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

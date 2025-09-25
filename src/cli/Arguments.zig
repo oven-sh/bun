@@ -204,6 +204,8 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile). Default: console output.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
+    clap.parseParam("--randomize                      Randomize the order of test files") catch unreachable,
+    clap.parseParam("--seed <NUMBER>                  Set the seed for randomizing test files (implies --randomize)") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -495,6 +497,20 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.concurrent = args.flag("--concurrent");
+
+        // Handle --randomize and --seed flags
+        if (args.flag("--randomize")) {
+            ctx.test_options.randomize = true;
+        }
+
+        if (args.option("--seed")) |seed_str| {
+            // --seed implies --randomize
+            ctx.test_options.randomize = true;
+            ctx.test_options.randomize_seed = std.fmt.parseInt(u64, seed_str, 10) catch |e| {
+                Output.prettyErrorln("<r><red>error<r>: --seed expects a number: {s}", .{@errorName(e)});
+                Global.exit(1);
+            };
+        }
     }
 
     ctx.args.absolute_working_dir = cwd;

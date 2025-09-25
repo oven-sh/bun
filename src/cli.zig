@@ -347,6 +347,9 @@ pub const Command = struct {
 
         file_reporter: ?TestCommand.FileReporter = null,
         reporter_outfile: ?[]const u8 = null,
+
+        randomize: bool = false,
+        randomize_seed: ?u64 = null,
     };
 
     pub const Debugger = union(enum) {

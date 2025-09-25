@@ -582,6 +582,7 @@ pub const CommandLineReporter = struct {
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
     file_reporter: ?FileReporter = null,
+    randomize_seed: ?u64 = null,
 
     pub const FileReporter = union(enum) {
         junit: *JunitReporter,
@@ -912,6 +913,11 @@ pub const CommandLineReporter = struct {
             files,
             if (files == 1) "" else "s",
         });
+
+        // Display the random seed if tests were randomized
+        if (this.randomize_seed) |seed| {
+            Output.prettyError("<d>[randomized with seed {d}]<r> ", .{seed});
+        }
 
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
@@ -1469,9 +1475,20 @@ pub const TestCommand = struct {
             };
         }
 
-        const test_files = bun.handleOom(scanner.takeFoundTestFiles());
+        var test_files = bun.handleOom(scanner.takeFoundTestFiles());
         defer ctx.allocator.free(test_files);
         const search_count = scanner.search_count;
+
+        // Randomize test file order if requested
+        if (ctx.test_options.randomize and test_files.len > 1) {
+            const seed = ctx.test_options.randomize_seed orelse @as(u64, @intCast(std.time.timestamp()));
+            reporter.randomize_seed = seed;
+            var rng = std.Random.DefaultPrng.init(seed);
+            rng.random().shuffle(PathString, test_files);
+        } else {
+            // Suppress "never mutated" warning when not shuffling
+            _ = &test_files;
+        }
 
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;

@@ -3,8 +3,8 @@ import * as Bake from "bun:app";
 import { serverManifest } from "bun:app/server";
 import type { AsyncLocalStorage } from "node:async_hooks";
 import { PassThrough } from "node:stream";
-import { renderToPipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
 import type { RequestContext } from "../../src/bake/hmr-runtime-server.ts";
+import { renderToPipeableStream } from "./vendor/react-server-dom-bun/server.node.unbundled.js";
 
 function assertReactComponent(Component: unknown): asserts Component is React.JSXElementConstructor<unknown> {
   if (typeof Component !== "function") {
@@ -13,7 +13,6 @@ function assertReactComponent(Component: unknown): asserts Component is React.JS
   }
 }
 
-// This function converts the route information into a React component tree.
 function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: readonly string[]) {
   let route = component(meta.pageModule, meta.params, meta.request);
 
@@ -57,7 +56,6 @@ function component(mod: any, params: Record<string, string | string[]> | null, r
     props = method();
   }
 
-  // Pass request prop if mode is 'ssr'
   if (mod.mode === "ssr" && request) {
     props.request = request;
   }

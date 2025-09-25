@@ -84,60 +84,6 @@ interface Window {
   __bun_f: Array<string | Uint8Array<ArrayBuffer>>;
 }
 
-// The following interfaces have been transcribed manually.
-declare module "react-server-dom-bun/client.browser" {
-  export function createFromReadableStream<T>(readable: ReadableStream<T>): Promise<T>;
-}
-
-declare module "react-server-dom-bun/client.node.unbundled.js" {
-  import type { SSRManifest } from "bun:app/server";
-  import type { Readable } from "node:stream";
-
-  export interface Manifest {
-    moduleMap: SSRManifest;
-    moduleLoading?: ModuleLoading;
-  }
-
-  export interface ModuleLoading {
-    prefix: string;
-    crossOrigin?: string;
-  }
-
-  export interface Options {
-    encodeFormAction?: any;
-    findSourceMapURL?: any;
-    environmentName?: string;
-  }
-
-  export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
-}
-
-declare module "react-server-dom-bun/server.node.unbundled.js" {
-  import type { ServerManifest } from "bun:app/server";
-  import type { ReactElement } from "react";
-
-  export interface PipeableStream<T> {
-    /** Returns the input, which should match the Node.js writable interface */
-    pipe: <T extends NodeJS.WritableStream>(destination: T) => T;
-    abort: () => void;
-  }
-
-  export function renderToPipeableStream<T = any>(
-    model: ReactElement,
-    webpackMap: ServerManifest,
-    options?: RenderToPipeableStreamOptions,
-  ): PipeableStream<T>;
-
-  export interface RenderToPipeableStreamOptions {
-    onError?: (error: Error) => void;
-    identifierPrefix?: string;
-    onPostpone?: () => void;
-    temporaryReferences?: any;
-    environmentName?: string;
-    filterStackFrame?: () => boolean;
-  }
-}
-
 declare module "react-dom/server.node" {
   export * from "react-dom/server";
 }

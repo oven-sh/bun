@@ -20,7 +20,5 @@
     "isolatedDeclarations": true,
     "declaration": true,
     "jsx": "react-jsx"
-  },
-  "include": ["./**/*.tsx", "./**/*.ts"],
-  "exclude": ["node_modules"]
+  }
 }

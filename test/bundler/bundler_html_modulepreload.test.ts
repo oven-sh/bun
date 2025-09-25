@@ -446,4 +446,103 @@ export function c() { return 'C:' + shared(); }`,
       expect(entry2ScriptCount).toBe(1);
     },
   });
+
+  // Test HTML with multiple script imports
+  itBundled("html/multiple-script-tags", {
+    outdir: "out/",
+    splitting: true,
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Multiple Scripts</title>
+  <script type="module" src="./header.js"></script>
+  <script type="module" src="./nav.js"></script>
+  <script type="module" src="./main.js"></script>
+  <script type="module" src="./sidebar.js"></script>
+  <script type="module" src="./footer.js"></script>
+</head>
+<body>
+  <h1>Page with many script imports</h1>
+</body>
+</html>`,
+      "/other.html": `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Other</title>
+  <script type="module" src="./other.js"></script>
+</head>
+<body></body>
+</html>`,
+      "/header.js": `
+import { utils } from './utils.js';
+import { api } from './api.js';
+console.log('Header:', utils(), api());`,
+      "/nav.js": `
+import { utils } from './utils.js';
+import { config } from './config.js';
+console.log('Nav:', utils(), config());`,
+      "/main.js": `
+import { api } from './api.js';
+import { config } from './config.js';
+console.log('Main:', api(), config());`,
+      "/sidebar.js": `
+import { utils } from './utils.js';
+console.log('Sidebar:', utils());`,
+      "/footer.js": `
+import { api } from './api.js';
+console.log('Footer:', api());`,
+      "/other.js": `
+import { utils } from './utils.js';
+import { api } from './api.js';
+console.log('Other:', utils(), api());`,
+      "/utils.js": `
+import { shared } from './shared.js';
+export function utils() { return 'utils:' + shared(); }`,
+      "/api.js": `
+import { shared } from './shared.js';
+export function api() { return 'api:' + shared(); }`,
+      "/config.js": `export function config() { return 'config'; }`,
+      "/shared.js": `export function shared() { return 'shared'; }`,
+    },
+    entryPoints: ["/index.html", "/other.html"],
+
+    onAfterBundle(api) {
+      const indexHtml = api.readFile("out/index.html");
+      const otherHtml = api.readFile("out/other.html");
+
+      // Extract script tags and preload links
+      const scriptCount = (indexHtml.match(/<script[^>]*>/g) || []).length;
+      const preloadCount = (indexHtml.match(/rel="modulepreload"/g) || []).length;
+
+      // With multiple script tags in HTML, Bun combines them into one entry
+      // This is an optimization to reduce the number of entry chunks
+      expect(scriptCount).toBe(1);
+
+      // Should have modulepreload for shared dependencies
+      expect(preloadCount).toBeGreaterThan(0);
+
+      // Verify the HTML is well-formed
+      expect(indexHtml).toMatch(/<script[^>]+type="module"/);
+      expect(indexHtml).toMatch(/crossorigin/);
+
+      // Other page should also work correctly
+      const otherScriptCount = (otherHtml.match(/<script[^>]*>/g) || []).length;
+      expect(otherScriptCount).toBe(1);
+
+      // Extract preloads to verify no duplicates
+      const getPreloads = (html: string) =>
+        [...html.matchAll(/href="\.\/([^"]+)"/g)]
+          .filter(m => html.includes(`rel="modulepreload"`) && html.indexOf(m[0]) < html.indexOf('</head>'))
+          .map(m => m[1]);
+
+      const indexPreloads = getPreloads(indexHtml);
+      const uniquePreloads = new Set(indexPreloads);
+
+      // No duplicate preloads
+      expect(indexPreloads.length).toBe(uniquePreloads.size);
+    },
+  });
 });

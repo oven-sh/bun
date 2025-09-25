@@ -37,7 +37,7 @@ test("process.argv with many arguments doesn't double-free", async () => {
   expect(stderr).toBe("");
 
   const result = JSON.parse(stdout.trim());
-  expect(result.length).toBe(42); // exe + script + 40 args
+  expect(result.length).toBe(131); // exe + script + 129 args
   expect(result.hasAllArgs).toBe(true);
   expect(result.hasExe).toBe(true);
   expect(result.hasScript).toBe(true);

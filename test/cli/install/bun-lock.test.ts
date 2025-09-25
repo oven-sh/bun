@@ -615,3 +615,78 @@ it("should include unused resolutions in the lockfile", async () => {
   // --frozen-lockfile works
   await runBunInstall(env, packageDir, { frozenLockfile: true });
 });
+
+it("respects install.lockfile.save = false when migrating from package-lock.json", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // Copy a local tarball to avoid registry issues
+  await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(packageDir, "bar-0.0.2.tgz"));
+
+  // Create a simple package.json
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "test-lockfile-save-false",
+      version: "1.0.0",
+      dependencies: {
+        "dummy-package": "file:./bar-0.0.2.tgz",
+      },
+    }),
+  );
+
+  // Create a package-lock.json (simulating npm install)
+  await writeFile(
+    join(packageDir, "package-lock.json"),
+    JSON.stringify({
+      name: "test-lockfile-save-false",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      packages: {
+        "": {
+          name: "test-lockfile-save-false",
+          version: "1.0.0",
+          dependencies: {
+            "dummy-package": "file:./bar-0.0.2.tgz",
+          },
+        },
+        "node_modules/dummy-package": {
+          version: "0.0.2",
+          resolved: "file:bar-0.0.2.tgz",
+          license: "ISC",
+        },
+      },
+      dependencies: {
+        "dummy-package": {
+          version: "file:bar-0.0.2.tgz",
+        },
+      },
+    }),
+  );
+
+  // Create bunfig.toml with save = false
+  await writeFile(
+    join(packageDir, "bunfig.toml"),
+    `[install.lockfile]
+save = false
+`,
+  );
+
+  // Run bun install
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+  });
+
+  expect(await exited).toBe(0);
+
+  // Verify that bun.lock was not created
+  expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
+  expect(await exists(join(packageDir, "bun.lockb"))).toBe(false);
+
+  // Verify that package-lock.json still exists
+  expect(await exists(join(packageDir, "package-lock.json"))).toBe(true);
+
+  // Verify that dependencies were still installed (could be in different locations due to migration)
+  // The important part is that bun.lock was not created, which we've already verified
+});

@@ -37,8 +37,9 @@ pub fn installWithManager(
 
     manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
         (load_result == .ok and
-            // if migrated always save a new lockfile
-            (load_result.ok.was_migrated or
+            // if migrated and save_lockfile is enabled (not disabled), save a new lockfile
+            // Note: we check do.save_lockfile to respect the user's configuration
+            ((load_result.ok.was_migrated and manager.options.do.save_lockfile) or
 
                 // if loaded from binary and save-text-lockfile is passed
                 (load_result.ok.format == .binary and
@@ -700,7 +701,10 @@ pub fn installWithManager(
             packages_len_before_install,
         );
 
-        try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
+        // Only save if save_lockfile is enabled
+        if (manager.options.do.save_lockfile) {
+            try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);
+        }
 
         if (manager.options.do.summary) {
             // TODO(dylan-conway): packages aren't installed but we can still print

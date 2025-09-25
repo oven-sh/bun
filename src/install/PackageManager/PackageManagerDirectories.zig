@@ -636,11 +636,14 @@ pub fn saveLockfile(
         this.progress.refresh();
     }
 
-    this.lockfile.saveToDisk(load_result, &this.options);
+    // Only actually save to disk if save_lockfile is enabled
+    if (this.options.do.save_lockfile) {
+        this.lockfile.saveToDisk(load_result, &this.options);
 
-    // delete binary lockfile if saving text lockfile
-    if (save_format == .text and load_result.loadedFromBinaryLockfile()) {
-        _ = bun.sys.unlinkat(FD.cwd(), comptime bun.OSPathLiteral("bun.lockb"));
+        // delete binary lockfile if saving text lockfile
+        if (save_format == .text and load_result.loadedFromBinaryLockfile()) {
+            _ = bun.sys.unlinkat(FD.cwd(), comptime bun.OSPathLiteral("bun.lockb"));
+        }
     }
 
     if (comptime Environment.allow_assert) {
@@ -663,8 +666,11 @@ pub fn saveLockfile(
         this.progress.root.end();
         this.progress = .{};
     } else if (log_level != .silent) {
-        Output.prettyErrorln("Saved lockfile", .{});
-        Output.flush();
+        // Only print message if we actually saved
+        if (this.options.do.save_lockfile) {
+            Output.prettyErrorln("Saved lockfile", .{});
+            Output.flush();
+        }
     }
 }
 

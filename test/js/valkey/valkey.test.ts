@@ -1,15 +1,6 @@
-import { randomUUIDv7, RedisClient } from "bun";
+import { randomUUIDv7 } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import {
-  ConnectionType,
-  createClient,
-  ctx,
-  DEFAULT_REDIS_URL,
-  TLS_REDIS_URL,
-  expectType,
-  isEnabled,
-  setupDockerContainer,
-} from "./test-utils";
+import { ConnectionType, createClient, ctx, expectType, isEnabled, setupDockerContainer } from "./test-utils";
 
 for (const connectionType of [ConnectionType.TCP, ConnectionType.TLS]) {
   describe.skipIf(!isEnabled)(`Valkey Redis Client (${connectionType})`, () => {

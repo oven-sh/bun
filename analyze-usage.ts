@@ -88,6 +88,7 @@ async function main() {
   }
   const unused = getFilteredUnused(baseFiltered);
 
+  let count = 0;
   for (const source of unused) {
     const { module, path, line, col } = getDeclInfo(source);
     if (!rootFolders[module]) continue;
@@ -98,7 +99,10 @@ async function main() {
       "error",
       "\x1b[31m",
     );
+    count += 1;
   }
+  console.log();
+  console.log(`Found ${count} unused declarations`);
 }
 
 function getDeclInfo(decl: string) {

@@ -23,20 +23,21 @@ void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initi
 extern "C" EncodedJSValue Bake__createDevServerFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
 
-    auto* zig = jsCast<::Zig::GlobalObject*>(globalObject);
-    auto* object = JSFinalObject::create(zig->vm(), zig->bakeAdditions().m_DevServerFrameworkRequestArgsClassStructure.get(zig));
+    auto* zig = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_DevServerFrameworkRequestArgsClassStructure.get(zig));
     RETURN_IF_EXCEPTION(scope, {});
 
-    object->putDirectOffset(zig->vm(), 0, JSValue::decode(routerTypeMain));
+    object->putDirectOffset(vm, 0, JSValue::decode(routerTypeMain));
     RETURN_IF_EXCEPTION(scope, {});
-    object->putDirectOffset(zig->vm(), 1, JSValue::decode(routeModules));
+    object->putDirectOffset(vm, 1, JSValue::decode(routeModules));
     RETURN_IF_EXCEPTION(scope, {});
-    object->putDirectOffset(zig->vm(), 2, JSValue::decode(clientEntryUrl));
+    object->putDirectOffset(vm, 2, JSValue::decode(clientEntryUrl));
     RETURN_IF_EXCEPTION(scope, {});
-    object->putDirectOffset(zig->vm(), 3, JSValue::decode(styles));
+    object->putDirectOffset(vm, 3, JSValue::decode(styles));
     RETURN_IF_EXCEPTION(scope, {});
-    object->putDirectOffset(zig->vm(), 4, JSValue::decode(params));
+    object->putDirectOffset(vm, 4, JSValue::decode(params));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(object);
@@ -101,7 +102,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
         return {};
     }
 
-    JSRequest* request = jsCast<JSRequest*>(requestValue);
+    JSRequest* request = jsDynamicCast<JSRequest*>(requestValue);
     if (!request) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "request must be a JSRequest"_s);
         return {};

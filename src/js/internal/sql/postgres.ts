@@ -138,7 +138,7 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
   if ($isArray(value) || isTypedArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
-    return value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter);
+    return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
   switch (typeof value) {

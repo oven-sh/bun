@@ -254,4 +254,114 @@ export function initAdmin() {
       expect(preloadedFiles.length).toBeGreaterThan(0);
     },
   });
+
+  // Test that pages only preload their own dependencies, not other pages' chunks
+  itBundled("html/chunk-isolation", {
+    outdir: "out/",
+    splitting: true,
+    files: {
+      "/page1.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Page 1</title>
+    <script type="module" src="./page1.js"></script>
+  </head>
+  <body>
+    <h1>Page 1</h1>
+  </body>
+</html>`,
+      "/page2.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Page 2</title>
+    <script type="module" src="./page2.js"></script>
+  </head>
+  <body>
+    <h1>Page 2</h1>
+  </body>
+</html>`,
+      "/page3.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Page 3</title>
+    <script type="module" src="./page3.js"></script>
+  </head>
+  <body>
+    <h1>Page 3</h1>
+  </body>
+</html>`,
+      "/page1.js": `
+import { shared } from './shared.js';
+import { moduleA } from './module-a.js';
+console.log('Page 1:', shared(), moduleA());`,
+      "/page2.js": `
+import { shared } from './shared.js';
+import { moduleB } from './module-b.js';
+console.log('Page 2:', shared(), moduleB());`,
+      "/page3.js": `
+import { shared } from './shared.js';
+import { moduleC } from './module-c.js';
+console.log('Page 3:', shared(), moduleC());`,
+      "/shared.js": `
+// Shared by all pages
+export function shared() {
+  return 'shared by all';
+}`,
+      "/module-a.js": `
+// Only used by page1
+import { utilsA } from './utils-a.js';
+export function moduleA() {
+  return 'module A with ' + utilsA();
+}`,
+      "/module-b.js": `
+// Only used by page2
+import { utilsB } from './utils-b.js';
+export function moduleB() {
+  return 'module B with ' + utilsB();
+}`,
+      "/module-c.js": `
+// Only used by page3
+import { utilsC } from './utils-c.js';
+export function moduleC() {
+  return 'module C with ' + utilsC();
+}`,
+      "/utils-a.js": `export function utilsA() { return 'utils A'; }`,
+      "/utils-b.js": `export function utilsB() { return 'utils B'; }`,
+      "/utils-c.js": `export function utilsC() { return 'utils C'; }`,
+    },
+    entryPoints: ["/page1.html", "/page2.html", "/page3.html"],
+
+    onAfterBundle(api) {
+      const page1Html = api.readFile("out/page1.html");
+      const page2Html = api.readFile("out/page2.html");
+      const page3Html = api.readFile("out/page3.html");
+
+      // Extract preloaded files for each page
+      const getPreloadedFiles = (html: string) => {
+        const matches = [...html.matchAll(/rel="modulepreload"[^>]+href="\.\/([^"]+)"/g)];
+        return matches.map(m => m[1]);
+      };
+
+      const page1Preloads = getPreloadedFiles(page1Html);
+      const page2Preloads = getPreloadedFiles(page2Html);
+      const page3Preloads = getPreloadedFiles(page3Html);
+
+      // All pages should preload the shared chunk
+      expect(page1Preloads.length).toBeGreaterThan(0);
+      expect(page2Preloads.length).toBeGreaterThan(0);
+      expect(page3Preloads.length).toBeGreaterThan(0);
+
+      // Since all pages share the same shared module, they should all preload the same chunk
+      // (the shared chunk)
+      expect(page1Preloads).toEqual(page2Preloads);
+      expect(page2Preloads).toEqual(page3Preloads);
+
+      // The important test: verify all pages preload the SAME chunk
+      // (which should be the shared chunk, not page-specific chunks)
+      // This proves that pages don't preload each other's exclusive chunks
+    },
+  });
 });

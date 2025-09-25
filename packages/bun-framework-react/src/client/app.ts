@@ -69,6 +69,12 @@ const initialRscPayload: Promise<NonNullishReactNode> =
         }),
       );
 
+declare global {
+  interface Window {
+    __bun_f: Array<string | Uint8Array<ArrayBuffer>>;
+  }
+}
+
 const appStore: Store<AppState> = store<AppState>({
   rsc: initialRscPayload,
 });

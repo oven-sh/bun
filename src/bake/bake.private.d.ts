@@ -80,10 +80,6 @@ declare var IS_BUN_DEVELOPMENT: unknown;
 /** If this is the fallback error page */
 declare const IS_ERROR_RUNTIME: boolean;
 
-interface Window {
-  __bun_f: Array<string | Uint8Array<ArrayBuffer>>;
-}
-
 declare module "react-dom/server.node" {
   export * from "react-dom/server";
 }

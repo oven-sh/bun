@@ -18,7 +18,7 @@ import { Matchers } from "bun:test";
 import { EventEmitter } from "node:events";
 // @ts-ignore
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles, runBunInstall } from "harness";
 import { expect } from "bun:test";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
@@ -1722,6 +1722,12 @@ function testImpl<T extends DevServerTest>(
       if (runInstall) {
         // await copyCachedReactDeps(root);
         await installReactWithCache(root);
+
+        // Also ensure bun-framework-react has its dependencies installed
+        const frameworkDir = path.join(__dirname, "../../packages/bun-framework-react");
+        if (!fs.existsSync(path.join(frameworkDir, "node_modules"))) {
+          await runBunInstall(bunEnv, frameworkDir);
+        }
       }
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
         if (!options.framework) {

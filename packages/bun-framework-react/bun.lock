@@ -3,9 +3,9 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "react": "^0.0.0-experimental-e2332183-20250924",
-        "react-dom": "^0.0.0-experimental-e2332183-20250924",
-        "react-refresh": "^0.0.0-experimental-e2332183-20250924",
+        "react": "0.0.0-experimental-e2332183-20250924",
+        "react-dom": "0.0.0-experimental-e2332183-20250924",
+        "react-refresh": "0.0.0-experimental-e2332183-20250924",
       },
       "devDependencies": {
         "@types/react": "^19.1.13",

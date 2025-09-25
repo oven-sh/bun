@@ -546,8 +546,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         allocator: std.mem.Allocator,
         poll_ref: Async.KeepAlive = .{},
 
-        cached_hostname: bun.String = bun.String.empty,
-
         flags: packed struct(u3) {
             deinit_scheduled: bool = false,
             terminated: bool = false,
@@ -963,18 +961,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // obviously invalid pointer marks it as used
             upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
             const signal = upgrader.signal;
-
             upgrader.signal = null;
             upgrader.resp = null;
             request.request_context = AnyRequestContext.Null;
             upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
-            const ws = ServerWebSocket.new(.{
-                .handler = &this.config.websocket.?.handler,
-                .this_value = data_value,
-                .signal = signal,
-            });
+            const ws = ServerWebSocket.init(&this.config.websocket.?.handler, data_value, signal);
             data_value.ensureStillAlive();
 
             var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
@@ -1368,38 +1361,35 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return url.toJSDOMURL(globalThis);
         }
 
-        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
+        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) !jsc.JSValue {
             switch (this.config.address) {
                 .unix => return .js_undefined,
-                else => {},
+                .tcp => {},
             }
-
-            if (this.cached_hostname.isEmpty()) {
+            {
                 if (this.listener) |listener| {
                     var buf: [1024]u8 = [_]u8{0} ** 1024;
 
                     if (listener.socket().remoteAddress(buf[0..1024])) |addr| {
                         if (addr.len > 0) {
-                            this.cached_hostname = bun.String.cloneUTF8(addr);
+                            return bun.String.createUTF8ForJS(globalThis, addr);
                         }
                     }
                 }
-
-                if (this.cached_hostname.isEmpty()) {
+                {
                     switch (this.config.address) {
                         .tcp => |tcp| {
                             if (tcp.hostname) |hostname| {
-                                this.cached_hostname = bun.String.cloneUTF8(bun.sliceTo(hostname, 0));
+                                return bun.String.createUTF8ForJS(globalThis, bun.sliceTo(hostname, 0));
                             } else {
-                                this.cached_hostname = bun.String.createAtomASCII("localhost");
+                                return bun.String.static("localhost").toJS(globalThis);
                             }
                         },
-                        else => {},
+                        .unix => unreachable,
                     }
                 }
             }
-
-            return this.cached_hostname.toJS(globalThis);
+            @panic("unreachable");
         }
 
         pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
@@ -1593,7 +1583,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // However, when the JS VM terminates, it hypothetically might not call stopListening
             this.notifyInspectorServerStopped();
 
-            this.cached_hostname.deref();
             this.all_closed_promise.deinit();
             for (this.user_routes.items) |*user_route| {
                 user_route.deinit();
@@ -2649,7 +2638,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // If onNodeHTTPRequest is configured, it might be needed for Node.js compatibility layer
             // for specific Node API routes, even if it's not the main "/*" handler.
             if (this.config.onNodeHTTPRequest != .zero) {
-                NodeHTTP_assignOnCloseFunction(ssl_enabled, app);
+                NodeHTTP_assignOnNodeJSCompat(ssl_enabled, app);
             }
 
             return route_list_value;
@@ -2821,7 +2810,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) void {
             if (this.on_clienterror.get()) |callback| {
                 const is_ssl = protocol_enum == .https;
-                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocket, .{ is_ssl, socket, this.globalThis }) catch return;
+                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocketForClientError, .{ is_ssl, socket, this.globalThis }) catch return;
                 if (node_socket.isUndefinedOrNull()) return;
 
                 const error_code_value = JSValue.jsNumber(error_code);
@@ -3319,9 +3308,8 @@ extern fn NodeHTTPServer__onRequest_https(
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
-extern fn Bun__createNodeHTTPServerSocket(bool, *anyopaque, *jsc.JSGlobalObject) jsc.JSValue;
-extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
-extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
+extern fn Bun__createNodeHTTPServerSocketForClientError(bool, *anyopaque, *jsc.JSGlobalObject) jsc.JSValue;
+
 extern "c" fn Bun__ServerRouteList__callRoute(
     globalObject: *jsc.JSGlobalObject,
     index: u32,
@@ -3349,6 +3337,9 @@ fn throwSSLErrorIfNecessary(globalThis: *jsc.JSGlobalObject) bool {
 
     return false;
 }
+
+extern fn NodeHTTP_assignOnNodeJSCompat(bool, *anyopaque) void;
+extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 const string = []const u8;
 

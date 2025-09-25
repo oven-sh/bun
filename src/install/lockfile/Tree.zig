@@ -340,15 +340,15 @@ pub fn isFilteredDependencyOrWorkspace(
     const res = &pkg_resolutions[pkg_id];
     const parent_res = &pkg_resolutions[parent_pkg_id];
 
-    if (pkg_metas[pkg_id].isDisabled()) {
+    if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os)) {
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
             const name = lockfile.str(&pkg_names[pkg_id]);
-            if (!meta.os.isMatch() and !meta.arch.isMatch()) {
+            if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & os mismatch<r>", .{name});
-            } else if (!meta.os.isMatch()) {
+            } else if (!meta.os.isMatch(manager.options.os)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os mismatch<r>", .{name});
-            } else if (!meta.arch.isMatch()) {
+            } else if (!meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu mismatch<r>", .{name});
             }
         }

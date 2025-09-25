@@ -382,8 +382,10 @@ pub fn isResolvedDependencyDisabled(
     dep_id: DependencyID,
     features: Features,
     meta: *const Package.Meta,
+    cpu: Npm.Architecture,
+    os: Npm.OperatingSystem,
 ) bool {
-    if (meta.isDisabled()) return true;
+    if (meta.isDisabled(cpu, os)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
@@ -1583,9 +1585,11 @@ pub const FormatVersion = enum(u32) {
     // bun v0.1.7+
     // This change added tarball URLs to npm-resolved packages
     v2 = 2,
+    // Changed semver major/minor/patch to each use u64 instead of u32
+    v3 = 3,
 
     _,
-    pub const current = FormatVersion.v2;
+    pub const current = FormatVersion.v3;
 };
 
 pub const PackageIDSlice = ExternalSlice(PackageID);
@@ -1605,7 +1609,7 @@ pub const Buffers = @import("./lockfile/Buffers.zig");
 pub const Serializer = @import("./lockfile/bun.lockb.zig");
 pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
 pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
-pub const Package = @import("./lockfile/Package.zig").Package;
+pub const Package = @import("./lockfile/Package.zig").Package(u64);
 pub const Tree = @import("./lockfile/Tree.zig");
 
 pub fn deinit(this: *Lockfile) void {
@@ -2016,6 +2020,7 @@ const stringZ = [:0]const u8;
 
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
+const Npm = @import("./npm.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const TextLockfile = @import("./lockfile/bun.lock.zig");
 const migration = @import("./migration.zig");

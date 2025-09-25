@@ -113,6 +113,10 @@ export class ClassDefinition {
    */
   call?: boolean;
   /**
+   * The instances of this class are intended to be inside the this of a bound function.
+   */
+  forBind?: boolean;
+  /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
    *

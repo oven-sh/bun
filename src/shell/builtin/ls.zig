@@ -228,9 +228,7 @@ pub const ShellLsTask = struct {
 
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
-    task: jsc.WorkPoolTask = .{
-        .callback = workPoolCallback,
-    },
+    task: jsc.WorkPoolTask = .{ .callback = workPoolCallback },
 
     pub fn schedule(this: *@This()) void {
         jsc.WorkPool.schedule(&this.task);

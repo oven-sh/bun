@@ -1,13 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const jsc = bun.jsc;
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSValue = jsc.JSValue;
-const JSError = jsc.JSError;
-const JSPromise = jsc.JSPromise;
-const ZigString = jsc.ZigString;
-
 pub fn writeText(globalObject: *JSGlobalObject, callframe: *jsc.CallFrame) JSError!JSValue {
     const args = callframe.argumentsAsArray(1);
 
@@ -165,3 +155,15 @@ fn readTextLinux(allocator: std.mem.Allocator) ![]u8 {
     }
     return result.stdout;
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+
+const jsc = bun.jsc;
+const JSError = jsc.JSError;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSPromise = jsc.JSPromise;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

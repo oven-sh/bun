@@ -7,7 +7,11 @@ const {
   SQLQueryFlags,
   symbols: { _strings, _values, _flags, _results, _handle },
 } = require("internal/sql/query");
-const isTypedArray = ArrayBuffer.isView;
+function isTypedArray(value: any) {
+  // Buffer should be treated as a normal object
+  // Typed arrays should be treated like an array
+  return ArrayBuffer.isView(value) && !Buffer.isBuffer(value);
+}
 
 const { PostgresError } = require("internal/sql/errors");
 

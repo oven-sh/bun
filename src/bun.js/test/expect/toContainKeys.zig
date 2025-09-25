@@ -26,9 +26,7 @@ pub fn toContainKeys(
     var pass = brk: {
         const count = try expected.getLength(globalThis);
 
-        // jest-extended checks for truthiness before calling hasOwnProperty
-        // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
-        if (!value.toBoolean()) break :brk count == 0;
+        if (!value.isObject()) break :brk count == 0;
 
         var i: u32 = 0;
 

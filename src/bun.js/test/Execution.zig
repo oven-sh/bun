@@ -255,7 +255,7 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
             while (group.next_sequence_index < group.sequences(this).len) : (group.next_sequence_index += 1) {
                 const target_sequence = &group.sequences(this)[group.next_sequence_index];
                 if (target_sequence.executing) continue;
-                const sequence_status = try stepSequence(buntest_strong, globalThis, group, group.next_sequence_index, now);
+                const sequence_status = try stepSequence(buntest_strong, globalThis, group, group.next_sequence_index, &now);
                 switch (sequence_status) {
                     .done => continue,
                     .execute => |exec| {

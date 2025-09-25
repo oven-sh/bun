@@ -207,7 +207,7 @@ function serializeArray(values: any[], type: string) {
   const first = values[0];
 
   if ($isArray(first)) {
-    return "{" + values.map(x => this.serializeArray(x, type)).join(delimiter) + "}";
+    return "{" + values.map(x => serializeArray(x, type)).join(delimiter) + "}";
   }
 
   return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;

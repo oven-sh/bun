@@ -1,34 +1,10 @@
 import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
-// Helper to extract modulepreload links from HTML
 function getModulePreloads(html: string): string[] {
   return [...html.matchAll(/rel="modulepreload"[^>]+href="\.\/([^"]+)"/g)].map(m => m[1]);
 }
 
-// Helper to get the main script src
-function getMainScriptSrc(html: string): string | null {
-  const match = html.match(/<script[^>]+type="module"[^>]+src="\.\/([^"]+)"/);
-  return match ? match[1] : null;
-}
-
-// Helper to check tag order in HTML head
-function checkTagOrder(html: string): { cssFirst: boolean; preloadsBeforeScript: boolean } {
-  const headMatch = html.match(/<head[^>]*>([\s\S]*?)<\/head>/);
-  if (!headMatch) return { cssFirst: false, preloadsBeforeScript: false };
-
-  const head = headMatch[1];
-  const cssIndex = head.indexOf('rel="stylesheet"');
-  const firstPreloadIndex = head.indexOf('rel="modulepreload"');
-  const scriptIndex = head.indexOf('<script type="module"');
-
-  return {
-    cssFirst: cssIndex === -1 || firstPreloadIndex === -1 || cssIndex < firstPreloadIndex,
-    preloadsBeforeScript: firstPreloadIndex === -1 || scriptIndex === -1 || firstPreloadIndex < scriptIndex,
-  };
-}
-
-// Helper to create simple HTML with script tag
 function createHTML(title: string, scriptSrc: string): string {
   return `<!DOCTYPE html>
 <html>
@@ -42,13 +18,11 @@ function createHTML(title: string, scriptSrc: string): string {
 </html>`;
 }
 
-// Helper to count script tags
 function countScriptTags(html: string): number {
   return (html.match(/<script[^>]*>/g) || []).length;
 }
 
 describe("bundler", () => {
-  // Test that modulepreload links are added for chunk dependencies
   itBundled("html/modulepreload-chunks", {
     outdir: "out/",
     splitting: true,
@@ -81,15 +55,12 @@ export function utils() {
     entryPoints: ["/page1.html", "/page2.html"],
 
     onAfterBundle(api) {
-      // Check that HTML includes modulepreload links for chunks
       const page1Html = api.readFile("out/page1.html");
       const page2Html = api.readFile("out/page2.html");
 
-      // Both pages should have modulepreload links
       api.expectFile("out/page1.html").toMatch(/rel="modulepreload"/);
       api.expectFile("out/page2.html").toMatch(/rel="modulepreload"/);
 
-      // Both should preload the shared chunk
       const page1Preloads = getModulePreloads(page1Html);
       const page2Preloads = getModulePreloads(page2Html);
 
@@ -98,7 +69,6 @@ export function utils() {
     },
   });
 
-  // Test with nested chunk dependencies
   itBundled("html/modulepreload-nested-chunks", {
     outdir: "out/",
     splitting: true,
@@ -136,15 +106,12 @@ export function deepDep() {
     entryPoints: ["/index.html", "/other.html"],
 
     onAfterBundle(api) {
-      // Check that HTML includes modulepreload links for all dependency chunks
       const indexHtml = api.readFile("out/index.html");
       const otherHtml = api.readFile("out/other.html");
 
-      // Both should have modulepreload links
       api.expectFile("out/index.html").toMatch(/rel="modulepreload"/);
       api.expectFile("out/other.html").toMatch(/rel="modulepreload"/);
 
-      // With code splitting and nested dependencies, we should have preloads
       const indexPreloads = getModulePreloads(indexHtml);
       const otherPreloads = getModulePreloads(otherHtml);
 
@@ -153,7 +120,6 @@ export function deepDep() {
     },
   });
 
-  // Test that dynamic imports are NOT preloaded
   itBundled("html/dynamic-imports-not-preloaded", {
     outdir: "out/",
     splitting: true,
@@ -181,26 +147,21 @@ export function deepDep() {
   </body>
 </html>`,
       "/app.js": `
-// Static imports - these SHOULD be preloaded
 import { utils } from './utils.js';
 import { api } from './api.js';
-
 console.log('App loaded:', utils(), api());
 
-// Dynamic imports - these should NOT be preloaded
 if (typeof window !== 'undefined') {
   document.getElementById('load-feature')?.addEventListener('click', async () => {
     const { heavyFeature } = await import('./heavy-feature.js');
     console.log('Loaded:', heavyFeature());
   });
 
-  // Conditional dynamic import
   if (window.location.search.includes('admin')) {
     import('./admin.js').then(m => m.initAdmin());
   }
 }`,
       "/other.js": `
-// Force code splitting by sharing utils
 import { utils } from './utils.js';
 import { shared } from './shared.js';
 console.log('Other:', utils(), shared());`,
@@ -222,13 +183,11 @@ export function shared() {
   return 'shared';
 }`,
       "/heavy-feature.js": `
-// This module is dynamically imported
 import { shared } from './shared.js';
 export function heavyFeature() {
   return 'heavy feature with ' + shared();
 }`,
       "/admin.js": `
-// This module is dynamically imported
 import { shared } from './shared.js';
 export function initAdmin() {
   console.log('Admin initialized with ' + shared());
@@ -238,23 +197,15 @@ export function initAdmin() {
 
     onAfterBundle(api) {
       const indexHtml = api.readFile("out/index.html");
-
-      // HTML should have some modulepreload links for static imports
       expect(indexHtml).toMatch(/rel="modulepreload"/);
-
-      // Extract all preloaded chunk filenames
       const preloadedFiles = getModulePreloads(indexHtml);
 
-      // Dynamic imports should NOT be preloaded
       expect(preloadedFiles.some(f => f.includes("heavy"))).toBe(false);
       expect(preloadedFiles.some(f => f.includes("admin"))).toBe(false);
-
-      // But there should be some preloads for the static imports
       expect(preloadedFiles.length).toBeGreaterThan(0);
     },
   });
 
-  // Test that exactly the right chunks are preloaded
   itBundled("html/exact-chunk-preloading", {
     outdir: "out/",
     splitting: true,

@@ -512,26 +512,30 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
     case SubtleCrypto::KeyFormat::Spki:
     case SubtleCrypto::KeyFormat::Pkcs8:
     case SubtleCrypto::KeyFormat::Raw:
-        return WTF::switchOn(
-            keyDataVariant,
-            [&promise](JsonWebKey&) -> std::optional<KeyData> {
-                promise->reject(Exception { TypeError });
-                return std::nullopt;
-            },
-            [](auto& bufferSource) -> std::optional<KeyData> {
-                return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
-            });
+        return std::visit(
+            WTF::makeVisitor(
+                [&promise](JsonWebKey&) -> std::optional<KeyData> {
+                    promise->reject(Exception { TypeError });
+                    return std::nullopt;
+                },
+                [](auto& bufferSource) -> std::optional<KeyData> {
+                    return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
+                }
+            ),
+            keyDataVariant);
     case SubtleCrypto::KeyFormat::Jwk:
-        return WTF::switchOn(
-            keyDataVariant,
-            [](JsonWebKey& webKey) -> std::optional<KeyData> {
-                normalizeJsonWebKey(webKey);
-                return KeyData { webKey };
-            },
-            [&promise](auto&) -> std::optional<KeyData> {
-                promise->reject(Exception { TypeError });
-                return std::nullopt;
-            });
+        return std::visit(
+            WTF::makeVisitor(
+                [](JsonWebKey& webKey) -> std::optional<KeyData> {
+                    normalizeJsonWebKey(webKey);
+                    return KeyData { webKey };
+                },
+                [&promise](auto&) -> std::optional<KeyData> {
+                    promise->reject(Exception { TypeError });
+                    return std::nullopt;
+                }
+            ),
+            keyDataVariant);
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -815,22 +819,24 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](KeyOrKeyPair&& keyOrKeyPair) mutable {
         if (auto promise = getPromise(index, weakThis)) {
-            WTF::switchOn(
-                keyOrKeyPair,
-                [&promise](RefPtr<CryptoKey>& key) {
-                    if ((key->type() == CryptoKeyType::Private || key->type() == CryptoKeyType::Secret) && !key->usagesBitmap()) {
-                        rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
-                        return;
+            std::visit(
+                WTF::makeVisitor(
+                    [&promise](RefPtr<CryptoKey>& key) {
+                        if ((key->type() == CryptoKeyType::Private || key->type() == CryptoKeyType::Secret) && !key->usagesBitmap()) {
+                            rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
+                            return;
+                        }
+                        promise->resolve<IDLInterface<CryptoKey>>(*key);
+                    },
+                    [&promise](CryptoKeyPair& keyPair) {
+                        if (!keyPair.privateKey->usagesBitmap()) {
+                            rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
+                            return;
+                        }
+                        promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
                     }
-                    promise->resolve<IDLInterface<CryptoKey>>(*key);
-                },
-                [&promise](CryptoKeyPair& keyPair) {
-                    if (!keyPair.privateKey->usagesBitmap()) {
-                        rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
-                        return;
-                    }
-                    promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
-                });
+                ),
+                keyOrKeyPair);
         }
     };
     auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {

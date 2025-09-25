@@ -752,13 +752,13 @@ pub const Stringifier = struct {
         }
 
         // TODO(dylan-conway)
-        // if (meta.libc != .all) {
-        //     try writer.writeAll(
-        //         \\"libc": [
-        //     );
-        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
-        //     try writer.writeAll("], ");
-        // }
+        if (meta.libc != .all) {
+            try writer.writeAll(
+                \\"libc": [
+            );
+            try Negatable(Npm.Libc).toJson(meta.libc, writer);
+            try writer.writeAll("], ");
+        }
 
         if (meta.os != .all) {
             if (any) {
@@ -1798,10 +1798,9 @@ pub fn parseIntoBinaryLockfile(
                         if (deps_os_cpu_libc_bin_bundle_obj.get("cpu")) |arch| {
                             pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
                         }
-                        // TODO(dylan-conway)
-                        // if (os_cpu_libc_obj.get("libc")) |libc| {
-                        //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
-                        // }
+                        if (deps_os_cpu_libc_bin_bundle_obj.get("libc")) |libc| {
+                            pkg.meta.libc = try Negatable(Npm.Libc).fromJson(allocator, libc);
+                        }
                     }
                 },
                 .root => {
@@ -1888,13 +1887,11 @@ pub fn parseIntoBinaryLockfile(
         const pkgs = lockfile.packages.slice();
         const pkg_deps = pkgs.items(.dependencies);
         const pkg_names = pkgs.items(.name);
-        var pkg_metas = pkgs.items(.meta);
         var pkg_resolutions = pkgs.items(.resolution);
 
         {
             // first the root dependencies are resolved
             pkg_resolutions[0] = Resolution.init(.{ .root = {} });
-            pkg_metas[0].origin = .local;
 
             for (pkg_deps[0].begin()..pkg_deps[0].end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);

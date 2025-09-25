@@ -644,6 +644,8 @@ pub const OperatingSystem = enum(u16) {
     pub const sunos: u16 = 1 << 6;
     pub const win32: u16 = 1 << 7;
     pub const android: u16 = 1 << 8;
+    // some more in use on npm:
+    // netbsd, haiku, cygwin
 
     pub const all_value: u16 = aix | darwin | freebsd | linux | openbsd | sunos | win32 | android;
 
@@ -727,8 +729,10 @@ pub const Libc = enum(u8) {
         return .{ .added = this, .removed = .none };
     }
 
-    // TODO:
-    pub const current: Libc = @intFromEnum(glibc);
+    pub const current: Libc = switch (Environment.os) {
+        .linux => if (Environment.isMusl) @enumFromInt(musl) else @enumFromInt(glibc),
+        else => .all,
+    };
 
     const jsc = bun.jsc;
     pub fn jsFunctionLibcIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -764,6 +768,8 @@ pub const Architecture = enum(u16) {
     pub const s390x: u16 = 1 << 9;
     pub const x32: u16 = 1 << 10;
     pub const x64: u16 = 1 << 11;
+    // some more in use on npm:
+    // wasm32, riscv64, loong64, mips64el, sparc
 
     pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
 
@@ -869,7 +875,7 @@ pub const PackageVersion = extern struct {
     cpu: Architecture = Architecture.all,
 
     /// `"libc"` field in package.json, not exposed in npm registry api yet.
-    libc: Libc = Libc.none,
+    libc: Libc = Libc.all,
 
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,

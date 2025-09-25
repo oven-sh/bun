@@ -384,8 +384,9 @@ pub fn isResolvedDependencyDisabled(
     meta: *const Package.Meta,
     cpu: Npm.Architecture,
     os: Npm.OperatingSystem,
+    libc: Npm.Libc,
 ) bool {
-    if (meta.isDisabled(cpu, os)) return true;
+    if (meta.isDisabled(cpu, os, libc)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
@@ -1609,7 +1610,7 @@ pub const Buffers = @import("./lockfile/Buffers.zig");
 pub const Serializer = @import("./lockfile/bun.lockb.zig");
 pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
 pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
-pub const Package = @import("./lockfile/Package.zig").Package(u64);
+pub const Package = @import("./lockfile/Package.zig").Package(true);
 pub const Tree = @import("./lockfile/Tree.zig");
 
 pub fn deinit(this: *Lockfile) void {

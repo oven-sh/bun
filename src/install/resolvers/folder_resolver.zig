@@ -222,7 +222,7 @@ pub const FolderResolution = union(Tag) {
             break :brk bun.sys.exists(binding_dot_gyp_path);
         };
 
-        package.meta.setHasInstallScript(has_scripts);
+        package.meta.has_install_script = has_scripts;
 
         if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
             package.meta.id = existing_id;

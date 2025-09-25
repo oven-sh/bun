@@ -101,7 +101,7 @@ pub fn processExtractedTarballPackage(
                         break :brk Syscall.exists(binding_dot_gyp_path);
                     };
 
-                    pkg.meta.setHasInstallScript(has_scripts);
+                    pkg.meta.has_install_script = has_scripts;
                     break :package pkg;
                 }
 
@@ -186,7 +186,7 @@ pub fn processExtractedTarballPackage(
                 break :brk Syscall.exists(binding_dot_gyp_path);
             };
 
-            package.meta.setHasInstallScript(has_scripts);
+            package.meta.has_install_script = has_scripts;
 
             package = manager.lockfile.appendPackage(package) catch unreachable;
             package_id.* = package.meta.id;

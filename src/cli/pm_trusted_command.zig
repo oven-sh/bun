@@ -19,7 +19,6 @@ pub const UntrustedCommand = struct {
 
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
         PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
-        try pm.updateLockfileIfNeeded(load_lockfile);
 
         const packages = pm.lockfile.packages.slice();
         const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
@@ -161,7 +160,6 @@ pub const TrustCommand = struct {
 
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
         PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
-        try pm.updateLockfileIfNeeded(load_lockfile);
 
         var packages_to_trust: std.ArrayListUnmanaged(string) = .{};
         defer packages_to_trust.deinit(ctx.allocator);

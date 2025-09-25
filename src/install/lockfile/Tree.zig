@@ -340,16 +340,24 @@ pub fn isFilteredDependencyOrWorkspace(
     const res = &pkg_resolutions[pkg_id];
     const parent_res = &pkg_resolutions[parent_pkg_id];
 
-    if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os)) {
+    if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os, manager.options.libc)) {
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
             const name = lockfile.str(&pkg_names[pkg_id]);
-            if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu)) {
+            if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu) and !meta.libc.isMatch(manager.options.libc)) {
+                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu, os & libc mismatch<r>", .{name});
+            } else if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & os mismatch<r>", .{name});
+            } else if (!meta.os.isMatch(manager.options.os) and !meta.libc.isMatch(manager.options.libc)) {
+                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os & libc mismatch<r>", .{name});
+            } else if (!meta.arch.isMatch(manager.options.cpu) and !meta.libc.isMatch(manager.options.libc)) {
+                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & libc mismatch<r>", .{name});
             } else if (!meta.os.isMatch(manager.options.os)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os mismatch<r>", .{name});
             } else if (!meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu mismatch<r>", .{name});
+            } else {
+                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- libc mismatch<r>", .{name});
             }
         }
         return true;

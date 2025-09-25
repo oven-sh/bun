@@ -693,12 +693,12 @@ pub fn migrateYarnLockfile(
             .resolutions = .{},
             .meta = .{
                 .id = 0,
-                .origin = .local,
                 .arch = .all,
                 .os = .all,
                 .man_dir = String{},
-                .has_install_script = .false,
+                .has_install_script = false,
                 .integrity = Integrity{},
+                .libc = .all,
             },
             .bin = Bin.init(),
             .scripts = .{},
@@ -980,7 +980,6 @@ pub fn migrateYarnLockfile(
             .resolutions = .{},
             .meta = .{
                 .id = package_id,
-                .origin = .npm,
                 .arch = if (entry.cpu) |cpu_list| arch: {
                     var arch = Npm.Architecture.none.negatable();
                     for (cpu_list) |cpu| {
@@ -996,11 +995,12 @@ pub fn migrateYarnLockfile(
                     break :os os.combine();
                 } else .all,
                 .man_dir = String{},
-                .has_install_script = .false,
+                .has_install_script = false,
                 .integrity = if (entry.integrity) |integrity|
                     Integrity.parse(integrity)
                 else
                     Integrity{},
+                .libc = .all,
             },
             .bin = Bin.init(),
             .scripts = .{},

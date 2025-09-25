@@ -126,12 +126,6 @@ pub const Aligner = struct {
     }
 };
 
-pub const Origin = enum(u8) {
-    local = 0,
-    npm = 1,
-    tarball = 2,
-};
-
 pub const Features = struct {
     dependencies: bool = true,
     dev_dependencies: bool = false,

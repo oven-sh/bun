@@ -1,10 +1,10 @@
-pub const Meta = extern struct {
-    // TODO: when we bump the lockfile version, we should reorder this to:
-    // id(32), arch(16), os(16), id(8), man_dir(8), has_install_script(8), integrity(72 align 8)
-    // should allow us to remove padding bytes
-
-    // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
-    origin: Origin = Origin.npm,
+// old (v2)
+pub const MetaV2 = extern struct {
+    origin: enum(u8) {
+        local = 0,
+        npm = 1,
+        tarball = 2,
+    } = .npm,
     _padding_origin: u8 = 0,
 
     arch: Npm.Architecture = .all,
@@ -15,13 +15,6 @@ pub const Meta = extern struct {
 
     man_dir: String = .{},
     integrity: Integrity = .{},
-
-    /// Shouldn't be used directly. Use `Meta.hasInstallScript()` and
-    /// `Meta.setHasInstallScript()` instead.
-    ///
-    /// `.old` represents the value of this field before it was used
-    /// in the lockfile and should never be saved to a new lockfile.
-    /// There is a debug assert for this in `Lockfile.Package.Serializer.save()`.
     has_install_script: enum(u8) {
         old = 0,
         false,
@@ -30,22 +23,29 @@ pub const Meta = extern struct {
 
     _padding_integrity: [2]u8 = .{0} ** 2,
 
-    /// Does the `cpu` arch and `os` match the requirements listed in the package?
+    pub fn init() MetaV2 {
+        return .{};
+    }
+};
+
+// v3
+pub const Meta = extern struct {
+    id: PackageID = invalid_package_id,
+
+    arch: Npm.Architecture = .all,
+    os: Npm.OperatingSystem = .all,
+    libc: Npm.Libc = .all,
+
+    man_dir: String = .{},
+    has_install_script: bool = false,
+    integrity: Integrity = .{},
+
+    _padding: [1]u8 = .{0} ** 1,
+
+    /// Does the `cpu` arch, `os`, and `libc` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn isDisabled(this: *const Meta, cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
-        return !this.arch.isMatch(cpu) or !this.os.isMatch(os);
-    }
-
-    pub fn hasInstallScript(this: *const Meta) bool {
-        return this.has_install_script == .true;
-    }
-
-    pub fn setHasInstallScript(this: *Meta, has_script: bool) void {
-        this.has_install_script = if (has_script) .true else .false;
-    }
-
-    pub fn needsUpdate(this: *const Meta) bool {
-        return this.has_install_script == .old;
+    pub fn isDisabled(this: *const Meta, cpu: Npm.Architecture, os: Npm.OperatingSystem, libc: Npm.Libc) bool {
+        return !this.arch.isMatch(cpu) or !this.os.isMatch(os) or !this.libc.isMatch(libc);
     }
 
     pub fn count(this: *const Meta, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) void {
@@ -63,7 +63,7 @@ pub const Meta = extern struct {
             .integrity = this.integrity,
             .arch = this.arch,
             .os = this.os,
-            .origin = this.origin,
+            .libc = this.libc,
             .has_install_script = this.has_install_script,
         };
     }
@@ -76,6 +76,5 @@ const String = bun.Semver.String;
 
 const install = bun.install;
 const Npm = install.Npm;
-const Origin = install.Origin;
 const PackageID = install.PackageID;
 const invalid_package_id = install.invalid_package_id;

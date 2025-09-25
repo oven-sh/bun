@@ -52,6 +52,8 @@ const shared_params = [_]ParamType{
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
     clap.parseParam("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)") catch unreachable,
     clap.parseParam("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)") catch unreachable,
+    // clap.parseParam("--libc <STR>...                       Override libc for optional dependencies (e.g., glibc, musl, * for all)") catch unreachable,
+    clap.parseParam("--libc <STR>...") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -243,9 +245,10 @@ depth: ?usize = null,
 audit_level: ?AuditLevel = null,
 audit_ignore_list: []const string = &.{},
 
-// CPU and OS overrides for optional dependencies
+// CPU, OS, and libc overrides for optional dependencies
 cpu: Npm.Architecture = Npm.Architecture.current,
 os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+libc: Npm.Libc = Npm.Libc.current,
 
 pub const AuditLevel = enum {
     low,
@@ -989,6 +992,30 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
             }
         }
         cli.os = os_negatable.combine();
+    }
+
+    // Parse multiple --libc flags and combine them using Negatable
+    const libc_values = args.options("--libc");
+    if (libc_values.len > 0) {
+        var libc_negatable = Npm.Libc.none.negatable();
+        for (libc_values) |libc_str| {
+            // apply() already handles "any" as wildcard and negation with !
+            libc_negatable.apply(libc_str);
+
+            // Support * as an alias for "any"
+            if (strings.eqlComptime(libc_str, "*")) {
+                libc_negatable.had_wildcard = true;
+                libc_negatable.had_unrecognized_values = false;
+            } else if (libc_negatable.had_unrecognized_values and
+                !strings.eqlComptime(libc_str, "any") and
+                !strings.eqlComptime(libc_str, "none"))
+            {
+                // Only error for truly unrecognized values (not "any" or "none")
+                Output.errGeneric("Invalid libc: '{s}'. Valid values are: *, any, glibc, musl. Use !name to negate.", .{libc_str});
+                Global.crash();
+            }
+        }
+        cli.libc = libc_negatable.combine();
     }
 
     if (comptime subcommand == .add or subcommand == .install) {

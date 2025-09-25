@@ -64,6 +64,7 @@ pub const PackageJSON = struct {
 
     arch: Architecture = Architecture.all,
     os: OperatingSystem = OperatingSystem.all,
+    libc: Libc = Libc.all,
 
     package_manager_package_id: Install.PackageID = Install.invalid_package_id,
     dependencies: DependencyMap = .{},
@@ -935,9 +936,9 @@ pub const PackageJSON = struct {
                         }
                     }
                 }
-                if (json.get("cpu")) |os_field| {
-                    if (os_field.asArray()) |array_const| {
-                        var array = array_const;
+                if (json.get("cpu")) |cpu_field| {
+                    var cpu_array = cpu_field.asArray();
+                    if (cpu_array) |*array| {
                         var arch = Architecture.none.negatable();
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
@@ -946,6 +947,9 @@ pub const PackageJSON = struct {
                         }
 
                         package_json.arch = arch.combine();
+                    } else if (cpu_field.asString(bun.default_allocator)) |str| {
+                        var arch = Architecture.none.negatable();
+                        arch.apply(str);
                     }
                 }
 
@@ -958,8 +962,27 @@ pub const PackageJSON = struct {
                                 os.apply(str);
                             }
                         }
-
+                    } else if (os_field.asString(bun.default_allocator)) |str| {
+                        var os = OperatingSystem.none.negatable();
+                        os.apply(str);
                         package_json.os = os.combine();
+                    }
+                }
+
+                if (json.get("libc")) |libc_field| {
+                    var libc_array = libc_field.asArray();
+                    if (libc_array) |*array| {
+                        var libc = Libc.none.negatable();
+                        while (array.next()) |item| {
+                            if (item.asString(bun.default_allocator)) |str| {
+                                libc.apply(str);
+                            }
+                        }
+                        package_json.libc = libc.combine();
+                    } else if (libc_field.asString(bun.default_allocator)) |str| {
+                        var libc = Libc.none.negatable();
+                        libc.apply(str);
+                        package_json.libc = libc.combine();
                     }
                 }
 
@@ -2150,6 +2173,7 @@ const std = @import("std");
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
+const Libc = @import("../install/npm.zig").Libc;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

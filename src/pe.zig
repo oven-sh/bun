@@ -100,6 +100,20 @@ pub const PEFile = struct {
     const DOS_SIGNATURE = 0x5A4D; // "MZ"
     const OPTIONAL_HEADER_MAGIC_64 = 0x020B;
 
+    // Data directory indices
+    const IMAGE_DIRECTORY_ENTRY_SECURITY = 4;
+
+    // WIN_CERTIFICATE structure
+    const WIN_CERTIFICATE = extern struct {
+        dwLength: u32, // Size of the certificate
+        wRevision: u16, // Certificate revision (0x0200 for revision 2.0)
+        wCertificateType: u16, // Certificate type (0x0002 for PKCS#7)
+        // Certificate data follows
+    };
+
+    const WIN_CERT_REVISION_2_0 = 0x0200;
+    const WIN_CERT_TYPE_PKCS_SIGNED_DATA = 0x0002;
+
     // Section characteristics
     const IMAGE_SCN_CNT_CODE = 0x00000020;
     const IMAGE_SCN_CNT_INITIALIZED_DATA = 0x00000040;
@@ -333,6 +347,83 @@ pub const PEFile = struct {
     /// Write the modified PE file
     pub fn write(self: *const PEFile, writer: anytype) !void {
         try writer.writeAll(self.data.items);
+    }
+
+    /// Check if the PE file has an Authenticode signature
+    pub fn hasSignature(self: *const PEFile) bool {
+        const optional_header = self.getOptionalHeader();
+
+        // Check if we have enough data directories
+        if (optional_header.number_of_rva_and_sizes <= IMAGE_DIRECTORY_ENTRY_SECURITY) {
+            return false;
+        }
+
+        const security_dir = optional_header.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
+        return security_dir.virtual_address != 0 and security_dir.size != 0;
+    }
+
+    /// Remove Authenticode signature from the PE file
+    pub fn removeSignature(self: *PEFile) !void {
+        const optional_header = self.getOptionalHeader();
+
+        // Check if signature exists
+        if (optional_header.number_of_rva_and_sizes <= IMAGE_DIRECTORY_ENTRY_SECURITY) {
+            return; // No signature directory
+        }
+
+        const security_dir = &optional_header.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
+
+        if (security_dir.virtual_address == 0 or security_dir.size == 0) {
+            return; // No signature present
+        }
+
+        // Verify signature is at the end of the file
+        const sig_start = security_dir.virtual_address;
+        const sig_end = sig_start + security_dir.size;
+
+        // The signature might not be exactly at the end due to padding
+        // but it should be close to the end
+        if (sig_end > self.data.items.len) {
+            // Signature extends beyond file, file might be corrupted
+            return error.InvalidSignatureLocation;
+        }
+
+        // Find the actual end of content before the signature
+        // We need to check if there's debug info after the signature
+        var actual_end: usize = sig_start;
+
+        // Check all sections to find the last byte of actual content
+        const section_headers = self.getSectionHeaders();
+        for (section_headers) |section| {
+            const section_end = section.pointer_to_raw_data + section.size_of_raw_data;
+            if (section_end > actual_end and section_end < sig_start) {
+                actual_end = section_end;
+            }
+        }
+
+        // If signature is at the end, we can safely truncate
+        if (sig_end == self.data.items.len) {
+            // Truncate file to remove signature
+            try self.data.resize(sig_start);
+        } else {
+            // There's data after the signature (possibly debug info)
+            // We need to preserve that data
+            const data_after_sig = self.data.items[sig_end..];
+            const data_after_sig_len = data_after_sig.len;
+
+            // Move the data after signature to where signature was
+            std.mem.copyForwards(u8, self.data.items[sig_start..][0..data_after_sig_len], data_after_sig);
+
+            // Resize to remove the signature bytes
+            try self.data.resize(self.data.items.len - security_dir.size);
+        }
+
+        // Clear the security directory entry
+        security_dir.virtual_address = 0;
+        security_dir.size = 0;
+
+        // Clear the checksum (unsigned files typically have checksum = 0)
+        optional_header.checksum = 0;
     }
 
     /// Validate the PE file structure

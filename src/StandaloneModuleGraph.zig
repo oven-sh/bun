@@ -724,6 +724,15 @@ pub const StandaloneModuleGraph = struct {
                     return bun.invalid_fd;
                 };
                 defer pe_file.deinit();
+
+                // Remove signature if present (required before adding .bun section)
+                if (pe_file.hasSignature()) {
+                    pe_file.removeSignature() catch |err| {
+                        // Log warning but continue - signature removal failure shouldn't be fatal
+                        Output.prettyErrorln("Warning: Could not remove signature from PE file: {}", .{err});
+                    };
+                }
+
                 pe_file.addBunSection(bytes) catch |err| {
                     Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
                     cleanup(zname, cloned_executable_fd);

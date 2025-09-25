@@ -945,7 +945,6 @@ pub const PackageJSON = struct {
                                 arch.apply(str);
                             }
                         }
-
                         package_json.arch = arch.combine();
                     } else if (cpu_field.asString(bun.default_allocator)) |str| {
                         var arch = Architecture.none.negatable();
@@ -963,6 +962,7 @@ pub const PackageJSON = struct {
                                 os.apply(str);
                             }
                         }
+                        package_json.os = os.combine();
                     } else if (os_field.asString(bun.default_allocator)) |str| {
                         var os = OperatingSystem.none.negatable();
                         os.apply(str);

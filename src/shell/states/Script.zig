@@ -7,6 +7,7 @@ base: State,
 node: *const ast.Script,
 io: IO,
 parent: ParentPtr,
+exit_requested: bool = false,
 state: union(enum) {
     normal: struct {
         idx: usize = 0,
@@ -84,7 +85,19 @@ fn finish(this: *Script, exit_code: ExitCode) Yield {
 }
 
 pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) Yield {
+    // Check if the child Stmt executed an exit builtin
+    // We detect this by checking if the Stmt has exit_requested flag set
+    const stmt = child.val;
+    const executed_exit = stmt.exit_requested;
+
     child.deinit();
+
+    // If exit builtin was executed, finish immediately with the exit code
+    if (executed_exit) {
+        this.exit_requested = true;
+        return this.finish(exit_code);
+    }
+
     if (this.state.normal.idx >= this.node.stmts.len) {
         return this.finish(exit_code);
     }

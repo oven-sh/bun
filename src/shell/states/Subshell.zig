@@ -150,6 +150,7 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
     }
 
     if (child_ptr.ptr.is(Script)) {
+        // Subshell exit is contained - don't propagate exit_requested to parent
         child_ptr.deinit();
         return this.parent.childDone(this, exit_code);
     }

@@ -497,6 +497,7 @@ declare module "bun:app" {
      * The loaded module of the page itself.
      */
     readonly pageModule: any;
+    readonly request?: Request | undefined;
     /**
      * The loaded module of all of the route layouts. The first one is the
      * inner-most, the last is the root layout.

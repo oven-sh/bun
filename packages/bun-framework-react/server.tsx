@@ -13,7 +13,7 @@ function assertReactComponent(Component: unknown): asserts Component is React.JS
   }
 }
 
-function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: readonly string[]) {
+function getPage(meta: Bake.RouteMetadata & { request?: Request | undefined }, styles: readonly string[]) {
   let route = component(meta.pageModule, meta.params, meta.request);
 
   for (const layout of meta.layouts) {

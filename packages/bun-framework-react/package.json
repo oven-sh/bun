@@ -1,7 +1,7 @@
 {
   "name": "bun-framework-react",
-  "version": "0.1.0",
-  "description": "React framework integration for Bun Bake",
+  "version": "0.0.0",
+  "description": "React framework integration with RSC, for the Bun Rendering API",
   "type": "module",
   "exports": {
     ".": "./index.ts",

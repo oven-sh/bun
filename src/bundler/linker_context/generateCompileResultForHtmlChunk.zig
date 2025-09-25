@@ -147,6 +147,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
 
         fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) std.ArrayList([]const u8) {
             var array = std.ArrayList([]const u8).init(allocator);
+            // Put CSS before JS to reduce changes of flash of unstyled content
             if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
                 const link_tag = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}));
                 bun.handleOom(array.append(link_tag));
@@ -158,6 +159,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                     const preload = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"modulepreload\" crossorigin href=\"{s}\">", .{imported_chunk.unique_key}));
                     bun.handleOom(array.append(preload));
                 }
+                // type="module" scripts do not block rendering, so it is okay to put them in head
                 const script = bun.handleOom(std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}));
                 bun.handleOom(array.append(script));
             }

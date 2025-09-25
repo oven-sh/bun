@@ -7,6 +7,28 @@ function getModulePreloads(html: string): string[] {
     .map(m => m[1]);
 }
 
+// Helper to get the main script src
+function getMainScriptSrc(html: string): string | null {
+  const match = html.match(/<script[^>]+type="module"[^>]+src="\.\/([^"]+)"/);
+  return match ? match[1] : null;
+}
+
+// Helper to check tag order in HTML head
+function checkTagOrder(html: string): { cssFirst: boolean; preloadsBeforeScript: boolean } {
+  const headMatch = html.match(/<head[^>]*>([\s\S]*?)<\/head>/);
+  if (!headMatch) return { cssFirst: false, preloadsBeforeScript: false };
+
+  const head = headMatch[1];
+  const cssIndex = head.indexOf('rel="stylesheet"');
+  const firstPreloadIndex = head.indexOf('rel="modulepreload"');
+  const scriptIndex = head.indexOf('<script type="module"');
+
+  return {
+    cssFirst: cssIndex === -1 || firstPreloadIndex === -1 || cssIndex < firstPreloadIndex,
+    preloadsBeforeScript: firstPreloadIndex === -1 || scriptIndex === -1 || firstPreloadIndex < scriptIndex
+  };
+}
+
 // Helper to create simple HTML with script tag
 function createHTML(title: string, scriptSrc: string): string {
   return `<!DOCTYPE html>

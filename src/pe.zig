@@ -739,10 +739,8 @@ pub const BUN_COMPILED_SECTION_NAME = ".bun";
 extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
 extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;
 
-const std = @import("std");
-
 const bun = @import("bun");
-const strings = bun.strings;
+const std = @import("std");
 
 const mem = std.mem;
 const Allocator = mem.Allocator;

@@ -2410,7 +2410,6 @@ const ArrayBuffer = jsc.ArrayBuffer;
 const C_API = bun.jsc.C;
 const CatchScope = jsc.CatchScope;
 const DOMURL = jsc.DOMURL;
-const ExceptionValidationScope = jsc.ExceptionValidationScope;
 const JSArrayIterator = jsc.JSArrayIterator;
 const JSCell = jsc.JSCell;
 const JSGlobalObject = jsc.JSGlobalObject;

@@ -240,8 +240,15 @@ if (isDockerEnabled()) {
       test("sql.array should support INTEGER arrays", async () => {
         await using sql = postgres(options);
 
-        const [{ x }] = await sql`select ${sql.array([100000, -2147483648, 2147483647], "INT")} as x`;
-        expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
+        {
+          const [{ x }] = await sql`select ${sql.array([100000, -2147483648, 2147483647], "INT")} as x`;
+          expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
+        }
+        {
+          const [{ x }] =
+            await sql`select ${sql.array(Int32Array.from([100000, -2147483648, 2147483647]), "INT")} as x`;
+          expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
+        }
       });
 
       test("sql.array should support BIGINT arrays", async () => {

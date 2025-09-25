@@ -1,12 +1,14 @@
 import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { DatabaseAdapter, SQLArrayParameter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
+import type { DatabaseAdapter, SQLArrayParameter, SQLHelper, SQLResultArray, SSLMode, ArrayType } from "./shared";
 const { SQLHelper, SSLMode, SQLResultArray, SQLArrayParameter } = require("internal/sql/shared");
 const {
   Query,
   SQLQueryFlags,
   symbols: { _strings, _values, _flags, _results, _handle },
 } = require("internal/sql/query");
+const isTypedArray = ArrayBuffer.isView;
+
 const { PostgresError } = require("internal/sql/errors");
 
 const {
@@ -105,6 +107,7 @@ function isPostgresNumericType(type: string) {
     case "SMALLINT": // int2_array
     case "INT2VECTOR": // int2vector_array
     case "INTEGER": // int4_array
+    case "INT": // int4_array
     case "BIGINT": // int8_array
     case "REAL": // float4_array
     case "DOUBLE PRECISION": // float8_array
@@ -128,10 +131,16 @@ function getPostgresArrayType(typeId: number) {
   return POSTGRES_ARRAY_TYPES[typeId] || null;
 }
 
-function arrayValueSerializer(type: string, is_numeric: boolean, is_json: boolean, value: any) {
+function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boolean, value: any) {
   // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
   // postgres will try to convert string -> array type
   // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
+  if ($isArray(value) || isTypedArray(value)) {
+    if (!value.length) return "{}";
+    const delimiter = type === "BOX" ? ";" : ",";
+    return value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter);
+  }
+
   switch (typeof value) {
     case "undefined":
       return "null";
@@ -185,7 +194,7 @@ function arrayValueSerializer(type: string, is_numeric: boolean, is_json: boolea
       return `"${arrayEscape(JSON.stringify(value))}"`;
   }
 }
-function getArrayType(typeNameOrID: number | string | undefined = undefined): string {
+function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined): ArrayType {
   const typeOfType = typeof typeNameOrID;
   if (typeOfType === "number") {
     return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
@@ -196,19 +205,13 @@ function getArrayType(typeNameOrID: number | string | undefined = undefined): st
   // default to JSON so we accept most of the types
   return "JSON";
 }
-function serializeArray(values: any[], type: string) {
-  if ($isArray(values) === false) return values;
+function serializeArray(values: any[], type: ArrayType) {
+  if (!$isArray(values) && !isTypedArray(values)) return values;
 
   if (!values.length) return "{}";
 
   // Only _box (1020) has the ';' delimiter for arrays, all other types use the ',' delimiter
   const delimiter = type === "BOX" ? ";" : ",";
-
-  const first = values[0];
-
-  if ($isArray(first)) {
-    return "{" + values.map(x => serializeArray(x, type)).join(delimiter) + "}";
-  }
 
   return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
 }
@@ -768,7 +771,7 @@ class PostgresAdapter
     }
   }
 
-  array(values: any[], typeNameOrID?: number | string): SQLArrayParameter {
+  array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter {
     const arrayType = getArrayType(typeNameOrID);
     return new SQLArrayParameter(serializeArray(values, arrayType), arrayType);
   }

@@ -7,11 +7,58 @@ declare global {
   }
 }
 
-export type { SQLArrayParameter, SQLResultArray };
+type ArrayType =
+  | "BOOLEAN"
+  | "BYTEA"
+  | "CHAR"
+  | "NAME"
+  | "TEXT"
+  | "CHAR"
+  | "VARCHAR"
+  | "SMALLINT"
+  | "INT2VECTOR"
+  | "INTEGER"
+  | "INT"
+  | "BIGINT"
+  | "REAL"
+  | "DOUBLE PRECISION"
+  | "NUMERIC"
+  | "MONEY"
+  | "OID"
+  | "TID"
+  | "XID"
+  | "CID"
+  | "JSON"
+  | "JSONB"
+  | "JSONPATH"
+  | "XML"
+  | "POINT"
+  | "LSEG"
+  | "PATH"
+  | "BOX"
+  | "POLYGON"
+  | "LINE"
+  | "CIRCLE"
+  | "CIDR"
+  | "MACADDR"
+  | "INET"
+  | "MACADDR8"
+  | "DATE"
+  | "TIME"
+  | "TIMESTAMP"
+  | "TIMESTAMPTZ"
+  | "INTERVAL"
+  | "TIMETZ"
+  | "BIT"
+  | "VARBIT"
+  | "ACLITEM"
+  | "PG_DATABASE"
+  | (string & {});
+export type { SQLArrayParameter, SQLResultArray, ArrayType };
 class SQLArrayParameter {
   serializedValues: string;
-  arrayType: string;
-  constructor(serializedValues: string, arrayType: string) {
+  arrayType: ArrayType;
+  constructor(serializedValues: string, arrayType: ArrayType) {
     this.serializedValues = serializedValues;
     this.arrayType = arrayType;
   }
@@ -867,6 +914,7 @@ export default {
   normalizeSSLMode,
   SQLResultArray,
   SQLArrayParameter,
+  ArrayType,
   // @ts-expect-error we're exporting a const enum which works in our builtins
   // generator but not in typescript officially
   SSLMode,

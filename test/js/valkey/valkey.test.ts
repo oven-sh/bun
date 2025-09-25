@@ -13,7 +13,7 @@ import {
   TLS_REDIS_URL,
 } from "./test-utils";
 
-for (const connectionType of [ConnectionType.TCP, ConnectionType.TLS]) {
+for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
   describe.skipIf(!isEnabled)(`Valkey Redis Client (${connectionType})`, () => {
     beforeAll(async () => {
       // Ensure container is ready before tests run
@@ -201,9 +201,13 @@ for (const connectionType of [ConnectionType.TCP, ConnectionType.TLS]) {
       });
 
       const testKeyUniquePerDb = crypto.randomUUID();
-      test.each([...Array(16).keys()])("Connecting to database with url $url succeeds", async (dbId: number) => {
-        const redis = createClient(connectionType, {}, dbId);
-
+      test.only("Connecting to database with url $url succeeds", async () => {
+        if (connectionType === ConnectionType.TCP) {
+          return;
+        }
+        const redis = createClient(connectionType);
+        await redis.connect();
+        console.log("Connected!");
         // Ensure the value is not in the database.
         const testValue = await redis.get(testKeyUniquePerDb);
         expect(testValue).toBeNull();

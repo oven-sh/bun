@@ -410,7 +410,10 @@ pub const JSValkeyClient = struct {
         const orig_hostname = this.client.address.hostname();
         const hostname = bun.memory.rebaseSlice(orig_hostname, base_ptr, new_base);
         const new_alloc = this.client.allocator;
-
+        const tls: valkey.TLS = if (this.client.tls != .none) this.client.tls else if (this.client.protocol.isTLS()) .enabled else .none;
+        // if (tls == .custom) {
+        //     tls.custom = tls.custom.clone();
+        // }
         return JSValkeyClient.new(.{
             .ref_count = .init(),
             ._subscription_ctx = null,
@@ -439,7 +442,7 @@ pub const JSValkeyClient = struct {
                         },
                     },
                 },
-                .tls = if (this.client.tls != .none) this.client.tls else if (this.client.protocol.isTLS()) .enabled else .none,
+                .tls = tls,
                 .database = this.client.database,
                 .allocator = new_alloc,
                 .flags = .{
@@ -1023,13 +1026,13 @@ pub const JSValkeyClient = struct {
                 },
             };
         this.ref();
-
-        defer {
-            if (deinit_context) {
-                // This is actually unref(). uws.Context is reference counted.
-                ctx.deinit(true);
-            }
-        }
+        _ = deinit_context;
+        // defer {
+        //     if (deinit_context) {
+        //         // This is actually unref(). uws.Context is reference counted.
+        //         ctx.deinit(true);
+        //     }
+        // }
         this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
@@ -1268,10 +1271,12 @@ fn SocketHandler(comptime ssl: bool) type {
                                 this.client.flags.is_manually_closed = true;
                                 this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
                                 this.client.close();
+                                return;
                             }
                         }
                     }
                 }
+                this.client.start();
             }
         }
 

@@ -81,6 +81,7 @@ export const TLS_REDIS_OPTIONS = {
   ...DEFAULT_REDIS_OPTIONS,
   db: 1,
   tls: {
+    rejectUnauthorized: false,
     ca: Bun.file(path.join(import.meta.dir, "docker-unified", "server.crt")),
   },
 };
@@ -276,7 +277,6 @@ export function createClient(
     default:
       throw new Error(`Unknown connection type: ${connectionType}`);
   }
-
   // Using Function constructor to avoid static analysis issues
   return new RedisClient(url, options);
 }

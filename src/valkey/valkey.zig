@@ -457,6 +457,7 @@ pub const ValkeyClient = struct {
 
     /// Handle connection closed event
     pub fn onClose(this: *ValkeyClient) void {
+        this.socket = .{ .SocketTCP = .detached };
         this.unregisterAutoFlusher();
         this.write_buffer.clearAndFree(this.allocator);
 
@@ -945,11 +946,15 @@ pub const ValkeyClient = struct {
         this.socket = socket;
         this.write_buffer.clearAndFree(this.allocator);
         this.read_buffer.clearAndFree(this.allocator);
-        this.start();
+        if (this.socket == .SocketTCP) {
+            // if is tcp, we need to start the connection process
+            // if is tls, we need to wait for the handshake to complete
+            this.start();
+        }
     }
 
     /// Start the connection process
-    fn start(this: *ValkeyClient) void {
+    pub fn start(this: *ValkeyClient) void {
         this.authenticate();
         _ = this.flushData();
     }

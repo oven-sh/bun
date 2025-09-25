@@ -950,6 +950,7 @@ pub const PackageJSON = struct {
                     } else if (cpu_field.asString(bun.default_allocator)) |str| {
                         var arch = Architecture.none.negatable();
                         arch.apply(str);
+                        package_json.arch = arch.combine();
                     }
                 }
 

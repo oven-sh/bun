@@ -31,7 +31,7 @@ function queue(fn: () => void) {
 }
 
 const resolveQueue: (() => void)[] = [];
-let timeout: bool = false;
+let timeout: boolean = false;
 
 test.concurrent.each(Array.from({ length: 100 }, (_, i) => i + 1))(`concurrent test %d`, (i, done) => {
   console.log(`start test ${i}`);

@@ -199,8 +199,8 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-    clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
-    clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
+    clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile). Default: console output.") catch unreachable,
+    clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -424,7 +424,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 } else if (bun.strings.eqlComptime(reporter, "lcov")) {
                     ctx.test_options.coverage.reporters.lcov = true;
                 } else {
-                    Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
+                    Output.prettyErrorln("<r><red>error<r>: invalid coverage reporter '{s}'. Available options: 'text' (console output), 'lcov' (code coverage file)", .{reporter});
                     Global.exit(1);
                 }
             }
@@ -437,12 +437,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--reporter")) |reporter| {
             if (strings.eqlComptime(reporter, "junit")) {
                 if (ctx.test_options.reporter_outfile == null) {
-                    Output.errGeneric("--reporter=junit expects an output file from --reporter-outfile", .{});
+                    Output.errGeneric("--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report", .{});
                     Global.crash();
                 }
                 ctx.test_options.file_reporter = .junit;
             } else {
-                Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
+                Output.errGeneric("unsupported reporter format '{s}'. Available options: 'junit' (for XML test results)", .{reporter});
                 Global.crash();
             }
         }

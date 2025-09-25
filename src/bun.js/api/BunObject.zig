@@ -1943,6 +1943,7 @@ pub const JSZstd = struct {
 
         pub fn runFromJS(this: *ZstdJob) void {
             defer this.deinit();
+
             if (this.vm.isShuttingDown()) {
                 return;
             }

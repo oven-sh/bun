@@ -127,7 +127,6 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
         debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
         if (!this.has_started_debugger) {
             this.has_started_debugger = true;
-            futex_atomic = std.atomic.Value(u32).init(0);
             var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
             thread.detach();
         }

@@ -53,11 +53,11 @@ function getFilteredUnused(result: Map<string, boolean>): string[] {
 
 async function main() {
   const result = new Map<string, boolean>();
-  await addFile("usage-x86_64-macos.txt", result);
-  await addFile("usage-x86_64-windows.txt", result);
-  await addFile("usage-x86_64-linux.txt", result);
-  await addFile("usage-aarch64-macos.txt", result);
-  await addFile("usage-aarch64-linux.txt", result);
+  await addFile("coverage/usage-x86_64-macos.txt", result);
+  await addFile("coverage/usage-x86_64-windows.txt", result);
+  await addFile("coverage/usage-x86_64-linux.txt", result);
+  await addFile("coverage/usage-aarch64-macos.txt", result);
+  await addFile("coverage/usage-aarch64-linux.txt", result);
   const unused = getFilteredUnused(result);
 
   for (const source of unused) {

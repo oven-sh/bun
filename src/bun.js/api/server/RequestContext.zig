@@ -80,6 +80,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
+        pub fn setSignalAborted(this: *RequestContext, reason: bun.jsc.CommonAbortReason) void {
+            if (this.signal) |signal| {
+                if (this.server) |server| {
+                    signal.signal(server.globalThis, reason);
+                }
+            }
+        }
+
+        pub fn devServer(this: *const RequestContext) ?*bun.bake.DevServer {
+            const server = this.server orelse return null;
+            return server.dev_server;
+        }
+
         pub fn memoryCost(this: *const RequestContext) usize {
             // The Sink and ByteStream aren't owned by this.
             return @sizeOf(RequestContext) + this.request_body_buf.capacity + this.response_buf_owned.capacity + this.blob.memoryCost();
@@ -1491,9 +1504,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeaderInt("content-length", 0);
                     this.endWithoutBody(this.shouldCloseConnection());
                 },
-                .Render => {
-                    @panic("Unexpected Render body value in HEAD response. This is a bug in Bun, please file a GitHub issue at https://github.com/oven-sh/bun/issues");
-                },
             }
         }
 
@@ -1909,92 +1919,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     lock.onReceiveValue = doRenderWithBodyLocked;
                     lock.task = this;
 
-                    return;
-                },
-                .Render => |render_body| {
-                    if (this.server) |server| {
-                        if (@hasField(@TypeOf(server.*), "dev_server")) {
-                            if (server.dev_server) |dev_server_| {
-                                const dev_server: *bun.bake.DevServer = dev_server_;
-                                // Use the current response from the RequestContext
-                                const response = if (this.resp) |resp|
-                                    bun.uws.AnyResponse.init(resp)
-                                else {
-                                    this.renderMissing();
-                                    return;
-                                };
-
-                                const signal = if (this.signal) |signal| signal.ref() else null;
-
-                                const resp = this.resp;
-                                this.detachResponse();
-
-                                const new_request_ctx = server.request_pool_allocator.tryGet() catch |err| bun.handleOom(err);
-                                new_request_ctx.* = .{
-                                    .allocator = server.allocator,
-                                    .resp = resp,
-                                    .req = this.req,
-                                    .method = this.method,
-                                    .server = server,
-                                    .defer_deinit_until_callback_completes = null,
-                                    .signal = signal,
-                                };
-
-                                const url = bun.String.cloneUTF8(render_body.path.get());
-                                const body: jsc.WebCore.Body.Value = .{ .Null = {} };
-
-                                const new_request = Request.new(.{
-                                    .method = this.method,
-                                    .request_context = AnyRequestContext.init(new_request_ctx),
-                                    .https = ssl_enabled,
-                                    .signal = if (signal) |s| s.ref() else null,
-                                    .body = server.vm.initRequestBodyValue(body) catch |err| bun.handleOom(err),
-                                    .url = url,
-                                });
-
-                                new_request_ctx.request_weakref = .initRef(new_request);
-
-                                server.onPendingRequest();
-                                const js_request = new_request.toJSForBake(server.globalThis) catch |err| brk: {
-                                    if (err == error.OutOfMemory) bun.outOfMemory();
-                                    break :brk server.globalThis.takeException(err);
-                                };
-                                // Call DevServer with the render path
-                                dev_server.handleRenderRedirect(bun.jsc.API.SavedRequest{
-                                    .js_request = .create(js_request, server.globalThis),
-                                    .ctx = AnyRequestContext.init(new_request_ctx),
-                                    .request = new_request,
-                                    .response = bun.uws.AnyResponse.init(resp.?),
-                                }, render_body.path.get(), response) catch {
-                                    new_request_ctx.deinit();
-                                    // On error, render missing
-                                    this.renderMissing();
-                                    return;
-                                };
-
-                                return;
-                            }
-                        }
-
-                        // Check for production SSR server with bake_manifest
-                        if (@hasField(@TypeOf(server.config), "bake_manifest")) {
-                            if (server.config.bake_manifest) |_| {
-                                // In production mode, handle render redirect by calling the SSR handler with the new URL
-                                if (this.req) |req| {
-                                    if (this.resp) |resp| {
-                                        // Call the production SSR handler with the render path
-                                        server.bakeProductionSSRRouteHandlerWithURL(req, resp, render_body.path.get());
-                                        return;
-                                    }
-                                }
-                                this.renderMissing();
-                                return;
-                            }
-                        }
-                    }
-
-                    // Fallback to rendering missing
-                    this.renderMissing();
                     return;
                 },
                 else => {},

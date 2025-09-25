@@ -841,8 +841,8 @@ pub fn onExit(this: *VirtualMachine) void {
 extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
+    bun.assert(this.isShuttingDown());
     if (this.shouldDestructMainThreadOnExit()) {
-        this.is_shutting_down = true;
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
         this.transpiler.deinit();
@@ -2316,7 +2316,7 @@ pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_n
 /// We cannot hold it from Zig code because it relies on C++ ARIA to automatically release the lock
 /// and it is not safe to copy the lock itself
 /// So we have to wrap entry points to & from JavaScript with an API lock that calls out to C++
-pub inline fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
+pub fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
     this.global.vm().holdAPILock(ctx, jsc.OpaqueWrap(Context, function));
 }
 

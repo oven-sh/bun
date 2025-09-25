@@ -54,7 +54,7 @@ type ArrayType =
   | "ACLITEM"
   | "PG_DATABASE"
   | (string & {});
-export type { SQLArrayParameter, SQLResultArray, ArrayType };
+export type { ArrayType, SQLArrayParameter, SQLResultArray };
 class SQLArrayParameter {
   serializedValues: string;
   arrayType: ArrayType;

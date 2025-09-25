@@ -1,6 +1,6 @@
 import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query, SQLQueryResultMode } from "./query";
-import type { DatabaseAdapter, OnConnected, SQLArrayParameter, SQLHelper, SQLResultArray, ArrayType } from "./shared";
+import type { ArrayType, DatabaseAdapter, OnConnected, SQLArrayParameter, SQLHelper, SQLResultArray } from "./shared";
 
 const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
 const {

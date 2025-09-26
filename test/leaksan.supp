@@ -138,3 +138,5 @@ leak:bundler.bundle_v2.BundleV2.enqueueOnLoadPluginIfNeededImpl
 leak:DebugHTTPServerClass__finalize
 # test/bake/framework-router.test.ts
 leak:bake.FrameworkRouter.JSFrameworkRouter.constructor
+# test/bundler/bundler_decorator_metadata.test.ts
+leak:bundler.bundle_v2.BundleV2.init

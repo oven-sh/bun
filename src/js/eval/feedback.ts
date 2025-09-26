@@ -444,7 +444,7 @@ async function resolveFileCandidate(token: string): Promise<string | undefined> 
     candidates.add(path.join(os.homedir(), token.slice(2)));
   }
 
-  const resolved = path.resolve(process.cwd(), token);
+  const resolved = path.join(process.cwd(), token);
   candidates.add(resolved);
 
   for (const candidate of candidates) {
@@ -479,6 +479,7 @@ async function readFromPositionals(positionals: string[]): Promise<PositionalCon
 
   for (const token of positionals) {
     const filePath = await resolveFileCandidate(token);
+
     if (filePath) {
       try {
         let fileContents = await Bun.file(filePath).bytes();
@@ -488,7 +489,10 @@ async function readFromPositionals(positionals: string[]): Promise<PositionalCon
         }
 
         flushTokens();
-        files.push({ filename: path.basename(filePath), content: fileContents });
+        files.push({
+          filename: path.normalize(path.relative(process.cwd(), filePath)),
+          content: fileContents,
+        });
         continue;
       } catch {
         // Ignore read errors; treat token as part of the message instead.
@@ -545,9 +549,6 @@ function getOldestGitSha(): string | undefined {
 
 async function main() {
   const rawArgv = [...process.argv.slice(2)];
-  if (rawArgv.length > 0 && /feedback(\.ts)?$/.test(rawArgv[0])) {
-    rawArgv.shift();
-  }
 
   let terminal: TerminalIO | null = null;
   try {

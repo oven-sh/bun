@@ -130,7 +130,10 @@ When using `--randomize`, the seed used for randomization will be displayed in t
 ```sh
 $ bun test --randomize
 # ... test output ...
-Ran 10 tests across 2 files. (seed: 123456) [50.00ms]
+ --seed=12345
+ 2 pass
+ 8 fail
+Ran 10 tests across 2 files. [50.00ms]
 ```
 
 ### Reproducible random order with `--seed`
@@ -138,9 +141,6 @@ Ran 10 tests across 2 files. (seed: 123456) [50.00ms]
 Use the `--seed` flag to specify a seed for the randomization. This allows you to reproduce the same test order when debugging order-dependent failures.
 
 ```sh
-# Use a specific seed
-$ bun test --seed 123456
-
 # Reproduce a previous randomized run
 $ bun test --seed 123456
 ```

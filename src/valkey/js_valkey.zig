@@ -541,7 +541,7 @@ pub const JSValkeyClient = struct {
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
-        this.this_value.setStrong(this_value, globalObject);
+        this.this_value.upgrade(globalObject);
 
         if (this.client.flags.needs_to_open_socket) {
             debug("Need to open socket, starting connection process.", .{});
@@ -759,6 +759,7 @@ pub const JSValkeyClient = struct {
     // Callback for when Valkey client connects
     pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) void {
         bun.debugAssert(this.client.status == .connected);
+        bun.debugAssert(this.this_value.isStrong());
         const globalObject = this.globalObject;
         const event_loop = this.client.vm.eventLoop();
         event_loop.enter();
@@ -911,7 +912,9 @@ pub const JSValkeyClient = struct {
         defer this.deref();
 
         const this_jsvalue = this.this_value.tryGet() orelse return;
-        this.this_value.setWeak(this_jsvalue);
+        this_jsvalue.ensureStillAlive();
+        this.this_value.downgrade();
+
         this.ref();
         defer this.deref();
 
@@ -1058,16 +1061,16 @@ pub const JSValkeyClient = struct {
             // save the context so we deinit it later (if we reconnect we can reuse the same context)
             this._socket_ctx = ctx;
         }
-
+        this.client.status = .connecting;
+        this.updatePollRef();
         this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
-    pub fn send(this: *JSValkeyClient, globalThis: *jsc.JSGlobalObject, this_jsvalue: JSValue, command: *const Command) !*jsc.JSPromise {
+    pub fn send(this: *JSValkeyClient, globalThis: *jsc.JSGlobalObject, _: JSValue, command: *const Command) !*jsc.JSPromise {
         if (this.client.flags.needs_to_open_socket) {
             @branchHint(.unlikely);
 
-            if (this.this_value != .strong)
-                this.this_value.setStrong(this_jsvalue, globalThis);
+            this.this_value.upgrade(globalThis);
 
             this.connect() catch |err| {
                 this.client.flags.needs_to_open_socket = true;

@@ -29,9 +29,8 @@
   ],
   "type": "module",
   "dependencies": {
-    "react": "19.2.0-canary-b0c1dc01-20250925",
-    "react-refresh": "19.2.0-canary-b0c1dc01-20250925",
-    "react-dom": "19.2.0-canary-b0c1dc01-20250925",
-    "react-server-dom-esm": "19.2.0-canary-b0c1dc01-20250925"
+    "react": "^19.2.0-canary-b0c1dc01-20250925",
+    "react-dom": "^19.2.0-canary-b0c1dc01-20250925",
+    "react-refresh": "^0.18.0-canary-b0c1dc01-20250925"
   }
 }

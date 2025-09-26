@@ -1707,6 +1707,7 @@ pub const PackagesOption = enum {
 pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
+    global_name: string = "",
     define: *defines.Define,
     drop: []const []const u8 = &.{},
     loaders: Loader.HashTable,
@@ -2115,6 +2116,7 @@ pub fn openOutputDir(output_dir: string) !std.fs.Dir {
 pub const TransformOptions = struct {
     footer: string = "",
     banner: string = "",
+    global_name: string = "",
     define: bun.StringHashMap(string),
     loader: Loader = Loader.js,
     resolve_dir: string = "/",

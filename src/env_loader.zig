@@ -487,18 +487,61 @@ pub const Loader = struct {
     pub fn loadProcess(this: *Loader) OOM!void {
         if (this.did_load_process) return;
 
-        try this.map.map.ensureTotalCapacity(std.os.environ.len);
-        for (std.os.environ) |_env| {
-            var env = bun.span(_env);
-            if (strings.indexOfChar(env, '=')) |i| {
-                const key = env[0..i];
-                const value = env[i + 1 ..];
-                if (key.len > 0) {
-                    try this.map.put(key, value);
+        if (comptime Environment.isWindows) {
+            // On Windows, use libuv to get environment variables properly
+            // std.os.environ may not be properly populated on Windows
+            const uv = bun.windows.libuv;
+            var envitems: [*c]uv.uv_env_item_t = undefined;
+            var count: c_int = 0;
+
+            const rc = uv.uv_os_environ(&envitems, &count);
+            if (rc == 0) {
+                defer uv.uv_os_free_environ(envitems, count);
+
+                try this.map.map.ensureTotalCapacity(@intCast(count));
+                var i: usize = 0;
+                while (i < count) : (i += 1) {
+                    const item = envitems[i];
+                    if (item.name != null and item.value != null) {
+                        const key = bun.span(item.name);
+                        const value = bun.span(item.value);
+                        if (key.len > 0) {
+                            try this.map.put(key, value);
+                        }
+                    }
                 }
             } else {
-                if (env.len > 0) {
-                    try this.map.put(env, "");
+                // Fallback to std.os.environ if uv_os_environ fails
+                try this.map.map.ensureTotalCapacity(std.os.environ.len);
+                for (std.os.environ) |_env| {
+                    var env = bun.span(_env);
+                    if (strings.indexOfChar(env, '=')) |i| {
+                        const key = env[0..i];
+                        const value = env[i + 1 ..];
+                        if (key.len > 0) {
+                            try this.map.put(key, value);
+                        }
+                    } else {
+                        if (env.len > 0) {
+                            try this.map.put(env, "");
+                        }
+                    }
+                }
+            }
+        } else {
+            try this.map.map.ensureTotalCapacity(std.os.environ.len);
+            for (std.os.environ) |_env| {
+                var env = bun.span(_env);
+                if (strings.indexOfChar(env, '=')) |i| {
+                    const key = env[0..i];
+                    const value = env[i + 1 ..];
+                    if (key.len > 0) {
+                        try this.map.put(key, value);
+                    }
+                } else {
+                    if (env.len > 0) {
+                        try this.map.put(env, "");
+                    }
                 }
             }
         }

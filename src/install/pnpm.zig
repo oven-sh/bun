@@ -1506,19 +1506,17 @@ const Resolution = @import("./resolution.zig").Resolution;
 
 const Lockfile = @import("./lockfile.zig");
 const LoadResult = Lockfile.LoadResult;
-const PatchedDep = Lockfile.PatchedDep;
 
 const bun = @import("bun");
-const Environment = bun.Environment;
 const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const OOM = bun.OOM;
 const logger = bun.logger;
 const strings = bun.strings;
+const sys = bun.sys;
 const YAML = bun.interchange.yaml.YAML;
 
 const Semver = bun.Semver;
-const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const stringHash = String.Builder.stringHash;
 
@@ -1526,13 +1524,13 @@ const JSAst = bun.ast;
 const E = JSAst.E;
 const Expr = JSAst.Expr;
 
+const DependencyID = bun.install.DependencyID;
+const ExtractTarball = bun.install.ExtractTarball;
+const PackageID = bun.install.PackageID;
+const PackageManager = bun.install.PackageManager;
+const invalid_package_id = bun.install.invalid_package_id;
+const Negatable = bun.install.Npm.Negatable;
+
 const std = @import("std");
 const os = std.os;
 const Allocator = std.mem.Allocator;
-const sys = bun.sys;
-const PackageManager = bun.install.PackageManager;
-const PackageID = bun.install.PackageID;
-const Negatable = bun.install.Npm.Negatable;
-const ExtractTarball = bun.install.ExtractTarball;
-const invalid_package_id = bun.install.invalid_package_id;
-const DependencyID = bun.install.DependencyID;

@@ -1,7 +1,7 @@
-import { test, expect, describe, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv, tempDir, VerdaccioRegistry, nodeModulesPackages } from "harness.js";
+import { file, spawn } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness.js";
 import { join } from "path";
-import { spawn, file } from "bun";
 
 let verdaccio = new VerdaccioRegistry();
 

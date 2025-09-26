@@ -462,10 +462,10 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const OOM = bun.OOM;
 const logger = bun.logger;
+const strings = bun.strings;
 const Expr = bun.ast.Expr;
 const String = bun.Semver.String;
 
 const Dependency = bun.install.Dependency;
 const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;
-const strings = bun.strings;

@@ -283,6 +283,7 @@ export function createClient(
     default:
       throw new Error(`Unknown connection type: ${connectionType}`);
   }
+
   // Using Function constructor to avoid static analysis issues
   return new RedisClient(url, options);
 }

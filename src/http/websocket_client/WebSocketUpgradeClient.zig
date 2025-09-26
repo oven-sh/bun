@@ -41,6 +41,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         hostname: [:0]const u8 = "",
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         state: State = .initializing,
+        vm: *jsc.VirtualMachine,
         subprotocols: bun.StringSet,
 
         const State = enum { initializing, reading, failed };
@@ -116,6 +117,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
                 .state = .initializing,
+                .vm = vm,
                 .subprotocols = brk: {
                     var subprotocols = bun.StringSet.init(bun.default_allocator);
                     var it = bun.http.HeaderValueIterator.init(protocol_for_subprotocols.slice());
@@ -171,7 +173,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn clearInput(this: *HTTPClient) void {
-            if (this.input_body_buf.len > 0) bun.default_allocator.free(this.input_body_buf);
+            if (this.input_body_buf.len > 0) this.vm.allocator.free(this.input_body_buf);
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {

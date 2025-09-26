@@ -35,10 +35,10 @@ pub fn main() void {
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
         _ = bun.windows.libuv.uv_replace_allocator(
-            &bun.mimalloc.mi_malloc,
-            &bun.mimalloc.mi_realloc,
-            &bun.mimalloc.mi_calloc,
-            &bun.mimalloc.mi_free,
+            &bun.default_malloc,
+            &bun.default_realloc,
+            &bun.default_calloc,
+            &bun.default_free,
         );
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);

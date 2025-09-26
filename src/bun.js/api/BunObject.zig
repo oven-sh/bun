@@ -1113,7 +1113,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 pub export fn Bun__escapeHTML16(globalObject: *jsc.JSGlobalObject, input_value: JSValue, ptr: [*]const u16, len: usize) JSValue {
     assert(len > 0);
     const input_slice = ptr[0..len];
-    const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
+    const escaped = strings.escapeHTMLForUTF16Input(bun.default_allocator, input_slice) catch {
         return globalObject.throwValue(bun.String.static("Out of memory").toJS(globalObject)) catch .zero;
     };
 
@@ -1128,7 +1128,7 @@ pub export fn Bun__escapeHTML8(globalObject: *jsc.JSGlobalObject, input_value: J
     assert(len > 0);
 
     const input_slice = ptr[0..len];
-    var stack_allocator = std.heap.stackFallback(256, globalObject.bunVM().allocator);
+    var stack_allocator = std.heap.stackFallback(256, bun.default_allocator);
     const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
@@ -1446,7 +1446,7 @@ pub const JSZlib = struct {
         reader.deinit();
     }
     export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        bun.allocators.freeWithoutSize(ctx);
+        bun.default_free(ctx);
     }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
@@ -1730,7 +1730,7 @@ pub const JSZlib = struct {
 
 pub const JSZstd = struct {
     export fn deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        bun.allocators.freeWithoutSize(ctx);
+        bun.default_free(ctx);
     }
 
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!struct { jsc.Node.StringOrBuffer, ?JSValue } {

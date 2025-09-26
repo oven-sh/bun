@@ -174,7 +174,7 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         return read_file.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
     }
     const file_read = read_file.ReadFile.createWithCtx(
-        bun.default_allocator,
+        ctx.allocator,
         this.store.?,
         ctx,
         NewInternalReadFileHandler(Handler, Function).run,
@@ -3473,8 +3473,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
     if (bom == .utf16_le) {
         defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
         var out = bun.String.cloneUTF16(bun.reinterpretSlice(u16, buf));
-        defer out.deref();
-        return out.toJS(global);
+        return out.transferToJS(global);
     }
 
     // null == unknown
@@ -3529,12 +3528,8 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
             // external doesn't support this case here yet.
             if (buf.len != raw_bytes.len) {
                 var out = bun.String.cloneLatin1(buf);
-                defer {
-                    bun.default_allocator.free(raw_bytes);
-                    out.deref();
-                }
-
-                return out.toJS(global);
+                defer bun.default_allocator.free(raw_bytes);
+                return out.transferToJS(global);
             }
 
             return ZigString.init(buf).toExternalValue(global);
@@ -4300,7 +4295,7 @@ pub const Any = union(enum) {
             //     return value;
             // },
             .InternalBlob => {
-                const bytes = this.InternalBlob.toOwnedSlice();
+                const bytes = this.InternalBlob.toGlobalSlice();
                 this.* = .{ .Blob = .{} };
 
                 return jsc.ArrayBuffer.fromDefaultAllocator(
@@ -4429,10 +4424,9 @@ pub const Internal = struct {
         (bytes_without_bom.len != this.bytes.items.len) {
             defer this.deinit();
             var out = bun.String.cloneLatin1(this.bytes.items[3..]);
-            defer out.deref();
-            return out.toJS(globalThis);
+            return out.transferToJS(globalThis);
         } else {
-            var str = ZigString.init(this.toOwnedSlice());
+            var str = ZigString.init(this.toGlobalSlice());
             str.markGlobal();
             return str.toExternalValue(globalThis);
         }
@@ -4468,6 +4462,15 @@ pub const Internal = struct {
         this.bytes.items = &.{};
         this.bytes.capacity = 0;
 
+        return bytes;
+    }
+
+    pub fn toGlobalSlice(this: *@This()) []u8 {
+        const prev = this.toOwnedSlice();
+        if (bun.Environment.enable_mimalloc) return prev;
+        if (!bun.mimalloc.mi_is_in_heap_region(prev.ptr)) return prev;
+        const bytes = bun.default_allocator.dupe(u8, prev) catch bun.outOfMemory();
+        this.bytes.allocator.free(prev);
         return bytes;
     }
 

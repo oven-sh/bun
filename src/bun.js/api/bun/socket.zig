@@ -1508,7 +1508,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 tls.deref();
 
                 handlers_ptr.unprotect();
-                bun.default_allocator.destroy(handlers_ptr);
+                handlers_ptr.vm.allocator.destroy(handlers_ptr);
 
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
@@ -1951,7 +1951,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         return globalObject.throw("Expected \"socket\" option", .{});
     };
 
-    var handlers = try Handlers.fromJS(globalObject, socket_obj, false);
+    const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
 
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
     if (try opts.getTruthy(globalObject, "tls")) |tls| {

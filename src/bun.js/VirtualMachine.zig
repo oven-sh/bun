@@ -1119,10 +1119,8 @@ pub fn init(opts: Options) !*VirtualMachine {
         .initial_script_execution_context_identifier = if (opts.is_main_thread) 1 else std.math.maxInt(i32),
     };
     vm.source_mappings.init(&vm.saved_source_map_table);
-    vm.regular_event_loop.tasks = EventLoop.Queue.init(
-        default_allocator,
-    );
 
+    vm.regular_event_loop.tasks = EventLoop.Queue.init(default_allocator);
     vm.regular_event_loop.virtual_machine = vm;
     vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
     vm.regular_event_loop.concurrent_tasks = .{};
@@ -1917,6 +1915,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
 pub fn deinit(this: *VirtualMachine) void {
     this.auto_killer.deinit();
+    this.regular_event_loop.tasks.deinit();
 
     if (source_code_printer) |print| {
         print.getMutableBuffer().deinit();

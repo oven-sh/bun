@@ -793,17 +793,15 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
     }
 
     var arena = MimallocArena.init();
+    defer arena.deinit();
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
     this.transpiler.setAllocator(allocator);
+    defer this.transpiler.setAllocator(prev_allocator);
     var log = logger.Log.init(arena.backingAllocator());
     defer log.deinit();
     this.transpiler.setLog(&log);
-    defer {
-        this.transpiler.setLog(&this.config.log);
-        this.transpiler.setAllocator(prev_allocator);
-        arena.deinit();
-    }
+    defer this.transpiler.setLog(&this.config.log);
     var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
     var ast_scope = ast_memory_allocator.enter(allocator);
     defer ast_scope.exit();
@@ -993,7 +991,6 @@ pub fn transformSync(
     buffer_writer = printer.ctx;
     var out = jsc.ZigString.init(buffer_writer.written);
     out.setOutputEncoding();
-
     return out.toJS(globalThis);
 }
 
@@ -1071,6 +1068,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     }
 
     var arena = MimallocArena.init();
+    defer arena.deinit();
     const prev_allocator = this.transpiler.allocator;
     const allocator = arena.allocator();
     var ast_memory_allocator = bun.handleOom(allocator.create(JSAst.ASTMemoryAllocator));
@@ -1078,14 +1076,11 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     defer ast_scope.exit();
 
     this.transpiler.setAllocator(allocator);
+    defer this.transpiler.setAllocator(prev_allocator);
     var log = logger.Log.init(arena.backingAllocator());
     defer log.deinit();
     this.transpiler.setLog(&log);
-    defer {
-        this.transpiler.setLog(&this.config.log);
-        this.transpiler.setAllocator(prev_allocator);
-        arena.deinit();
-    }
+    defer this.transpiler.setLog(&this.config.log);
 
     const source = logger.Source.initPathString(loader.stdinName(), code);
     var transpiler = &this.transpiler;

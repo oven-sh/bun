@@ -9,12 +9,10 @@ namespace Bun {
 extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t* ptr, size_t length)
 {
     JSC::JSUint8Array* uint8Array;
-
     if (length > 0) [[likely]] {
         auto buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            mi_free(p);
+            bun_free(p);
         }));
-
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), WTFMove(buffer), 0, length);
     } else {
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), 0);
@@ -27,10 +25,10 @@ extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobal
 {
 
     RefPtr<ArrayBuffer> buffer;
-
     if (length > 0) [[likely]] {
+        ASSERT(mi_is_in_heap_region(ptr) == (ENABLE_MIMALLOC == 1));
         buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            mi_free(p);
+            bun_free(p);
         }));
     } else {
         buffer = ArrayBuffer::create(0, 1);

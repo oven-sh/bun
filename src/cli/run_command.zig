@@ -1378,6 +1378,7 @@ pub const RunCommand = struct {
         var this_transpiler: transpiler.Transpiler = undefined;
         const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
+        defer ctx.allocator.destroy(this_transpiler.resolve_results);
         this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
 
         if (!ctx.debug.loaded_bunfig) {
@@ -1503,6 +1504,9 @@ pub const RunCommand = struct {
         // TODO: run module resolution here - try the next condition if the module can't be found
 
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_transpiler.fs.top_level_dir });
+        const backup_import_path = try std.mem.join(ctx.allocator, "", &.{ "./", target_name });
+        defer ctx.allocator.free(backup_import_path);
+
         const resolution = brk: {
             const preserve_symlinks = this_transpiler.resolver.opts.preserve_symlinks;
             defer this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks;
@@ -1518,7 +1522,7 @@ pub const RunCommand = struct {
             ) catch
                 this_transpiler.resolver.resolve(
                     this_transpiler.fs.top_level_dir,
-                    try std.mem.join(ctx.allocator, "", &.{ "./", target_name }),
+                    backup_import_path,
                     .entry_point_run,
                 );
         };

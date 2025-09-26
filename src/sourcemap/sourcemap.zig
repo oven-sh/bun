@@ -1121,7 +1121,18 @@ pub fn getSourceMapImpl(
                         allocator,
                         json_slice,
                         result,
-                    ) catch return null,
+                    ) catch |err| {
+                        // Print warning even if this came from non-visible code like
+                        // calling `error.stack`. This message is only printed if
+                        // the sourcemap has been found but is invalid, such as being
+                        // invalid JSON text or corrupt mappings.
+                        bun.Output.warn("Could not decode sourcemap in dev server runtime: {s} - {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        }); // Disable the "try using --sourcemap=external" hint
+                        bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
                 };
             }
 

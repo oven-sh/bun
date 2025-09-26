@@ -74,9 +74,10 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeEnsureAsyncLocalStorage, (JSC::JSGlobalOb
     auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     if (callframe->argumentCount() < 1) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "bakeEnsureAsyncLocalStorage requires at least one argument"_s);
-        return {};
+        return JSValue::encode(jsUndefined());
     }
     zig->bakeAdditions().ensureAsyncLocalStorageInstance(zig, callframe->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

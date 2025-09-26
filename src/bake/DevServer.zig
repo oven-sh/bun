@@ -4659,7 +4659,9 @@ fn extractPathnameFromUrl(url: []const u8) []const u8 {
     if (std.mem.indexOfScalar(u8, pathname, '/')) |path_start| {
         const path_with_query = pathname[path_start..];
         // Remove query string and hash
-        const end = bun.strings.lastIndexOf(path_with_query, "?") orelse path_with_query.len;
+        const query_index = std.mem.indexOfScalar(u8, path_with_query, '?') orelse path_with_query.len;
+        const hash_index = std.mem.indexOfScalar(u8, path_with_query, '#') orelse path_with_query.len;
+        const end = @min(query_index, hash_index);
         pathname = path_with_query[0..end];
     }
 

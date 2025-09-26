@@ -1050,7 +1050,7 @@ fn ensureRouteIsBundled(
             if (dev.bundling_failures.count() > 0) {
                 // Trace the graph to see if there are any failures that are
                 // reachable by this route.
-                switch (try checkRouteFailures(dev, route_bundle_index, resp)) {
+                switch (try checkRouteFailures(dev, route_bundle_index, req, resp)) {
                     .stop => return,
                     .ok => {}, // Errors were cleared or not in the way.
                     .rebuild => continue :sw .unqueued, // Do the build all over again
@@ -1062,6 +1062,7 @@ fn ensureRouteIsBundled(
         },
         .evaluation_failure => {
             try dev.sendSerializedFailures(
+                req,
                 resp,
                 (&(dev.routeBundlePtr(route_bundle_index).data.framework.evaluate_failure.?))[0..1],
                 .evaluation,
@@ -1104,6 +1105,7 @@ fn deferRequest(
 fn checkRouteFailures(
     dev: *DevServer,
     route_bundle_index: RouteBundle.Index,
+    req: *Request,
     resp: anytype,
 ) !enum { stop, ok, rebuild } {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator());
@@ -1131,6 +1133,7 @@ fn checkRouteFailures(
         }
 
         try dev.sendSerializedFailures(
+            req,
             resp,
             dev.incremental_result.failures_added.items,
             .bundler,
@@ -2552,6 +2555,7 @@ pub fn finalizeBundle(
             };
 
             try dev.sendSerializedFailures(
+                null,
                 resp,
                 dev.bundling_failures.keys(),
                 .bundler,
@@ -2941,55 +2945,93 @@ fn encodeSerializedFailures(
     }
 }
 
+/// Check if the client accepts HTML responses based on Accept header
+fn acceptsHtml(req: *Request) bool {
+    const accept = req.header("accept") orelse return true; // Default to HTML if no Accept header
+
+    // Check if client accepts text/html or */*
+    return std.mem.indexOf(u8, accept, "text/html") != null or
+        std.mem.indexOf(u8, accept, "*/*") != null;
+}
+
 fn sendSerializedFailures(
     dev: *DevServer,
+    req: ?*Request,
     resp: AnyResponse,
     failures: []const SerializedFailure,
     kind: ErrorPageKind,
     inspector_agent: ?*BunFrontendDevServerAgent,
 ) !void {
-    var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator(), 2048);
-    errdefer buf.deinit();
+    // Check if client accepts HTML based on Accept header
+    // If no request is available, default to HTML (likely from deferred requests)
+    const wants_html = req == null or acceptsHtml(req.?);
+    if (wants_html) {
+        // Return HTML error page for clients that accept HTML
+        var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator(), 2048);
+        errdefer buf.deinit();
 
-    try buf.appendSlice(switch (kind) {
-        inline else => |k| std.fmt.comptimePrint(
-            \\<!doctype html>
-            \\<html lang="en">
-            \\<head>
-            \\<meta charset="UTF-8" />
-            \\<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-            \\<title>Bun - {[page_title]s}</title>
-            \\<style>:root{{color-scheme:light dark}}body{{background:light-dark(white,black)}}</style>
-            \\</head>
-            \\<body>
-            \\<noscript><h1 style="font:28px sans-serif;">{[page_title]s}</h1><p style="font:20px sans-serif;">Bun requires JavaScript enabled in the browser to render this error screen, as well as receive hot reloading events.</p></noscript>
-            \\<script>let error=Uint8Array.from(atob("
-        ,
-            .{ .page_title = switch (k) {
-                .bundler => "Build Failed",
-                .evaluation, .runtime => "Runtime Error",
-            } },
-        ),
-    });
+        try buf.appendSlice(switch (kind) {
+            inline else => |k| std.fmt.comptimePrint(
+                \\<!doctype html>
+                \\<html lang="en">
+                \\<head>
+                \\<meta charset="UTF-8" />
+                \\<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                \\<title>Bun - {[page_title]s}</title>
+                \\<style>:root{{color-scheme:light dark}}body{{background:light-dark(white,black)}}</style>
+                \\</head>
+                \\<body>
+                \\<noscript><h1 style="font:28px sans-serif;">{[page_title]s}</h1><p style="font:20px sans-serif;">Bun requires JavaScript enabled in the browser to render this error screen, as well as receive hot reloading events.</p></noscript>
+                \\<script>let error=Uint8Array.from(atob("
+            ,
+                .{ .page_title = switch (k) {
+                    .bundler => "Build Failed",
+                    .evaluation, .runtime => "Runtime Error",
+                } },
+            ),
+        });
 
-    try dev.encodeSerializedFailures(failures, &buf, inspector_agent);
+        try dev.encodeSerializedFailures(failures, &buf, inspector_agent);
 
-    const pre = "\"),c=>c.charCodeAt(0));let config={bun:\"" ++ bun.Global.package_json_version_with_canary ++ "\"};";
-    const post = "</script></body></html>";
+        const pre = "\"),c=>c.charCodeAt(0));let config={bun:\"" ++ bun.Global.package_json_version_with_canary ++ "\"};";
+        const post = "</script></body></html>";
 
-    if (Environment.codegen_embed) {
-        try buf.appendSlice(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post);
+        if (Environment.codegen_embed) {
+            try buf.appendSlice(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post);
+        } else {
+            try buf.appendSlice(pre);
+            try buf.appendSlice(bun.runtimeEmbedFile(.codegen_eager, "bake.error.js"));
+            try buf.appendSlice(post);
+        }
+
+        StaticRoute.sendBlobThenDeinit(resp, &.fromArrayList(buf), .{
+            .mime_type = &.html,
+            .server = dev.server.?,
+            .status_code = 500,
+        });
     } else {
-        try buf.appendSlice(pre);
-        try buf.appendSlice(bun.runtimeEmbedFile(.codegen_eager, "bake.error.js"));
-        try buf.appendSlice(post);
-    }
+        // Return plain text error for clients that don't accept HTML
+        var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator(), 512);
+        errdefer buf.deinit();
 
-    StaticRoute.sendBlobThenDeinit(resp, &.fromArrayList(buf), .{
-        .mime_type = &.html,
-        .server = dev.server.?,
-        .status_code = 500,
-    });
+        const page_title = switch (kind) {
+            .bundler => "Build Failed",
+            .evaluation, .runtime => "Runtime Error",
+        };
+
+        try buf.writer().print("{s}\n\n", .{page_title});
+        try buf.writer().print("Bun development server encountered an error.\n", .{});
+        try buf.writer().print("Found {d} error(s) preventing the application from running.\n\n", .{failures.len});
+
+        try buf.writer().print("To see detailed error information, open this URL in a web browser.\n", .{});
+        try buf.writer().print("For programmatic access to error details, consider using WebSocket connections.\n", .{});
+
+        StaticRoute.sendBlobThenDeinit(resp, &.fromArrayList(buf), .{
+            .mime_type = &.text,
+            .server = dev.server.?,
+            .status_code = 500,
+        });
+    }
 }
 
 fn sendBuiltInNotFound(resp: anytype) void {

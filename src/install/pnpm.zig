@@ -1,70 +1,3 @@
-const string = []const u8;
-
-/// Represents a pnpm package path with optional peer dependency suffixes
-/// This parser handles both PNPM v6 and v9 formats correctly
-const PnpmPackagePath = struct {
-    name: string,
-    version: string,
-    peer_suffix: ?string = null,
-
-    /// Parse a pnpm package path (supports v6 and v9 formats)
-    /// Handles complex peer deps like: pkg@1.0.0(@jest/globals@29.7.0)(vitest@3.0.4(@types/node@20.17.6(patch_hash=xyz)))
-    pub fn parse(path: string) PnpmPackagePath {
-        if (path.len == 0) return .{ .name = "", .version = "" };
-
-        const start: usize = if (path[0] == '/') 1 else 0;
-
-        const first_paren = strings.indexOfChar(path, '(');
-        const base_end = first_paren orelse path.len;
-
-        var name_end: usize = start;
-        var version_start: usize = base_end;
-
-        if (start < base_end and path[start] == '@') {
-            var i = start + 1;
-            var found_slash = false;
-            while (i < base_end) : (i += 1) {
-                if (path[i] == '/') {
-                    found_slash = true;
-                } else if (path[i] == '@' and found_slash) {
-                    name_end = i;
-                    version_start = i + 1;
-                    break;
-                }
-            }
-        } else {
-            var i = start;
-            while (i < base_end) : (i += 1) {
-                if (path[i] == '@') {
-                    name_end = i;
-                    version_start = i + 1;
-                    break;
-                }
-            }
-        }
-
-        var cleaned_suffix: ?string = null;
-        if (first_paren) |idx| {
-            const suffix = path[idx..];
-            if (strings.hasPrefixComptime(suffix, "(patch_hash=")) {
-                if (strings.indexOfChar(suffix, ')')) |close_idx| {
-                    if (close_idx + 1 < suffix.len and suffix[close_idx + 1] == '(') {
-                        cleaned_suffix = suffix[close_idx + 1 ..];
-                    }
-                }
-            } else {
-                cleaned_suffix = suffix;
-            }
-        }
-
-        return .{
-            .name = if (name_end > start) path[start..name_end] else path[start..base_end],
-            .version = if (version_start < base_end) path[version_start..base_end] else "",
-            .peer_suffix = cleaned_suffix,
-        };
-    }
-};
-
 /// returns { peersIndex, patchHashIndex }
 /// https://github.com/pnpm/pnpm/blob/102d5a01ddabda1184b88119adccfbe956d30579/packages/dependency-path/src/index.ts#L9-L31
 fn indexOfDepPathSuffix(path: []const u8) struct { ?usize, ?usize } {
@@ -113,204 +46,12 @@ fn removeSuffix(path: []const u8) []const u8 {
     return path;
 }
 
-/// Catalog entry from pnpm lockfile
-const CatalogEntry = struct {
-    specifier: string,
-    version: string,
-};
-
-/// Represents the parsed pnpm lockfile structure
-const PnpmLockfile = struct {
-    settings: ?*E.Object = null,
-    importers: ?*E.Object = null,
-    packages: ?*E.Object = null,
-    snapshots: ?*E.Object = null,
-    catalogs: ?*E.Object = null,
-    dependencies: ?*E.Object = null,
-    specifiers: ?*E.Object = null,
-    overrides: ?*E.Object = null,
-    patchedDependencies: ?*E.Object = null,
-
-    /// Parse catalogs section and return a map of catalog_name:package_name -> version
-    pub fn parseCatalogs(
-        self: PnpmLockfile,
-        allocator: Allocator,
-        string_buf: *String.Buf,
-        log: *logger.Log,
-        manager: *PackageManager,
-    ) OOM!bun.StringHashMap(Dependency.Version) {
-        var catalog_map = bun.StringHashMap(Dependency.Version).init(allocator);
-
-        if (self.catalogs) |catalogs_obj| {
-            const catalog_iter = catalogs_obj.properties.slice();
-            for (catalog_iter) |catalog_entry| {
-                const catalog_name = catalog_entry.key.?.asString(allocator) orelse continue;
-                if (catalog_entry.value == null or catalog_entry.value.?.data != .e_object) continue;
-
-                const pkg_iter = catalog_entry.value.?.data.e_object.properties.slice();
-                for (pkg_iter) |pkg_entry| {
-                    const pkg_name = pkg_entry.key.?.asString(allocator) orelse continue;
-
-                    const catalog_key = if (strings.eqlComptime(catalog_name, "default"))
-                        try std.fmt.allocPrint(allocator, "catalog:{s}", .{pkg_name})
-                    else
-                        try std.fmt.allocPrint(allocator, "catalog:{s}:{s}", .{ catalog_name, pkg_name });
-                    defer allocator.free(catalog_key);
-
-                    if (pkg_entry.value) |version_obj| {
-                        if (version_obj.data == .e_object) {
-                            const version_props = version_obj.data.e_object;
-                            if (version_props.get("version")) |version_expr| {
-                                if (version_expr.data == .e_string) {
-                                    const version_str = version_expr.data.e_string.data;
-
-                                    const stored_version = try string_buf.append(version_str);
-                                    const sliced = Semver.SlicedString.init(stored_version.slice(string_buf.bytes.items), stored_version.slice(string_buf.bytes.items));
-                                    const parsed_dep = Dependency.parse(
-                                        allocator,
-                                        try string_buf.append(pkg_name),
-                                        stringHash(pkg_name),
-                                        stored_version.slice(string_buf.bytes.items),
-                                        &sliced,
-                                        log,
-                                        manager,
-                                    ) orelse continue;
-
-                                    const catalog_key_dup = try allocator.dupe(u8, catalog_key);
-                                    try catalog_map.put(catalog_key_dup, parsed_dep);
-                                }
-                            }
-                        } else if (version_obj.data == .e_string) {
-                            const version_str = version_obj.data.e_string.data;
-                            const stored_version = try string_buf.append(version_str);
-                            const sliced = Semver.SlicedString.init(stored_version.slice(string_buf.bytes.items), stored_version.slice(string_buf.bytes.items));
-                            const parsed_dep = Dependency.parse(
-                                allocator,
-                                try string_buf.append(pkg_name),
-                                stringHash(pkg_name),
-                                stored_version.slice(string_buf.bytes.items),
-                                &sliced,
-                                log,
-                                manager,
-                            ) orelse continue;
-
-                            const catalog_key_dup = try allocator.dupe(u8, catalog_key);
-                            try catalog_map.put(catalog_key_dup, parsed_dep);
-                        }
-                    }
-                }
-            }
-        }
-
-        return catalog_map;
-    }
-};
-
-/// Parse an alias specifier like "npm:eslint@^8.57.0"
-fn parseNpmAliasSpecifier(specifier: string) ?struct { package: string, version: string } {
-    if (!strings.hasPrefixComptime(specifier, "npm:")) return null;
-    const body = specifier["npm:".len..];
-    if (strings.indexOfChar(body, '@')) |at_idx| {
-        const pkg = body[0..at_idx];
-        const ver = if (at_idx + 1 < body.len) body[at_idx + "@".len ..] else "*";
-        return .{ .package = pkg, .version = ver };
-    }
-    return .{ .package = body, .version = "*" };
-}
-
-/// Parse a "name@version" string (supports scoped names like "@scope/name@1.2.3")
-fn parseNameAtVersion(spec: string) ?struct { name: string, version: string } {
-    if (spec.len == 0) return null;
-    if (spec[0] == '@') {
-        if (strings.indexOfChar(spec[1..], '@')) |second_at_rel| {
-            const second_at = second_at_rel + "@".len;
-            return .{ .name = spec[0..second_at], .version = if (second_at + 1 < spec.len) spec[second_at + 1 ..] else "" };
-        }
-        return null;
-    }
-    if (strings.indexOfChar(spec, '@')) |idx| {
-        return .{ .name = spec[0..idx], .version = if (idx + 1 < spec.len) spec[idx + 1 ..] else "" };
-    }
-    return null;
-}
-
-/// Strip PNPM snapshot/patch suffixes and peer suffixes from version
-fn sanitizeVersionAppend(this: *Lockfile, string_buf: *String.Buf, version_in: []const u8) ![]const u8 {
-    _ = this;
-    var v = version_in;
-
-    if (strings.indexOfChar(v, '(')) |idx| {
-        v = v[0..idx];
-    }
-
-    if (v.len == 0) v = version_in;
-
-    const stored = try string_buf.append(v);
-    const result = stored.slice(string_buf.bytes.items);
-
-    return result;
-}
-
-/// Parse git+https:// and git+ssh:// URLs to extract owner, repo, and commit hash
-fn parseGitUrl(url: []const u8) struct { owner: []const u8, repo: []const u8, commit: []const u8 } {
-    var working_url = url;
-    var commit: []const u8 = "";
-    var owner: []const u8 = "";
-    var repo: []const u8 = "";
-
-    if (strings.hasPrefixComptime(working_url, "git+")) {
-        working_url = working_url["git+".len..];
-    }
-
-    if (strings.indexOfChar(working_url, '#')) |hash_idx| {
-        commit = working_url[hash_idx + "#".len ..];
-        working_url = working_url[0..hash_idx];
-    }
-
-    if (strings.containsComptime(working_url, "github.com")) {
-        if (strings.indexOf(working_url, "github.com:")) |github_idx| {
-            const after_github = working_url[github_idx + "github.com:".len ..];
-            if (strings.indexOfChar(after_github, '/')) |slash_idx| {
-                owner = after_github[0..slash_idx];
-                var repo_part = after_github[slash_idx + "/".len ..];
-
-                if (strings.endsWithComptime(repo_part, ".git")) {
-                    repo_part = repo_part[0 .. repo_part.len - 4];
-                }
-                repo = repo_part;
-            }
-        } else if (strings.indexOf(working_url, "github.com/")) |github_idx| {
-            const after_github = working_url[github_idx + "github.com/".len ..];
-            if (strings.indexOfChar(after_github, '/')) |slash_idx| {
-                owner = after_github[0..slash_idx];
-                var repo_part = after_github[slash_idx + "/".len ..];
-
-                if (strings.endsWithComptime(repo_part, ".git")) {
-                    repo_part = repo_part[0 .. repo_part.len - 4];
-                }
-                repo = repo_part;
-            }
-        }
-    }
-
-    return .{ .owner = owner, .repo = repo, .commit = commit };
-}
-
-const MigratePnpmLockfileError = OOM || error{
-    YamlParseError,
-    InvalidPnpmLockfile,
-    PnpmLockfileVersionMissing,
-    PnpmLockfileVersionInvalid,
-    PnpmLockfileTooOld,
-    DependencyLoop,
-};
-
 pub fn migratePnpmLockfile(
     lockfile: *Lockfile,
     manager: *PackageManager,
     allocator: std.mem.Allocator,
     log: *logger.Log,
-    data: string,
+    data: []const u8,
     dir: bun.FD,
 ) !LoadResult {
     var buf: std.ArrayList(u8) = .init(allocator);
@@ -365,6 +106,9 @@ pub fn migratePnpmLockfile(
         return error.PnpmLockfileTooOld;
     }
 
+    var found_patches: bun.StringArrayHashMap([]const u8) = .init(allocator);
+    defer found_patches.deinit();
+
     const pkg_map, const importer_dep_res_versions, const workspace_pkgs_off, const workspace_pkgs_end = build: {
         var string_buf = lockfile.stringBuf();
 
@@ -410,6 +154,43 @@ pub fn migratePnpmLockfile(
                 };
 
                 try lockfile.overrides.map.put(allocator, name_hash, dep);
+            }
+        }
+
+        const Patch = struct {
+            path: String,
+            dep_name: []const u8,
+        };
+        var patches: bun.StringArrayHashMap(Patch) = .init(allocator);
+        defer patches.deinit();
+        var patch_join_buf: std.ArrayList(u8) = .init(allocator);
+        defer patch_join_buf.deinit();
+
+        if (root.getObject("patchedDependencies")) |patched_dependencies_expr| {
+            for (patched_dependencies_expr.data.e_object.properties.slice()) |prop| {
+                const dep_name_expr = prop.key.?;
+                const value = prop.value.?;
+
+                const dep_name_str = dep_name_expr.asString(allocator) orelse {
+                    return invalidPnpmLockfile();
+                };
+
+                const path_str, _ = try value.getString(allocator, "path") orelse {
+                    return invalidPnpmLockfile();
+                };
+
+                const hash_str, _ = try value.getString(allocator, "hash") orelse {
+                    return invalidPnpmLockfile();
+                };
+
+                const entry = try patches.getOrPut(hash_str);
+                if (entry.found_existing) {
+                    return invalidPnpmLockfile();
+                }
+                entry.value_ptr.* = .{
+                    .path = try string_buf.append(path_str),
+                    .dep_name = dep_name_str,
+                };
             }
         }
 
@@ -673,7 +454,34 @@ pub fn migratePnpmLockfile(
                     return invalidPnpmLockfile();
                 }
 
-                const key_str_without_suffix = removeSuffix(key_str);
+                const peer_hash_idx, const patch_hash_idx = indexOfDepPathSuffix(key_str);
+
+                const key_str_without_suffix = if (patch_hash_idx orelse peer_hash_idx) |idx| key_str[0..idx] else key_str;
+
+                if (patch_hash_idx) |idx| try_patch: {
+                    const patch_hash_str = key_str[idx + "(patch_hash=".len ..];
+                    const end_idx = strings.indexOfChar(patch_hash_str, ')') orelse {
+                        return invalidPnpmLockfile();
+                    };
+                    const patch = patches.fetchSwapRemove(patch_hash_str[0..end_idx]) orelse {
+                        break :try_patch;
+                    };
+
+                    _, const res_str = Dependency.splitNameAndVersion(key_str_without_suffix) catch {
+                        return invalidPnpmLockfile();
+                    };
+
+                    try found_patches.put(patch.value.dep_name, res_str);
+
+                    patch_join_buf.clearRetainingCapacity();
+                    try patch_join_buf.writer().print("{s}@{s}", .{
+                        patch.value.dep_name,
+                        res_str,
+                    });
+
+                    const patch_hash = String.Builder.stringHash(patch_join_buf.items);
+                    try lockfile.patched_dependencies.put(allocator, patch_hash, .{ .path = patch.value.path });
+                }
 
                 const entry = try snapshots.getOrPut(key_str_without_suffix);
                 if (entry.found_existing) {
@@ -819,24 +627,23 @@ pub fn migratePnpmLockfile(
             }
 
             const dep_name = dep.name.slice(string_buf);
-            const version_maybe_alias = importer_versions.get(dep_name) orelse {
+            var version_maybe_alias = importer_versions.get(dep_name) orelse {
                 return invalidPnpmLockfile();
             };
+            if (strings.hasPrefixComptime(version_maybe_alias, "npm:")) {
+                version_maybe_alias = version_maybe_alias["npm:".len..];
+            }
             const version, const has_alias = Dependency.splitVersionAndMaybeName(version_maybe_alias);
             const version_without_suffix = removeSuffix(version);
 
-            switch (dep.version.tag) {
-                .folder, .symlink, .workspace => {
-                    const maybe_symlink_or_folder_or_workspace_path = strings.withoutPrefixComptime(version_without_suffix, "link:");
-                    var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
-                    defer path_buf.deinit();
-                    path_buf.join(&.{maybe_symlink_or_folder_or_workspace_path});
-                    if (pkg_map.get(path_buf.slice())) |pkg_id| {
-                        lockfile.buffers.resolutions.items[dep_id] = pkg_id;
-                        continue;
-                    }
-                },
-                else => {},
+            if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |maybe_symlink_or_folder_or_workspace_path| {
+                var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                defer path_buf.deinit();
+                path_buf.join(&.{maybe_symlink_or_folder_or_workspace_path});
+                if (pkg_map.get(path_buf.slice())) |pkg_id| {
+                    lockfile.buffers.resolutions.items[dep_id] = pkg_id;
+                    continue;
+                }
             }
 
             res_buf.clearRetainingCapacity();
@@ -868,26 +675,23 @@ pub fn migratePnpmLockfile(
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep = &lockfile.buffers.dependencies.items[dep_id];
             const dep_name = dep.name.slice(string_buf);
-            const version_maybe_alias = importer_versions.get(dep_name) orelse {
+            var version_maybe_alias = importer_versions.get(dep_name) orelse {
                 return invalidPnpmLockfile();
             };
+            if (strings.hasPrefixComptime(version_maybe_alias, "npm:")) {
+                version_maybe_alias = version_maybe_alias["npm:".len..];
+            }
             const version, const has_alias = Dependency.splitVersionAndMaybeName(version_maybe_alias);
             const version_without_suffix = removeSuffix(version);
 
-            switch (dep.version.tag) {
-                .folder, .symlink, .workspace => {
-                    const maybe_symlink_or_folder_or_workspace_path = strings.withoutPrefixComptime(version_without_suffix, "link:");
-                    var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
-                    defer path_buf.deinit();
-
-                    path_buf.join(&.{ workspace_path, maybe_symlink_or_folder_or_workspace_path });
-
-                    if (pkg_map.get(path_buf.slice())) |link_pkg_id| {
-                        lockfile.buffers.resolutions.items[dep_id] = link_pkg_id;
-                        continue;
-                    }
-                },
-                else => {},
+            if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |maybe_symlink_or_folder_or_workspace_path| {
+                var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                defer path_buf.deinit();
+                path_buf.join(&.{ workspace_path, maybe_symlink_or_folder_or_workspace_path });
+                if (pkg_map.get(path_buf.slice())) |link_pkg_id| {
+                    lockfile.buffers.resolutions.items[dep_id] = link_pkg_id;
+                    continue;
+                }
             }
 
             res_buf.clearRetainingCapacity();
@@ -911,7 +715,10 @@ pub fn migratePnpmLockfile(
         for (deps.begin()..deps.end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep = &lockfile.buffers.dependencies.items[dep_id];
-            const version_maybe_alias = dep.version.literal.slice(string_buf);
+            var version_maybe_alias = dep.version.literal.slice(string_buf);
+            if (strings.hasPrefixComptime(version_maybe_alias, "npm:")) {
+                version_maybe_alias = version_maybe_alias["npm:".len..];
+            }
             const version, const has_alias = Dependency.splitVersionAndMaybeName(version_maybe_alias);
             const version_without_suffix = removeSuffix(version);
 
@@ -942,7 +749,9 @@ pub fn migratePnpmLockfile(
 
     try lockfile.resolve(log);
 
-    try updatePackageJsonAfterMigration(allocator, manager, log, dir);
+    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager);
+
+    try updatePackageJsonAfterMigration(allocator, manager, log, dir, found_patches);
 
     return .{
         .ok = .{
@@ -969,6 +778,9 @@ fn parseAppendPackageDependencies(
     string_buf: *String.Buf,
     log: *logger.Log,
 ) ParseAppendDependenciesError!struct { u32, u32 } {
+    var version_buf: std.ArrayList(u8) = .init(allocator);
+    defer version_buf.deinit();
+
     const off = lockfile.buffers.dependencies.items.len;
 
     const snapshot_dependency_groups = [2]struct { []const u8, Dependency.Behavior }{
@@ -1050,8 +862,24 @@ fn parseAppendPackageDependencies(
 
             const version_without_suffix = removeSuffix(version_str);
 
-            const version = try string_buf.append(version_without_suffix);
-            const version_sliced = version.sliced(string_buf.bytes.items);
+            // pnpm-lock.yaml does not prefix aliases with npm: in snapshots
+            _, const has_alias = Dependency.splitVersionAndMaybeName(version_without_suffix);
+
+            var alias: ?ExternalString = null;
+            const version_sliced = version: {
+                if (has_alias) |alias_str| {
+                    alias = try string_buf.appendExternal(alias_str);
+                    version_buf.clearRetainingCapacity();
+                    try version_buf.writer().print("npm:{s}", .{version_without_suffix});
+                    const version = try string_buf.append(version_buf.items);
+                    const version_sliced = version.sliced(string_buf.bytes.items);
+                    break :version version_sliced;
+                }
+
+                const version = try string_buf.append(version_without_suffix);
+                const version_sliced = version.sliced(string_buf.bytes.items);
+                break :version version_sliced;
+            };
 
             if (package_obj.get("peerDependencies")) |peers| {
                 if (!peers.isObject()) {
@@ -1102,8 +930,8 @@ fn parseAppendPackageDependencies(
                             .behavior = behavior,
                             .version = Dependency.parse(
                                 allocator,
-                                name.value,
-                                name.hash,
+                                if (alias) |a| a.value else name.value,
+                                if (alias) |a| a.hash else name.hash,
                                 version_sliced.slice,
                                 &version_sliced,
                                 log,
@@ -1125,8 +953,8 @@ fn parseAppendPackageDependencies(
                 .behavior = .{ .prod = true },
                 .version = Dependency.parse(
                     allocator,
-                    name.value,
-                    name.hash,
+                    if (alias) |a| a.value else name.value,
+                    if (alias) |a| a.hash else name.hash,
                     version_sliced.slice,
                     &version_sliced,
                     log,
@@ -1141,6 +969,13 @@ fn parseAppendPackageDependencies(
     }
 
     const end = lockfile.buffers.dependencies.items.len;
+
+    std.sort.pdq(
+        Dependency,
+        lockfile.buffers.dependencies.items[off..],
+        string_buf.bytes.items,
+        Dependency.isLessThan,
+    );
 
     return .{ @intCast(off), @intCast(end - off) };
 }
@@ -1303,7 +1138,7 @@ fn parseAppendImporterDependencies(
 }
 
 /// Updates package.json with workspace and catalog information after migration
-fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManager, log: *logger.Log, dir: bun.FD) OOM!void {
+fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManager, log: *logger.Log, dir: bun.FD, patches: bun.StringArrayHashMap([]const u8)) OOM!void {
     var pkg_json_path: bun.AbsPath(.{}) = .initTopLevelDir();
     defer pkg_json_path.deinit();
 
@@ -1425,6 +1260,8 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
     var workspace_paths: ?std.ArrayList([]const u8) = null;
     var catalog_obj: ?Expr = null;
     var catalogs_obj: ?Expr = null;
+    var workspace_overrides_obj: ?Expr = null;
+    var workspace_patched_deps_obj: ?Expr = null;
 
     switch (bun.sys.File.readFrom(bun.FD.cwd(), "pnpm-workspace.yaml", allocator)) {
         .result => |contents| read_pnpm_workspace_yaml: {
@@ -1453,6 +1290,14 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
 
             if (root.getObject("catalogs")) |catalogs_expr| {
                 catalogs_obj = catalogs_expr;
+            }
+
+            if (root.getObject("overrides")) |overrides_expr| {
+                workspace_overrides_obj = overrides_expr;
+            }
+
+            if (root.getObject("patchedDependencies")) |patched_deps_expr| {
+                workspace_patched_deps_obj = patched_deps_expr;
             }
         },
         .err => {},
@@ -1534,6 +1379,61 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
         }
     }
 
+    // Handle overrides from pnpm-workspace.yaml
+    if (workspace_overrides_obj) |ws_overrides| {
+        if (ws_overrides.data == .e_object) {
+            if (json.asProperty("overrides")) |existing_prop| {
+                if (existing_prop.expr.data == .e_object) {
+                    const existing_overrides = existing_prop.expr.data.e_object;
+                    for (ws_overrides.data.e_object.properties.slice()) |prop| {
+                        const key = prop.key.?.asString(allocator) orelse continue;
+                        try existing_overrides.put(allocator, key, prop.value.?);
+                    }
+                }
+            } else {
+                try json.data.e_object.put(allocator, "overrides", ws_overrides);
+            }
+            needs_update = true;
+        }
+    }
+
+    // Handle patchedDependencies from pnpm-workspace.yaml
+    if (workspace_patched_deps_obj) |ws_patched| {
+        var join_buf: std.ArrayList(u8) = .init(allocator);
+        defer join_buf.deinit();
+
+        if (ws_patched.data == .e_object) {
+            for (0..ws_patched.data.e_object.properties.len) |prop_i| {
+                // convert keys to expected "name@version" instead of only "name"
+                var prop = &ws_patched.data.e_object.properties.ptr[prop_i];
+                const key_str = prop.key.?.asString(allocator) orelse {
+                    continue;
+                };
+                const res_str = patches.get(key_str) orelse {
+                    continue;
+                };
+                join_buf.clearRetainingCapacity();
+                try join_buf.writer().print("{s}@{s}", .{
+                    key_str,
+                    res_str,
+                });
+                prop.key = Expr.init(E.String, .{ .data = try allocator.dupe(u8, join_buf.items) }, .Empty);
+            }
+            if (json.asProperty("patchedDependencies")) |existing_prop| {
+                if (existing_prop.expr.data == .e_object) {
+                    const existing_patches = existing_prop.expr.data.e_object;
+                    for (ws_patched.data.e_object.properties.slice()) |prop| {
+                        const key = prop.key.?.asString(allocator) orelse continue;
+                        try existing_patches.put(allocator, key, prop.value.?);
+                    }
+                }
+            } else {
+                try json.data.e_object.put(allocator, "patchedDependencies", ws_patched);
+            }
+            needs_update = true;
+        }
+    }
+
     if (needs_update) {
         var buffer_writer = JSPrinter.BufferWriter.init(allocator);
         defer buffer_writer.buffer.deinit();
@@ -1583,6 +1483,7 @@ const YAML = bun.interchange.yaml.YAML;
 
 const Semver = bun.Semver;
 const String = Semver.String;
+const ExternalString = Semver.ExternalString;
 const stringHash = String.Builder.stringHash;
 
 const JSAst = bun.ast;

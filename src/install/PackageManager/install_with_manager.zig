@@ -146,13 +146,15 @@ pub fn installWithManager(
                     Global.exit(1);
                 };
 
+                const source_copy = root_package_json_entry.source;
+
                 var resolver: void = {};
                 try maybe_root.parse(
                     &lockfile,
                     manager,
                     manager.allocator,
                     manager.log,
-                    &root_package_json_entry.source,
+                    &source_copy,
                     void,
                     &resolver,
                     Features.main,
@@ -420,13 +422,15 @@ pub fn installWithManager(
             Global.exit(1);
         };
 
+        const source_copy = root_package_json_entry.source;
+
         var resolver: void = {};
         try root.parse(
             manager.lockfile,
             manager,
             manager.allocator,
             manager.log,
-            &root_package_json_entry.source,
+            &source_copy,
             void,
             &resolver,
             Features.main,

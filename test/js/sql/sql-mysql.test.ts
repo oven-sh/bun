@@ -292,6 +292,7 @@ if (isDockerEnabled()) {
         });
 
         test("Drop table", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create table drop_table_test(id int)`;
           await sql`drop table drop_table_test`;
           // Verify that table is dropped

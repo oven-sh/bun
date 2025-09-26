@@ -565,15 +565,12 @@ pub fn migratePnpmLockfile(
         for (0..workspace_pkgs_end) |_pkg_id| {
             const pkg_id: PackageID = @intCast(_pkg_id);
 
-            const importer_versions = (importer_versions: {
-                if (pkg_id == 0) {
-                    break :importer_versions importer_dep_res_versions.get(".");
-                }
-
+            const workspace_path = if (pkg_id == 0) "." else workspace_path: {
                 const workspace_res = lockfile.packages.items(.resolution)[pkg_id];
-                const workspace_path = workspace_res.value.workspace.slice(string_buf.bytes.items);
-                break :importer_versions importer_dep_res_versions.get(workspace_path);
-            }) orelse {
+                break :workspace_path workspace_res.value.workspace.slice(string_buf.bytes.items);
+            };
+
+            const importer_versions = importer_dep_res_versions.get(workspace_path) orelse {
                 return invalidPnpmLockfile();
             };
 
@@ -596,8 +593,13 @@ pub fn migratePnpmLockfile(
                             .resolution = .init(.{ .folder = try string_buf.append(link_path) }),
                         };
 
+                        var abs_link_path: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                        defer abs_link_path.deinit();
+
+                        abs_link_path.join(&.{ workspace_path, link_path });
+
                         const link_pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
-                        const pkg_entry = try pkg_map.getOrPut(link_path);
+                        const pkg_entry = try pkg_map.getOrPut(abs_link_path.slice());
                         if (pkg_entry.found_existing) {
                             return invalidPnpmLockfile();
                         }

@@ -359,7 +359,7 @@ pub const S3UploadStreamWrapper = struct {
         }
     }
 
-    pub fn writeRequestData(this: *@This(), data: []const u8) bool {
+    pub fn writeRequestData(this: *@This(), data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
         return bun.handleOom(this.task.writeBytes(data, false));
     }
@@ -685,3 +685,4 @@ const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const picohttp = bun.picohttp;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;

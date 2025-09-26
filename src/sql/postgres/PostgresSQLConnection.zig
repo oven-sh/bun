@@ -1429,7 +1429,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             };
             const pending_value = PostgresSQLQuery.js.pendingValueGetCached(thisValue) orelse .zero;
             pending_value.ensureStillAlive();
-            const result = putter.toJS(
+            const result = try putter.toJS(
                 this.globalObject,
                 pending_value,
                 structure,

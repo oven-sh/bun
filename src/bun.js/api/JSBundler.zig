@@ -13,7 +13,13 @@ pub const JSBundler = struct {
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
-        jsx: options.JSX.Pragma = .{},
+        jsx: api.Jsx = .{
+            .factory = "",
+            .fragment = "",
+            .runtime = .automatic,
+            .import_source = "",
+            .development = true, // Default to development mode like old Pragma
+        },
         force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
@@ -381,6 +387,51 @@ pub const JSBundler = struct {
                 this.packages = packages;
             }
 
+            // Parse JSX configuration
+            if (try config.getTruthy(globalThis, "jsx")) |jsx_value| {
+                if (!jsx_value.isObject()) {
+                    return globalThis.throwInvalidArguments("jsx must be an object", .{});
+                }
+
+                if (try jsx_value.getOptional(globalThis, "runtime", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    var str_lower: [128]u8 = undefined;
+                    const len = @min(slice.len, str_lower.len);
+                    _ = strings.copyLowercase(slice.slice()[0..len], str_lower[0..len]);
+                    if (options.JSX.RuntimeMap.get(str_lower[0..len])) |runtime| {
+                        this.jsx.runtime = runtime.runtime;
+                        if (runtime.development) |dev| {
+                            this.jsx.development = dev;
+                        }
+                    } else {
+                        return globalThis.throwInvalidArguments("Invalid jsx.runtime: '{s}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'", .{slice.slice()});
+                    }
+                }
+
+                if (try jsx_value.getOptional(globalThis, "factory", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.factory = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getOptional(globalThis, "fragment", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.fragment = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getOptional(globalThis, "importSource", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.import_source = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getBooleanLoose(globalThis, "development")) |dev| {
+                    this.jsx.development = dev;
+                }
+
+                if (try jsx_value.getBooleanLoose(globalThis, "sideEffects")) |val| {
+                    this.jsx.side_effects = val;
+                }
+            }
+
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
@@ -717,6 +768,19 @@ pub const JSBundler = struct {
                 }
                 bun.default_allocator.free(loaders.loaders);
                 bun.default_allocator.free(loaders.extensions);
+            }
+            // Free JSX allocated strings
+            if (self.jsx.factory.len > 0) {
+                allocator.free(self.jsx.factory);
+                self.jsx.factory = "";
+            }
+            if (self.jsx.fragment.len > 0) {
+                allocator.free(self.jsx.fragment);
+                self.jsx.fragment = "";
+            }
+            if (self.jsx.import_source.len > 0) {
+                allocator.free(self.jsx.import_source);
+                self.jsx.import_source = "";
             }
             self.names.deinit();
             self.outdir.deinit();

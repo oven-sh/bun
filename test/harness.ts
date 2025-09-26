@@ -260,7 +260,7 @@ export function tempDirWithFiles(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
 ): string {
-  const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
+  const base = fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_"));
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }

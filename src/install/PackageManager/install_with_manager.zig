@@ -1,7 +1,7 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: *std.ArrayList(u8),
+    root_package_json_path: [:0]const u8,
     original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
@@ -136,13 +136,23 @@ pub fn installWithManager(
                 lockfile.initEmpty(manager.allocator);
                 var maybe_root = Lockfile.Package{};
 
+                const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
+                    manager.allocator,
+                    manager.log,
+                    root_package_json_path,
+                    .{},
+                ).unwrap() catch |err| {
+                    Output.err(err, "failed to read/parse package.json at '{s}'", .{root_package_json_path});
+                    Global.exit(1);
+                };
+
                 var resolver: void = {};
                 try maybe_root.parse(
                     &lockfile,
                     manager,
                     manager.allocator,
                     manager.log,
-                    &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents.items),
+                    &root_package_json_entry.source,
                     void,
                     &resolver,
                     Features.main,
@@ -400,13 +410,23 @@ pub fn installWithManager(
             Global.crash();
         }
 
+        const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            root_package_json_path,
+            .{},
+        ).unwrap() catch |err| {
+            Output.err(err, "failed to read/parse package.json at '{s}'", .{root_package_json_path});
+            Global.exit(1);
+        };
+
         var resolver: void = {};
         try root.parse(
             manager.lockfile,
             manager,
             manager.allocator,
             manager.log,
-            &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents.items),
+            &root_package_json_entry.source,
             void,
             &resolver,
             Features.main,

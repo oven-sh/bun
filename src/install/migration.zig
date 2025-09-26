@@ -93,7 +93,7 @@ pub fn detectAndLoadOtherLockfile(
             switch (err) {
                 error.PnpmLockfileTooOld => {
                     Output.prettyErrorln(
-                        \\<red><b>error<r><d>:<r> pnpm-lock.yaml version is too old (v5 or v6)
+                        \\<red><b>error<r><d>:<r> pnpm-lock.yaml version is too old (\< v7)
                         \\
                         \\Please upgrade using 'pnpm install --lockfile-only' first, then try again.
                     , .{});

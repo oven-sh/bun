@@ -313,8 +313,6 @@ pub fn migratePnpmLockfile(
     data: string,
     dir: bun.FD,
 ) !LoadResult {
-    _ = dir;
-
     var buf: std.ArrayList(u8) = .init(allocator);
     defer buf.deinit();
 
@@ -499,10 +497,11 @@ pub fn migratePnpmLockfile(
                     .value = .{ .workspace = try string_buf.append(path) },
                 };
 
-                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
                 defer path_buf.deinit();
 
                 path_buf.append(path);
+                const abs_path = try allocator.dupe(u8, path_buf.slice());
                 path_buf.append("package.json");
 
                 const workspace_pkg_json = manager.workspace_package_json_cache.getWithPath(allocator, log, path_buf.slice(), .{}).unwrap() catch {
@@ -548,7 +547,7 @@ pub fn migratePnpmLockfile(
 
                 const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
-                const entry = try pkg_map.getOrPut(path);
+                const entry = try pkg_map.getOrPut(abs_path);
                 if (entry.found_existing) {
                     return invalidPnpmLockfile();
                 }
@@ -763,6 +762,19 @@ pub fn migratePnpmLockfile(
         for (pkg_deps[0].begin()..pkg_deps[0].end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep = &lockfile.buffers.dependencies.items[dep_id];
+
+            // implicit workspace dependencies
+            if (dep.behavior.isWorkspace()) {
+                const workspace_path = dep.version.value.workspace.slice(string_buf);
+                var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                defer path_buf.deinit();
+                path_buf.join(&.{workspace_path});
+                if (pkg_map.get(path_buf.slice())) |workspace_pkg_id| {
+                    lockfile.buffers.resolutions.items[dep_id] = workspace_pkg_id;
+                    continue;
+                }
+            }
+
             const dep_name = dep.name.slice(string_buf);
             const version_maybe_alias = importer_versions.get(dep_name) orelse {
                 return invalidPnpmLockfile();
@@ -773,8 +785,11 @@ pub fn migratePnpmLockfile(
             switch (dep.version.tag) {
                 .folder, .symlink, .workspace => {
                     const maybe_symlink_or_folder_or_workspace_path = strings.withoutPrefixComptime(version_without_suffix, "link:");
-                    if (pkg_map.get(maybe_symlink_or_folder_or_workspace_path)) |workspace_pkg_id| {
-                        lockfile.buffers.resolutions.items[dep_id] = workspace_pkg_id;
+                    var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                    defer path_buf.deinit();
+                    path_buf.join(&.{maybe_symlink_or_folder_or_workspace_path});
+                    if (pkg_map.get(path_buf.slice())) |pkg_id| {
+                        lockfile.buffers.resolutions.items[dep_id] = pkg_id;
                         continue;
                     }
                 },
@@ -819,8 +834,13 @@ pub fn migratePnpmLockfile(
             switch (dep.version.tag) {
                 .folder, .symlink, .workspace => {
                     const maybe_symlink_or_folder_or_workspace_path = strings.withoutPrefixComptime(version_without_suffix, "link:");
-                    if (pkg_map.get(maybe_symlink_or_folder_or_workspace_path)) |workspace_pkg_id| {
-                        lockfile.buffers.resolutions.items[dep_id] = workspace_pkg_id;
+                    var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                    defer path_buf.deinit();
+
+                    path_buf.join(&.{ workspace_path, maybe_symlink_or_folder_or_workspace_path });
+
+                    if (pkg_map.get(path_buf.slice())) |link_pkg_id| {
+                        lockfile.buffers.resolutions.items[dep_id] = link_pkg_id;
                         continue;
                     }
                 },
@@ -878,6 +898,8 @@ pub fn migratePnpmLockfile(
     }
 
     try lockfile.resolve(log);
+
+    try updatePackageJsonAfterMigration(allocator, manager, log, dir);
 
     return .{
         .ok = .{
@@ -1238,29 +1260,24 @@ fn parseAppendImporterDependencies(
 }
 
 /// Updates package.json with workspace and catalog information after migration
-fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: bun.FD) OOM!void {
-    const package_json_path = "package.json";
+fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManager, log: *logger.Log, dir: bun.FD) OOM!void {
+    var pkg_json_path: bun.AbsPath(.{}) = .initTopLevelDir();
+    defer pkg_json_path.deinit();
 
-    const package_json_file = bun.sys.File.openat(dir, package_json_path, bun.O.RDONLY, 0).unwrap() catch return;
-    defer package_json_file.close();
+    pkg_json_path.append("package.json");
 
-    const package_json_content = package_json_file.readToEnd(allocator).unwrap() catch return;
-    defer allocator.free(package_json_content);
-
-    const source = logger.Source.initPathString(package_json_path, package_json_content);
-    const json_result = JSON.parsePackageJSONUTF8WithOpts(
-        &source,
+    const root_pkg_json = manager.workspace_package_json_cache.getWithPath(
+        manager.allocator,
         log,
-        allocator,
+        pkg_json_path.slice(),
         .{
-            .is_json = true,
-            .allow_comments = true,
-            .allow_trailing_commas = true,
             .guess_indentation = true,
         },
-    ) catch return;
+    ).unwrap() catch {
+        return;
+    };
 
-    var json = json_result.root;
+    var json = root_pkg_json.root;
     if (json.data != .e_object) return;
 
     var needs_update = false;
@@ -1477,24 +1494,30 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, log: *logger.Log, dir: 
     if (needs_update) {
         var buffer_writer = JSPrinter.BufferWriter.init(allocator);
         defer buffer_writer.buffer.deinit();
-        buffer_writer.append_newline = package_json_content.len > 0 and package_json_content[package_json_content.len - 1] == '\n';
+        buffer_writer.append_newline = root_pkg_json.source.contents.len > 0 and root_pkg_json.source.contents[root_pkg_json.source.contents.len - 1] == '\n';
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
         _ = JSPrinter.printJSON(
             @TypeOf(&package_json_writer),
             &package_json_writer,
             json,
-            &source,
+            &root_pkg_json.source,
             .{
-                .indent = json_result.indentation,
+                .indent = root_pkg_json.indentation,
                 .mangled_props = null,
             },
         ) catch return;
 
+        package_json_writer.flush() catch {
+            return error.OutOfMemory;
+        };
+
+        root_pkg_json.source.contents = try allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+
         // Write the updated package.json
-        const write_file = bun.sys.File.openat(dir, package_json_path, bun.O.WRONLY | bun.O.TRUNC, 0).unwrap() catch return;
+        const write_file = bun.sys.File.openat(dir, "package.json", bun.O.WRONLY | bun.O.TRUNC, 0).unwrap() catch return;
         defer write_file.close();
-        _ = write_file.write(package_json_writer.ctx.writtenWithoutTrailingZero()).unwrap() catch return;
+        _ = write_file.write(root_pkg_json.source.contents).unwrap() catch return;
     }
 }
 

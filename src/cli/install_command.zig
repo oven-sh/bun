@@ -77,15 +77,7 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
         Output.flush();
     }
 
-    var package_json_contents: std.ArrayList(u8) = .init(ctx.allocator);
-    _ = bun.sys.File.readToEndWithArrayList(.from(manager.root_package_json_file), &package_json_contents, .unknown_size).unwrap() catch |err| {
-        if (manager.options.log_level != .silent) {
-            Output.err(err, "Failed to read package.json", .{});
-        }
-        Global.exit(1);
-    };
-
-    try manager.installWithManager(ctx, &package_json_contents, original_cwd);
+    try manager.installWithManager(ctx, PackageManager.root_package_json_path, original_cwd);
 
     if (manager.any_failed_to_install) {
         Global.exit(1);

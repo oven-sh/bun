@@ -1728,7 +1728,7 @@ export class VerdaccioRegistry {
     const packageJson = join(packageDir, "package.json");
     await this.writeBunfig(packageDir, opts.bunfigOpts);
     this.users = {};
-    return { packageDir, packageJson };
+    return { packageDir: String(packageDir), packageJson };
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {

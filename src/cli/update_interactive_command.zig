@@ -520,20 +520,13 @@ pub const UpdateInteractiveCommand = struct {
                     try updatePackageJsonFilesFromUpdates(manager, package_updates.items);
                 }
 
-                var package_json_contents: std.ArrayList(u8) = .init(ctx.allocator);
-                _ = bun.sys.File.readToEndWithArrayList(.from(manager.root_package_json_file), &package_json_contents, .unknown_size).unwrap() catch |err| {
-                    if (manager.options.log_level != .silent) {
-                        Output.err(err, "Failed to read package.json", .{});
-                    }
-                    Global.exit(1);
-                };
                 manager.to_update = true;
 
                 // Reset the timer to show actual install time instead of total command time
                 var install_ctx = ctx;
                 install_ctx.start_time = std.time.nanoTimestamp();
 
-                try PackageManager.installWithManager(manager, install_ctx, &package_json_contents, manager.root_dir.dir);
+                try PackageManager.installWithManager(manager, install_ctx, PackageManager.root_package_json_path, manager.root_dir.dir);
             }
         }
     }

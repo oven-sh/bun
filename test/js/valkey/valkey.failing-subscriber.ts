@@ -13,8 +13,12 @@ function trySend(msg: any) {
   process.send(msg);
 }
 
-let redisUrlResolver: (msg: { tlsPaths?: { cert: string; key: string; ca: string }; url: string }) => void;
-const redisUrl = new Promise<{ tlsPaths?: { cert: string; key: string; ca: string }; url: string }>(resolve => {
+export interface RedisTestStartMessage {
+  tlsPaths?: { cert: string; key: string; ca: string };
+  url: string;
+}
+let redisUrlResolver: (msg: RedisTestStartMessage) => void;
+const redisUrl = new Promise<RedisTestStartMessage>(resolve => {
   redisUrlResolver = resolve;
 });
 
@@ -44,7 +48,6 @@ trySend({ event: "ready" });
 
 let counter = 0;
 await subscriber.subscribe(CHANNEL, () => {
-
   if ((counter++) === 1) {
     throw new Error("Intentional callback error");
   }
@@ -52,7 +55,6 @@ await subscriber.subscribe(CHANNEL, () => {
   trySend({ event: "message", index: counter });
 });
 
-
-process.on("uncaughtException", (e) => {
+process.on("uncaughtException", e => {
   trySend({ event: "exception", exMsg: e.message });
 });

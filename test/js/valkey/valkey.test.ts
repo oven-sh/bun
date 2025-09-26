@@ -13,6 +13,7 @@ import {
   TLS_REDIS_OPTIONS,
   TLS_REDIS_URL,
 } from "./test-utils";
+import type { RedisTestStartMessage } from "./valkey.failing-subscriber";
 
 for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
   const ctx = { ..._ctx, redis: connectionType ? _ctx.redis : _ctx.redisTLS };
@@ -602,7 +603,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           event: "start",
           url: connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,
           tlsPaths: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tlsPaths : undefined,
-        });
+        } as RedisTestStartMessage);
 
         try {
           await stepCounter.untilValue(STEP_SUBSCRIBED);

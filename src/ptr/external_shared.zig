@@ -53,7 +53,7 @@ pub fn ExternalShared(comptime T: type) type {
         pub const Optional = struct {
             #impl: ?*T = null,
 
-            pub fn initNull() Self {
+            pub fn initNull() Optional {
                 return .{};
             }
 
@@ -63,19 +63,19 @@ pub fn ExternalShared(comptime T: type) type {
                 return .{ .#impl = incremented_raw };
             }
 
-            pub fn deinit(self: *Self) void {
+            pub fn deinit(self: *Optional) void {
                 if (self.#impl) |impl| {
                     T.external_shared_descriptor.deref(impl);
                 }
                 self.* = undefined;
             }
 
-            pub fn get(self: Self) ?*T {
+            pub fn get(self: Optional) ?*T {
                 return self.#impl;
             }
 
             /// Sets `self` to null.
-            pub fn take(self: *Self) ?NonOptional {
+            pub fn take(self: *Optional) ?NonOptional {
                 const result: NonOptional = .{ .#impl = self.#impl orelse return null };
                 self.#impl = null;
                 return result;
@@ -96,7 +96,7 @@ pub fn ExternalShared(comptime T: type) type {
             }
 
             /// Returns the raw pointer without decrementing the ref count. Invalidates `self`.
-            pub fn leak(self: *Self) ?*T {
+            pub fn leak(self: *Optional) ?*T {
                 defer self.* = undefined;
                 return self.#impl;
             }

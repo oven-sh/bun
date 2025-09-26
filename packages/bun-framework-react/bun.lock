@@ -3,9 +3,10 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "react": "0.0.0-experimental-e2332183-20250924",
-        "react-dom": "0.0.0-experimental-e2332183-20250924",
-        "react-refresh": "0.0.0-experimental-e2332183-20250924",
+        "react": "",
+        "react-dom": "",
+        "react-refresh": "",
+        "react-server-dom-esm": "",
       },
       "devDependencies": {
         "@types/react": "^19.1.13",
@@ -13,19 +14,34 @@
       },
     },
   },
+  "overrides": {
+    "react": "/Users/ali/code/react/build/oss-experimental/react/react-0.0.0-experimental-8ea8bd10-20250925.tgz",
+    "react-dom": "/Users/ali/code/react/build/oss-experimental/react-dom/react-dom-0.0.0-experimental-8ea8bd10-20250925.tgz",
+    "react-refresh": "/Users/ali/code/react/build/oss-experimental/react-refresh/react-refresh-0.0.0-experimental-8ea8bd10-20250925.tgz",
+    "react-server-dom-esm": "/Users/ali/code/react/build/oss-experimental/react-server-dom-esm/react-server-dom-esm-0.0.0-experimental-8ea8bd10-20250925.tgz",
+    "scheduler": "/Users/ali/code/react/build/oss-experimental/scheduler/scheduler-0.0.0-experimental-8ea8bd10-20250925.tgz",
+  },
   "packages": {
     "@types/react": ["@types/react@19.1.13", "", { "dependencies": { "csstype": "^3.0.2" } }, "sha512-hHkbU/eoO3EG5/MZkuFSKmYqPbSVk5byPFa3e7y/8TybHiLMACgI8seVYlicwk7H5K/rI2px9xrQp/C+AUDTiQ=="],
 
     "@types/react-dom": ["@types/react-dom@19.1.9", "", { "peerDependencies": { "@types/react": "^19.0.0" } }, "sha512-qXRuZaOsAdXKFyOhRBg6Lqqc0yay13vN7KrIg4L7N4aaHN68ma9OK3NE1BoDFgFOTfM7zg+3/8+2n8rLUH3OKQ=="],
 
+    "acorn": ["acorn@8.15.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg=="],
+
+    "acorn-loose": ["acorn-loose@8.5.2", "", { "dependencies": { "acorn": "^8.15.0" } }, "sha512-PPvV6g8UGMGgjrMu+n/f9E/tCSkNQ2Y97eFvuVdJfG11+xdIeDcLyNdC8SHcrHbRqkfwLASdplyR6B6sKM1U4A=="],
+
     "csstype": ["csstype@3.1.3", "", {}, "sha512-M1uQkMl8rQK/szD0LNhtqxIPLpimGm8sOBwU7lLnCpSbTyY3yeU1Vc7l4KT5zT4s/yOxHH5O7tIuuLOCnLADRw=="],
 
-    "react": ["react@0.0.0-experimental-e2332183-20250924", "", {}, "sha512-4/G3COJS4ZRI1eEw/eLJ0+yiq+ukHAgufM9HKcctCRRFb+AGrGxUhJy7Sb7BRy+/yDDat+LDRS9wChVTjS6Azw=="],
+    "react": ["react@/Users/ali/code/react/build/oss-experimental/react/react-0.0.0-experimental-8ea8bd10-20250925.tgz", {}],
 
-    "react-dom": ["react-dom@0.0.0-experimental-e2332183-20250924", "", { "dependencies": { "scheduler": "0.0.0-experimental-e2332183-20250924" }, "peerDependencies": { "react": "0.0.0-experimental-e2332183-20250924" } }, "sha512-A6GIfoQeAbimDam/T4xNCtlGpB4Tnvx2E+iPyG3oTiMpzY//btHGXIJNi+aHhYelqoRm4ofofyZb28hGjFpWjw=="],
+    "react-dom": ["react-dom@/Users/ali/code/react/build/oss-experimental/react-dom/react-dom-0.0.0-experimental-8ea8bd10-20250925.tgz", { "dependencies": { "scheduler": "0.0.0-experimental-8ea8bd10-20250925" }, "peerDependencies": { "react": "0.0.0-experimental-8ea8bd10-20250925" } }],
 
-    "react-refresh": ["react-refresh@0.0.0-experimental-e2332183-20250924", "", {}, "sha512-T2/g4LsZh0RTePk/I32kH6QSv5Jq22FtoIz8g5f6WQeQV1fQ18CXqH8Fq/Dif7T5MBz87Ny6+ZP8JhhATJZwAQ=="],
+    "react-refresh": ["react-refresh@/Users/ali/code/react/build/oss-experimental/react-refresh/react-refresh-0.0.0-experimental-8ea8bd10-20250925.tgz", {}],
 
-    "scheduler": ["scheduler@0.0.0-experimental-e2332183-20250924", "", {}, "sha512-reLxhrf+Zsf20+Mf2G0JLY0DOPZ3tzimMoyFi7KktJUk1cqPRAXO/Pu4eQbRAVglg9IKXdsJxB6FV9WTeRR79A=="],
+    "react-server-dom-esm": ["react-server-dom-esm@/Users/ali/code/react/build/oss-experimental/react-server-dom-esm/react-server-dom-esm-0.0.0-experimental-8ea8bd10-20250925.tgz", { "dependencies": { "acorn-loose": "^8.3.0", "webpack-sources": "^3.2.0" }, "peerDependencies": { "react": "0.0.0-experimental-8ea8bd10-20250925", "react-dom": "0.0.0-experimental-8ea8bd10-20250925" } }],
+
+    "scheduler": ["scheduler@/Users/ali/code/react/build/oss-experimental/scheduler/scheduler-0.0.0-experimental-8ea8bd10-20250925.tgz", {}],
+
+    "webpack-sources": ["webpack-sources@3.3.3", "", {}, "sha512-yd1RBzSGanHkitROoPFd6qsrxt+oFhg/129YzheDGqeustzX0vTZJZsSsQjVQC4yzBQ56K55XU8gaNCtIzOnTg=="],
   }
 }

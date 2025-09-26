@@ -7,8 +7,8 @@ import type { Readable } from "node:stream";
 import * as React from "react";
 import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server.node";
+import { createFromNodeStream } from "react-server-dom-esm/client.node";
 import type { MiniAbortSignal } from "./server.tsx";
-import { createFromNodeStream } from "./vendor/react-server-dom-bun/client.node.unbundled.js";
 
 // The `renderToHtml` function not only implements converting the RSC payload
 // into HTML via react-dom, but also streaming the RSC payload via injected

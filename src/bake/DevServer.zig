@@ -4608,6 +4608,7 @@ fn newRouteParamsForBundlePromiseForJS(global: *bun.jsc.JSGlobalObject, callfram
     const route_bundle_index = RouteBundle.Index.init(@intCast(route_bundle_index_js.toInt32()));
 
     const url = try url_js.toBunString(global);
+    defer url.deref();
     const url_utf8 = url.toUTF8(bun.default_allocator);
     defer url_utf8.deinit();
 

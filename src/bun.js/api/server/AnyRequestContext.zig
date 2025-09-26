@@ -23,20 +23,28 @@ pub fn setAdditionalOnAbortCallback(self: AnyRequestContext, cb: ?AdditionalOnAb
         return;
     }
 
+    var old: ?AdditionalOnAbortCallback = null;
     switch (self.tagged_pointer.tag()) {
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+            old = self.tagged_pointer.as(HTTPServer.RequestContext).additional_on_abort;
             self.tagged_pointer.as(HTTPServer.RequestContext).additional_on_abort = cb;
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+            old = self.tagged_pointer.as(HTTPSServer.RequestContext).additional_on_abort;
             self.tagged_pointer.as(HTTPSServer.RequestContext).additional_on_abort = cb;
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+            old = self.tagged_pointer.as(DebugHTTPServer.RequestContext).additional_on_abort;
             self.tagged_pointer.as(DebugHTTPServer.RequestContext).additional_on_abort = cb;
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+            old = self.tagged_pointer.as(DebugHTTPSServer.RequestContext).additional_on_abort;
             self.tagged_pointer.as(DebugHTTPSServer.RequestContext).additional_on_abort = cb;
         },
         else => @panic("Unexpected AnyRequestContext tag"),
+    }
+    if (old != null) {
+        old.?.deref();
     }
 }
 

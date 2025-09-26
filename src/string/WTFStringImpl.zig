@@ -217,7 +217,15 @@ pub const WTFStringImplStruct = extern struct {
     pub fn hasPrefix(self: WTFStringImpl, text: []const u8) bool {
         return bun.cpp.Bun__WTFStringImpl__hasPrefix(self, text.ptr, text.len);
     }
+
+    pub const external_shared_descriptor = struct {
+        pub const ref = WTFStringImplStruct.ref;
+        pub const deref = WTFStringImplStruct.deref;
+    };
 };
+
+/// Behaves like `WTF::Ref<WTF::StringImpl>`.
+pub const WTFString = bun.ptr.ExternalShared(WTFStringImplStruct);
 
 pub const StringImplAllocator = struct {
     fn alloc(ptr: *anyopaque, len: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {

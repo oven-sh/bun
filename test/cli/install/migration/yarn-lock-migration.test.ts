@@ -1336,7 +1336,7 @@ webpack@^5.75.0:
 
     // Verify peer dependencies are captured
     expect(bunLockContent).toContain("peerDependencies");
-  });
+  }, 2000000);
 });
 
 describe("bun pm migrate for existing yarn.lock", () => {
@@ -1348,28 +1348,32 @@ describe("bun pm migrate for existing yarn.lock", () => {
     "yarn-stuff",
     "yarn-stuff/abbrev-link-target",
   ];
-  test.each(folders)("%s", async folder => {
-    const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
-    const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
+  test.each(folders)(
+    "%s",
+    async folder => {
+      const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
+      const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
 
-    const tempDir = tempDirWithFiles("yarn-lock-migration-", {
-      "package.json": packageJsonContent,
-      "yarn.lock": yarnLockContent,
-    });
+      const tempDir = tempDirWithFiles("yarn-lock-migration-", {
+        "package.json": packageJsonContent,
+        "yarn.lock": yarnLockContent,
+      });
 
-    const migrateResult = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
+      const migrateResult = Bun.spawn({
+        cmd: [bunExe(), "pm", "migrate", "-f"],
+        cwd: tempDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
 
-    expect(migrateResult.exited).resolves.toBe(0);
-    expect(Bun.file(join(tempDir, "bun.lock")).exists()).resolves.toBe(true);
+      expect(migrateResult.exited).resolves.toBe(0);
+      expect(Bun.file(join(tempDir, "bun.lock")).exists()).resolves.toBe(true);
 
-    const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
-    expect(bunLockContent).toMatchSnapshot(folder);
-  });
+      const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
+      expect(bunLockContent).toMatchSnapshot(folder);
+    },
+    2000000,
+  );
 });

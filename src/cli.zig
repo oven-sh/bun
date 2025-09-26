@@ -340,6 +340,7 @@ pub const Command = struct {
         only: bool = false,
         concurrent: bool = false,
         randomize: bool = false,
+        seed: ?u32 = null,
         concurrent_test_glob: ?[]const []const u8 = null,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},

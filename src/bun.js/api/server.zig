@@ -2158,13 +2158,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         break :brk 0;
                     };
 
+                    // Abort the request very early.
                     if (len > this.config.max_request_body_size) {
-                        // Set up abort handler before ending the response to ensure proper cleanup
                         resp.writeStatus("413 Request Entity Too Large");
                         resp.endWithoutBody(true);
-                        // Don't call finalize() here - let the abort handler clean up
                         return null;
                     }
+
+                    break :request_body_length len;
                 }
 
                 break :request_body_length null;

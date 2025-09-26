@@ -5,7 +5,7 @@
 
 namespace Bun {
 
-void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initializer& init)
+void createFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto structure = JSC::Structure::create(init.vm, init.global, init.global->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, 0), JSFinalObject::info(), NonArray, 5);
 
@@ -20,13 +20,13 @@ void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initi
     init.setStructure(structure);
 }
 
-extern "C" EncodedJSValue Bake__createDevServerFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params)
+extern "C" EncodedJSValue Bake__createFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto& vm = globalObject->vm();
 
     auto* zig = jsCast<Zig::GlobalObject*>(globalObject);
-    auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_DevServerFrameworkRequestArgsClassStructure.get(zig));
+    auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_FrameworkRequestArgsClassStructure.get(zig));
     RETURN_IF_EXCEPTION(scope, {});
 
     object->putDirectOffset(vm, 0, JSValue::decode(routerTypeMain));
@@ -119,10 +119,10 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
     return Bake__bundleNewRouteJSFunctionImpl(globalObject, request->m_ctx, url);
 }
 
-extern "C" JSC::EncodedJSValue Bake__getNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bake__getDevNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
 {
     auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    auto value = zig->bakeAdditions().getNewRouteParamsJSFunction(zig);
+    auto value = zig->bakeAdditions().getDevNewRouteParamsJSFunction(zig);
     return JSValue::encode(value);
 }
 

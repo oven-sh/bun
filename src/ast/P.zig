@@ -2174,16 +2174,18 @@ pub fn NewParser_(
                 .none, .client_side => {},
                 else => {
                     p.response_ref = try p.declareGeneratedSymbol(.import, "Response");
-                    p.bun_app_namespace_ref = try p.newSymbol(
-                        .other,
-                        "import_bun_app",
-                    );
-                    const symbol = &p.symbols.items[p.response_ref.inner_index];
-                    symbol.namespace_alias = .{
-                        .namespace_ref = p.bun_app_namespace_ref,
-                        .alias = "Response",
-                        .import_record_index = std.math.maxInt(u32),
-                    };
+                    if (p.options.features.hot_module_reloading) {
+                        p.bun_app_namespace_ref = try p.newSymbol(
+                            .other,
+                            "import_bun_app",
+                        );
+                        const symbol = &p.symbols.items[p.response_ref.inner_index];
+                        symbol.namespace_alias = .{
+                            .namespace_ref = p.bun_app_namespace_ref,
+                            .alias = "Response",
+                            .import_record_index = std.math.maxInt(u32),
+                        };
+                    }
                 },
             }
 

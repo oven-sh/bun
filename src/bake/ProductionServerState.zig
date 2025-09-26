@@ -25,19 +25,11 @@ pub fn create(
 ) JSError!bun.ptr.Owned(*Self) {
     // const allocator = bun.default_allocator;
 
-    const manifest = bun.take(&config.bake_manifest) orelse {
+    const manifest: *Manifest = bun.take(&config.bake_manifest) orelse {
         return globalObject.throw("Manifest not configured", .{});
     };
 
-    const ssr_route_count = ssr_route_count: {
-        var len: u32 = 0;
-        for (manifest.routes) |*route| {
-            if (route.* == .ssr) len += 1;
-        }
-        break :ssr_route_count len;
-    };
-
-    const route_list = try SSRRouteList.create(globalObject, ssr_route_count);
+    const route_list = try SSRRouteList.create(globalObject, manifest.routes.len);
 
     const build_output_dir = manifest.build_output_dir;
 
@@ -90,8 +82,8 @@ pub fn initBakeServerRuntime(global: *JSGlobalObject, server_runtime_path: []con
     return jsc.Strong.create(handle_request_fn, global);
 }
 
-pub fn getRouteInfo(this: *Self, index: Route.Index) JSError!JSValue {
-    return SSRRouteList.getRouteInfo(this.route_list.get(), index);
+pub fn getRouteInfo(this: *Self, global: *JSGlobalObject, index: Route.Index) JSError!JSValue {
+    return SSRRouteList.getRouteInfo(global, this.route_list.get(), index.get());
 }
 
 const SSRRouteList = struct {
@@ -103,7 +95,7 @@ const SSRRouteList = struct {
     }
 
     pub fn getRouteInfo(globalObject: *JSGlobalObject, route_list_object: JSValue, index: usize) JSError!JSValue {
-        return jsc.fromJSHostCall(globalObject, @src(), Bun__BakeProductionSSRRouteList__create, .{ globalObject, route_list_object, index });
+        return jsc.fromJSHostCall(globalObject, @src(), Bun__BakeProductionSSRRouteList__getRouteInfo, .{ globalObject, route_list_object, index });
     }
 };
 
@@ -186,13 +178,12 @@ pub fn routeDataForInitialization(
     out_styles: *JSValue,
 ) JSError!void {
     const server = request.request_context.getBakeProdState() orelse {
-        globalObject.throw("Request context is not a production server state", .{});
-        return .JSError;
+        return globalObject.throw("Request context is not a production server state", .{});
     };
 
     const rtr = server.router();
 
-    if (router_index >= rtr.types.len) {
+    if (router_index >= rtr.routes.items.len) {
         return globalObject.throw("Router index out of bounds", .{});
     }
     if (router_type_index >= rtr.types.len) {
@@ -212,7 +203,6 @@ pub fn routeDataForInitialization(
     const route_modules = try jsc.JSValue.createEmptyArray(globalObject, route.modules.len);
     for (route.modules.slice(), 0..) |module_path, i| {
         const module_str = bun.String.init(module_path);
-        module_str.toJS(globalObject);
         try route_modules.putIndex(globalObject, @intCast(i), module_str.toJS(globalObject));
     }
     out_route_modules.* = route_modules;
@@ -223,7 +213,6 @@ pub fn routeDataForInitialization(
     const styles = try jsc.JSValue.createEmptyArray(globalObject, route.styles.len);
     for (route.styles.slice(), 0..) |style_path, i| {
         const style_str = bun.String.init(style_path);
-        style_str.toJS(globalObject);
         try styles.putIndex(globalObject, @intCast(i), style_str.toJS(globalObject));
     }
     out_styles.* = styles;
@@ -239,8 +228,12 @@ export fn Bun__BakeProductionSSRRouteInfo__dataForInitialization(
     clientEntryUrl: *JSValue,
     styles: *JSValue,
 ) callconv(jsc.conv) c_int {
-    const request: *bun.webcore.Request = @ptrCast(zigRequestPtr);
-    routeDataForInitialization(globalObject, request, router_index: usize, router_type_index: usize, out_router_type_main: *JSValue, out_route_modules: *JSValue, out_client_entry_url: *JSValue, out_styles: *JSValue)
+    const request: *bun.webcore.Request = @ptrCast(@alignCast(zigRequestPtr));
+    routeDataForInitialization(globalObject, request, routerIndex, routerTypeIndex, routerTypeMain, routeModules, clientEntryUrl, styles) catch |err| {
+        if (err == error.OutOfMemory) bun.outOfMemory();
+        return 0;
+    };
+    return 1;
 }
 
 const bun = @import("bun");
@@ -264,5 +257,6 @@ const Resolver = bun.resolver.Resolver;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const Output = bun.Output;
+const Manifest = bun.bake.Manifest;
 
 const FrameworkRouter = bun.bake.FrameworkRouter;

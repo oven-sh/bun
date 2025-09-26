@@ -2124,8 +2124,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             prepared.js_request.ensureStillAlive();
 
             if (should_deinit_context) {
-                ctx.deref();
-                // ctx.deinit();
+                ctx.deinit();
                 return;
             }
 
@@ -3036,8 +3035,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     const route = &manifest.routes[route_index.get()];
                     switch (route.*) {
                         .ssr => |*ssr| {
+                            _ = ssr;
                             // Call the SSR request handler
-                            this.onBakeFrameworkSSRRequest(req, resp, ssr, route_index, &params);
+                            this.onBakeFrameworkSSRRequest(req, resp, route_index, &params);
                             return;
                         },
                         .ssg, .ssg_many => {
@@ -3070,85 +3070,36 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this: *ThisServer,
             req: *uws.Request,
             resp: *App.Response,
-            route: *const bun.bake.Manifest.Route.SSR,
             route_index: bun.bake.FrameworkRouter.Route.Index,
             params: *const bun.bake.FrameworkRouter.MatchedParams,
         ) void {
+            this.onBakeFrameworkSSRRequestImpl(req, resp, route_index, params) catch |err| switch (err) {
+                error.JSError => this.vm.global.reportActiveExceptionAsUnhandled(err),
+                error.OutOfMemory => bun.outOfMemory(),
+            };
+        }
+
+        pub fn onBakeFrameworkSSRRequestImpl(
+            this: *ThisServer,
+            req: *uws.Request,
+            resp: *App.Response,
+            route_index: bun.bake.FrameworkRouter.Route.Index,
+            params: *const bun.bake.FrameworkRouter.MatchedParams,
+        ) bun.JSError!void {
             if (comptime Environment.enable_logs)
                 httplog("[Bake SSR] {s} - {s}", .{ req.method(), req.url() });
 
             const bake_prod = this.bake_prod.get().?;
 
-            // Get the handleRequest function from the server runtime
             const server_request_callback = bake_prod.bake_server_runtime_handler.get();
 
             const global = this.globalThis;
-            const allocator = this.allocator;
 
-            // Get the router type server entrypoint from the manifest
             const router = this.bake_prod.get().?.router();
-
-            const manifest = this.bake_prod.get().?.manifest;
 
             // Look up the route to get its router type
             const framework_route = &router.routes.items[route_index.get()];
             const router_type_index = framework_route.type.get();
-
-            // Get the server entrypoint for this router type from the manifest
-            const router_type_main = if (router_type_index < manifest.router_types.len)
-                // bun.String.init(bun.strings.concat(bun.default_allocator, &.{ "dist/", manifest.router_types[router_type_index].server_entrypoint }) catch bun.outOfMemory())
-                bun.String.init(manifest.router_types[router_type_index].server_entrypoint)
-            else
-                bun.String.init("");
-
-            // FIXME: this is gonna get GC'ed
-            // Create the route modules array
-            var modules_array = allocator.alloc(jsc.JSValue, route.modules.len) catch {
-                resp.writeStatus("500 Internal Server Error");
-                resp.end("Out of memory", false);
-                return;
-            };
-            defer allocator.free(modules_array);
-
-            for (route.modules.slice(), 0..) |module_path, i| {
-                const module_str = bun.String.init(module_path);
-                modules_array[i] = module_str.toJS(global);
-            }
-
-            const route_modules = jsc.JSValue.createEmptyArray(global, modules_array.len) catch {
-                resp.writeStatus("500 Internal Server Error");
-                resp.end("Out of memory", false);
-                return;
-            };
-            for (modules_array, 0..) |module_js, i| {
-                route_modules.putIndex(global, @intCast(i), module_js) catch {};
-            }
-
-            // Create client entry URL string (for SSR, this is route.entrypoint)
-            const client_entry = bun.String.init(route.entrypoint).toJS(global);
-
-            // FIXME: this is gonna get GC'ed
-            // Create styles array
-            var styles_array = allocator.alloc(jsc.JSValue, route.styles.len) catch {
-                resp.writeStatus("500 Internal Server Error");
-                resp.end("Out of memory", false);
-                return;
-            };
-            defer allocator.free(styles_array);
-
-            for (route.styles.slice(), 0..) |style_path, i| {
-                const style_str = bun.String.init(style_path);
-                styles_array[i] = style_str.toJS(global);
-            }
-
-            const styles = jsc.JSValue.createEmptyArray(global, styles_array.len) catch {
-                resp.writeStatus("500 Internal Server Error");
-                resp.end("Out of memory", false);
-                return;
-            };
-            for (styles_array, 0..) |style_js, i| {
-                styles.putIndex(global, @intCast(i), style_js) catch {};
-            }
 
             // Convert params to JSValue
             const params_js = params.toJS(global);
@@ -3156,20 +3107,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // Get the setAsyncLocalStorage function that properly sets up the AsyncLocalStorage instance
             const setAsyncLocalStorage = Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global);
 
+            const route_info = try bake_prod.getRouteInfo(global, route_index);
+
             // Call the server runtime's handleRequest function using onSavedRequest
             this.onSavedRequest(
                 .{ .stack = req },
                 resp,
                 server_request_callback,
-                7,
+                5,
                 .{
-                    router_type_main.toJS(global), // routerTypeMain
-                    route_modules, // routeModules
-                    client_entry, // clientEntryUrl
-                    styles, // styles
-                    params_js, // params
+                    JSValue.jsNumberFromUint64(route_index.get()),
+                    JSValue.jsNumberFromUint64(router_type_index),
+                    route_info,
+                    params_js,
                     setAsyncLocalStorage, // setAsyncLocalStorage
-                    jsc.JSValue.js_undefined, // reserved for future use
                 },
             );
         }

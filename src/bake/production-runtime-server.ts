@@ -22,13 +22,30 @@ const responseOptionsALS = new AsyncLocalStorage();
 // };
 let asyncLocalStorageWasSet = false;
 
+type Module = unknown;
+
+type RouteArgs = {
+  serverEntrypoint: string;
+  routeModules: string[];
+  clientEntryUrl: string;
+  styles: string[];
+};
+
+type RouteInfo = {
+  serverEntrypoint: Module & Bake.ServerEntryPoint;
+  routeModules: Module[];
+  clientEntryUrl: string;
+  styles: string[];
+  dataForInitialization(req: Request, routeIndex: number, routerTypeIndex: number): RouteArgs;
+  initializing: Promise<unknown> | undefined;
+};
+
 interface Exports {
   handleRequest: (
     req: Request,
-    routerTypeMain: string,
-    routeModules: string[],
-    clientEntryUrl: string,
-    styles: string[],
+    routeIndex: number,
+    routerTypeIndex: number,
+    routeInfo: RouteInfo,
     params: Record<string, string> | null,
     setAsyncLocalStorage: Function,
   ) => Promise<Response>;
@@ -37,31 +54,54 @@ interface Exports {
 declare let server_exports: Exports;
 
 server_exports = {
-  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params, setAsyncLocalStorage) {
+  async handleRequest(req, routeIndex, routerTypeIndex, routeInfo, params, setAsyncLocalStorage) {
     // Set up AsyncLocalStorage if not already done
     if (!asyncLocalStorageWasSet) {
       asyncLocalStorageWasSet = true;
       setAsyncLocalStorage(responseOptionsALS);
     }
-    // Load the server entrypoint module
-    const serverEntryPoint = await import(routerTypeMain);
 
-    const serverRenderer = serverEntryPoint.render;
+    console.log("Route info", routeInfo);
+    if (routeInfo.initializing) {
+      await routeInfo.initializing;
+      routeInfo.initializing = undefined;
+    }
 
-    if (!serverRenderer) {
-      throw new Error('Framework server entrypoint is missing a "render" export.');
+    if (!routeInfo.serverEntrypoint) {
+      const args = routeInfo.dataForInitialization(req, routeIndex, routerTypeIndex);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      routeInfo.initializing = promise;
+
+      try {
+        routeInfo.serverEntrypoint = await import(args.serverEntrypoint);
+        routeInfo.routeModules = await Promise.all(args.routeModules.map(modulePath => import(modulePath)));
+        routeInfo.clientEntryUrl = args.clientEntryUrl;
+        routeInfo.styles = args.styles;
+        resolve();
+      } catch (error) {
+        reject(error);
+        throw error;
+      } finally {
+        routeInfo.initializing = undefined;
+      }
+
+      if (!routeInfo.serverEntrypoint.render) {
+        throw new Error('Framework server entrypoint is missing a "render" export.');
+      }
+      if (typeof routeInfo.serverEntrypoint.render !== "function") {
+        throw new Error('Framework server entrypoint\'s "render" export is not a function.');
+      }
     }
-    if (typeof serverRenderer !== "function") {
-      throw new Error('Framework server entrypoint\'s "render" export is not a function.');
-    }
+
+    const serverRenderer = routeInfo.serverEntrypoint.render;
 
     // Load all route modules (page and layouts)
-    const [pageModule, ...layouts] = await Promise.all(routeModules.map(modulePath => import(modulePath)));
+    const [pageModule, ...layouts] = routeInfo.routeModules;
 
     // Set up the request context for AsyncLocalStorage
     let storeValue: RequestContext = {
       responseOptions: {},
-      streaming: pageModule.streaming ?? false,
+      streaming: (pageModule as { streaming?: boolean }).streaming ?? false,
     };
 
     try {
@@ -71,14 +111,12 @@ server_exports = {
         return await serverRenderer(
           req,
           {
-            styles,
-            modules: [clientEntryUrl],
+            styles: routeInfo.styles,
+            modules: [routeInfo.clientEntryUrl],
             layouts,
             pageModule,
             modulepreload: [],
             params,
-            // Pass request in metadata when mode is 'ssr'
-            request: pageModule.mode === "ssr" ? req : undefined,
           },
           responseOptionsALS,
         );
@@ -93,7 +131,7 @@ server_exports = {
       // For `Response.render(...)`/`Response.redirect(...)` we throw the
       // response to stop React from rendering
       if (error instanceof Response) {
-        return error;
+        throw new Error("FIXME zack: Response.render(...) and Response.redirect(..)");
       }
 
       // Re-throw other errors

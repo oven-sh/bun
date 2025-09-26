@@ -21,25 +21,25 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction);
 extern "C" JSC::EncodedJSValue Bake__getEnsureAsyncLocalStorageInstanceJSFunction(JSC::JSGlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue Bake__getAsyncLocalStorage(JSC::JSGlobalObject* globalObject);
 
-extern "C" EncodedJSValue Bake__createDevServerFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params);
+extern "C" EncodedJSValue Bake__createFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params);
 
-void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initializer& init);
+void createFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initializer& init);
 
-extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Bake__getNewRouteParamsJSFunctionImpl(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Bake__getDevNewRouteParamsJSFunctionImpl(JSC::JSGlobalObject*, JSC::CallFrame*);
 
 struct BakeAdditionsToGlobalObject {
     template<typename Visitor>
     void visit(Visitor& visitor)
     {
         this->m_JSBakeResponseClassStructure.visit(visitor);
-        this->m_DevServerFrameworkRequestArgsClassStructure.visit(visitor);
+        this->m_FrameworkRequestArgsClassStructure.visit(visitor);
         visitor.append(this->m_wrapComponent);
         visitor.append(this->m_asyncLocalStorageInstance);
 
         this->m_bakeGetAsyncLocalStorage.visit(visitor);
         this->m_bakeEnsureAsyncLocalStorage.visit(visitor);
         this->m_bakeGetBundleNewRoute.visit(visitor);
-        this->m_bakeGetNewRouteParams.visit(visitor);
+        this->m_bakeGetDevNewRouteParamsJSFunction.visit(visitor);
     }
 
     void initialize()
@@ -74,14 +74,14 @@ struct BakeAdditionsToGlobalObject {
                 init.set(JSFunction::create(init.vm, init.owner, 1, String("bundleNewRoute"_s), jsFunctionBakeGetBundleNewRouteJSFunction, ImplementationVisibility::Public, NoIntrinsic));
             });
 
-        m_bakeGetNewRouteParams.initLater(
+        m_bakeGetDevNewRouteParamsJSFunction.initLater(
             [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-                init.set(JSFunction::create(init.vm, init.owner, 1, String("newRouteParams"_s), Bake__getNewRouteParamsJSFunctionImpl, ImplementationVisibility::Public, NoIntrinsic));
+                init.set(JSFunction::create(init.vm, init.owner, 1, String("newRouteParams"_s), Bake__getDevNewRouteParamsJSFunctionImpl, ImplementationVisibility::Public, NoIntrinsic));
             });
 
-        m_DevServerFrameworkRequestArgsClassStructure.initLater(
+        m_FrameworkRequestArgsClassStructure.initLater(
             [](LazyClassStructure::Initializer& init) {
-                Bun::createDevServerFrameworkRequestArgsStructure(init);
+                Bun::createFrameworkRequestArgsStructure(init);
             });
     }
 
@@ -90,9 +90,9 @@ struct BakeAdditionsToGlobalObject {
         return m_bakeGetBundleNewRoute.get(globalObject);
     }
 
-    JSValue getNewRouteParamsJSFunction(JSGlobalObject* globalObject)
+    JSValue getDevNewRouteParamsJSFunction(JSGlobalObject* globalObject)
     {
-        return m_bakeGetNewRouteParams.get(globalObject);
+        return m_bakeGetDevNewRouteParamsJSFunction.get(globalObject);
     }
 
     void ensureAsyncLocalStorageInstance(JSGlobalObject* globalObject, JSValue asyncLocalStorage)
@@ -142,7 +142,7 @@ struct BakeAdditionsToGlobalObject {
     LazyClassStructure m_JSBakeResponseClassStructure;
     LazyClassStructure m_BakeProductionSSRRouteInfoClassStructure;
     LazyClassStructure m_BakeProductionSSRRouteArgsClassStructure;
-    LazyClassStructure m_DevServerFrameworkRequestArgsClassStructure;
+    LazyClassStructure m_FrameworkRequestArgsClassStructure;
 
 private:
     WriteBarrier<JSFunction> m_wrapComponent;
@@ -151,7 +151,7 @@ private:
     LazyProperty<JSGlobalObject, JSFunction> m_bakeGetAsyncLocalStorage;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeEnsureAsyncLocalStorage;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeGetBundleNewRoute;
-    LazyProperty<JSGlobalObject, JSFunction> m_bakeGetNewRouteParams;
+    LazyProperty<JSGlobalObject, JSFunction> m_bakeGetDevNewRouteParamsJSFunction;
 };
 
 } // namespace Bun

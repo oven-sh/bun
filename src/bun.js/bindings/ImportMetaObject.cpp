@@ -137,7 +137,6 @@ ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* glo
 {
     ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, structure, url);
     ptr->finishCreation(vm);
-    printf("IMPORT META OBJECT CREATED: %s\n", url.utf8().data());
     return ptr;
 }
 

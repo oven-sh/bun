@@ -13,7 +13,7 @@ void createBakeProductionSSRRouteArgsStructure(JSC::LazyClassStructure::Initiali
     auto structure = JSC::Structure::create(init.vm, init.global, init.global->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, 0), JSFinalObject::info(), NonArray, 4);
 
     PropertyOffset offset = 0;
-    structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "routerTypeMain"_s), 0, offset);
+    structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "serverEntrypoint"_s), 0, offset);
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "routeModules"_s), 0, offset);
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "styles"_s), 0, offset);
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "clientEntryUrl"_s), 0, offset);
@@ -139,24 +139,33 @@ private:
     }
 };
 
+template<typename Visitor>
+void BakeProductionSSRRouteInfoPrototype::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    BakeProductionSSRRouteInfoPrototype* thisCallSite = jsCast<BakeProductionSSRRouteInfoPrototype*>(cell);
+    Base::visitChildren(thisCallSite, visitor);
+}
+DEFINE_VISIT_CHILDREN(BakeProductionSSRRouteInfoPrototype);
+
 const JSC::ClassInfo BakeProductionSSRRouteInfoPrototype::s_info = { "BakeProductionSSRRouteInfo"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(BakeProductionSSRRouteInfoPrototype) };
 
 void createBakeProductionSSRRouteInfoStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* prototype = BakeProductionSSRRouteInfoPrototype::create(init.vm, init.global, BakeProductionSSRRouteInfoPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto structure = JSC::Structure::create(init.vm, init.global, prototype, JSC::TypeInfo(JSC::ObjectType, 0), JSFinalObject::info(), NonArray, 4);
+    auto structure = JSC::Structure::create(init.vm, init.global, prototype, JSC::TypeInfo(JSC::ObjectType, 0), JSFinalObject::info(), NonArray, 5);
 
     PropertyOffset offset = 0;
-    structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "serverEntryPointModule"_s), 0, offset);
+    structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "serverEntrypoint"_s), 0, offset);
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "routeModules"_s), 0, offset);
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "styles"_s), 0, offset);
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "clientEntryUrl"_s), 0, offset);
+    structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "initializing"_s), 0, offset);
 
     init.setPrototype(prototype);
     init.setStructure(structure);
 }
 
-JSFinalObject* createRouteInfoObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSFinalObject* createEmptyRouteInfoObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto zigGlobalObject = defaultGlobalObject(globalObject);
     auto* structure = zigGlobalObject->bakeAdditions().m_BakeProductionSSRRouteInfoClassStructure.get(zigGlobalObject);
@@ -192,7 +201,14 @@ public:
     {
         Base::finishCreation(vm);
         for (size_t i = 0; i < m_routeInfos.size(); i++) {
-            m_routeInfos[i].setMayBeNull(vm, this, createRouteInfoObject(vm, globalObject));
+            auto* routeInfo = createEmptyRouteInfoObject(vm, globalObject);
+            routeInfo->putDirectOffset(vm, 0, jsUndefined());
+            routeInfo->putDirectOffset(vm, 1, jsUndefined());
+            routeInfo->putDirectOffset(vm, 2, jsUndefined());
+            routeInfo->putDirectOffset(vm, 3, jsUndefined());
+            routeInfo->putDirectOffset(vm, 4, jsUndefined());
+
+            m_routeInfos[i].setMayBeNull(vm, this, routeInfo);
             m_paramsObjectStructures[i].setMayBeNull(vm, this, nullptr);
         }
     }
@@ -244,6 +260,7 @@ extern "C" JSC::EncodedJSValue Bun__BakeProductionSSRRouteList__getRouteInfo(Zig
 {
     JSValue routeListValue = JSValue::decode(routeListObject);
     BakeProductionSSRRouteList* routeList = jsCast<BakeProductionSSRRouteList*>(routeListValue);
-    return JSValue::encode(routeList->routeInfo(index));
+    JSValue routeInfo = routeList->routeInfo(index);
+    return JSValue::encode(routeInfo);
 }
 }

@@ -1,17 +1,17 @@
 import { randomUUIDv7, RedisClient, spawn } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import {
+  ctx as _ctx,
   awaitableCounter,
   ConnectionType,
   createClient,
-  ctx as _ctx,
   DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
   randomCoinFlip,
   setupDockerContainer,
-  TLS_REDIS_URL,
   TLS_REDIS_OPTIONS,
+  TLS_REDIS_URL,
 } from "./test-utils";
 
 for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {

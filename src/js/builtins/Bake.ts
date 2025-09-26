@@ -1,9 +1,7 @@
-//! JS code for bake
-/// <reference path="../../bake/bake.d.ts" />
-import type { Bake } from "bun";
+import type { GetParamIterator, RouteMetadata, ServerEntryPoint } from "bun:app";
 
-type FrameworkPrerender = Bake.ServerEntryPoint["prerender"];
-type FrameworkGetParams = Bake.ServerEntryPoint["getParams"];
+type FrameworkPrerender = ServerEntryPoint["prerender"];
+type FrameworkGetParams = ServerEntryPoint["getParams"];
 type TypeAndFlags = number;
 type FileIndex = number;
 
@@ -61,7 +59,7 @@ export async function renderRoutesForProdStatic(
       layouts,
       pageModule,
       params,
-    } satisfies Bake.RouteMetadata);
+    } satisfies RouteMetadata);
     if (results == null) {
       throw new Error(`Route ${JSON.stringify(sourceRouteFiles[i])} cannot be pre-rendered to a static page.`);
     }
@@ -131,7 +129,7 @@ export async function renderRoutesForProdStatic(
       if (paramInformation[i] != null) {
         const getParam = getParams[type];
         $assert(getParam != null && $isCallable(getParam));
-        const paramGetter: Bake.GetParamIterator = await getParam({
+        const paramGetter: GetParamIterator = await getParam({
           pageModule,
           layouts,
         });

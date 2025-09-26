@@ -184,25 +184,25 @@ server_exports = {
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
-        try {
-          const exports = await loadExports<{}>(uid);
+        const exports = await loadExports<{}>(uid);
 
-          const client = {};
-          for (const exportName of Object.keys(exports)) {
-            serverManifest[uid + "#" + exportName] = {
-              id: uid,
-              name: exportName,
-              chunks: [],
-            };
-            client[exportName] = {
-              specifier: "ssr:" + uid,
-              name: exportName,
-            };
-          }
-          ssrManifest[uid] = client;
-        } catch (err) {
-          console.error(err);
+        if (exports === null) {
+          throw new Error(`Failed to load exports for ${uid}`);
         }
+
+        const client = {};
+        for (const exportName of Object.keys(exports)) {
+          serverManifest[uid + "#" + exportName] = {
+            id: uid,
+            name: exportName,
+            chunks: [],
+          };
+          client[exportName] = {
+            specifier: "ssr:" + uid,
+            name: exportName,
+          };
+        }
+        ssrManifest[uid] = client;
       }
     }
 

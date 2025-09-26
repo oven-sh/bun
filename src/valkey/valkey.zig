@@ -497,7 +497,7 @@ pub const ValkeyClient = struct {
 
         debug("reconnect in {d}ms (attempt {d}/{d})", .{ delay_ms, this.retry_attempts, this.max_retries });
 
-        this.status = .disconnected;
+        this.status = .connecting;
         this.flags.is_reconnecting = true;
         this.flags.is_authenticated = false;
         this.flags.is_selecting_db_internal = false;

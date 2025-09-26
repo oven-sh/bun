@@ -1277,10 +1277,6 @@ pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
 
-pub fn getSSRResponseConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    const Bake__getSSRResponseConstructor = @extern(*const fn (*jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue, .{ .name = "Bake__getSSRResponseConstructor" });
-    return Bake__getSSRResponseConstructor(globalThis);
-}
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.WebCore.S3Client.js.getConstructor(globalThis);
 }

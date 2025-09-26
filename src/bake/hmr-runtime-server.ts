@@ -2,7 +2,7 @@
 
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
-import type { RouteMetadata, ServerEntryPoint } from "bun:app";
+import type { ServerEntryPoint } from "bun:app";
 import "./debug";
 import { loadExports, replaceModules, serverManifest, ssrManifest } from "./hmr-module";
 // import { AsyncLocalStorage } from "node:async_hooks";
@@ -29,7 +29,19 @@ interface Exports {
     styles: string[],
     params: Record<string, string> | null,
     setAsyncLocalStorage: Function,
-  ) => Bun.MaybePromise<Response>;
+    bundleNewRoute: (req: Request, path: string) => [number, Promise<void> | undefined],
+    newRouteParams: (
+      req: Request,
+      routeBundleIndex: number,
+      url: string,
+    ) => {
+      routerTypeMain: Id;
+      routeModules: Id[];
+      clientEntryUrl: string;
+      styles: string[];
+      params: Record<string, string> | null;
+    },
+  ) => any;
   registerUpdate: (
     modules: any,
     componentManifestAdd: null | string[],
@@ -39,87 +51,110 @@ interface Exports {
 
 declare let server_exports: Exports;
 server_exports = {
-  async handleRequest(req, routerTypeMain, routeModules, clientEntryUrl, styles, params, setAsyncLocalStorage) {
+  async handleRequest(
+    req,
+    routerTypeMain,
+    routeModules,
+    clientEntryUrl,
+    styles,
+    params,
+    setAsyncLocalStorage,
+    bundleNewRoute,
+    newRouteParams,
+  ) {
     if (!asyncLocalStorageWasSet) {
       asyncLocalStorageWasSet = true;
       setAsyncLocalStorage(responseOptionsALS);
     }
 
-    if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
-      console.log("handleRequest", {
-        routeModules,
-        clientEntryUrl,
-        styles,
-        params,
-      });
-    }
-
-    const exports = await loadExports<ServerEntryPoint>(routerTypeMain);
-
-    const serverRenderer = exports.render;
-
-    if (!serverRenderer) {
-      throw new Error('Framework server entrypoint is missing a "render" export.');
-    }
-    if (typeof serverRenderer !== "function") {
-      throw new Error('Framework server entrypoint\'s "render" export is not a function.');
-    }
-
-    const [pageModule, ...layouts] = await Promise.all(
-      routeModules.map(loadExports) as [
-        Promise<{
-          streaming?: boolean;
-          mode?: "ssr" | "static";
-          default: () => React.JSXElementConstructor<unknown>;
-        }>,
-        ...Promise<RouteMetadata["layouts"][number]>[],
-      ],
-    );
-
-    if (!pageModule) {
-      throw new Error("Page module is missing for path: " + req.url);
-    }
-
-    let requestWithCookies = req;
-
-    let storeValue: import("bun:app").__internal.RequestContext = {
-      responseOptions: {},
-      streaming: pageModule?.streaming ?? false,
-    };
-
-    try {
-      // Run the renderer inside the AsyncLocalStorage context
-      // This allows Response constructors to access the stored options
-      const response = await responseOptionsALS.run(storeValue, async () => {
-        return await serverRenderer(
-          requestWithCookies,
-          {
-            styles: styles,
-            modules: [clientEntryUrl],
-            layouts,
-            pageModule,
-            modulepreload: [],
-            params,
-            // Pass request in metadata when mode is 'ssr'
-            request: pageModule?.mode === "ssr" ? requestWithCookies : undefined,
-          },
-          responseOptionsALS,
-        );
-      });
-
-      if (!(response instanceof Response)) {
-        throw $ERR_SSR_RESPONSE_EXPECTED(`Server-side request handler was expected to return a Response object.`);
+    while (true) {
+      if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_BAKE_JS) {
+        console.log("handleRequest", {
+          routeModules,
+          clientEntryUrl,
+          styles,
+          params,
+        });
       }
 
-      return response;
-    } catch (error) {
-      // For `Response.render(...)`/`Response.redirect(...)` we throw the
-      // response to stop React from rendering
-      if (error instanceof Response) {
-        return error;
+      const exports = await loadExports<ServerEntryPoint>(routerTypeMain);
+
+      const serverRenderer = exports.render;
+
+      if (!serverRenderer) {
+        throw new Error('Framework server entrypoint is missing a "render" export.');
+      }
+      if (typeof serverRenderer !== "function") {
+        throw new Error('Framework server entrypoint\'s "render" export is not a function.');
       }
 
-      throw error;
+      const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
+
+      let requestWithCookies = req;
+
+      let storeValue: RequestContext = {
+        responseOptions: {},
+        streaming: pageModule.streaming ?? false,
+      };
+
+      try {
+        // Run the renderer inside the AsyncLocalStorage context
+        // This allows Response constructors to access the stored options
+        const response = await responseOptionsALS.run(storeValue, async () => {
+          return await serverRenderer(
+            requestWithCookies,
+            {
+              styles: styles,
+              modules: [clientEntryUrl],
+              layouts,
+              pageModule,
+              modulepreload: [],
+              params,
+              // Pass request in metadata when mode is 'ssr'
+              request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
+            },
+            responseOptionsALS,
+          );
+        });
+
+        if (!(response instanceof Response)) {
+          throw $ERR_SSR_RESPONSE_EXPECTED(`Server-side request handler was expected to return a Response object.`);
+        }
+
+        return response;
+      } catch (error) {
+        // For `Response.render(...)`/`Response.redirect(...)` we throw the
+        // response to stop React from rendering
+        if (error instanceof Response) {
+          const resp = error;
+
+          // Handle `Response.render(...)`
+          if (resp.status !== 302) {
+            const newUrl = resp.headers.get("location");
+            if (!newUrl) {
+              throw new Error("Response.render(...) was expected to have a Location header");
+            }
+
+            const [routeBundleIndex, promise] = bundleNewRoute(req, newUrl);
+            if (promise) await promise;
+            if (req.signal.aborted) return new Response("");
+
+            const newArgs = newRouteParams(req, routeBundleIndex, newUrl);
+            routerTypeMain = newArgs.routerTypeMain;
+            routeModules = newArgs.routeModules;
+            clientEntryUrl = newArgs.clientEntryUrl;
+            styles = newArgs.styles;
+            params = newArgs.params;
+
+            continue;
+          }
+
+          // `Response.redirect(...)` or others, just return it
+          return resp;
+        }
+
+        throw error;
+      }
     }
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {

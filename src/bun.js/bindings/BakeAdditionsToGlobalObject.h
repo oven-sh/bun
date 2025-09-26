@@ -3,6 +3,7 @@
 #include "headers-handwritten.h"
 #include "BunBuiltinNames.h"
 #include "WebCoreJSBuiltins.h"
+#include "headers-handwritten.h"
 
 namespace Bun {
 using namespace JSC;
@@ -14,20 +15,30 @@ void setupJSBakeResponseClassStructure(JSC::LazyClassStructure::Initializer& ini
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBakeGetAsyncLocalStorage);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBakeEnsureAsyncLocalStorage);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction);
 
 extern "C" JSC::EncodedJSValue Bake__getEnsureAsyncLocalStorageInstanceJSFunction(JSC::JSGlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue Bake__getAsyncLocalStorage(JSC::JSGlobalObject* globalObject);
+
+extern "C" EncodedJSValue Bake__createDevServerFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params);
+
+void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initializer& init);
+
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Bake__getNewRouteParamsJSFunctionImpl(JSC::JSGlobalObject*, JSC::CallFrame*);
 
 struct BakeAdditionsToGlobalObject {
     template<typename Visitor>
     void visit(Visitor& visitor)
     {
         this->m_JSBakeResponseClassStructure.visit(visitor);
+        this->m_DevServerFrameworkRequestArgsClassStructure.visit(visitor);
         visitor.append(this->m_wrapComponent);
         visitor.append(this->m_asyncLocalStorageInstance);
 
         this->m_bakeGetAsyncLocalStorage.visit(visitor);
         this->m_bakeEnsureAsyncLocalStorage.visit(visitor);
+        this->m_bakeGetBundleNewRoute.visit(visitor);
+        this->m_bakeGetNewRouteParams.visit(visitor);
     }
 
     void initialize()
@@ -46,6 +57,31 @@ struct BakeAdditionsToGlobalObject {
             [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
                 init.set(JSFunction::create(init.vm, init.owner, 1, String("bakeSetAsyncLocalStorage"_s), jsFunctionBakeEnsureAsyncLocalStorage, ImplementationVisibility::Public, NoIntrinsic));
             });
+
+        m_bakeGetBundleNewRoute.initLater(
+            [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                init.set(JSFunction::create(init.vm, init.owner, 1, String("bundleNewRoute"_s), jsFunctionBakeGetBundleNewRouteJSFunction, ImplementationVisibility::Public, NoIntrinsic));
+            });
+
+        m_bakeGetNewRouteParams.initLater(
+            [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                init.set(JSFunction::create(init.vm, init.owner, 1, String("newRouteParams"_s), Bake__getNewRouteParamsJSFunctionImpl, ImplementationVisibility::Public, NoIntrinsic));
+            });
+
+        m_DevServerFrameworkRequestArgsClassStructure.initLater(
+            [](LazyClassStructure::Initializer& init) {
+                Bun::createDevServerFrameworkRequestArgsStructure(init);
+            });
+    }
+
+    JSValue getBundleNewRouteJSFunction(JSGlobalObject* globalObject)
+    {
+        return m_bakeGetBundleNewRoute.get(globalObject);
+    }
+
+    JSValue getNewRouteParamsJSFunction(JSGlobalObject* globalObject)
+    {
+        return m_bakeGetNewRouteParams.get(globalObject);
     }
 
     void ensureAsyncLocalStorageInstance(JSGlobalObject* globalObject, JSValue asyncLocalStorage)
@@ -93,6 +129,7 @@ struct BakeAdditionsToGlobalObject {
     }
 
     LazyClassStructure m_JSBakeResponseClassStructure;
+    LazyClassStructure m_DevServerFrameworkRequestArgsClassStructure;
 
 private:
     WriteBarrier<JSFunction> m_wrapComponent;
@@ -100,6 +137,8 @@ private:
     WriteBarrier<Unknown> m_asyncLocalStorageInstance;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeGetAsyncLocalStorage;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeEnsureAsyncLocalStorage;
+    LazyProperty<JSGlobalObject, JSFunction> m_bakeGetBundleNewRoute;
+    LazyProperty<JSGlobalObject, JSFunction> m_bakeGetNewRouteParams;
 };
 
 } // namespace Bun

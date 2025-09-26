@@ -178,13 +178,13 @@ pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     return js.toJSUnchecked(globalObject, this);
 }
 
-extern "C" fn Bun__JSRequest__createFromUwsReqForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request, req: *uws.Request) jsc.JSValue;
-pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject, req: *uws.Request) bun.JSError!JSValue {
+extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) jsc.JSValue;
+pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     return bun.jsc.fromJSHostCall(
         globalObject,
         @src(),
-        Bun__JSRequest__createFromUwsReqForBake,
-        .{ globalObject, this, req },
+        Bun__JSRequest__createForBake,
+        .{ globalObject, this },
     );
 }
 

@@ -689,7 +689,6 @@ pub const WriteFileWaitFromLockedValueTask = struct {
             .Null,
             .Empty,
             .Blob,
-            .Render,
             => {
                 var blob = value.use();
                 // TODO: this should be one promise not two!

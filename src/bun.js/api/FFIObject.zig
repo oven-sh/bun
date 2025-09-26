@@ -582,7 +582,7 @@ pub fn toBuffer(
                 return jsc.JSValue.createBufferWithCtx(globalThis, slice, ctx, callback);
             }
 
-            return jsc.JSValue.createBuffer(globalThis, slice, null);
+            return jsc.JSValue.createBuffer(globalThis, slice);
         },
     }
 }

@@ -1987,7 +1987,7 @@ comptime {
 pub fn Bun__canonicalizeIP_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
 
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.arguments();
 
     if (arguments.len == 0) {
         return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
@@ -1995,42 +1995,42 @@ pub fn Bun__canonicalizeIP_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
 
-    const script_ctx = globalThis.bunVM();
-    var args = jsc.CallFrame.ArgumentsSlice.init(script_ctx, arguments.slice());
-    const addr_arg = args.nextEat().?;
+    const addr_arg = try arguments[0].toSlice(globalThis, bun.default_allocator);
+    defer addr_arg.deinit();
+    const addr_str = addr_arg.slice();
+    if (addr_str.len >= INET6_ADDRSTRLEN)
+        return .js_undefined;
 
-    const addr = try bun.String.fromJS(addr_arg, globalThis);
-    {
-        defer addr.deref();
-        const addr_slice = addr.toSlice(bun.default_allocator);
-        const addr_str = addr_slice.slice();
-        if (addr_str.len >= INET6_ADDRSTRLEN) {
+    // CIDR not allowed
+    if (strings.containsChar(addr_str, '/'))
+        return .js_undefined;
+
+    var ip_binary: [16]u8 = undefined; // 16 bytes is enough for both IPv4 and IPv6
+
+    // we need a null terminated string as input
+    var ip_addr: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+    bun.copy(u8, &ip_addr, addr_str);
+    ip_addr[addr_str.len] = 0;
+
+    var af: c_int = AF.INET;
+    // get the binary representation of the IP
+    if (ares_inet_pton(af, &ip_addr, &ip_binary) != 1) {
+        af = AF.INET6;
+        if (ares_inet_pton(af, &ip_addr, &ip_binary) != 1) {
             return .js_undefined;
         }
-        for (addr_str) |char| if (char == '/') return .js_undefined; // CIDR not allowed
-
-        var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
-        // we need a null terminated string as input
-        var ip_addr: [INET6_ADDRSTRLEN + 1]u8 = undefined;
-        bun.copy(u8, &ip_addr, addr_str);
-        ip_addr[addr_str.len] = 0;
-
-        var af: c_int = AF.INET;
-        // get the standard text representation of the IP
-        if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-            af = AF.INET6;
-            if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-                return .js_undefined;
-            }
-        }
-        // ip_addr will contain the null-terminated string of the cannonicalized IP
-        if (ares_inet_ntop(af, &ip_std_text, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
-            return .js_undefined;
-        }
-        // use the null-terminated size to return the string
-        const size = bun.len(bun.cast([*:0]u8, &ip_addr));
-        return jsc.ZigString.init(ip_addr[0..size]).toJS(globalThis);
     }
+    // ip_addr will contain the null-terminated string of the canonicalized IP
+    if (ares_inet_ntop(af, &ip_binary, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
+        return .js_undefined;
+    }
+    // use the null-terminated size to return the string
+    const slice = bun.sliceTo(ip_addr[0..], 0);
+    if (bun.strings.eql(addr_str, slice)) {
+        return arguments[0];
+    }
+
+    return bun.String.createUTF8ForJS(globalThis, slice);
 }
 
 /// Creates a sockaddr structure from an address, port.

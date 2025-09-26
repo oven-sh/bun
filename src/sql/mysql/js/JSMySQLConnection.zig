@@ -304,19 +304,19 @@ fn SocketHandler(comptime ssl: bool) type {
 }
 
 fn updateReferenceType(this: *@This()) void {
-    if (this.#js_value.isNotEmpty()) {
-        if (this.#connection.isActive()) {
-            if (this.#js_value == .weak) {
-                this.#js_value.upgrade(this.#globalObject);
-                this.#poll_ref.ref(this.#vm);
-            }
-            return;
+    if (this.#connection.isActive()) {
+        debug("connection is active", .{});
+        if (this.#js_value.isNotEmpty() and this.#js_value == .weak) {
+            debug("strong ref", .{});
+            this.#js_value.upgrade(this.#globalObject);
         }
-        if (this.#js_value == .strong) {
-            this.#js_value.downgrade();
-            this.#poll_ref.unref(this.#vm);
-            return;
-        }
+        this.#poll_ref.ref(this.#vm);
+        return;
+    }
+    debug("connection is not active", .{});
+    if (this.#js_value.isNotEmpty() and this.#js_value == .strong) {
+        debug("week ref", .{});
+        this.#js_value.downgrade();
     }
     this.#poll_ref.unref(this.#vm);
 }
@@ -589,10 +589,10 @@ pub fn getQueriesArray(this: *@This()) JSValue {
     return .js_undefined;
 }
 
-pub inline fn isAbleToWrite(this: *@This()) bool {
+pub inline fn isAbleToWrite(this: *const @This()) bool {
     return this.#connection.isAbleToWrite();
 }
-pub inline fn isConnected(this: *@This()) bool {
+pub inline fn isConnected(this: *const @This()) bool {
     return this.#connection.status == .connected;
 }
 pub inline fn canPipeline(this: *@This()) bool {
@@ -662,15 +662,12 @@ pub fn onConnectionEstabilished(this: *@This()) void {
     on_connect.ensureStillAlive();
     var js_value = this.#js_value.tryGet() orelse .js_undefined;
     js_value.ensureStillAlive();
-    // this.#globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
-    const loop = this.#vm.eventLoop();
-    loop.runCallback(on_connect, this.#globalObject, .js_undefined, &[_]JSValue{ JSValue.jsNull(), js_value });
-    this.#poll_ref.unref(this.#vm);
+    this.#globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
 }
 pub fn onQueryResult(this: *@This(), request: *JSMySQLQuery, result: MySQLQueryResult) void {
     request.resolve(this.getQueriesArray(), result);
 }
-pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStatement, Context: type, reader: NewReader(Context)) error{ShortRead}!void {
+pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStatement, Context: type, reader: NewReader(Context)) (error{ ShortRead, JSError })!void {
     const result_mode = request.getResultMode();
     var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = stack_fallback.get();
@@ -703,7 +700,7 @@ pub fn onResultRow(this: *@This(), request: *JSMySQLQuery, statement: *MySQLStat
     };
     const pending_value = request.getPendingValue() orelse .js_undefined;
     // Process row data
-    const row_value = row.toJS(
+    const row_value = try row.toJS(
         this.#globalObject,
         pending_value,
         structure,

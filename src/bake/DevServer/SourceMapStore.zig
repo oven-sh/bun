@@ -207,8 +207,9 @@ pub const Entry = struct {
             .original_column = 0,
         };
 
-        // +2 because the magic fairy in my dreams said it would align the source maps.
-        var lines_between: u32 = runtime.line_count + 2;
+        // The runtime.line_count counts newlines (e.g., 2941 for a 2942-line file).
+        // The runtime ends at line 2942 with })({ so modules start after that.
+        var lines_between: u32 = runtime.line_count;
 
         // Join all of the mappings together.
         for (0..map_files.len) |i| switch (map_files.get(i)) {

@@ -128,8 +128,8 @@ pub fn CompressionStream(comptime T: type) type {
         pub fn runFromJSThread(this: *T) void {
             const global: *jsc.JSGlobalObject = this.globalThis;
             const vm = global.bunVM();
-            this.poll_ref.unref(vm);
             defer this.deref();
+            defer this.poll_ref.unref(vm);
 
             this.write_in_progress = false;
 

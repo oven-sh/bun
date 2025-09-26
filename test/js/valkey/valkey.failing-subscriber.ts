@@ -3,7 +3,7 @@
 //
 // DO NOT IMPORT FROM test-utils.ts. That import is janky and will have different state at different from different
 // importers.
-import {RedisClient} from "bun";
+import { RedisClient } from "bun";
 
 function trySend(msg: any) {
   if (process === undefined || process.send === undefined) {
@@ -13,14 +13,14 @@ function trySend(msg: any) {
   process.send(msg);
 }
 
-let redisUrlResolver: (url: string) => void;
-const redisUrl = new Promise<string>((resolve) => {
+let redisUrlResolver: (msg: { tlsPaths?: { cert: string; key: string; ca: string }; url: string }) => void;
+const redisUrl = new Promise<{ tlsPaths?: { cert: string; key: string; ca: string }; url: string }>(resolve => {
   redisUrlResolver = resolve;
 });
 
 process.on("message", (msg: any) => {
   if (msg.event === "start") {
-    redisUrlResolver(msg.url);
+    redisUrlResolver(msg);
   } else {
     throw new Error("Unknown event " + msg.event);
   }
@@ -29,20 +29,28 @@ process.on("message", (msg: any) => {
 const CHANNEL = "error-callback-channel";
 
 // We will wait for the parent process to tell us to start.
-const url = await redisUrl;
-const subscriber = new RedisClient(url);
+const { url, tlsPaths } = await redisUrl;
+const subscriber = new RedisClient(url, {
+  tls: tlsPaths
+    ? {
+        cert: Bun.file(tlsPaths.cert),
+        key: Bun.file(tlsPaths.key),
+        ca: Bun.file(tlsPaths.ca),
+      }
+    : undefined,
+});
 await subscriber.connect();
 trySend({ event: "ready" });
 
 let counter = 0;
 await subscriber.subscribe(CHANNEL, () => {
-  if ((counter++) === 1) {
+  if (counter++ === 1) {
     throw new Error("Intentional callback error");
   }
 
   trySend({ event: "message", index: counter });
 });
 
-process.on("uncaughtException", (e) => {
+process.on("uncaughtException", e => {
   trySend({ event: "exception", exMsg: e.message });
 });

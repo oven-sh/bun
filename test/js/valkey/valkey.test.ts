@@ -598,7 +598,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           },
         });
 
-        subscriberProc.send({ event: "start", url: DEFAULT_REDIS_URL });
+        subscriberProc.send({
+          event: "start",
+          url: connectionType === ConnectionType.TLS ? `${TLS_REDIS_URL}/1` : `${DEFAULT_REDIS_URL}/0`,
+          tlsPaths: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tlsPaths : undefined,
+        });
 
         try {
           await stepCounter.untilValue(STEP_SUBSCRIBED);
@@ -775,7 +779,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const url = new URL(connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL);
         url.username = "invaliduser";
         url.password = "invalidpassword";
-        const failedRedis = new RedisClient(url.toString());
+        const failedRedis = new RedisClient(url.toString(), {
+          tls: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tls : false,
+        });
 
         // Try to connect and expect it to fail
         let connectionFailed = false;

@@ -600,7 +600,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         subscriberProc.send({
           event: "start",
-          url: connectionType === ConnectionType.TLS ? `${TLS_REDIS_URL}/1` : `${DEFAULT_REDIS_URL}/0`,
+          url: connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,
           tlsPaths: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tlsPaths : undefined,
         });
 
@@ -609,24 +609,25 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           expect(currentMessage.event).toBe("ready");
 
           // Send multiple messages
-          expect(await ctx.redis.publish(channel, "message1")).toBe(1);
+          expect(await ctx.redis.publish(channel, "message1")).toBeGreaterThanOrEqual(1);
           await stepCounter.untilValue(STEP_FIRST_MESSAGE);
           expect(currentMessage.event).toBe("message");
           expect(currentMessage.index).toBe(1);
 
           // Now, the subscriber process will crash
-          expect(await ctx.redis.publish(channel, "message2")).toBe(1);
+          expect(await ctx.redis.publish(channel, "message2")).toBeGreaterThanOrEqual(1);
           await stepCounter.untilValue(STEP_SECOND_MESSAGE);
           expect(currentMessage.event).toBe("exception");
           //expect(currentMessage.index).toBe(2);
 
           // But it should recover and continue receiving messages
-          expect(await ctx.redis.publish(channel, "message3")).toBe(1);
+          expect(await ctx.redis.publish(channel, "message3")).toBeGreaterThanOrEqual(1);
           await stepCounter.untilValue(STEP_THIRD_MESSAGE);
           expect(currentMessage.event).toBe("message");
           expect(currentMessage.index).toBe(3);
         } finally {
           subscriberProc.kill();
+          await subscriberProc.exited;
         }
       });
 

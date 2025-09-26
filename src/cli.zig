@@ -187,6 +187,8 @@ pub const HelpCommand = struct {
         \\  <b><cyan>init<r>                           Start an empty Bun project from a built-in template
         \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
+        \\  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
+        \\
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
         \\
     ;
@@ -340,6 +342,7 @@ pub const Command = struct {
         only: bool = false,
         concurrent: bool = false,
         randomize: bool = false,
+        seed: ?u32 = null,
         concurrent_test_glob: ?[]const []const u8 = null,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},

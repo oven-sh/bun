@@ -57,12 +57,25 @@ pub const Debug = if (Environment.isDebug) struct {
     pub inline fn exit(_: Debug) void {}
 };
 
+/// Before your code enters JavaScript at the top of the event loop, call
+/// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
+///
+/// When we call into JavaScript, we must drain process.nextTick & microtasks
+/// afterwards (so that promises run). We must only do that once per task in the
+/// event loop. To make that work, we count enter/exit calls and once that
+/// counter reaches 0, we drain the microtasks.
+///
+/// This function increments the counter for the number of times we've entered
+/// the event loop.
 pub fn enter(this: *EventLoop) void {
     log("enter() = {d}", .{this.entered_event_loop_count});
     this.entered_event_loop_count += 1;
     this.debug.enter();
 }
 
+/// "exit" a microtask context in the event loop.
+///
+/// See the documentation for `enter` for more information.
 pub fn exit(this: *EventLoop) void {
     const count = this.entered_event_loop_count;
     log("exit() = {d}", .{count - 1});

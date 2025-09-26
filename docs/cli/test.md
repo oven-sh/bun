@@ -117,6 +117,36 @@ Use the `--rerun-each` flag to run each test multiple times. This is useful for 
 $ bun test --rerun-each 100
 ```
 
+## Randomize test execution order
+
+Use the `--randomize` flag to run tests in a random order. This helps detect tests that depend on shared state or execution order.
+
+```sh
+$ bun test --randomize
+```
+
+When using `--randomize`, the seed used for randomization will be displayed in the test summary:
+
+```sh
+$ bun test --randomize
+# ... test output ...
+ --seed=12345
+ 2 pass
+ 8 fail
+Ran 10 tests across 2 files. [50.00ms]
+```
+
+### Reproducible random order with `--seed`
+
+Use the `--seed` flag to specify a seed for the randomization. This allows you to reproduce the same test order when debugging order-dependent failures.
+
+```sh
+# Reproduce a previous randomized run
+$ bun test --seed 123456
+```
+
+The `--seed` flag implies `--randomize`, so you don't need to specify both. Using the same seed value will always produce the same test execution order, making it easier to debug intermittent failures caused by test interdependencies.
+
 ## Bail out with `--bail`
 
 Use the `--bail` flag to abort the test run early after a pre-determined number of test failures. By default Bun will run all tests and report all failures, but sometimes in CI environments it's preferable to terminate earlier to reduce CPU usage.

@@ -42,6 +42,29 @@ pub fn initDefault(comptime T: type) T {
         .{};
 }
 
+/// Returns true if `T` should not be required to have a `deinit` method.
+///
+/// This method is primarily for external types where a `deinit` method can't be added.
+/// For other types, prefer adding a `deinit` method or adding `pub const deinit = void;` if
+/// possible.
+fn exemptedFromDeinit(comptime T: type) bool {
+    return switch (T) {
+        std.mem.Allocator => true,
+        else => {
+            _ = T.deinit; // no deinit method? add one, set to void, or add an exemption
+            return false;
+        },
+    };
+}
+
+fn deinitIsVoid(comptime T: type) bool {
+    return switch (@TypeOf(T.deinit)) {
+        type => T.deinit == void,
+        void => true,
+        else => false,
+    };
+}
+
 /// Calls `deinit` on `ptr_or_slice`, or on every element of `ptr_or_slice`, if such a `deinit`
 /// method exists.
 ///
@@ -60,19 +83,61 @@ pub fn deinit(ptr_or_slice: anytype) void {
     const ptr_info = @typeInfo(@TypeOf(ptr_or_slice));
     const Child = ptr_info.pointer.child;
     const mutable = !ptr_info.pointer.is_const;
-    if (comptime std.meta.hasFn(Child, "deinit")) {
-        switch (comptime ptr_info.pointer.size) {
-            .one => {
+
+    const needs_deinit = comptime switch (@typeInfo(Child)) {
+        .@"struct" => true,
+        .@"union" => |u| u.tag_type != null,
+        else => false,
+    };
+    const should_call_deinit = comptime needs_deinit and
+        !exemptedFromDeinit(Child) and
+        !deinitIsVoid(Child);
+
+    switch (comptime ptr_info.pointer.size) {
+        .one => {
+            if (comptime should_call_deinit) {
                 ptr_or_slice.deinit();
-                if (comptime mutable) ptr_or_slice.* = undefined;
-            },
-            .slice => for (ptr_or_slice) |*elem| {
+            }
+            if (comptime mutable) ptr_or_slice.* = undefined;
+        },
+        .slice => for (ptr_or_slice) |*elem| {
+            if (comptime should_call_deinit) {
                 elem.deinit();
-                if (comptime mutable) elem.* = undefined;
-            },
-            else => @compileError("unsupported pointer type"),
-        }
+            }
+            if (comptime mutable) elem.* = undefined;
+        },
+        else => @compileError("unsupported pointer type"),
     }
+}
+
+/// Rebase a slice from one memory buffer to another buffer.
+///
+/// Given a slice which points into a memory buffer with base `old_base`, return
+/// a slice which points to the same offset in a new memory buffer with base
+/// `new_base`, preserving the length of the slice.
+///
+///
+/// ```
+/// const old_base = [6]u8{};
+/// assert(@ptrToInt(&old_base) == 0x32);
+///
+///            0x32 0x33 0x34 0x35 0x36 0x37
+/// old_base |????|????|????|????|????|????|
+///                    ^
+///                    |<-- slice --->|
+///
+/// const new_base = [6]u8{};
+/// assert(@ptrToInt(&new_base) == 0x74);
+/// const output = rebaseSlice(slice, old_base, new_base)
+///
+///            0x74 0x75 0x76 0x77 0x78 0x79
+/// new_base |????|????|????|????|????|????|
+///                    ^
+///                    |<-- output -->|
+/// ```
+pub fn rebaseSlice(slice: []const u8, old_base: [*]const u8, new_base: [*]const u8) []const u8 {
+    const offset = @intFromPtr(slice.ptr) - @intFromPtr(old_base);
+    return new_base[offset..][0..slice.len];
 }
 
 const std = @import("std");

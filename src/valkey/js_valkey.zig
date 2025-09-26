@@ -227,9 +227,7 @@ pub const JSValkeyClient = struct {
     poll_ref: bun.Async.KeepAlive = .{},
 
     _subscription_ctx: ?SubscriptionCtx,
-
     _socket_ctx: ?*uws.SocketContext = null,
-
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
         .next = .{
@@ -414,6 +412,7 @@ pub const JSValkeyClient = struct {
         const new_alloc = this.client.allocator;
         // TODO: we could ref count it instead of cloning it
         const tls: valkey.TLS = this.client.tls.clone();
+
         return JSValkeyClient.new(.{
             .ref_count = .init(),
             ._subscription_ctx = null,

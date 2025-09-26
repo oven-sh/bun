@@ -44,13 +44,15 @@ trySend({ event: "ready" });
 
 let counter = 0;
 await subscriber.subscribe(CHANNEL, () => {
-  if (counter++ === 1) {
+
+  if ((counter++) === 1) {
     throw new Error("Intentional callback error");
   }
 
   trySend({ event: "message", index: counter });
 });
 
-process.on("uncaughtException", e => {
+
+process.on("uncaughtException", (e) => {
   trySend({ event: "exception", exMsg: e.message });
 });

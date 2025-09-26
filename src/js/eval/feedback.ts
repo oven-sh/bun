@@ -15,9 +15,9 @@ const green = supportsAnsi ? "\x1b[32m" : "";
 const cyan = supportsAnsi ? "\x1b[36m" : "";
 const gray = supportsAnsi ? "\x1b[90m" : "";
 const symbols = {
-  question: `${cyan}?${reset}` || "?",
-  check: `${green}✔${reset}` || "✔",
-  cross: `${red}✖${reset}` || "✖",
+  question: `${cyan}?${reset}`,
+  check: `${green}✔${reset}`,
+  cross: `${red}✖${reset}`,
 };
 const inputPrefix = `${gray}> ${reset}`;
 const thankYouBanner = `
@@ -629,7 +629,7 @@ async function main() {
     const messageBody = normalizedMessage;
 
     const projectId = getOldestGitSha();
-    const endpoint = process.env.BUN_FEEDBACK_URL || "https://bun.com/api/v1/feedback";
+    const endpoint = process.env.BUN_FEEDBACK_URL || "https://bun.report/v1/feedback";
 
     const form = new FormData();
     form.append("email", normalizedEmail);

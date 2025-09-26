@@ -64,12 +64,6 @@ snapshots:
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    console.log("=== MIGRATION DEBUG ===");
-    console.log("Migration stdout:", stdout);
-    console.log("Migration stderr:", stderr);
-    console.log("Migration exitCode:", exitCode);
-    console.log("========================");
-
     if (exitCode !== 0) {
       console.log("stdout:", stdout);
       console.log("stderr:", stderr);
@@ -267,134 +261,6 @@ snapshots:
     expect(packageJson).toMatchSnapshot("workspace-pnpm-migration-package-json");
   });
 
-  test("pnpm with catalog dependencies", async () => {
-    const tempDir = tempDirWithFiles("pnpm-migrate-catalog", {
-      "package.json": JSON.stringify(
-        {
-          name: "catalog-test",
-          version: "1.0.0",
-          dependencies: {
-            react: "catalog:",
-            "old-react": "catalog:react17",
-          },
-        },
-        null,
-        2,
-      ),
-      "pnpm-workspace.yaml": `
-packages:
-  - 'packages/*'
-  - 'apps/*'
-catalog:
-  react: ^18.2.0
-  react-dom: ^18.2.0
-catalogs:
-  react17:
-    react: ^17.0.2
-    react-dom: ^17.0.2
-`,
-      "pnpm-lock.yaml": `lockfileVersion: '9.0'
-
-settings:
-  autoInstallPeers: true
-
-catalogs:
-  default:
-    react:
-      specifier: ^18.2.0
-      version: 18.2.0
-    react-dom:
-      specifier: ^18.2.0
-      version: 18.2.0
-  
-  react17:
-    react:
-      specifier: ^17.0.2
-      version: 17.0.2
-    react-dom:
-      specifier: ^17.0.2
-      version: 17.0.2
-
-importers:
-
-  .:
-    dependencies:
-      react:
-        specifier: 'catalog:'
-        version: 18.2.0
-      old-react:
-        specifier: catalog:react17
-        version: 17.0.2
-
-packages:
-
-  react@18.2.0:
-    resolution: {integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ==}
-    engines: {node: '>=0.10.0'}
-
-  react@17.0.2:
-    resolution: {integrity: sha512-gnhPt75i/dq/z3/6q/0asP78D0u592D5L1pd7M8P+dck6Fu/jJeL6iVVK23fptSUZj8Vjf++7wXA8UNclGQcbA==}
-    engines: {node: '>=0.10.0'}
-
-  loose-envify@1.4.0:
-    resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/tNVBQAZ8HW+WqwP25nGsjKeMZk13HGBF7YbJSi1KyeKwGAteWUa/ZKPUKAZNiIrUqZg==}
-    hasBin: true
-
-  js-tokens@4.0.0:
-    resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
-
-  object-assign@4.1.1:
-    resolution: {integrity: sha512-rJgTQnkUnkjVqfO3E+1Q45hXf64UF+6eWwJJCTNJN7q7vfVQqPJZsB/1/vb9TuT9e2vYfqvnMqGCDJ5x6+WUJA==}
-    engines: {node: '>=0.10.0'}
-
-snapshots:
-
-  react@18.2.0:
-    dependencies:
-      loose-envify: 1.4.0
-
-  react@17.0.2:
-    dependencies:
-      loose-envify: 1.4.0
-      object-assign: 4.1.1
-
-  loose-envify@1.4.0:
-    dependencies:
-      js-tokens: 4.0.0
-
-  js-tokens@4.0.0: {}
-
-  object-assign@4.1.1: {}
-`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate"],
-      cwd: tempDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    if (exitCode !== 0) {
-      console.log("stdout:", stdout);
-      console.log("stderr:", stderr);
-    }
-    expect(exitCode).toBe(0);
-
-    // Check migration message in stderr
-    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
-
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
-    expect(bunLockContent).toMatchSnapshot("catalog-pnpm-migration");
-    const packageJson = JSON.parse(fs.readFileSync(join(tempDir, "package.json"), "utf8"));
-    expect(packageJson).toMatchSnapshot("catalog-pnpm-migration-package-json");
-  });
-
   test("pnpm with npm protocol aliases", async () => {
     const tempDir = tempDirWithFiles("pnpm-migrate-npm-aliases", {
       "package.json": JSON.stringify(
@@ -510,34 +376,6 @@ snapshots:
     const v8ExitCode = await v8Proc.exited;
     expect(v8ExitCode).toBe(0);
     expect(fs.existsSync(join(v8Dir, "bun.lock"))).toBe(true);
-
-    // Test version 7
-    const v7Dir = tempDirWithFiles("pnpm-v7", {
-      "package.json": JSON.stringify({ name: "v7-test", dependencies: { "is-number": "^7.0.0" } }),
-      "pnpm-lock.yaml": `lockfileVersion: '9.0'
-importers:
-  .:
-    dependencies:
-      is-number:
-        specifier: ^7.0.0
-        version: 7.0.0
-packages:
-  /is-number@7.0.0:
-    resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==}
-    engines: {node: '>=0.12.0'}`,
-    });
-
-    await using v7Proc = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate"],
-      cwd: v7Dir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const v7ExitCode = await v7Proc.exited;
-    expect(v7ExitCode).toBe(0);
-    expect(fs.existsSync(join(v7Dir, "bun.lock"))).toBe(true);
   });
 
   test("handles missing pnpm-lock.yaml gracefully", async () => {

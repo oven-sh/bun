@@ -30,7 +30,6 @@ exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-p
     },
     "apps/web": {
       "name": "@repo/web",
-      "version": "1.0.0",
       "dependencies": {
         "@repo/ui": "workspace:*",
         "@repo/utils": "workspace:*",
@@ -39,14 +38,12 @@ exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-p
     },
     "packages/ui": {
       "name": "@repo/ui",
-      "version": "1.0.0",
       "dependencies": {
         "react": "^18.2.0",
       },
     },
     "packages/utils": {
       "name": "@repo/utils",
-      "version": "1.0.0",
       "dependencies": {
         "lodash": "^4.17.21",
       },
@@ -63,9 +60,9 @@ exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-p
 
     "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
 
-    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" } }, "sha512-lyuxPGr/Wfhrlem2CL/tNVBQAZ8HW+WqwP25nGsjKeMZk13HGBF7YbJSi1KyeKwGAteWUa/ZKPUKAZNiIrUqZg=="],
+    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, "sha512-lyuxPGr/Wfhrlem2CL/tNVBQAZ8HW+WqwP25nGsjKeMZk13HGBF7YbJSi1KyeKwGAteWUa/ZKPUKAZNiIrUqZg=="],
 
-    "next": ["next@14.0.4", "", { "dependencies": { "react": "18.2.0" } }, "sha512-qbwypnM7327SadwFtxXnQdGiKpkuhaRLE2uq62/nRul9cj9KhQ5LhHmlziTNqUidZotw/Q1I9OjirBROdUJNgA=="],
+    "next": ["next@14.0.4", "", { "dependencies": { "react": "18.2.0" }, "bin": { "next": "dist/bin/next" } }, "sha512-qbwypnM7327SadwFtxXnQdGiKpkuhaRLE2uq62/nRul9cj9KhQ5LhHmlziTNqUidZotw/Q1I9OjirBROdUJNgA=="],
 
     "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="],
   }
@@ -85,58 +82,6 @@ exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-p
 }
 `;
 
-exports[`pnpm-lock.yaml migration pnpm with catalog dependencies: catalog-pnpm-migration 1`] = `
-"{
-  "lockfileVersion": 1,
-  "workspaces": {
-    "": {
-      "name": "catalog-test",
-      "dependencies": {
-        "react": "18.2.0",
-        "old-react": "17.0.2",
-      },
-    },
-  },
-  "packages": {
-    "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
-
-    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" } }, "sha512-lyuxPGr/Wfhrlem2CL/tNVBQAZ8HW+WqwP25nGsjKeMZk13HGBF7YbJSi1KyeKwGAteWUa/ZKPUKAZNiIrUqZg=="],
-
-    "old-react": ["old-react@17.0.2", "", {}, ""],
-
-    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="],
-  }
-}
-"
-`;
-
-exports[`pnpm-lock.yaml migration pnpm with catalog dependencies: catalog-pnpm-migration-package-json 1`] = `
-{
-  "dependencies": {
-    "old-react": "catalog:react17",
-    "react": "catalog:",
-  },
-  "name": "catalog-test",
-  "version": "1.0.0",
-  "workspaces": {
-    "catalog": {
-      "react": "^18.2.0",
-      "react-dom": "^18.2.0",
-    },
-    "catalogs": {
-      "react17": {
-        "react": "^17.0.2",
-        "react-dom": "^17.0.2",
-      },
-    },
-    "packages": [
-      "packages/*",
-      "apps/*",
-    ],
-  },
-}
-`;
-
 exports[`pnpm-lock.yaml migration pnpm with npm protocol aliases: npm-aliases-pnpm-migration 1`] = `
 "{
   "lockfileVersion": 1,
@@ -144,15 +89,15 @@ exports[`pnpm-lock.yaml migration pnpm with npm protocol aliases: npm-aliases-pn
     "": {
       "name": "alias-test",
       "dependencies": {
-        "my-react": "npm:react@^17.0.0",
         "my-lodash": "npm:lodash@latest",
+        "my-react": "npm:react@^17.0.0",
       },
     },
   },
   "packages": {
     "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
 
-    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" } }, "sha512-lyuxPGr/Wfhrlem2CL/tNVBQAZ8HW+WqwP25nGsjKeMZk13HGBF7YbJSi1KyeKwGAteWUa/ZKPUKAZNiIrUqZg=="],
+    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, "sha512-lyuxPGr/Wfhrlem2CL/tNVBQAZ8HW+WqwP25nGsjKeMZk13HGBF7YbJSi1KyeKwGAteWUa/ZKPUKAZNiIrUqZg=="],
 
     "my-lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
 

@@ -1044,7 +1044,7 @@ fn parseAppendImporterDependencies(
                     const catalog_group_name = try string_buf.append(catalog_group_name_str);
                     var dep = lockfile.catalogs.get(lockfile, catalog_group_name, name.value) orelse {
                         // catalog is missing an entry in the "catalogs" object in the lockfile
-                        return error.InvalidPnpmLockfile;
+                        return invalidPnpmLockfile();
                     };
 
                     dep.behavior = group_behavior;

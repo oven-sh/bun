@@ -759,6 +759,14 @@ pub const JSValkeyClient = struct {
     // Callback for when Valkey client connects
     pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) void {
         bun.debugAssert(this.client.status == .connected);
+        defer {
+            this.client.onWritable();
+            this.updatePollRef();
+        }
+
+        if (this.this_value == .finalized) {
+            return;
+        }
         bun.debugAssert(this.this_value.isStrong());
         const globalObject = this.globalObject;
         const event_loop = this.client.vm.eventLoop();
@@ -796,9 +804,6 @@ pub const JSValkeyClient = struct {
                 this.client.flags.connection_promise_returns_client = false;
             }
         }
-
-        this.client.onWritable();
-        this.updatePollRef();
     }
 
     /// Invoked when the Valkey client receives a new listener.

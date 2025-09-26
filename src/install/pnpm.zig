@@ -1531,7 +1531,6 @@ const Lockfile = @import("./lockfile.zig");
 const LoadResult = Lockfile.LoadResult;
 
 const bun = @import("bun");
-const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const OOM = bun.OOM;
 const logger = bun.logger;

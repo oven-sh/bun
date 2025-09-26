@@ -1,4 +1,4 @@
-import { Bake } from "bun";
+import * as Bake from "bun:app";
 
 export function render(req: Request, meta: Bake.RouteMetadata) {
   if (typeof meta.pageModule.default !== "function") {

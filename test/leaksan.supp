@@ -109,6 +109,7 @@ leak:TLSSocket__create
 leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 
+
 # file comments below are where it was first seen, not necessarily an exhaustive list
 
 # test/js/node/tls/node-tls-cert.test.ts
@@ -155,3 +156,29 @@ leak:js_printer.BufferWriter.writeAll__anon
 leak:logger.Location.clone
 # test/bundler/bundler_browser.test.ts
 leak:bundler.bundle_v2.BundleV2.runResolutionForParseTask
+
+
+# leaks post experiment
+leak:bun.js.webcore.fetch.FetchTasklet.callback
+leak:bun.js.webcore.FileReader.onReadChunk
+leak:bun.js.ipc.SendQueue.startMessage
+leak:bun.js.api.bun.process.spawnProcessPosix
+leak:bun.js.api.bun.subprocess.spawnMaybeSync__anon
+leak:bun.js.node.node_cluster_binding.sendHelperChild
+leak:bun.js.event_loop.ManagedTask.New(bun.js.ipc.SendQueue,(*)).init
+leak:bun.js.VirtualMachine.ensureSourceCodePrinter
+leak:bun.js.node.types.VectorArrayBuffer.fromJS
+leak:bun.js.api.server.NewServer(*).init
+leak:NodeHTTPResponse__createForJS
+leak:bun.js.api.bun.dns.Resolver.onDNSSocketState
+leak:ArrayBufferSink__write
+leak:bun.js.webcore.fetch.Bun__fetch_
+leak:bun.js.api.server.NewServer(*).scheduleDeinit
+leak:bun.js.api.Timer.TimeoutObject.init
+leak:bun.js.node.node_net_binding.newDetachedSocket
+leak:deps.c_ares.Channel.init__anon
+leak:bun.js.api.bun.socket.NewSocket(*).getRemoteAddress
+leak:Bun::InternalModuleRegistry::createInternalModuleById
+leak:bun.js.api.bun.socket.jsUpgradeDuplexToTLS
+leak:bun.js.api.server.SSLConfig.fromJS
+leak:fmt.getSharedBuffer

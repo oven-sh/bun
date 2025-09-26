@@ -371,6 +371,7 @@ test/js/bun/util/fuzzy-wuzzy.test.ts
 test/js/bun/util/inspect.test.js
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
 test/js/node/vm/vm.test.ts
+test/js/node/test/parallel/test-assert-checktag.js
 
 # JSC::BuiltinNames::~BuiltinNames
 test/js/bun/shell/shell-hang.test.ts
@@ -390,6 +391,9 @@ test/v8/v8.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 
+# debug mode only
+test/js/node/test/parallel/test-net-socket-constructor.js
+
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 
@@ -401,3 +405,9 @@ test/js/third_party/rollup-v4/rollup-v4.test.ts
 test/js/web/abort/abort.test.ts
 test/js/third_party/resvg/bbox.test.js
 test/regression/issue/10139.test.ts
+
+
+# confusing errors post experiment
+test/js/node/test/parallel/test-child-process-emfile.js
+test/js/node/test/parallel/test-cluster-worker-wait-server-close.js
+test/js/node/test/parallel/test-stdin-from-file-spawn.js

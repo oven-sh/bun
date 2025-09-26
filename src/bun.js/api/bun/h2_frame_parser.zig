@@ -4247,7 +4247,6 @@ pub const H2FrameParser = struct {
                 this.native_socket = .{ .tls = socket };
             } else {
                 socket.ref();
-
                 this.native_socket = .{ .tls_writeonly = socket };
             }
             // if we started with non native and go to native we now control the backpressure internally
@@ -4260,7 +4259,6 @@ pub const H2FrameParser = struct {
                 this.native_socket = .{ .tcp = socket };
             } else {
                 socket.ref();
-
                 this.native_socket = .{ .tcp_writeonly = socket };
             }
             // if we started with non native and go to native we now control the backpressure internally
@@ -4270,8 +4268,8 @@ pub const H2FrameParser = struct {
     }
 
     pub fn detachNativeSocket(this: *H2FrameParser) void {
-        this.native_socket = .{ .none = {} };
         const native_socket = this.native_socket;
+        this.native_socket = .{ .none = {} };
 
         switch (native_socket) {
             inline .tcp, .tls => |socket| {
@@ -4355,7 +4353,6 @@ pub const H2FrameParser = struct {
                     this.native_socket = .{ .tls = socket };
                 } else {
                     socket.ref();
-
                     this.native_socket = .{ .tls_writeonly = socket };
                 }
             } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
@@ -4365,7 +4362,6 @@ pub const H2FrameParser = struct {
                     this.native_socket = .{ .tcp = socket };
                 } else {
                     socket.ref();
-
                     this.native_socket = .{ .tcp_writeonly = socket };
                 }
             }

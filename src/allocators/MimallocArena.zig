@@ -112,6 +112,7 @@ fn getThreadHeap() BorrowedHeap {
 const log = bun.Output.scoped(.mimalloc, .hidden);
 
 pub fn allocator(self: Self) std.mem.Allocator {
+    if (!bun.Environment.enable_mimalloc) return bun.default_allocator; // temp?
     return self.borrow().allocator();
 }
 

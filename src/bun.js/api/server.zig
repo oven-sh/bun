@@ -1590,6 +1590,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.user_routes.deinit(bun.default_allocator);
 
             this.config.deinit();
+            bun.default_allocator.free(this.base_url_string_for_joining);
 
             this.on_clienterror.deinit();
             if (this.app) |app| {

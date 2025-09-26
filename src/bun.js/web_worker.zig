@@ -398,10 +398,8 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     var error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
     var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
-    defer array.deinit();
 
-    var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &array };
-    var buffered_writer = &buffered_writer_;
+    var buffered_writer = bun.MutableString.BufferedWriter{ .context = &array };
     var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
     const writer = buffered_writer.writer();
@@ -429,11 +427,10 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         }
         error_instance = globalObject.tryTakeException().?;
     };
-    buffered_writer.flush() catch {
-        bun.outOfMemory();
-    };
+    buffered_writer.flush() catch bun.outOfMemory();
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
+    array.deinit(); // worker_.exitAndDeinit() means this function can't use defer.
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();
         worker.parent_poll_ref.unrefConcurrently(worker.parent);

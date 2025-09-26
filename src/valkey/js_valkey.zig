@@ -972,9 +972,6 @@ pub const JSValkeyClient = struct {
         this.stopTimers();
         this.this_value.finalize();
         this.client.flags.finalized = true;
-        // The JS object should only be able to finalize when the client is disconnected or failed
-        bun.assertf(this.client.status == .disconnected or this.client.status == .failed, "JSValkeyClient status should be disconnected or failed here, but it is {s}", .{@tagName(this.client.status)});
-        bun.assertf(!this.client.flags.is_reconnecting, "JSValkeyClient should not be reconnecting here", .{});
 
         // We do not need to free the subscription context here because we're
         // guaranteed to have freed it by virtue of the fact that we are

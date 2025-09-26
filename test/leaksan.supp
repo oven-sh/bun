@@ -182,3 +182,12 @@ leak:Bun::InternalModuleRegistry::createInternalModuleById
 leak:bun.js.api.bun.socket.jsUpgradeDuplexToTLS
 leak:bun.js.api.server.SSLConfig.fromJS
 leak:fmt.getSharedBuffer
+leak:ast.ASTMemoryAllocator.append__anon
+leak:ast.Parser.Parser._parse__anon
+leak:bun.js.api.JSTranspiler.transformSync
+leak:bun.js.api.JSTranspiler.scan
+leak:bun.js.api.JSTranspiler.TransformTask.run
+leak:ast.parseStmt.ParseStmt
+leak:bun.js.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.run
+leak:bun.js.BuildMessage.BuildMessage.getNotes
+leak:sql.postgres.PostgresSQLQuery.doRun

@@ -514,8 +514,11 @@ pub const BunTest = struct {
                 defer order.deinit();
 
                 const has_filter = if (this.reporter) |reporter| if (reporter.jest.filter_regex) |_| true else false else false;
-                const should_randomize = if (this.reporter) |reporter| reporter.jest.randomize else false;
-                const cfg: Order.Config = .{ .always_use_hooks = this.collection.root_scope.base.only == .no and !has_filter, .randomize = should_randomize };
+                const should_randomize: ?std.Random = if (this.reporter) |reporter| reporter.jest.randomize else null;
+                const cfg: Order.Config = .{
+                    .always_use_hooks = this.collection.root_scope.base.only == .no and !has_filter,
+                    .randomize = should_randomize,
+                };
                 const beforeall_order: Order.AllOrderResult = if (cfg.always_use_hooks or this.collection.root_scope.base.has_callback) try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items, cfg) else .empty;
                 try order.generateOrderDescribe(this.collection.root_scope, cfg);
                 beforeall_order.setFailureSkipTo(&order);

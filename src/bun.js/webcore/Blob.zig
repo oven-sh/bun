@@ -4469,7 +4469,7 @@ pub const Internal = struct {
         const prev = this.toOwnedSlice();
         if (bun.Environment.enable_mimalloc) return prev;
         if (!bun.mimalloc.mi_is_in_heap_region(prev.ptr)) return prev;
-        const bytes = bun.default_allocator.dupe(u8, prev) catch bun.outOfMemory();
+        const bytes = bun.handleOom(bun.default_allocator.dupe(u8, prev));
         this.bytes.allocator.free(prev);
         return bytes;
     }

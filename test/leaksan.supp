@@ -133,3 +133,6 @@ leak:cli.Arguments.loadConfigPath__anon
 # test/js/bun/globals.test.js
 leak:options.definesFromTransformOptions
 leak:transpiler.Transpiler.init
+# test/bake/deinitialization.test.ts
+leak:bundler.bundle_v2.BundleV2.enqueueOnLoadPluginIfNeededImpl
+leak:DebugHTTPServerClass__finalize

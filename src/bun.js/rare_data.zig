@@ -542,6 +542,9 @@ pub fn deinit(this: *RareData) void {
     if (this.default_csrf_secret.len > 0) {
         bun.default_allocator.free(this.default_csrf_secret);
     }
+    if (this.entropy_cache) |entropy_cache| {
+        default_allocator.destroy(entropy_cache);
+    }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
 

@@ -21,7 +21,7 @@ const framework: Framework = {
   serverComponents: {
     separateSSRGraph: true,
     serverRegisterClientReferenceExport: "registerClientReference",
-    serverRuntimeImportSource: resolve("react-server-dom-esm/server"),
+    serverRuntimeImportSource: resolve("./vendor/react-server-dom-bun/server.node.unbundled.js"),
   },
   reactFastRefresh: {
     importSource: resolve("react-refresh/runtime"),

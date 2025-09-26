@@ -7,7 +7,7 @@ import type { Readable } from "node:stream";
 import * as React from "react";
 import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server.node";
-import { createFromNodeStream } from "react-server-dom-esm/client.node";
+import { createFromNodeStream } from "./vendor/react-server-dom-bun/client.node.unbundled.js";
 import type { MiniAbortSignal } from "./server.tsx";
 
 // The `renderToHtml` function not only implements converting the RSC payload
@@ -101,7 +101,6 @@ export function renderToStaticHtml(
   const stream = new StaticRscInjectionStream(rscPayload);
   const promise = createFromNodeStream<React.ReactNode>(rscPayload, {
     moduleMap: ssrManifest,
-    moduleLoading: { prefix: "/" },
   });
 
   const Root: React.JSXElementConstructor<{}> = () => React.use(promise);

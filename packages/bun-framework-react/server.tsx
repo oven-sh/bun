@@ -3,7 +3,7 @@ import * as Bake from "bun:app";
 import { serverManifest } from "bun:app/server";
 import type { AsyncLocalStorage } from "node:async_hooks";
 import { PassThrough } from "node:stream";
-import { renderToPipeableStream } from "react-server-dom-esm/server.node";
+import { renderToPipeableStream } from "./vendor/react-server-dom-bun/server.node.unbundled.js";
 import type { RequestContext } from "../../src/bake/hmr-runtime-server.ts";
 
 function assertReactComponent(Component: unknown): asserts Component is React.JSXElementConstructor<unknown> {

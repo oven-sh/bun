@@ -287,6 +287,7 @@ if (isDockerEnabled()) {
         });
 
         test("Create table", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create table test_my_table(id int)`;
           await sql`drop table test_my_table`;
         });
@@ -499,6 +500,7 @@ if (isDockerEnabled()) {
         });
 
         test("Prepared transaction", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create table test_prepared_transaction (a int)`;
 
           try {

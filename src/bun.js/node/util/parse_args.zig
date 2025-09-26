@@ -272,10 +272,10 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         } else {
             var value_list = try JSValue.createEmptyArray(globalThis, 1);
             try value_list.putIndex(globalThis, 0, new_value);
-            values.putMayBeIndex(globalThis, &key, value_list);
+            try values.putMayBeIndex(globalThis, &key, value_list);
         }
     } else {
-        values.putMayBeIndex(globalThis, &key, new_value);
+        try values.putMayBeIndex(globalThis, &key, new_value);
     }
 }
 
@@ -723,7 +723,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             if (!option.long_name.eqlComptime("__proto__")) {
                 if (try state.values.getOwn(globalThis, option.long_name) == null) {
                     log("  Setting \"{}\" to default value", .{option.long_name});
-                    state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
+                    try state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
                 }
             }
         }

@@ -140,3 +140,7 @@ leak:DebugHTTPServerClass__finalize
 leak:bake.FrameworkRouter.JSFrameworkRouter.constructor
 # test/bundler/bundler_decorator_metadata.test.ts
 leak:bundler.bundle_v2.BundleV2.init
+# test/bundler/bun-build-compile-wasm.test.ts
+leak:StandaloneModuleGraph.StandaloneModuleGraph.inject
+leak:bundler.BundleThread.BundleThread(bundler.bundle_v2.BundleV2.JSBundleCompletionTask).generateInNewThread
+leak:StandaloneModuleGraph.StandaloneModuleGraph.toBytes

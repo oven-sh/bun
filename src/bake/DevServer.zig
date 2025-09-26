@@ -2948,10 +2948,9 @@ pub fn finalizeBundle(
     if (current_bundle.promise.strong.hasValue()) {
         defer current_bundle.promise.deinit();
         current_bundle.promise.setRouteBundleState(dev, .loaded);
-        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.true);
         dev.vm.eventLoop().enter();
-        defer dev.vm.eventLoop().exit();
-        dev.vm.drainMicrotasks();
+        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.true);
+        dev.vm.eventLoop().exit();
     }
 
     while (current_bundle.requests.popFirst()) |node| {
@@ -3360,10 +3359,9 @@ fn sendSerializedFailures(
                     .headers = fetch_headers,
                 },
             };
-            r.promise.reject(r.global, response.toJS(r.global));
             dev.vm.eventLoop().enter();
+            r.promise.reject(r.global, response.toJS(r.global));
             defer dev.vm.eventLoop().exit();
-            dev.vm.drainMicrotasks();
         },
     }
 }

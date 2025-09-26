@@ -243,6 +243,88 @@ pub fn parseAppend(
     return found_any;
 }
 
+const FromPnpmLockfileError = OOM || error{InvalidPnpmLockfile};
+
+pub fn fromPnpmLockfile(
+    lockfile: *Lockfile,
+    allocator: std.mem.Allocator,
+    log: *logger.Log,
+    catalogs_obj: *bun.ast.E.Object,
+    string_buf: *String.Buf,
+) FromPnpmLockfileError!void {
+    for (catalogs_obj.properties.slice()) |prop| {
+        const group_name_str = prop.key.?.asString(allocator) orelse {
+            return error.InvalidPnpmLockfile;
+        };
+
+        if (!prop.value.?.isObject()) {
+            continue;
+        }
+
+        const entries_obj = prop.value.?.data.e_object;
+
+        if (strings.eqlComptime(group_name_str, "default")) {
+            try putEntriesFromPnpmLockfile(lockfile, allocator, log, &lockfile.catalogs.default, entries_obj, string_buf);
+        } else {
+            const group_name = try string_buf.append(group_name_str);
+            const group = try lockfile.catalogs.getOrPutGroup(lockfile, group_name);
+            try putEntriesFromPnpmLockfile(lockfile, allocator, log, group, entries_obj, string_buf);
+        }
+    }
+}
+
+fn putEntriesFromPnpmLockfile(
+    lockfile: *Lockfile,
+    allocator: std.mem.Allocator,
+    log: *logger.Log,
+    catalog_map: *Map,
+    entries_obj: *bun.ast.E.Object,
+    string_buf: *String.Buf,
+) FromPnpmLockfileError!void {
+    for (entries_obj.properties.slice()) |entry_prop| {
+        const dep_name_str = entry_prop.key.?.asString(allocator) orelse {
+            return error.InvalidPnpmLockfile;
+        };
+        const dep_name_hash = String.Builder.stringHash(dep_name_str);
+        const dep_name = try string_buf.appendWithHash(dep_name_str, dep_name_hash);
+
+        const version_str, _ = try entry_prop.value.?.getString(allocator, "specifier") orelse {
+            return error.InvalidPnpmLockfile;
+        };
+        const version_hash = String.Builder.stringHash(version_str);
+        const version = try string_buf.appendWithHash(version_str, version_hash);
+        const version_sliced = version.sliced(string_buf.bytes.items);
+
+        const dep: Dependency = .{
+            .name = dep_name,
+            .name_hash = dep_name_hash,
+            .version = Dependency.parse(
+                allocator,
+                dep_name,
+                dep_name_hash,
+                version_sliced.slice,
+                &version_sliced,
+                log,
+                null,
+            ) orelse {
+                return error.InvalidPnpmLockfile;
+            },
+        };
+
+        const entry = try catalog_map.getOrPutContext(
+            allocator,
+            dep_name,
+            String.arrayHashContext(lockfile, null),
+        );
+
+        if (entry.found_existing) {
+            return error.InvalidPnpmLockfile;
+        }
+
+        entry.value_ptr.* = dep;
+    }
+}
+
 pub fn sort(this: *CatalogMap, lockfile: *const Lockfile) void {
     const DepSortCtx = struct {
         buf: string,
@@ -386,3 +468,4 @@ const String = bun.Semver.String;
 const Dependency = bun.install.Dependency;
 const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;
+const strings = bun.strings;

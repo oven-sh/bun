@@ -310,6 +310,15 @@ pub fn getObject(expr: *const Expr, name: string) ?Expr {
     return null;
 }
 
+pub fn getBoolean(expr: *const Expr, name: string) ?bool {
+    if (expr.asProperty(name)) |query| {
+        if (query.expr.isBoolean()) {
+            return query.expr.data.e_boolean.value;
+        }
+    }
+    return null;
+}
+
 pub fn getString(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?struct { string, logger.Loc } {
     if (asProperty(expr, name)) |q| {
         if (q.expr.asString(allocator)) |str| {

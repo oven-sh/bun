@@ -1,7 +1,7 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: []const u8,
+    root_package_json_contents: *std.ArrayList(u8),
     original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
@@ -48,9 +48,6 @@ pub fn installWithManager(
     // but we force allowing updates to the lockfile when you do bun add
     var had_any_diffs = false;
     manager.progress = .{};
-
-    // Step 2. Parse the package.json file
-    const root_package_json_source = &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents);
 
     switch (load_result) {
         .err => |cause| {
@@ -145,7 +142,7 @@ pub fn installWithManager(
                     manager,
                     manager.allocator,
                     manager.log,
-                    root_package_json_source,
+                    &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents.items),
                     void,
                     &resolver,
                     Features.main,
@@ -409,7 +406,7 @@ pub fn installWithManager(
             manager,
             manager.allocator,
             manager.log,
-            root_package_json_source,
+            &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents.items),
             void,
             &resolver,
             Features.main,

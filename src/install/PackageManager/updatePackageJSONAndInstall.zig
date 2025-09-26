@@ -337,7 +337,9 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         break :brk .{ root_package_json.source.contents, root_package_json_path_buf[0..root_package_json_path.len :0] };
     };
 
-    try manager.installWithManager(ctx, root_package_json_source, original_cwd);
+    var root_package_json_contents: std.ArrayList(u8) = .init(ctx.allocator);
+    try root_package_json_contents.appendSlice(root_package_json_source);
+    try manager.installWithManager(ctx, &root_package_json_contents, original_cwd);
 
     if (subcommand == .update or subcommand == .add or subcommand == .link) {
         for (updates.*) |request| {

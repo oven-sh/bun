@@ -403,10 +403,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 return globalThis.throwValue(globalThis.toTypeError(.INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer", .{}));
             }
 
-            const str = arg.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
-            }
+            const str = try arg.toJSString(globalThis);
 
             const view = str.view(globalThis);
 

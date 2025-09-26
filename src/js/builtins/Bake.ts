@@ -25,7 +25,7 @@ export async function renderRoutesForProdStatic(
   sourceRouteFiles: string[],
   paramInformation: Array<null | string[]>,
   styles: string[][],
-): Promise<void> {
+): Promise<void[]> {
   $debug({
     outBase,
     allServerFiles,
@@ -105,7 +105,7 @@ export async function renderRoutesForProdStatic(
     return doGenerateRoute(type, noClient, i, layouts, pageModule, params);
   }
 
-  let modulesForFiles = [];
+  let modulesForFiles: any[] = [];
   for (const fileList of files) {
     $assert(fileList.length > 0);
     if (fileList.length > 1) {

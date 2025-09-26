@@ -110,6 +110,36 @@ pub fn deinit(ptr_or_slice: anytype) void {
     }
 }
 
+/// Rebase a slice from one memory buffer to another buffer.
+///
+/// Given a slice which points into a memory buffer with base `old_base`, return
+/// a slice which points to the same offset in a new memory buffer with base
+/// `new_base`, preserving the length of the slice.
+///
+///
+/// ```
+/// const old_base = [6]u8{};
+/// assert(@ptrToInt(&old_base) == 0x32);
+///
+///            0x32 0x33 0x34 0x35 0x36 0x37
+/// old_base |????|????|????|????|????|????|
+///                    ^
+///                    |<-- slice --->|
+///
+/// const new_base = [6]u8{};
+/// assert(@ptrToInt(&new_base) == 0x74);
+/// const output = rebaseSlice(slice, old_base, new_base)
+///
+///            0x74 0x75 0x76 0x77 0x78 0x79
+/// new_base |????|????|????|????|????|????|
+///                    ^
+///                    |<-- output -->|
+/// ```
+pub fn rebaseSlice(slice: []const u8, old_base: [*]const u8, new_base: [*]const u8) []const u8 {
+    const offset = @intFromPtr(slice.ptr) - @intFromPtr(old_base);
+    return new_base[offset..][0..slice.len];
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

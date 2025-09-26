@@ -1500,8 +1500,6 @@ pub fn parseIntoBinaryLockfile(
         root_pkg.resolutions = .{ .off = off, .len = len };
 
         root_pkg.meta.id = 0;
-        root_pkg.meta.origin = .local;
-        root_pkg.resolution = .init(.{ .root = {} });
         try lockfile.packages.append(allocator, root_pkg);
         try lockfile.getOrPutID(0, root_pkg.name_hash);
     }
@@ -1660,7 +1658,7 @@ pub fn parseIntoBinaryLockfile(
             };
 
             const name_hash = String.Builder.stringHash(name_str);
-            const name = try string_buf.appendWithHash(name_str, name_hash);
+            const name = try string_buf.append(name_str);
 
             var res = Resolution.fromTextLockfile(res_str, &string_buf) catch |err| switch (err) {
                 error.OutOfMemory => return err,
@@ -1890,10 +1888,14 @@ pub fn parseIntoBinaryLockfile(
         const pkgs = lockfile.packages.slice();
         const pkg_deps = pkgs.items(.dependencies);
         const pkg_names = pkgs.items(.name);
-        const pkg_resolutions = pkgs.items(.resolution);
+        var pkg_metas = pkgs.items(.meta);
+        var pkg_resolutions = pkgs.items(.resolution);
 
         {
             // first the root dependencies are resolved
+            pkg_resolutions[0] = Resolution.init(.{ .root = {} });
+            pkg_metas[0].origin = .local;
+
             for (pkg_deps[0].begin()..pkg_deps[0].end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];

@@ -445,6 +445,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         const runtime_file_index = maybe_runtime_file_index orelse {
             bun.Output.panic("Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub.", .{});
         };
+
         const any_client_chunks = any_client_chunks: {
             for (bundled_outputs) |file| {
                 if (file.side) |s| {
@@ -455,6 +456,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
             }
             break :any_client_chunks false;
         };
+
         if (any_client_chunks) {
             const runtime_file: *const OutputFile = &bundled_outputs[runtime_file_index];
             _ = runtime_file.writeToDisk(root_dir, ".") catch |err| {

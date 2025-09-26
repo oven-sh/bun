@@ -94,7 +94,7 @@ server_exports = {
 
       let storeValue: RequestContext = {
         responseOptions: {},
-        streaming: pageModule.streaming ?? false,
+        streaming: pageModule?.streaming ?? false,
       };
 
       try {
@@ -111,7 +111,7 @@ server_exports = {
               modulepreload: [],
               params,
               // Pass request in metadata when mode is 'ssr'
-              request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
+              request: pageModule?.mode === "ssr" ? requestWithCookies : undefined,
             },
             responseOptionsALS,
           );

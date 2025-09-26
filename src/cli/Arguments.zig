@@ -500,7 +500,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.randomize = args.flag("--randomize");
 
         if (args.option("--seed")) |seed_str| {
-            ctx.test_options.seed = std.fmt.parseInt(u64, seed_str, 10) catch {
+            ctx.test_options.randomize = true;
+            ctx.test_options.seed = std.fmt.parseInt(u32, seed_str, 10) catch {
                 Output.prettyErrorln("<red>error<r>: Invalid seed value: {s}", .{seed_str});
                 std.process.exit(1);
             };

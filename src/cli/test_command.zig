@@ -913,13 +913,6 @@ pub const CommandLineReporter = struct {
             if (files == 1) "" else "s",
         });
 
-        // Display the random seed if tests were randomized
-        if (this.jest.randomize != null) {
-            if (this.jest.seed) |seed| {
-                Output.prettyError("(seed: {d}) ", .{seed});
-            }
-        }
-
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 
@@ -1288,7 +1281,7 @@ pub const TestCommand = struct {
         HTTPThread.init(&.{});
 
         const enable_random = ctx.test_options.randomize;
-        const seed: u64 = if (enable_random) ctx.test_options.seed orelse bun.fastRandom() else 0;
+        const seed: u32 = if (enable_random) ctx.test_options.seed orelse @truncate(bun.fastRandom()) else 0; // seed is limited to u32 so storing it in js doesn't lose precision
         var random_instance: ?std.Random.DefaultPrng = if (enable_random) std.Random.DefaultPrng.init(seed) else null;
         const random = if (random_instance) |*instance| instance.random() else null;
 
@@ -1314,7 +1307,7 @@ pub const TestCommand = struct {
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .concurrent = ctx.test_options.concurrent,
                 .randomize = random,
-                .seed = ctx.test_options.seed,
+                .seed = if (enable_random) seed else null,
                 .concurrent_test_glob = ctx.test_options.concurrent_test_glob,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
@@ -1620,6 +1613,11 @@ pub const TestCommand = struct {
             const did_label_filter_out_all_tests = summary.didLabelFilterOutAllTests() and reporter.jest.unhandled_errors_between_tests == 0;
 
             if (!did_label_filter_out_all_tests) {
+                // Display the random seed if tests were randomized
+                if (random != null) {
+                    Output.prettyError(" <r>--seed={d}<r>\n", .{seed});
+                }
+
                 if (summary.pass > 0) {
                     Output.prettyError("<r><green>", .{});
                 }

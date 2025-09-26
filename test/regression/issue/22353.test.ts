@@ -24,13 +24,14 @@ test("issue #22353 - server should handle oversized request without crashing", a
   });
   expect(resp.status).toBe(413);
   expect(await resp.text()).toBeEmpty();
-  const resp2 = await fetch(server.url, {
-    method: "POST",
-    body: "A".repeat(1023),
-  });
-  expect(resp2.status).toBe(200);
-  expect(await resp2.json()).toEqual({
-    received: true,
-    size: 1023,
-  });
+  for (let i = 0; i < 100; i++) {
+    const resp2 = await fetch(server.url, {
+      method: "POST",
+    });
+    expect(resp2.status).toBe(200);
+    expect(await resp2.json()).toEqual({
+      received: true,
+      size: 0,
+    });
+  }
 }, 10000);

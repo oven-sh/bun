@@ -385,6 +385,8 @@ pub const JSValkeyClient = struct {
 
         // Initially, we only need to hold a weak reference to the JS object.
         new_client.this_value = jsc.JSRef.initWeak(js_this);
+        // JSValue holds a reference
+        new_client.ref();
         return new_client;
     }
 
@@ -569,7 +571,6 @@ pub const JSValkeyClient = struct {
                 this.reconnect();
             },
             .failed => {
-                this.client.status = .disconnected;
                 this.client.flags.is_reconnecting = true;
                 this.client.retry_attempts = 0;
                 this.reconnect();
@@ -739,8 +740,6 @@ pub const JSValkeyClient = struct {
         this.ref();
         defer this.deref();
 
-        this.client.status = .connecting;
-
         // Ref the poll to keep event loop alive during connection
         this.poll_ref.disable();
         this.poll_ref = .{};
@@ -759,20 +758,14 @@ pub const JSValkeyClient = struct {
     // Callback for when Valkey client connects
     pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) void {
         bun.debugAssert(this.client.status == .connected);
-
-        if (this.this_value == .finalized) {
-            // TODO: how is this possible?
-            // Hypothesis:
-            // We connect have data still buffered to be processed, but disconnect quickly and the js object is already finalized
-            // so we can't do anything with it
-            return;
-        }
-        defer {
-            this.client.onWritable();
-            this.updatePollRef();
-        }
         // we should always have a strong reference to the object here
         bun.debugAssert(this.this_value.isStrong());
+
+        defer {
+            this.client.onWritable();
+            // update again after running the callback
+            this.updatePollRef();
+        }
         const globalObject = this.globalObject;
         const event_loop = this.client.vm.eventLoop();
         event_loop.enter();
@@ -800,8 +793,7 @@ pub const JSValkeyClient = struct {
                 const js_promise = promise.asPromise().?;
                 if (this.client.flags.connection_promise_returns_client) {
                     debug("Resolving connection promise with client instance", .{});
-                    const this_js = this.toJS(globalObject);
-                    js_promise.resolve(globalObject, this_js);
+                    js_promise.resolve(globalObject, this_value);
                 } else {
                     debug("Resolving connection promise with HELLO response", .{});
                     js_promise.resolve(globalObject, hello_value);
@@ -977,13 +969,14 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn finalize(this: *JSValkeyClient) void {
-        this.ref();
         defer this.deref();
 
         this.stopTimers();
         this.this_value.finalize();
         this.client.flags.finalized = true;
-        this.client.close();
+        // The JS object should only be able to finalize when the client is disconnected or failed
+        bun.assertf(this.client.status == .disconnected or this.client.status == .failed, "JSValkeyClient status should be disconnected or failed here, but it is {s}", .{@tagName(this.client.status)});
+        bun.assertf(!this.client.flags.is_reconnecting, "JSValkeyClient should not be reconnecting here", .{});
 
         // We do not need to free the subscription context here because we're
         // guaranteed to have freed it by virtue of the fact that we are
@@ -1140,7 +1133,6 @@ pub const JSValkeyClient = struct {
         this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();
-        this.this_value.finalize();
         this.ref_count.assertNoRefs();
 
         bun.destroy(this);
@@ -1319,6 +1311,7 @@ fn SocketHandler(comptime ssl: bool) type {
             const handshake_success = if (success == 1) true else false;
             this.ref();
             defer this.deref();
+            defer this.updatePollRef();
             if (handshake_success) {
                 const vm = this.client.vm;
                 if (this.client.tls.rejectUnauthorized(vm)) {
@@ -1333,7 +1326,6 @@ fn SocketHandler(comptime ssl: bool) type {
                                 const loop = vm.eventLoop();
                                 loop.enter();
                                 defer loop.exit();
-                                this.client.status = .failed;
                                 this.client.flags.is_manually_closed = true;
                                 this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
                                 this.client.close();

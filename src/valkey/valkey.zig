@@ -465,6 +465,8 @@ pub const ValkeyClient = struct {
     /// Handle connection closed event
     pub fn onClose(this: *ValkeyClient) void {
         this.socket = .{ .SocketTCP = .detached };
+        this.status = .disconnected;
+
         this.unregisterAutoFlusher();
         this.write_buffer.clearAndFree(this.allocator);
 
@@ -497,7 +499,6 @@ pub const ValkeyClient = struct {
 
         debug("reconnect in {d}ms (attempt {d}/{d})", .{ delay_ms, this.retry_attempts, this.max_retries });
 
-        this.status = .disconnected;
         this.flags.is_reconnecting = true;
         this.flags.is_authenticated = false;
         this.flags.is_selecting_db_internal = false;
@@ -1116,7 +1117,6 @@ pub const ValkeyClient = struct {
         this.flags.is_manually_closed = true;
         this.unregisterAutoFlusher();
         if (this.status == .connected or this.status == .connecting) {
-            this.status = .disconnected;
             this.close();
         }
     }

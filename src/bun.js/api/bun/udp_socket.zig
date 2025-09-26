@@ -963,6 +963,6 @@ const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
+const JSRef = jsc.JSRef;
 const JSValue = jsc.JSValue;
 const SocketAddress = jsc.API.SocketAddress;
-const JSRef = jsc.JSRef;

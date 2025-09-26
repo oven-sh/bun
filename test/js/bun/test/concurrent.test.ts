@@ -58,8 +58,8 @@ test("concurrent order", async () => {
   `);
 });
 
-test("maxConcurrency limits concurrent tests", async () => {
-  // Test with maxConcurrency=3
+test("max-concurrency limits concurrent tests", async () => {
+  // Test with max-concurrency=3
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", "--max-concurrency", "3", import.meta.dir + "/concurrent-max.fixture.ts"],
     stdout: "pipe",
@@ -81,7 +81,7 @@ test("maxConcurrency limits concurrent tests", async () => {
   expect(executionPattern).toEqual(expected);
 });
 
-test("maxConcurrency default is 20", async () => {
+test("max-concurrency default is 20", async () => {
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/concurrent-max.fixture.ts"],
     stdout: "pipe",
@@ -103,7 +103,7 @@ test("maxConcurrency default is 20", async () => {
   expect(executionPattern).toEqual(expected);
 });
 
-test("zero removes maxConcurrency", async () => {
+test("zero removes max-concurrency", async () => {
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", "--max-concurrency", "0", import.meta.dir + "/concurrent-max.fixture.ts"],
     stdout: "pipe",

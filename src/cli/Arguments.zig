@@ -421,7 +421,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--max-concurrency")) |max_concurrency| {
             if (max_concurrency.len > 0) {
                 ctx.test_options.max_concurrency = std.fmt.parseInt(u32, max_concurrency, 10) catch {
-                    Output.prettyErrorln("<r><red>error<r>: Invalid maxConcurrency: \"{s}\"", .{max_concurrency});
+                    Output.prettyErrorln("<r><red>error<r>: Invalid max-concurrency: \"{s}\"", .{max_concurrency});
                     Global.exit(1);
                 };
             }

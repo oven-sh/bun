@@ -111,7 +111,7 @@ $ bun test --timeout 20
 
 ## Concurrent test execution
 
-By default, Bun runs async tests sequentially within each test file. You can enable concurrent execution to run async tests in parallel, significantly speeding up test suites with independent tests.
+By default, Bun runs all tests sequentially within each test file. You can enable concurrent execution to run async tests in parallel, significantly speeding up test suites with independent tests.
 
 ### `--concurrent` flag
 

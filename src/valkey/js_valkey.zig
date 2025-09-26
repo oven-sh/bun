@@ -541,7 +541,7 @@ pub const JSValkeyClient = struct {
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
-        this.this_value.upgrade(globalObject);
+        defer this.updatePollRef();
 
         if (this.client.flags.needs_to_open_socket) {
             debug("Need to open socket, starting connection process.", .{});
@@ -908,12 +908,11 @@ pub const JSValkeyClient = struct {
     // Callback for when Valkey client closes
     pub fn onValkeyClose(this: *JSValkeyClient) void {
         const globalObject = this.globalObject;
-        this.poll_ref.disable();
+
         defer this.deref();
 
         const this_jsvalue = this.this_value.tryGet() orelse return;
         this_jsvalue.ensureStillAlive();
-        this.this_value.downgrade();
 
         this.ref();
         defer this.deref();
@@ -1070,8 +1069,6 @@ pub const JSValkeyClient = struct {
         if (this.client.flags.needs_to_open_socket) {
             @branchHint(.unlikely);
 
-            this.this_value.upgrade(globalThis);
-
             this.connect() catch |err| {
                 this.client.flags.needs_to_open_socket = true;
                 const err_value = globalThis.ERR(.SOCKET_CLOSED_BEFORE_CONNECTION, " {s} connecting to Valkey", .{@errorName(err)}).toJS();
@@ -1163,7 +1160,7 @@ pub const JSValkeyClient = struct {
         else
             true;
 
-        const has_activity = has_pending_commands or !subs_deletable;
+        const has_activity = has_pending_commands or !subs_deletable or this.client.flags.is_reconnecting;
 
         // There's a couple cases to handle here:
         if (has_activity) {

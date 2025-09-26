@@ -956,9 +956,6 @@ pub fn duplicate(
     const new_client_js = new_client.toJS(globalObject);
 
     new_client.this_value = jsc.JSRef.initWeak(new_client_js);
-    // JSValue holds a reference
-    new_client.ref();
-
     // If the original client is already connected and not manually closed, start connecting the new client.
     if (this.client.status == .connected and !this.client.flags.is_manually_closed) {
         // Use strong reference during connection to prevent premature GC

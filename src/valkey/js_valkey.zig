@@ -385,8 +385,6 @@ pub const JSValkeyClient = struct {
 
         // Initially, we only need to hold a weak reference to the JS object.
         new_client.this_value = jsc.JSRef.initWeak(js_this);
-        // JSValue holds a reference
-        new_client.ref();
         return new_client;
     }
 

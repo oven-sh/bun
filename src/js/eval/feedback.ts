@@ -548,7 +548,7 @@ function getOldestGitSha(): string | undefined {
 }
 
 async function main() {
-  const rawArgv = [...process.argv.slice(2)];
+  const rawArgv = [...process.argv.slice(1)];
 
   let terminal: TerminalIO | null = null;
   try {

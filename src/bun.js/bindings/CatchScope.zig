@@ -77,7 +77,7 @@ pub const CatchScope = struct {
 
     /// Intended for use with `try`. Returns if there is already a pending exception or if traps cause
     /// an exception to be thrown (this is the same as how RETURN_IF_EXCEPTION behaves in C++)
-    pub fn returnIfException(self: *CatchScope) bun.JSError!void {
+    pub fn returnIfException(self: *CatchScope) !void {
         if (self.exceptionIncludingTraps() != null) return error.JSError;
     }
 

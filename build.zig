@@ -585,7 +585,13 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .root_module = root,
     });
     configureObj(b, opts, obj);
+    if (enableFastBuild(b)) obj.root_module.strip = true;
     return obj;
+}
+
+fn enableFastBuild(b: *Build) bool {
+    const val = b.graph.env_map.get("BUN_BUILD_FAST") orelse return false;
+    return std.mem.eql(u8, val, "1");
 }
 
 fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
@@ -598,7 +604,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     // Object options
     obj.use_llvm = !opts.no_llvm;
     obj.use_lld = if (opts.os == .mac) false else !opts.no_llvm;
-    if (opts.enable_asan) {
+    if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;
         } else {

@@ -2387,8 +2387,8 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
     return std::numeric_limits<double>::infinity();
 }
 
-void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global, ZigString* key,
-    ZigString* values, size_t valuesLen)
+[[ZIG_EXPORT(check_slow)]]
+void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global, ZigString* key, ZigString* values, size_t valuesLen)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     auto ident = Identifier::fromString(global->vm(), Zig::toStringCopy(*key));
@@ -2405,14 +2405,10 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
         JSC::JSArray* array = nullptr;
         {
             JSC::ObjectInitializationScope initializationScope(global->vm());
-            if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                     initializationScope, nullptr,
-                     global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                     valuesLen))) {
+            if ((array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), valuesLen))) {
 
                 for (size_t i = 0; i < valuesLen; ++i) {
-                    array->initializeIndexWithoutBarrier(
-                        initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+                    array->initializeIndexWithoutBarrier(initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
                 }
             }
         }
@@ -3727,7 +3723,7 @@ void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     object->putDirectMayBeIndex(arg1, pkey, value);
 }
 
-extern "C" void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
@@ -4112,10 +4108,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
-    if (value.getOwnPropertySlot(globalObject, property, slot)) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, property)));
-    }
-    RELEASE_AND_RETURN(scope, {});
+    bool hasSlot = value.getOwnPropertySlot(globalObject, property, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasSlot) return {};
+    auto slotValue = slot.getValue(globalObject, property);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(slotValue);
 }
 
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
@@ -4358,12 +4356,7 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toObject(arg1);
 }
 
-JSC::JSString* JSC__JSValue__toString(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return value.toString(arg1);
-};
-JSC::JSString* JSC__JSValue__toStringOrNull(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
+[[ZIG_EXPORT(null_is_throw)]] JSC::JSString* JSC__JSValue__toStringOrNull(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     return value.toStringOrNull(arg1);
@@ -4898,6 +4891,10 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (stackValue) {
+            // Prevent infinite recursion if stack property is the error object itself
+            if (stackValue == val) {
+                return;
+            }
             if (stackValue.isString()) {
                 WTF::String stack = stackValue.toWTFString(global);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
@@ -6784,7 +6781,36 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalOb
 }
 #endif
 
-CPP_DECL unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject)
+CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JSValue__bind(JSC::EncodedJSValue functionToBindEncoded, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue bindThisArgEncoded, const BunString* name, double length, JSC::EncodedJSValue* args, size_t args_len)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    JSC::JSValue value = JSC::JSValue::decode(functionToBindEncoded);
+    if (!value.isCallable() || !value.isObject()) {
+        throwTypeError(globalObject, scope, "bind() called on non-callable"_s);
+        RELEASE_AND_RETURN(scope, {});
+    }
+
+    SourceCode bindSourceCode = makeSource("bind"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+    JSC::JSObject* valueObject = value.getObject();
+    JSC::JSValue bound = JSC::JSValue::decode(bindThisArgEncoded);
+    auto boundFunction = JSBoundFunction::create(globalObject->vm(), globalObject, valueObject, bound, ArgList(args, args_len), length, jsString(globalObject->vm(), name->toWTFString()), bindSourceCode);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(boundFunction));
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::EncodedJSValue valueEncoded, JSC::EncodedJSValue prototypeEncoded, JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
+    JSC::JSValue prototype = JSC::JSValue::decode(prototypeEncoded);
+    JSC::JSObject* valueObject = value.getObject();
+    valueObject->setPrototypeDirect(globalObject->vm(), prototype);
+    RELEASE_AND_RETURN(scope, );
+    return;
+}
+
+CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::LineColumn lineColumn;

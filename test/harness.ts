@@ -61,6 +61,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
+  WANTS_LOUD: "0",
 };
 
 const ciEnv = { ...bunEnv };
@@ -856,6 +857,9 @@ export function dockerExe(): string | null {
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 
@@ -868,6 +872,9 @@ export function isDockerEnabled(): boolean {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 }
@@ -906,11 +913,13 @@ export async function describeWithContainer(
     env = {},
     args = [],
     archs,
+    concurrent = false,
   }: {
     image: string;
     env?: Record<string, string>;
     args?: string[];
     archs?: NodeJS.Architecture[];
+    concurrent?: boolean;
   },
   fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
@@ -920,7 +929,7 @@ export async function describeWithContainer(
     return;
   }
 
-  describe(label, () => {
+  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
     // Check if this is one of our docker-compose services
     const services: Record<string, number> = {
       "postgres_plain": 5432,

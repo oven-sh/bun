@@ -288,7 +288,7 @@ pub const RESPValue = union(RESPType) {
                     defer key_str.deref();
                     const js_value = try entry.value.toJSWithOptions(globalObject, options);
 
-                    js_obj.putMayBeIndex(globalObject, &key_str, js_value);
+                    try js_obj.putMayBeIndex(globalObject, &key_str, js_value);
                 }
                 return js_obj;
             },

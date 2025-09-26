@@ -1207,12 +1207,7 @@ fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) !?JSArgument {
 
     if (value.isNumber()) {
         // Allow numbers to be passed as strings.
-        const str = value.toString(globalObject);
-        if (globalObject.hasException()) {
-            @branchHint(.unlikely);
-            return error.JSError;
-        }
-
+        const str = try value.toJSString(globalObject);
         return try JSArgument.fromJSMaybeFile(globalObject, bun.default_allocator, str.toJS(), true);
     }
 

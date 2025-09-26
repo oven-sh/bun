@@ -964,6 +964,7 @@ if(WIN32)
       /delayload:WSOCK32.dll
       /delayload:ADVAPI32.dll
       /delayload:IPHLPAPI.dll
+      /delayload:CRYPT32.dll
     )
   endif()
 endif()
@@ -1005,6 +1006,7 @@ if(LINUX)
     -Wl,--wrap=exp2
     -Wl,--wrap=expf
     -Wl,--wrap=fcntl64
+    -Wl,--wrap=gettid
     -Wl,--wrap=log
     -Wl,--wrap=log2
     -Wl,--wrap=log2f
@@ -1183,6 +1185,7 @@ if(WIN32)
     ntdll
     userenv
     dbghelp
+    crypt32
     wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     delayimp.lib
   )

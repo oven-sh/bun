@@ -1714,6 +1714,9 @@ pub const api = struct {
         /// ignore_dce_annotations
         ignore_dce_annotations: bool,
 
+        /// nativefill
+        nativefill: bool = false,
+
         /// e.g.:
         /// [serve.static]
         /// plugins = ["tailwindcss"]

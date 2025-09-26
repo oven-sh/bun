@@ -295,6 +295,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_INVALID_USERNAME", Error, "RedisError"],
   ["ERR_REDIS_TLS_NOT_AVAILABLE", Error, "RedisError"],
   ["ERR_REDIS_TLS_UPGRADE_FAILED", Error, "RedisError"],
+  ["ERR_REDIS_FAILED_TO_OPEN_SOCKET", Error, "RedisError"],
   ["HPE_UNEXPECTED_CONTENT_LENGTH", Error],
   ["HPE_INVALID_TRANSFER_ENCODING", Error],
   ["HPE_INVALID_EOF_STATE", Error],

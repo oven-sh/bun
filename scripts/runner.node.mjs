@@ -386,7 +386,7 @@ function getTestModifiers(testPath) {
  * @returns {string[]}
  */
 function loadRetryableTests() {
-  const retryableTests = readFileSync(import.meta.dir + "/retryable-tests.txt", "utf8")
+  const retryableTests = readFileSync(import.meta.dirname + "/retryable-tests.txt", "utf8")
     .split("\n")
     .filter(line => line.trim() && !line.trim().startsWith("#"));
 

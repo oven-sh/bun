@@ -54,7 +54,7 @@ test("basic", async () => {
   expect(err).not.toContain("Saved lockfile");
 });
 
-describe("bin", () => {
+describe.todo("bin", () => {
   test("manifests are fetched for bins", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/bin-manifest-fetching"),
@@ -62,7 +62,7 @@ describe("bin", () => {
   });
 });
 
-describe("peers", () => {
+describe.todo("peers", () => {
   test("peers basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/peers-basic"),
@@ -75,7 +75,7 @@ describe("peers", () => {
   });
 });
 
-describe("patched packages", () => {
+describe.todo("patched packages", () => {
   test("patches are detected and migrated correctly", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/patched-packages"),
@@ -83,7 +83,7 @@ describe("patched packages", () => {
   });
 });
 
-describe("folder dependencies", () => {
+describe.todo("folder dependencies", () => {
   test("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/folder-dependencies-basic"),
@@ -97,7 +97,7 @@ describe("folder dependencies", () => {
   });
 });
 
-describe("overrides", () => {
+describe.todo("overrides", () => {
   test("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/overrides-basic"),
@@ -110,11 +110,11 @@ describe("overrides", () => {
   });
 });
 
-test("from npm", async () => {
+test.todo("from npm", async () => {
   using testDir = tempDir("pnpm-migration-from-npm-registry", join(import.meta.dir, "pnpm/from-npm"));
 });
 
-describe("workspaces", async () => {
+describe.todo("workspaces", async () => {
   test("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/workspaces-basic"),

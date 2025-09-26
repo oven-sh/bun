@@ -759,15 +759,19 @@ pub const JSValkeyClient = struct {
     // Callback for when Valkey client connects
     pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) void {
         bun.debugAssert(this.client.status == .connected);
+
+        if (this.this_value == .finalized) {
+            // TODO: how is this possible?
+            // Hypothesis:
+            // We connect have data still buffered to be processed, but disconnect quickly and the js object is already finalized
+            // so we can't do anything with it
+            return;
+        }
         defer {
             this.client.onWritable();
             this.updatePollRef();
         }
-
-        if (this.this_value == .finalized) {
-            // TODO: how this is even possible?
-            return;
-        }
+        // we should always have a strong reference to the object here
         bun.debugAssert(this.this_value.isStrong());
         const globalObject = this.globalObject;
         const event_loop = this.client.vm.eventLoop();

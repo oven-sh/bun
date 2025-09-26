@@ -239,7 +239,7 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .low_memory_mode = this.low_memory_mode,
         .protos_len = this.protos_len,
     };
-    const fields = .{
+    const fields_cloned_by_memcopy = .{
         "server_name",
         "key_file_name",
         "cert_file_name",
@@ -248,13 +248,6 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         "passphrase",
         "protos",
     };
-
-    inline for (fields) |field| {
-        if (@field(this, field)) |slice_ptr| {
-            const slice = std.mem.span(slice_ptr);
-            @field(cloned, field) = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
-        }
-    }
 
     if (!this.is_using_default_ciphers) {
         if (this.ssl_ciphers) |slice_ptr| {
@@ -267,44 +260,30 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         }
     }
 
-    if (this.cert) |cert| {
-        const cloned_cert = bun.handleOom(bun.default_allocator.alloc([*c]const u8, this.cert_count));
-        cloned.cert = cloned_cert;
-        cloned.cert_count = this.cert_count;
-        for (0..this.cert_count) |i| {
-            const slice = std.mem.span(cert[i]);
-            if (slice.len > 0) {
-                cloned_cert[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
-            } else {
-                cloned_cert[i] = "";
-            }
+    inline for (fields_cloned_by_memcopy) |field| {
+        if (@field(this, field)) |slice_ptr| {
+            const slice = std.mem.span(slice_ptr);
+            @field(cloned, field) = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
         }
     }
 
-    if (this.key) |key| {
-        const cloned_key = bun.handleOom(bun.default_allocator.alloc([*c]const u8, this.key_count));
-        cloned.key = cloned_key;
-        cloned.key_count = this.key_count;
-        for (0..this.key_count) |i| {
-            const slice = std.mem.span(key[i]);
-            if (slice.len > 0) {
-                cloned_key[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
-            } else {
-                cloned_key[i] = "";
-            }
-        }
-    }
-
-    if (this.ca) |ca| {
-        const cloned_ca = bun.handleOom(bun.default_allocator.alloc([*c]const u8, this.ca_count));
-        cloned.ca = cloned_ca;
-        cloned.ca_count = this.ca_count;
-        for (0..this.ca_count) |i| {
-            const slice = std.mem.span(ca[i]);
-            if (slice.len > 0) {
-                cloned_ca[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
-            } else {
-                cloned_ca[i] = "";
+    const array_fields_cloned_by_memcopy = .{
+        "cert",
+        "key",
+        "ca",
+    };
+    inline for (array_fields_cloned_by_memcopy) |field| {
+        if (@field(this, field)) |array| {
+            const cloned_array = bun.handleOom(bun.default_allocator.alloc([*c]const u8, @field(this, field ++ "_count")));
+            @field(cloned, field) = cloned_array;
+            @field(cloned, field ++ "_count") = @field(this, field ++ "_count");
+            for (0..@field(this, field ++ "_count")) |i| {
+                const slice = std.mem.span(array[i]);
+                if (slice.len > 0) {
+                    cloned_array[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+                } else {
+                    cloned_array[i] = "";
+                }
             }
         }
     }

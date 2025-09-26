@@ -1169,6 +1169,7 @@ pub const JSValkeyClient = struct {
         }
 
         if (this.this_value.isEmpty()) {
+            debug("this_value is empty, skipping updatePollRef", .{});
             return;
         }
 
@@ -1187,16 +1188,19 @@ pub const JSValkeyClient = struct {
                 //
                 // It is 100% safe to drop the strong reference there and let
                 // the object be GC'd, but we're not doing that now.
+                debug("upgrading this_value since we are connected/connecting", .{});
                 this.this_value.upgrade(this.globalObject);
             },
             .disconnected, .failed => {
                 // If we're disconnected or failed, we need to check if we have
                 // any pending activity.
                 if (has_activity) {
+                    debug("upgrading this_value since there is pending activity", .{});
                     // If we have pending activity, we need to keep the object
                     // alive.
                     this.this_value.upgrade(this.globalObject);
                 } else {
+                    debug("downgrading this_value since there is no pending activity", .{});
                     // If we don't have any pending activity, we can drop the
                     // strong reference.
                     this.this_value.downgrade();

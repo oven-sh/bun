@@ -1076,7 +1076,7 @@ pub const ValkeyClient = struct {
         const js_promise = promise.promise.get();
         // Handle disconnected state with offline queue
         switch (this.status) {
-            .connecting, .connected => {
+            .connected => {
                 try this.enqueue(command, &promise);
 
                 // Schedule auto-flushing to process this command if pipelining is enabled
@@ -1088,7 +1088,7 @@ pub const ValkeyClient = struct {
                     this.registerAutoFlusher(this.vm);
                 }
             },
-            .disconnected => {
+            .connecting, .disconnected => {
                 // Only queue if offline queue is enabled
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);

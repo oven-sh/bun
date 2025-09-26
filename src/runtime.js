@@ -176,4 +176,4 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
-export var __promiseAll = /* @__PURE__ */ (args) => Promise.all(args);
+export var __promiseAll = /* @__PURE__ */ args => Promise.all(args);

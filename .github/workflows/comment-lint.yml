@@ -1,15 +1,15 @@
-name: C++ Linter comment
+name: clang-tidy:check
 
 permissions:
   actions: read
   pull-requests: write
 
 on:
-  workflow_run:
-    workflows:
-      - lint-cpp
-    types:
-      - completed
+  # pull_request:
+  workflow_dispatch:
+
+env:
+  LLVM_VERSION_MAJOR: "19"
 
 jobs:
   comment-lint:
@@ -17,50 +17,39 @@ jobs:
     name: Comment
     runs-on: ubuntu-latest
     steps:
-      - name: Download Comment
-        uses: actions/download-artifact@v4
-        with:
-          name: format.log
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-      - name: PR Number
-        uses: actions/download-artifact@v4
-        with:
-          name: pr-number.txt
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-      - name: Did Fail
-        uses: actions/download-artifact@v4
-        with:
-          name: did_fail.txt
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-      - name: Setup Environment
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-bun
+
+      - name: Run clang-tidy
         id: env
         shell: bash
         run: |
+          sudo apt-get remove -qq clang-18
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends --no-install-suggests -o=Dpkg::Use-Pty=0 clang-format-${{ env.LLVM_VERSION_MAJOR }}
+
           # Copy to outputs
-          echo "pr-number=$(cat pr-number.txt)" >> $GITHUB_OUTPUT
           {
             echo 'text_output<<EOF'
-            cat format.log
+            bun run clang-tidy:check
             echo EOF
           } >> "$GITHUB_OUTPUT"
-          echo "did_fail=$(cat did_fail.txt)" >> $GITHUB_OUTPUT
 
       - name: Find Comment
         id: comment
         uses: peter-evans/find-comment@v3
         with:
-          issue-number: ${{ steps.env.outputs.pr-number }}
+          issue-number: ${{ github.event.number }}
           comment-author: github-actions[bot]
           body-includes: <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
       - name: Update Comment
         uses: peter-evans/create-or-update-comment@v4
-        if: steps.env.outputs.did_fail != '0'
         with:
           comment-id: ${{ steps.comment.outputs.comment-id }}
-          issue-number: ${{ steps.env.outputs.pr-number }}
+          issue-number: ${{ github.event.number }}
+          edit-mode: replace
           body: |
             @${{ github.actor }}, `clang-tidy` had something to share with you about your code:
 
@@ -71,15 +60,3 @@ jobs:
             Commit: ${{ github.event.workflow_run.head_sha || github.sha }}
 
             <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
-          edit-mode: replace
-      - name: Update Previous Comment
-        uses: peter-evans/create-or-update-comment@v4
-        if: steps.env.outputs.did_fail == '0' && steps.comment.outputs.comment-id != ''
-        with:
-          comment-id: ${{ steps.comment.outputs.comment-id }}
-          issue-number: ${{ steps.env.outputs.pr-number }}
-          body: |
-            clang-tidy nits are fixed! Thank you.
-
-            <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
-          edit-mode: replace

@@ -38,7 +38,7 @@ foreach(i RANGE 10)
   else()
     message(STATUS "Downloading ${DOWNLOAD_URL}... (retry ${i})")
   endif()
-  
+
   file(DOWNLOAD
     ${DOWNLOAD_URL}
     ${DOWNLOAD_TMP_FILE_${i}}

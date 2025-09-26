@@ -3,7 +3,21 @@ FormatStyle: webkit
 Checks: >
   -*,
   clang-analyzer-*,
-  -clang-analyzer-optin.core.EnumCastOutOfRange
-  -clang-analyzer-webkit.UncountedLambdaCapturesChecker
-  -clang-analyzer-optin.core.EnumCastOutOfRange
-  -clang-analyzer-webkit.RefCntblBaseVirtualDtor
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  -clang-analyzer-webkit.UncountedLambdaCapturesChecker,
+  -clang-analyzer-webkit.RefCntblBaseVirtualDtor,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -clang-analyzer-deadcode.DeadStores,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-switch-missing-default-case,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-implicit-widening-of-multiplication-result,
+  performance-*,
+  -performance-no-int-to-ptr,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-narrowing-conversions,
+  -cppcoreguidelines-macro-to-enum,
+  -cppcoreguidelines-avoid-non-const-global-variables,

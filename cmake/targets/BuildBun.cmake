@@ -760,7 +760,7 @@ if (NOT WIN32)
   # Only enable in these scenarios:
   # 1. NOT in CI, OR
   # 2. In CI AND BUN_CPP_ONLY is enabled
-  if(NOT CI OR (CI AND BUN_CPP_ONLY))
+  if((NOT CI OR (CI AND BUN_CPP_ONLY)) AND NOT ENABLE_ANALYSIS)
     target_precompile_headers(${bun} PRIVATE
       "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
     )
@@ -1232,32 +1232,32 @@ if(NOT BUN_CPP_ONLY)
       OUTPUTS
         ${BUILD_PATH}/${bunStripExe}
     )
-    
+
     # Then sign both executables on Windows
     if(WIN32 AND ENABLE_WINDOWS_CODESIGNING)
       set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.ps1")
-      
+
       # Verify signing script exists
       if(NOT EXISTS "${SIGN_SCRIPT}")
         message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
       endif()
-      
+
       # Use PowerShell for Windows code signing (native Windows, no path issues)
-      find_program(POWERSHELL_EXECUTABLE 
+      find_program(POWERSHELL_EXECUTABLE
         NAMES pwsh.exe powershell.exe
-        PATHS 
+        PATHS
           "C:/Program Files/PowerShell/7"
           "C:/Program Files (x86)/PowerShell/7"
           "C:/Windows/System32/WindowsPowerShell/v1.0"
         DOC "Path to PowerShell executable"
       )
-      
+
       if(NOT POWERSHELL_EXECUTABLE)
         set(POWERSHELL_EXECUTABLE "powershell.exe")
       endif()
-      
+
       message(STATUS "Using PowerShell executable: ${POWERSHELL_EXECUTABLE}")
-      
+
       # Sign both bun-profile.exe and bun.exe after stripping
       register_command(
         TARGET

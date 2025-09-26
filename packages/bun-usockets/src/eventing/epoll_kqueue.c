@@ -44,7 +44,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].data.ptr
 #define SET_READY_POLL(loop, index, poll) loop->ready_polls[index].data.ptr = (void*)poll
 #else
-#define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].udata
+#define GET_READY_POLL(loop, index) (struct us_poll_t *) (loop)->ready_polls[index].udata
 #define SET_READY_POLL(loop, index, poll) loop->ready_polls[index].udata = (uint64_t)poll
 #endif
 
@@ -264,7 +264,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     us_internal_loop_pre(loop);
 
 
-    if (loop->data.jsc_vm) 
+    if (loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* Fetch ready polls */
@@ -336,7 +336,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 
             // if new events does not contain the ready events of this poll then remove (no we filter that out later on)
             SET_READY_POLL(loop, i, new_poll);
-            
+
             num_entries_possibly_remaining--;
         }
     }
@@ -366,7 +366,7 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
         /* Do they differ in writable? */
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
-    int ret;
+    int ret = 0;
     do {
         ret = kevent64(kqfd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
@@ -379,7 +379,7 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int ext_size) {
     int events = us_poll_events(p);
-    
+
 
     struct us_poll_t *new_p = us_realloc(p, sizeof(struct us_poll_t) + ext_size);
     if (p != new_p) {
@@ -391,6 +391,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
         /* Forcefully update poll by resetting them with new_p as user data */
         kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
 #endif      /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
+        // NOLINTNEXTLINE(clang-analyzer-unix.Malloc)
         us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
     }
 
@@ -562,8 +563,8 @@ void us_timer_close(struct us_timer_t *timer, int fallthrough) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) timer;
 
     struct kevent64_s event;
-    EV_SET64(&event, (uint64_t) (void*) internal_cb, EVFILT_TIMER, EV_DELETE, 0, 0, (uint64_t)internal_cb, 0, 0);
-    int ret;
+    EV_SET64(&event, (uint64_t) internal_cb, EVFILT_TIMER, EV_DELETE, 0, 0, (uint64_t)internal_cb, 0, 0);
+    int ret = 0;
     do {
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
@@ -584,10 +585,10 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
 
     /* Bug: repeat_ms must be the same as ms, or 0 */
     struct kevent64_s event;
-    uint64_t ptr = (uint64_t)(void*)internal_cb;
+    uint64_t ptr = (uint64_t)internal_cb;
     EV_SET64(&event, ptr, EVFILT_TIMER, EV_ADD | (repeat_ms ? 0 : EV_ONESHOT), 0, ms, (uint64_t)internal_cb, 0, 0);
 
-    int ret;
+    int ret = 0;
     do {
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
@@ -683,10 +684,10 @@ void us_internal_async_close(struct us_internal_async *a) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
 
     struct kevent64_s event;
-    uint64_t ptr = (uint64_t)(void*)internal_cb;
-    EV_SET64(&event, ptr, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0,0);
+    uint64_t ptr = (uint64_t)internal_cb;
+    EV_SET64(&event, ptr, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)internal_cb, 0,0);
 
-    int ret;
+    int ret = 0;
     do {
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
@@ -713,11 +714,11 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
     event.filter = EVFILT_MACHPORT;
     event.flags = EV_ADD | EV_ENABLE;
     event.fflags = MACH_RCV_MSG | MACH_RCV_OVERWRITE;
-    event.ext[0] = (uint64_t)(void*)internal_cb->machport_buf;
+    event.ext[0] = (uint64_t)internal_cb->machport_buf;
     event.ext[1] = MACHPORT_BUF_LEN;
-    event.udata = (uint64_t)(void*)internal_cb;
+    event.udata = (uint64_t)internal_cb;
 
-    int ret;
+    int ret = 0;
     do {
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
@@ -749,20 +750,14 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
     );
 
     switch (kr) {
-        case KERN_SUCCESS: {
-            break;
-        }
+        case KERN_SUCCESS:
 
         // This means that the send would've blocked because the
         // queue is full. We assume success because the port is full.
-        case MACH_SEND_TIMED_OUT: {
-            break;
-        }
+        case MACH_SEND_TIMED_OUT:
 
         // No space means it will wake up.
-        case MACH_SEND_NO_BUFFER: {
-            break;
-        }
+        case MACH_SEND_NO_BUFFER:
 
         default: {
             break;

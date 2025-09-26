@@ -517,7 +517,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
         return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
     }
 
-    struct addrinfo_request* ai_req;
+    struct addrinfo_request* ai_req = NULL;
     if (Bun__addrinfo_get(loop, host, (uint16_t)port, &ai_req) == 0) {
         // fast path for cached results
         struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);

@@ -181,7 +181,7 @@ static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
-    struct us_socket_t *s;
+    struct us_socket_t *s = NULL;
 
     loop_data->low_prio_budget = MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION;
 
@@ -425,7 +425,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                       const int recv_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
                     #endif
 
-                    int length;
+                    int length = 0;
                     #if !defined(_WIN32)
                     if(s->flags.is_ipc) {
                         struct msghdr msg = {0};

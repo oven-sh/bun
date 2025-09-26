@@ -113,7 +113,7 @@ int passphrase_cb(char *buf, int size, int rwflag, void *u) {
   const char *passphrase = (const char *)u;
   size_t passphrase_length = strlen(passphrase);
   memcpy(buf, passphrase, passphrase_length);
-  // put null at end? no?
+  buf[passphrase_length] = 0;
   return (int)passphrase_length;
 }
 
@@ -807,7 +807,7 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
   }
 
   if (options.ca_file_name) {
-    STACK_OF(X509_NAME) * ca_list;
+    STACK_OF(X509_NAME) * ca_list = NULL;
     ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       free_ssl_context(ssl_context);
@@ -825,7 +825,7 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
   if (options.dh_params_file_name) {
     /* Set up ephemeral DH parameters. */
     DH *dh_2048 = NULL;
-    FILE *paramfile;
+    FILE *paramfile = NULL;
     paramfile = fopen(options.dh_params_file_name, "r");
 
     if (paramfile) {
@@ -857,7 +857,7 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
 
   if (options.ssl_ciphers) {
     if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
-      unsigned long ssl_err = ERR_get_error(); 
+      unsigned long ssl_err = ERR_get_error();
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         // TLS1.2 ciphers were deliberately cleared, so don't consider
         // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
@@ -881,8 +881,8 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
 
 int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content,
                                       int type) {
-  int reason_code, ret = 0;
-  BIO *in;
+  int reason_code = 0, ret = 0;
+  BIO *in = NULL;
   EVP_PKEY *pkey = NULL;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
@@ -947,7 +947,7 @@ end:
 }
 
 int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
-  BIO *in;
+  BIO *in = NULL;
   int ret = 0;
   X509 *x = NULL;
 
@@ -975,9 +975,9 @@ int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
   if (ret) {
     // If we could set up our certificate, now proceed to the CA
     // certificates.
-    X509 *ca;
-    int r;
-    uint32_t err;
+    X509 *ca = NULL;
+    int r = 0;
+    uint32_t err = 0;
 
     SSL_CTX_clear_chain_certs(ctx);
 
@@ -1202,7 +1202,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
   if (options.ca_file_name) {
     SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
 
-    STACK_OF(X509_NAME) * ca_list;
+    STACK_OF(X509_NAME) * ca_list = NULL;
     ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
@@ -1268,7 +1268,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
   if (options.dh_params_file_name) {
     /* Set up ephemeral DH parameters. */
     DH *dh_2048 = NULL;
-    FILE *paramfile;
+    FILE *paramfile = NULL;
     paramfile = fopen(options.dh_params_file_name, "r");
 
     if (paramfile) {
@@ -1300,7 +1300,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   if (options.ssl_ciphers) {
     if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
-      unsigned long ssl_err = ERR_get_error(); 
+      unsigned long ssl_err = ERR_get_error();
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         char error_msg[256];
         ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
@@ -1308,7 +1308,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
         // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
         // works). If the user actually sets a value (like "no-such-cipher"), then
         // that's actually an error.
-        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;  
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;
         free_ssl_context(ssl_context);
         return NULL;
       }

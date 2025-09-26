@@ -966,13 +966,39 @@ pub const JSValkeyClient = struct {
         }
     }
 
+    fn closeSocketNextTick(this: *JSValkeyClient) void {
+        if (this.client.socket.isClosed()) return;
+
+        this.ref();
+        // socket close can potentially call JS so we need to enqueue the deinit
+        const Holder = struct {
+            ctx: *JSValkeyClient,
+            task: jsc.AnyTask,
+
+            pub fn run(self: *@This()) void {
+                defer bun.default_allocator.destroy(self);
+
+                self.ctx.client.close();
+                self.ctx.deref();
+            }
+        };
+        var holder = bun.handleOom(bun.default_allocator.create(Holder));
+        holder.* = .{
+            .ctx = this,
+            .task = undefined,
+        };
+        holder.task = jsc.AnyTask.New(Holder, Holder.run).init(holder);
+
+        this.client.vm.enqueueTask(jsc.Task.init(&holder.task));
+    }
+
     pub fn finalize(this: *JSValkeyClient) void {
         defer this.deref();
 
         this.stopTimers();
         this.this_value.finalize();
         this.client.flags.finalized = true;
-
+        this.closeSocketNextTick();
         // We do not need to free the subscription context here because we're
         // guaranteed to have freed it by virtue of the fact that we are
         // garbage collected now and the subscription context holds a reference

@@ -1481,6 +1481,11 @@ pub const TestCommand = struct {
         const search_count = scanner.search_count;
 
         if (test_files.len > 0) {
+            // Randomize the order of test files if --randomize flag is set
+            if (random) |rand| {
+                rand.shuffle(PathString, test_files);
+            }
+
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {

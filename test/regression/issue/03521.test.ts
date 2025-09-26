@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("issue #3521: expect.any and toMatchObject should not mutate the original object", () => {
   const obj = {

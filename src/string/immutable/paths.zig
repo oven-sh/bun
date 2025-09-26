@@ -500,7 +500,6 @@ const assert = bun.assert;
 
 const strings = bun.strings;
 const copyUTF16IntoUTF8 = strings.copyUTF16IntoUTF8;
-const eqlComptimeT = strings.eqlComptimeT;
 const hasPrefixComptime = strings.hasPrefixComptime;
 const hasPrefixComptimeType = strings.hasPrefixComptimeType;
 const hasPrefixComptimeUTF16 = strings.hasPrefixComptimeUTF16;

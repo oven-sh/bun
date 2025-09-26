@@ -1307,7 +1307,6 @@ pub const TestCommand = struct {
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .concurrent = ctx.test_options.concurrent,
                 .randomize = random,
-                .seed = if (enable_random) seed else null,
                 .concurrent_test_glob = ctx.test_options.concurrent_test_glob,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,

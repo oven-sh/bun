@@ -323,7 +323,7 @@ async function promptForBody(
     input.resume();
   }
 
-  const header = `${symbols.question} ${bold}Share your feedback${reset} ${dim}(Enter to send, Shift+Enter for a newline)${reset}`;
+  const header = `${symbols.question} ${bold}Share your feedback with Bun's team${reset} ${dim}(Enter to send, Shift+Enter for a newline)${reset}`;
   output.write(`${header}\n`);
   if (attachments.length > 0) {
     output.write(`${dim}+ ${attachments.map(file => file.filename).join(", ")}${reset}\n`);

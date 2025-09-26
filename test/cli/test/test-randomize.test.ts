@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 // test:
 // --randomize randomizes

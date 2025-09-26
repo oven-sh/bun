@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 test("issue #22353 - server should handle oversized request without crashing", async () => {
   using server = Bun.serve({

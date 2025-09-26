@@ -909,13 +909,14 @@ pub const JSValkeyClient = struct {
     pub fn onValkeyClose(this: *JSValkeyClient) void {
         const globalObject = this.globalObject;
 
-        defer this.deref();
+        defer {
+            // Update poll reference to allow garbage collection of disconnected clients
+            this.updatePollRef();
+            this.deref();
+        }
 
         const this_jsvalue = this.this_value.tryGet() orelse return;
         this_jsvalue.ensureStillAlive();
-
-        this.ref();
-        defer this.deref();
 
         // Create an error value
         const error_value = protocol.valkeyErrorToJS(globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
@@ -939,9 +940,6 @@ pub const JSValkeyClient = struct {
                 &[_]JSValue{error_value},
             ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
         }
-
-        // Update poll reference to allow garbage collection of disconnected clients
-        this.updatePollRef();
     }
 
     // Callback for when Valkey client times out
@@ -1105,28 +1103,27 @@ pub const JSValkeyClient = struct {
     }
 
     fn deinitSocketContextNextTick(this: *JSValkeyClient) void {
-        if (this._socket_ctx) |ctx| {
-            this._socket_ctx = null;
-            // socket close can potentially call JS so we need to enqueue the deinit
-            // this should only be the case tls socket with custom config
-            const Holder = struct {
-                ctx: *uws.SocketContext,
-                task: jsc.AnyTask,
+        const ctx = this._socket_ctx orelse return;
+        this._socket_ctx = null;
+        // socket close can potentially call JS so we need to enqueue the deinit
+        // this should only be the case tls socket with custom config
+        const Holder = struct {
+            ctx: *uws.SocketContext,
+            task: jsc.AnyTask,
 
-                pub fn run(self: *@This()) void {
-                    defer bun.default_allocator.destroy(self);
-                    self.ctx.deinit(true);
-                }
-            };
-            var holder = bun.handleOom(bun.default_allocator.create(Holder));
-            holder.* = .{
-                .ctx = ctx,
-                .task = undefined,
-            };
-            holder.task = jsc.AnyTask.New(Holder, Holder.run).init(holder);
+            pub fn run(self: *@This()) void {
+                defer bun.default_allocator.destroy(self);
+                self.ctx.deinit(true);
+            }
+        };
+        var holder = bun.handleOom(bun.default_allocator.create(Holder));
+        holder.* = .{
+            .ctx = ctx,
+            .task = undefined,
+        };
+        holder.task = jsc.AnyTask.New(Holder, Holder.run).init(holder);
 
-            this.client.vm.enqueueTask(jsc.Task.init(&holder.task));
-        }
+        this.client.vm.enqueueTask(jsc.Task.init(&holder.task));
     }
 
     fn deinit(this: *JSValkeyClient) void {
@@ -1301,7 +1298,7 @@ fn SocketHandler(comptime ssl: bool) type {
         }
 
         fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-            debug("onHandshake: {d} {d} {s} {s}", .{
+            debug("onHandshake: {d} error={d} reason={s} code={s}", .{
                 success,
                 ssl_error.error_no,
                 if (ssl_error.reason != null) bun.span(ssl_error.reason[0..bun.len(ssl_error.reason) :0]) else "no reason",

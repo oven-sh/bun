@@ -279,6 +279,7 @@ const DeferredPromise = struct {
     pub fn deinit(self: *DeferredPromise) void {
         self.strong.deinit();
         self.route_bundle_indices.deinit(bun.default_allocator);
+        self.route_bundle_indices = .{};
     }
 };
 
@@ -1054,7 +1055,6 @@ fn ensureRouteIsBundled(
             if (dev.current_bundle != null) {
                 try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
                 try defer_function(ctx, .next_bundle);
-                // try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
                 dev.routeBundlePtr(route_bundle_index).server_state = .deferred_to_next_bundle;
                 return;
             }
@@ -1128,7 +1128,6 @@ fn ensureRouteIsBundled(
             }
 
             try dev.next_bundle.route_queue.put(dev.allocator(), route_bundle_index, {});
-            // try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
             try defer_function(ctx, .next_bundle);
             dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
 
@@ -1140,12 +1139,10 @@ fn ensureRouteIsBundled(
         },
         .deferred_to_next_bundle => {
             bun.assert(dev.next_bundle.route_queue.get(route_bundle_index) != null);
-            // try dev.deferRequest(&dev.next_bundle.requests, route_bundle_index, kind, req, resp);
             try defer_function(ctx, .next_bundle);
         },
         .bundling => {
             bun.assert(dev.current_bundle != null);
-            // try dev.deferRequest(&dev.current_bundle.?.requests, route_bundle_index, kind, req, resp);
             try defer_function(ctx, .current_bundle);
         },
         .possible_bundling_failures => {
@@ -1163,19 +1160,9 @@ fn ensureRouteIsBundled(
             continue :sw .loaded;
         },
         .evaluation_failure => {
-            // try dev.sendSerializedFailures(
-            //     resp,
-            //     (&(dev.routeBundlePtr(route_bundle_index).data.framework.evaluate_failure.?))[0..1],
-            //     .evaluation,
-            //     null,
-            // );
             try on_failure_function(ctx);
         },
         .loaded => try on_loaded_function(ctx),
-        // .loaded => switch (kind) {
-        //     .server_handler => try dev.onFrameworkRequestWithBundle(route_bundle_index, if (req == .req) .{ .stack = req.req } else .{ .saved = req.saved }, resp),
-        //     .bundled_html_page => dev.onHtmlRequestWithBundle(route_bundle_index, resp, req.method()),
-        // },
     }
 }
 
@@ -1187,13 +1174,6 @@ const ReqOrSaved = union(enum) {
         return switch (this.*) {
             .req => |req| bun.http.Method.which(req.method()) orelse .POST,
             .saved => |saved| saved.request.method,
-        };
-    }
-
-    pub fn url(this: *const @This(), alloc: Allocator) bun.ZigString.Slice {
-        return switch (this.*) {
-            .req => |req| bun.ZigString.Slice.fromUTF8NeverFree(req.url()),
-            .saved => |saved| saved.request.url.toUTF8(alloc),
         };
     }
 };
@@ -1734,6 +1714,8 @@ pub const DeferredRequest = struct {
         return this.referenced_by_devserver;
     }
 
+    // NOTE: This should only be called from the DevServer which is the only
+    // place that can hold a strong reference
     pub fn deref(this: *DeferredRequest) void {
         this.referenced_by_devserver = false;
         const should_free = !this.weakly_referenced_by_requestcontext;
@@ -1913,6 +1895,8 @@ pub fn startAsyncBundle(
         .promise = dev.next_bundle.promise,
         .resolution_failure_entries = .{},
     };
+
+    dev.next_bundle.promise = .{};
     dev.next_bundle.requests = .{};
     dev.next_bundle.route_queue.clearRetainingCapacity();
 }
@@ -2215,6 +2199,7 @@ pub fn finalizeBundle(
     defer {
         var heap = bv2.graph.heap;
         bv2.deinitWithoutFreeingArena();
+        if (dev.current_bundle) |*cb| cb.promise.deinit();
         dev.current_bundle = null;
         dev.log.clearAndFree();
         heap.deinit();
@@ -2962,6 +2947,8 @@ pub fn finalizeBundle(
         defer current_bundle.promise.deinit();
         current_bundle.promise.setRouteBundleState(dev, .loaded);
         current_bundle.promise.strong.resolve(dev.vm.global, JSValue.true);
+        dev.vm.eventLoop().enter();
+        defer dev.vm.eventLoop().exit();
         dev.vm.drainMicrotasks();
     }
 
@@ -3372,6 +3359,8 @@ fn sendSerializedFailures(
                 },
             };
             r.promise.reject(r.global, response.toJS(r.global));
+            dev.vm.eventLoop().enter();
+            defer dev.vm.eventLoop().exit();
             dev.vm.drainMicrotasks();
         },
     }
@@ -4537,6 +4526,10 @@ fn bundleNewRouteJSFunctionImpl(global: *bun.jsc.JSGlobalObject, request_ptr: *a
 
     var params: FrameworkRouter.MatchedParams = undefined;
     const route_index = dev.router.matchSlow(pathname, &params) orelse return global.throw("No route found for path: {s}", .{pathname});
+
+    dev.vm.eventLoop().enter();
+    defer dev.vm.eventLoop().exit();
+
     var ctx = PromiseEnsureRouteBundledCtx{
         .dev = dev,
         .global = global,

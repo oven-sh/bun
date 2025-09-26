@@ -607,3 +607,10 @@ exports[`snapshot numbering 4`] = `"snap"`;
 exports[`snapshot numbering 6`] = `"hello"`;
 
 exports[`snapshot numbering: hinted 1`] = `"hello"`;
+
+exports[`snapshots backtick in test name 2`] = `
+"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[\`\\\` 1\`] = \`"abc"\`;
+"
+`;

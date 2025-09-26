@@ -799,7 +799,9 @@ pub const Expect = struct {
 
             const prop_matchers = _prop_matchers;
 
-            if (!try value.jestDeepMatch(prop_matchers, globalThis, true)) {
+            // Check if it matches without mutation to avoid issue #3521
+            // We no longer mutate objects even for snapshots
+            if (!try value.jestDeepMatch(prop_matchers, globalThis, false)) {
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature(fn_name, "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++

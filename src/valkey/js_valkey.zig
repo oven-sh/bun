@@ -759,14 +759,20 @@ pub const JSValkeyClient = struct {
     // Callback for when Valkey client connects
     pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) void {
         bun.debugAssert(this.client.status == .connected);
-
         const globalObject = this.globalObject;
         const event_loop = this.client.vm.eventLoop();
         event_loop.enter();
         defer event_loop.exit();
 
         if (this.this_value.tryGet()) |this_value| {
-            const hello_value: JSValue = value.toJS(globalObject) catch .js_undefined;
+            const hello_value: JSValue = js_hello: {
+                break :js_hello value.toJS(globalObject) catch |err| {
+                    // TODO: how should we handle this? old code ignore the exception instead of cleaning it up
+                    // now we clean it up, and behave the same as old code
+                    _ = globalObject.takeException(err);
+                    break :js_hello .js_undefined;
+                };
+            };
             js.helloSetCached(this_value, globalObject, hello_value);
             // Call onConnect callback if defined by the user
             if (js.onconnectGetCached(this_value)) |on_connect| {

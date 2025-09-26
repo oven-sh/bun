@@ -232,14 +232,12 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .secure_options = this.secure_options,
         .request_cert = this.request_cert,
         .reject_unauthorized = this.reject_unauthorized,
-        .ssl_ciphers = this.ssl_ciphers,
-        .protos = this.protos,
-        .protos_len = this.protos_len,
         .client_renegotiation_limit = this.client_renegotiation_limit,
         .client_renegotiation_window = this.client_renegotiation_window,
         .requires_custom_request_ctx = this.requires_custom_request_ctx,
         .is_using_default_ciphers = this.is_using_default_ciphers,
         .low_memory_mode = this.low_memory_mode,
+        .protos_len = this.protos_len,
     };
     const fields = .{
         "server_name",
@@ -251,6 +249,13 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         "protos",
     };
 
+    inline for (fields) |field| {
+        if (@field(this, field)) |slice_ptr| {
+            const slice = std.mem.span(slice_ptr);
+            @field(cloned, field) = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+        }
+    }
+
     if (!this.is_using_default_ciphers) {
         if (this.ssl_ciphers) |slice_ptr| {
             const slice = std.mem.span(slice_ptr);
@@ -259,13 +264,6 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
             } else {
                 cloned.ssl_ciphers = null;
             }
-        }
-    }
-
-    inline for (fields) |field| {
-        if (@field(this, field)) |slice_ptr| {
-            const slice = std.mem.span(slice_ptr);
-            @field(cloned, field) = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
         }
     }
 

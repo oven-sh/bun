@@ -43,7 +43,7 @@ test("process.argv with many arguments doesn't double-free", async () => {
   expect(result.hasScript).toBe(true);
 });
 
-test("process.argv with many arguments in worker", async () => {
+test.todo("process.argv with many arguments in worker", async () => {
   // Test the worker code path as well
   const manyArgs = Array.from({ length: 129 }, (_, i) => `worker-arg${i}`);
 

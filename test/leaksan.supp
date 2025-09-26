@@ -144,3 +144,8 @@ leak:bundler.bundle_v2.BundleV2.init
 leak:StandaloneModuleGraph.StandaloneModuleGraph.inject
 leak:bundler.BundleThread.BundleThread(bundler.bundle_v2.BundleV2.JSBundleCompletionTask).generateInNewThread
 leak:StandaloneModuleGraph.StandaloneModuleGraph.toBytes
+# test/bundler/bundler_minify_symbol_for.test.ts
+leak:bundler.ThreadPool.ThreadPool.getWorker
+leak:ast.P.NewParser_(*).appendPart
+leak:ast.P.NewParser_(*).newSymbol
+leak:transpiler.Transpiler.transform

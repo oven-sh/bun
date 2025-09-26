@@ -617,7 +617,7 @@ pub const UDPSocket = struct {
                     if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
                         break :brk arrayBuffer.slice();
                     } else if (val.isString()) {
-                        break :brk val.toString(globalThis).toSlice(globalThis, alloc).slice();
+                        break :brk (try val.toJSString(globalThis)).toSlice(globalThis, alloc).slice();
                     } else {
                         return globalThis.throwInvalidArguments("Expected ArrayBufferView or string as payload", .{});
                     }

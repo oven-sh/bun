@@ -324,26 +324,10 @@ pub const JSPasswordObject = struct {
 
     pub export fn JSPasswordObject__create(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         var object = JSValue.createEmptyObject(globalObject, 4);
-        object.put(
-            globalObject,
-            ZigString.static("hash"),
-            jsc.createCallback(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash),
-        );
-        object.put(
-            globalObject,
-            ZigString.static("hashSync"),
-            jsc.createCallback(globalObject, ZigString.static("hashSync"), 2, JSPasswordObject__hashSync),
-        );
-        object.put(
-            globalObject,
-            ZigString.static("verify"),
-            jsc.createCallback(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify),
-        );
-        object.put(
-            globalObject,
-            ZigString.static("verifySync"),
-            jsc.createCallback(globalObject, ZigString.static("verifySync"), 2, JSPasswordObject__verifySync),
-        );
+        object.put(globalObject, ZigString.static("hash"), jsc.createCallback(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash));
+        object.put(globalObject, ZigString.static("hashSync"), jsc.createCallback(globalObject, ZigString.static("hashSync"), 2, JSPasswordObject__hashSync));
+        object.put(globalObject, ZigString.static("verify"), jsc.createCallback(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify));
+        object.put(globalObject, ZigString.static("verifySync"), jsc.createCallback(globalObject, ZigString.static("verifySync"), 2, JSPasswordObject__verifySync));
         return object;
     }
 

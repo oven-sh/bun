@@ -55,6 +55,8 @@ pub const TestRunner = struct {
     only: bool = false,
     run_todo: bool = false,
     concurrent: bool = false,
+    randomize: bool = false,
+    concurrent_test_glob: ?[]const []const u8 = null,
     last_file: u64 = 0,
     bail: u32 = 0,
 
@@ -97,6 +99,26 @@ pub const TestRunner = struct {
 
     pub fn hasTestFilter(this: *const TestRunner) bool {
         return this.filter_regex != null;
+    }
+
+    pub fn shouldFileRunConcurrently(this: *const TestRunner, file_id: File.ID) bool {
+        // Check if global concurrent flag is set
+        if (this.concurrent) return true;
+
+        // If no glob patterns are set, don't run concurrently
+        const glob_patterns = this.concurrent_test_glob orelse return false;
+
+        // Get the file path from the file_id
+        if (file_id >= this.files.len) return false;
+        const file_path = this.files.items(.source)[file_id].path.text;
+
+        // Check if the file path matches any of the glob patterns
+        const glob = @import("../../glob.zig");
+        for (glob_patterns) |pattern| {
+            const result = glob.match(this.allocator, pattern, file_path);
+            if (result == .match) return true;
+        }
+        return false;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) struct { file_id: File.ID } {
@@ -438,6 +460,13 @@ pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObj
         }
     }
     return 0;
+}
+
+pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
+    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
+    if (bun.detectCI()) |_| {
+        return globalObject.throwPretty("{s}\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{message});
+    }
 }
 
 const string = []const u8;

@@ -724,7 +724,8 @@ pub const StandaloneModuleGraph = struct {
                     return bun.invalid_fd;
                 };
                 defer pe_file.deinit();
-                pe_file.addBunSection(bytes) catch |err| {
+                // Always strip authenticode when adding .bun section for --compile
+                pe_file.addBunSection(bytes, .strip_always) catch |err| {
                     Output.prettyErrorln("Error adding Bun section to PE file: {}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;

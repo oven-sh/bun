@@ -114,14 +114,14 @@ pub const BunTestRoot = struct {
         bun.assert(this.active_file == null);
     }
 
-    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) void {
+    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool) void {
         group.begin(@src());
         defer group.end();
 
         bun.assert(this.active_file.get() == null);
 
         this.active_file = .new(undefined);
-        this.active_file.get().?.init(this.gpa, this, file_id, reporter);
+        this.active_file.get().?.init(this.gpa, this, file_id, reporter, default_concurrent);
     }
     pub fn exitFile(this: *BunTestRoot) void {
         group.begin(@src());
@@ -156,6 +156,8 @@ pub const BunTest = struct {
     reporter: ?*test_command.CommandLineReporter,
     timer: bun.api.Timer.EventLoopTimer = .{ .next = .epoch, .tag = .BunTest },
     result_queue: ResultQueue,
+    /// Whether tests in this file should default to concurrent execution
+    default_concurrent: bool = false,
 
     phase: enum {
         collection,
@@ -165,7 +167,7 @@ pub const BunTest = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter) void {
+    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool) void {
         group.begin(@src());
         defer group.end();
 
@@ -187,6 +189,7 @@ pub const BunTest = struct {
             .execution = .init(this.gpa),
             .reporter = reporter,
             .result_queue = .init(this.gpa),
+            .default_concurrent = default_concurrent,
         };
     }
     pub fn deinit(this: *BunTest) void {
@@ -328,6 +331,7 @@ pub const BunTest = struct {
         errdefer group.log("ended in error", .{});
 
         const result, const this_ptr = callframe.argumentsAsArray(2);
+        if (this_ptr.isEmptyOrUndefinedOrNull()) return;
 
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
         defer refdata.deref();
@@ -469,21 +473,21 @@ pub const BunTest = struct {
             }
         }
 
-        this.updateMinTimeout(globalThis, min_timeout);
+        this.updateMinTimeout(globalThis, &min_timeout);
     }
 
-    fn updateMinTimeout(this: *BunTest, globalThis: *jsc.JSGlobalObject, min_timeout: bun.timespec) void {
+    fn updateMinTimeout(this: *BunTest, globalThis: *jsc.JSGlobalObject, min_timeout: *const bun.timespec) void {
         group.begin(@src());
         defer group.end();
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
-        group.log("-> timeout: {} {}, {s}", .{ min_timeout, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
+        group.log("-> timeout: {} {}, {s}", .{ min_timeout.*, this.timer.next, @tagName(min_timeout.orderIgnoreEpoch(this.timer.next)) });
         if (min_timeout.orderIgnoreEpoch(this.timer.next) == .lt) {
-            group.log("-> setting timer to {}", .{min_timeout});
+            group.log("-> setting timer to {}", .{min_timeout.*});
             if (!this.timer.next.eql(&.epoch)) {
                 group.log("-> removing existing timer", .{});
                 globalThis.bunVM().timer.remove(&this.timer);
             }
-            this.timer.next = min_timeout;
+            this.timer.next = min_timeout.*;
             if (!this.timer.next.eql(&.epoch)) {
                 group.log("-> inserting timer", .{});
                 globalThis.bunVM().timer.insert(&this.timer);
@@ -510,7 +514,8 @@ pub const BunTest = struct {
                 defer order.deinit();
 
                 const has_filter = if (this.reporter) |reporter| if (reporter.jest.filter_regex) |_| true else false else false;
-                const cfg: Order.Config = .{ .always_use_hooks = this.collection.root_scope.base.only == .no and !has_filter };
+                const should_randomize = if (this.reporter) |reporter| reporter.jest.randomize else false;
+                const cfg: Order.Config = .{ .always_use_hooks = this.collection.root_scope.base.only == .no and !has_filter, .randomize = should_randomize };
                 const beforeall_order: Order.AllOrderResult = if (cfg.always_use_hooks or this.collection.root_scope.base.has_callback) try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items, cfg) else .empty;
                 try order.generateOrderDescribe(this.collection.root_scope, cfg);
                 beforeall_order.setFailureSkipTo(&order);
@@ -531,48 +536,55 @@ pub const BunTest = struct {
         }
     }
 
-    fn drain(globalThis: *jsc.JSGlobalObject) void {
-        const bun_vm = globalThis.bunVM();
-        bun_vm.drainMicrotasks();
-        var count = bun_vm.unhandled_error_counter;
-        bun_vm.global.handleRejectedPromises();
-        while (bun_vm.unhandled_error_counter > count) {
-            count = bun_vm.unhandled_error_counter;
-            bun_vm.drainMicrotasks();
-            bun_vm.global.handleRejectedPromises();
-        }
-    }
-
-    /// if sync, the result is queued and appended later
-    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg_callback: jsc.JSValue, cfg_done_parameter: bool, cfg_data: BunTest.RefDataValue, timeout: bun.timespec) void {
+    /// if sync, the result is returned. if async, null is returned.
+    pub fn runTestCallback(this_strong: BunTestPtr, globalThis: *jsc.JSGlobalObject, cfg_callback: jsc.JSValue, cfg_done_parameter: bool, cfg_data: BunTest.RefDataValue, timeout: *const bun.timespec) ?RefDataValue {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
+        const vm = globalThis.bunVM();
 
-        var done_arg: ?jsc.JSValue = null;
+        // Don't use ?jsc.JSValue to make it harder for the conservative stack
+        // scanner to miss it.
+        var done_arg: jsc.JSValue = .zero;
+        var done_callback: jsc.JSValue = .zero;
 
-        var done_callback: ?jsc.JSValue = null;
         if (cfg_done_parameter) {
             group.log("callTestCallback -> appending done callback param: data {}", .{cfg_data});
             done_callback = DoneCallback.createUnbound(globalThis);
-            done_arg = DoneCallback.bind(done_callback.?, globalThis) catch |e| blk: {
+            done_arg = DoneCallback.bind(done_callback, globalThis) catch |e| blk: {
                 this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg_data);
-                break :blk jsc.JSValue.js_undefined; // failed to bind done callback
+                break :blk .zero; // failed to bind done callback
             };
         }
 
         this.updateMinTimeout(globalThis, timeout);
-        const result: ?jsc.JSValue = cfg_callback.call(globalThis, .js_undefined, if (done_arg) |done| &.{done} else &.{}) catch blk: {
+        const result: jsc.JSValue = vm.eventLoop().runCallbackWithResultAndForcefullyDrainMicrotasks(cfg_callback, globalThis, .js_undefined, if (done_arg != .zero) &.{done_arg} else &.{}) catch blk: {
             globalThis.clearTerminationException();
             this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg_data);
             group.log("callTestCallback -> error", .{});
-            break :blk null;
+            break :blk .zero;
         };
 
+        done_callback.ensureStillAlive();
+
+        // Drain unhandled promise rejections.
+        while (true) {
+            // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
+            if (result != .zero)
+                if (result.asPromise()) |promise|
+                    if (promise.status(globalThis.vm()) == .rejected)
+                        promise.setHandled(globalThis.vm());
+
+            const prev_unhandled_count = vm.unhandled_error_counter;
+            globalThis.handleRejectedPromises();
+            if (vm.unhandled_error_counter == prev_unhandled_count)
+                break;
+        }
+
         var dcb_ref: ?*RefData = null;
-        if (done_callback) |dcb| {
-            if (DoneCallback.fromJS(dcb)) |dcb_data| {
-                if (dcb_data.called or result == null) {
+        if (done_callback != .zero and result != .zero) {
+            if (DoneCallback.fromJS(done_callback)) |dcb_data| {
+                if (dcb_data.called) {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     dcb_ref = ref(this_strong, cfg_data);
@@ -581,25 +593,43 @@ pub const BunTest = struct {
             } else bun.debugAssert(false); // this should be unreachable, we create DoneCallback above
         }
 
-        if (result != null and result.?.asPromise() != null) {
-            group.log("callTestCallback -> promise: data {}", .{cfg_data});
-            const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
-            result.?.then(globalThis, this_ref, bunTestThen, bunTestCatch);
-            drain(globalThis);
-            return;
+        if (result != .zero) {
+            if (result.asPromise()) |promise| {
+                defer result.ensureStillAlive(); // because sometimes we use promise without result
+
+                group.log("callTestCallback -> promise: data {}", .{cfg_data});
+
+                switch (promise.status(globalThis.vm())) {
+                    .pending => {
+                        // not immediately resolved; register 'then' to handle the result when it becomes available
+                        const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
+                        result.then(globalThis, this_ref, bunTestThen, bunTestCatch);
+                        return null;
+                    },
+                    .fulfilled => {
+                        // Do not register a then callback when it's already fulfilled.
+                        return cfg_data;
+                    },
+                    .rejected => {
+                        const value = promise.result(globalThis.vm());
+                        this.onUncaughtException(globalThis, value, true, cfg_data);
+
+                        // We previously marked it as handled above.
+
+                        return cfg_data;
+                    },
+                }
+            }
         }
 
         if (dcb_ref) |_| {
             // completed asynchronously
             group.log("callTestCallback -> wait for done callback", .{});
-            drain(globalThis);
-            return;
+            return null;
         }
 
         group.log("callTestCallback -> sync", .{});
-        drain(globalThis);
-        this.addResult(cfg_data);
-        return;
+        return cfg_data;
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
@@ -649,8 +679,14 @@ pub const StepResult = union(enum) {
 
 pub const Collection = @import("./Collection.zig");
 
+pub const ConcurrentMode = enum {
+    inherit,
+    no,
+    yes,
+};
+
 pub const BaseScopeCfg = struct {
-    self_concurrent: bool = false,
+    self_concurrent: ConcurrentMode = .inherit,
     self_mode: ScopeMode = .normal,
     self_only: bool = false,
     test_id_for_debugger: i32 = 0,
@@ -658,9 +694,9 @@ pub const BaseScopeCfg = struct {
     /// returns null if the other already has the value
     pub fn extend(this: BaseScopeCfg, other: BaseScopeCfg) ?BaseScopeCfg {
         var result = this;
-        if (other.self_concurrent) {
-            if (result.self_concurrent) return null;
-            result.self_concurrent = true;
+        if (other.self_concurrent != .inherit) {
+            if (result.self_concurrent != .inherit) return null;
+            result.self_concurrent = other.self_concurrent;
         }
         if (other.self_mode != .normal) {
             if (result.self_mode != .normal) return null;
@@ -695,7 +731,11 @@ pub const BaseScope = struct {
         return .{
             .parent = parent,
             .name = if (name_not_owned) |name| bun.handleOom(gpa.dupe(u8, name)) else null,
-            .concurrent = this.self_concurrent or if (parent) |p| p.base.concurrent else false,
+            .concurrent = switch (this.self_concurrent) {
+                .yes => true,
+                .no => false,
+                .inherit => if (parent) |p| p.base.concurrent else false,
+            },
             .mode = if (parent) |p| if (p.base.mode != .normal) p.base.mode else this.self_mode else this.self_mode,
             .only = if (this.self_only) .yes else .no,
             .has_callback = has_callback,
@@ -830,6 +870,26 @@ pub const ExecutionEntry = struct {
         }
         return entry;
     }
+
+    pub fn evaluateTimeout(this: *ExecutionEntry, sequence: *Execution.ExecutionSequence, now: *const bun.timespec) bool {
+        if (!this.timespec.eql(&.epoch) and this.timespec.order(now) == .lt) {
+            // timed out
+            sequence.result = if (this == sequence.test_entry)
+                if (this.has_done_parameter)
+                    .fail_because_timeout_with_done_callback
+                else
+                    .fail_because_timeout
+            else if (this.has_done_parameter)
+                .fail_because_hook_timeout_with_done_callback
+            else
+                .fail_because_hook_timeout;
+            sequence.maybe_skip = true;
+            return true;
+        }
+
+        return false;
+    }
+
     pub fn destroy(this: *ExecutionEntry, gpa: std.mem.Allocator) void {
         if (this.callback) |*c| c.deinit();
         this.base.deinit(gpa);

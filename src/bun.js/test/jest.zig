@@ -55,6 +55,7 @@ pub const TestRunner = struct {
     only: bool = false,
     run_todo: bool = false,
     concurrent: bool = false,
+    randomize: bool = false,
     concurrent_test_glob: ?[]const []const u8 = null,
     last_file: u64 = 0,
     bail: u32 = 0,
@@ -459,6 +460,13 @@ pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObj
         }
     }
     return 0;
+}
+
+pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
+    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
+    if (bun.detectCI()) |_| {
+        return globalObject.throwPretty("{s}\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{message});
+    }
 }
 
 const string = []const u8;

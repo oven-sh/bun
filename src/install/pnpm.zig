@@ -372,6 +372,47 @@ pub fn migratePnpmLockfile(
             try Lockfile.CatalogMap.fromPnpmLockfile(lockfile, allocator, log, catalogs_expr.data.e_object, &string_buf);
         }
 
+        if (root.getObject("overrides")) |overrides_expr| {
+            for (overrides_expr.data.e_object.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+
+                const name_str = key.asString(allocator) orelse {
+                    return invalidPnpmLockfile();
+                };
+                const name_hash = String.Builder.stringHash(name_str);
+                const name = try string_buf.appendWithHash(name_str, name_hash);
+
+                if (!value.isString()) {
+                    // TODO:
+                    return invalidPnpmLockfile();
+                }
+
+                const version_str = value.asString(allocator).?;
+                const version_hash = String.Builder.stringHash(version_str);
+                const version = try string_buf.appendWithHash(version_str, version_hash);
+                const version_sliced = version.sliced(string_buf.bytes.items);
+
+                const dep: Dependency = .{
+                    .name = name,
+                    .name_hash = name_hash,
+                    .version = Dependency.parse(
+                        allocator,
+                        name,
+                        name_hash,
+                        version_sliced.slice,
+                        &version_sliced,
+                        log,
+                        manager,
+                    ) orelse {
+                        return invalidPnpmLockfile();
+                    },
+                };
+
+                try lockfile.overrides.map.put(allocator, name_hash, dep);
+            }
+        }
+
         const importers_obj = root.getObject("importers") orelse {
             return invalidPnpmLockfile();
         };

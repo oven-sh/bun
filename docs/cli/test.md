@@ -109,6 +109,85 @@ Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a t
 $ bun test --timeout 20
 ```
 
+## Concurrent test execution
+
+By default, Bun runs async tests sequentially within each test file. You can enable concurrent execution to run async tests in parallel, significantly speeding up test suites with independent tests.
+
+### `--concurrent` flag
+
+Use the `--concurrent` flag to run all tests concurrently within their respective files:
+
+```sh
+$ bun test --concurrent
+```
+
+When this flag is enabled, all tests will run in parallel unless explicitly marked with `test.serial`.
+
+### `--max-concurrency` flag
+
+Control the maximum number of tests running simultaneously with the `--max-concurrency` flag:
+
+```sh
+# Limit to 4 concurrent tests
+$ bun test --concurrent --max-concurrency 4
+
+# Default: 20
+$ bun test --concurrent
+```
+
+This helps prevent resource exhaustion when running many concurrent tests. The default value is 20.
+
+### `test.concurrent`
+
+Mark individual tests to run concurrently, even when the `--concurrent` flag is not used:
+
+```ts
+import { test, expect } from "bun:test";
+
+// These tests run in parallel with each other
+test.concurrent("concurrent test 1", async () => {
+  await fetch("/api/endpoint1");
+  expect(true).toBe(true);
+});
+
+test.concurrent("concurrent test 2", async () => {
+  await fetch("/api/endpoint2");
+  expect(true).toBe(true);
+});
+
+// This test runs sequentially
+test("sequential test", () => {
+  expect(1 + 1).toBe(2);
+});
+```
+
+### `test.serial`
+
+Force tests to run sequentially, even when the `--concurrent` flag is enabled:
+
+```ts
+import { test, expect } from "bun:test";
+
+let sharedState = 0;
+
+// These tests must run in order
+test.serial("first serial test", () => {
+  sharedState = 1;
+  expect(sharedState).toBe(1);
+});
+
+test.serial("second serial test", () => {
+  // Depends on the previous test
+  expect(sharedState).toBe(1);
+  sharedState = 2;
+});
+
+// This test can run concurrently if --concurrent is enabled
+test("independent test", () => {
+  expect(true).toBe(true);
+});
+```
+
 ## Rerun tests
 
 Use the `--rerun-each` flag to run each test multiple times. This is useful for detecting flaky or non-deterministic test failures.

@@ -149,3 +149,5 @@ leak:bundler.ThreadPool.ThreadPool.getWorker
 leak:ast.P.NewParser_(*).appendPart
 leak:ast.P.NewParser_(*).newSymbol
 leak:transpiler.Transpiler.transform
+# test/bundler/bundler_naming.test.ts
+leak:js_printer.BufferWriter.writeAll__anon

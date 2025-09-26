@@ -184,6 +184,7 @@ pub const BuildMessage = struct {
 
     pub fn finalize(this: *BuildMessage) void {
         this.msg.deinit(this.allocator);
+        bun.default_allocator.destroy(this);
     }
 };
 

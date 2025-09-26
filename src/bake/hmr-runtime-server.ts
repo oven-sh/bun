@@ -22,7 +22,7 @@ let asyncLocalStorageWasSet = false;
 
 interface Exports {
   handleRequest: (
-    req: Request,
+    req: Bun.BunRequest,
     routerTypeMain: Id,
     routeModules: Id[],
     clientEntryUrl: string,
@@ -47,6 +47,20 @@ interface Exports {
     componentManifestAdd: null | string[],
     componentManifestDelete: null | string[],
   ) => void;
+}
+
+function validateStreaming(streaming: unknown) {
+  if (streaming !== true && streaming !== false) {
+    throw new Error("Value of `export const streaming` must be a boolean");
+  }
+  return streaming;
+}
+
+function validateMode(mode: unknown) {
+  if (mode !== "ssr" && mode !== "static") {
+    throw new Error("Value of `export const mode` must be 'ssr' or 'st'");
+  }
+  return mode;
 }
 
 declare let server_exports: Exports;
@@ -84,17 +98,25 @@ server_exports = {
       if (!serverRenderer) {
         throw new Error('Framework server entrypoint is missing a "render" export.');
       }
+
       if (typeof serverRenderer !== "function") {
         throw new Error('Framework server entrypoint\'s "render" export is not a function.');
       }
 
       const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
 
-      let requestWithCookies = req;
+      if (pageModule === null || typeof pageModule !== "object") {
+        throw new Error(`Did not find any exports in the page module. Got: ${Bun.inspect(pageModule)}`);
+      }
 
-      let storeValue: RequestContext = {
+      const streaming = "streaming" in pageModule ? validateStreaming(pageModule.streaming) : false;
+      const mode = "mode" in pageModule ? validateMode(pageModule.mode) : "static";
+
+      const requestWithCookies = req;
+
+      const storeValue: RequestContext = {
         responseOptions: {},
-        streaming: pageModule?.streaming ?? false,
+        streaming,
       };
 
       try {
@@ -111,7 +133,7 @@ server_exports = {
               modulepreload: [],
               params,
               // Pass request in metadata when mode is 'ssr'
-              request: pageModule?.mode === "ssr" ? requestWithCookies : undefined,
+              request: mode === "ssr" ? requestWithCookies : undefined,
             },
             responseOptionsALS,
           );

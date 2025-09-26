@@ -15,6 +15,9 @@ pub const JSMap = opaque {
     /// Attempt to remove a key from this JS Map object.
     pub const remove = bun.cpp.JSC__JSMap__remove;
 
+    /// Clear all entries from this JS Map object.
+    pub const clear = bun.cpp.JSC__JSMap__clear;
+
     /// Retrieve the number of entries in this JS Map object.
     pub const size = bun.cpp.JSC__JSMap__size;
 

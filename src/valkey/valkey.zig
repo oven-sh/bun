@@ -16,7 +16,7 @@ pub const ConnectionFlags = struct {
     needs_to_open_socket: bool = true,
     enable_auto_reconnect: bool = true,
     is_reconnecting: bool = false,
-    auto_pipelining: bool = true,
+    enable_auto_pipelining: bool = true,
     finalized: bool = false,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
@@ -388,7 +388,8 @@ pub const ValkeyClient = struct {
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
-        return this.write_buffer.len() > 0;
+        const has_remaining = this.write_buffer.len() > 0;
+        return has_remaining;
     }
 
     const DeferredFailure = struct {
@@ -543,6 +544,7 @@ pub const ValkeyClient = struct {
     ///
     /// Caller refs / derefs.
     pub fn onData(this: *ValkeyClient, data: []const u8) void {
+        debug("Low-level onData called with {d} bytes: {s}", .{data.len, data});
         // Path 1: Buffer already has data, append and process from buffer
         if (this.read_buffer.remaining().len > 0) {
             this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
@@ -651,9 +653,12 @@ pub const ValkeyClient = struct {
 
     /// Try handling this response as a subscriber-state response.
     /// Returns `handled` if we handled it, `fallthrough` if we did not.
-    fn handleSubscribeResponse(this: *ValkeyClient, value: *protocol.RESPValue, pair: *ValkeyCommand.PromisePair) bun.JSError!enum { handled, fallthrough } {
+    fn handleSubscribeResponse(
+        this: *ValkeyClient,
+        value: *protocol.RESPValue,
+        pair: ?*ValkeyCommand.PromisePair,
+    ) bun.JSError!enum { handled, fallthrough } {
         // Resolve the promise with the potentially transformed value
-        var promise_ptr = &pair.promise;
         const globalThis = this.globalObject();
         const loop = this.vm.eventLoop();
 
@@ -663,34 +668,42 @@ pub const ValkeyClient = struct {
 
         return switch (value.*) {
             .Error => {
-                promise_ptr.reject(globalThis, value.toJS(globalThis));
+                if (pair) |p| {
+                    p.promise.reject(globalThis, value.toJS(globalThis));
+                }
                 return .handled;
             },
             .Push => |push| {
                 const p = this.parent();
-                const subs_ctx = try p.getOrCreateSubscriptionCtxEnteringSubscriptionMode();
-                const sub_count = try subs_ctx.channelsSubscribedToCount(globalThis);
+                const sub_count = try p._subscription_ctx.channelsSubscribedToCount(globalThis);
 
                 if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
                     switch (msg_type) {
+                        .message => {
+                            this.onValkeyMessage(push.data);
+                            return .handled;
+                        },
                         .subscribe => {
+                            p.addSubscription();
                             this.onValkeySubscribe(value);
-                            promise_ptr.promise.resolve(globalThis, .jsNumber(sub_count));
+
+                            // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
+                            // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
+                            if (pair) |req_pair| {
+                                req_pair.promise.promise.resolve(globalThis, .jsNumber(sub_count));
+                            }
                             return .handled;
                         },
                         .unsubscribe => {
                             try this.onValkeyUnsubscribe();
-                            promise_ptr.promise.resolve(globalThis, .js_undefined);
+                            p.removeSubscription();
+
+                            // For UNSUBSCRIBE responses, only resolve the promise if we have one
+                            // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
+                            if (pair) |req_pair| {
+                                req_pair.promise.promise.resolve(globalThis, .js_undefined);
+                            }
                             return .handled;
-                        },
-                        else => {
-                            // Other push messages (message, pmessage, etc) are not handled here
-                            @branchHint(.cold);
-                            this.fail(
-                                "Push message is not a subscription message.",
-                                protocol.RedisError.InvalidResponseType,
-                            );
-                            return .fallthrough;
                         },
                     }
                 } else {
@@ -769,7 +782,6 @@ pub const ValkeyClient = struct {
 
     /// Handle Valkey protocol response
     fn handleResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
-        debug("onData() {any}", .{value.*});
         // Special handling for the initial HELLO response
         if (!this.flags.is_authenticated) {
             this.handleHelloResponse(value);
@@ -804,26 +816,47 @@ pub const ValkeyClient = struct {
                 },
             };
         }
-        // Let's load the promise pair.
-        var pair_maybe = this.in_flight.readItem();
+        // Check if this is a subscription push message that might not need a promise pair
+        var should_consume_promise_pair = true;
+        var pair_maybe: ?ValkeyCommand.PromisePair = null;
 
-        // We handle subscriptions specially because they are not regular
-        // commands and their failure will potentially cause the client to drop
-        // out of subscriber mode.
+        // For subscription clients, check if this is a push message that doesn't need a promise pair
         if (this.parent().isSubscriber()) {
-            debug("This client is a subscriber. Handling as subscriber...", .{});
-
-            // There are multiple different commands we may receive in
-            // subscriber mode. One is from a client.subscribe() call which
-            // requires that a promise is in-flight, but otherwise, we may also
-            // receive push messages from the server that do not have an
-            // associated promise.
-            if (pair_maybe) |*pair| {
-                debug("There is a request in flight. Handling as a subscribe request...", .{});
-                if ((try this.handleSubscribeResponse(value, pair)) == .handled) {
-                    return;
-                }
+            switch (value.*) {
+                .Push => |push| {
+                    if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
+                        switch (msg_type) {
+                            .message => {
+                                // Message pushes never need promise pairs
+                                should_consume_promise_pair = false;
+                            },
+                            .subscribe, .unsubscribe => {
+                                // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
+                                if (this.in_flight.readableLength() == 0) {
+                                    should_consume_promise_pair = false;
+                                }
+                            },
+                        }
+                    }
+                },
+                else => {},
             }
+        }
+
+        // Only consume promise pair if we determined we need one
+        // The reaosn we consume pairs is that a SUBSCRIBE message may actually be followed by a number of SUBSCRIBE
+        // responses which indicate all the channels we have connected to. As a stop-gap, we currently ignore the
+        // actual of content of the SUBSCRIBE responses and just resolve the first one with the count of channels.
+        // TODO(markovejnovic): Do better.
+        if (should_consume_promise_pair) {
+            pair_maybe = this.in_flight.readItem();
+        }
+
+        // We handle subscriptions specially because they are not regular commands and their failure will potentially
+        // cause the client to drop out of subscriber mode.
+        const request_is_subscribe = if (pair_maybe) |p| p.meta.subscription_request else false;
+        if (this.parent().isSubscriber() or request_is_subscribe) {
+            debug("This client is a subscriber. Handling as subscriber...", .{});
 
             switch (value.*) {
                 .Error => |err| {
@@ -831,19 +864,9 @@ pub const ValkeyClient = struct {
                     return;
                 },
                 .Push => |push| {
-                    if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
-                        switch (msg_type) {
-                            .message => {
-                                @branchHint(.likely);
-                                debug("Received a message.", .{});
-                                this.onValkeyMessage(push.data);
-                                return;
-                            },
-                            else => {
-                                @branchHint(.cold);
-                                debug("Received non-message push without promise: {any}", .{push.data});
-                                return;
-                            },
+                    if (protocol.SubscriptionPushMessage.map.get(push.kind)) |_| {
+                        if ((try this.handleSubscribeResponse(value, if (pair_maybe) |*pm| pm else null)) == .handled) {
+                            return;
                         }
                     } else {
                         @branchHint(.cold);
@@ -866,7 +889,6 @@ pub const ValkeyClient = struct {
 
         // For regular commands, get the next command+promise pair from the queue
         var pair = pair_maybe orelse {
-            debug("Received response but no promise in queue", .{});
             return;
         };
 
@@ -984,7 +1006,9 @@ pub const ValkeyClient = struct {
             }
         }
 
-        const offline_cmd = this.queue.readItem() orelse return false;
+        const offline_cmd = this.queue.readItem() orelse {
+            return false;
+        };
 
         // Add the promise to the command queue first
         this.in_flight.writeItem(.{
@@ -1023,7 +1047,7 @@ pub const ValkeyClient = struct {
     }
 
     fn enqueue(this: *ValkeyClient, command: *const Command, promise: *Command.Promise) !void {
-        const can_pipeline = command.meta.supports_auto_pipelining and this.flags.auto_pipelining;
+        const can_pipeline = command.meta.supports_auto_pipelining and this.flags.enable_auto_pipelining;
 
         // For commands that don't support pipelining, we need to wait for the queue to drain completely
         // before sending the command. This ensures proper order of execution for state-changing commands.
@@ -1042,7 +1066,8 @@ pub const ValkeyClient = struct {
             can_pipeline)
         {
             // We serialize the bytes in here, so we don't need to worry about the lifetime of the Command itself.
-            try this.queue.writeItem(try Command.Entry.create(this.allocator, command, promise.*));
+            const entry = try Command.Entry.create(this.allocator, command, promise.*);
+            try this.queue.writeItem(entry);
 
             // If we're connected and using auto pipelining, schedule a flush
             if (this.status == .connected and can_pipeline) {
@@ -1053,9 +1078,11 @@ pub const ValkeyClient = struct {
         }
 
         switch (this.status) {
-            .connecting, .connected => command.write(this.writer()) catch {
-                promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
-                return;
+            .connecting, .connected => {
+                command.write(this.writer()) catch {
+                    promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
+                    return;
+                };
             },
             else => unreachable,
         }
@@ -1072,17 +1099,21 @@ pub const ValkeyClient = struct {
     }
 
     pub fn send(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, command: *const Command) !*jsc.JSPromise {
-        var promise = Command.Promise.create(globalThis, command.meta);
+        // FIX: Check meta before using it for routing decisions
+        var checked_command = command.*;
+        checked_command.meta = command.meta.check(command);
+
+        var promise = Command.Promise.create(globalThis, checked_command.meta);
 
         const js_promise = promise.promise.get();
         // Handle disconnected state with offline queue
         switch (this.status) {
             .connected => {
-                try this.enqueue(command, &promise);
+                try this.enqueue(&checked_command, &promise);
 
                 // Schedule auto-flushing to process this command if pipelining is enabled
-                if (this.flags.auto_pipelining and
-                    command.meta.supports_auto_pipelining and
+                if (this.flags.enable_auto_pipelining and
+                    checked_command.meta.supports_auto_pipelining and
                     this.status == .connected and
                     this.queue.readableLength() > 0)
                 {
@@ -1092,7 +1123,7 @@ pub const ValkeyClient = struct {
             .connecting, .disconnected => {
                 // Only queue if offline queue is enabled
                 if (this.flags.enable_offline_queue) {
-                    try this.enqueue(command, &promise);
+                    try this.enqueue(&checked_command, &promise);
                 } else {
                     promise.reject(
                         globalThis,

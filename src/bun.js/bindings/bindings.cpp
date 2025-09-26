@@ -1,3 +1,12 @@
+/**
+ * Source code for JavaScriptCore bindings used by bind.
+ *
+ * This file is processed by cppbind.ts.
+ *
+ * @see cppbind.ts holds helpful tips on how to add and implement new bindings.
+ *      Note that cppbind.ts also automatically runs some error-checking which
+ *      can be disabled if necessary. Consult cppbind.ts for details.
+ */
 #include "root.h"
 
 #include "JavaScriptCore/ErrorType.h"
@@ -37,6 +46,7 @@
 #include "JavaScriptCore/JSArrayInlines.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
+#include "JavaScriptCore/OrderedHashTableHelper.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -6463,30 +6473,47 @@ CPP_DECL WebCore::DOMFormData* WebCore__DOMFormData__fromJS(JSC::EncodedJSValue 
 
 #pragma mark - JSC::JSMap
 
-CPP_DECL JSC::EncodedJSValue JSC__JSMap__create(JSC::JSGlobalObject* arg0)
+CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSMap__create(JSC::JSGlobalObject* arg0)
 {
-    JSC::JSMap* map = JSC::JSMap::create(arg0->vm(), arg0->mapStructure());
-    return JSC::JSValue::encode(map);
+    return JSC::JSValue::encode(JSC::JSMap::create(arg0->vm(), arg0->mapStructure()));
 }
-CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSMap__get_(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
 
-    return JSC::JSValue::encode(map->get(arg1, value));
-}
-CPP_DECL [[ZIG_EXPORT(nothrow)]] bool JSC__JSMap__has(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+// JSMap::get never returns JSValue::zero, even in the case of an exception. The
+// best we can, therefore, do is manually test for exceptions.
+// NOLINTNEXTLINE(bun-bindgen-force-zero_is_throw-for-jsvalue)
+CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSMap__get(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
-    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+    auto& vm = JSC::getVM(arg1);
+    const JSC::JSValue key = JSC::JSValue::decode(JSValue2);
+
+    // JSMap::get never returns JSValue::zero, even in the case of an exception.
+    // It will return JSValue::undefined and set an exception on the VM.
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const JSValue value = map->get(arg1, key);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(value);
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] bool JSC__JSMap__has(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+{
+    const JSC::JSValue value = JSC::JSValue::decode(JSValue2);
     return map->has(arg1, value);
 }
-CPP_DECL [[ZIG_EXPORT(nothrow)]] bool JSC__JSMap__remove(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] bool JSC__JSMap__remove(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
-    JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+    const JSC::JSValue value = JSC::JSValue::decode(JSValue2);
     return map->remove(arg1, value);
 }
-CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3)
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3)
 {
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+{
+    return map->size();
 }
 
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)

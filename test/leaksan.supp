@@ -153,3 +153,5 @@ leak:transpiler.Transpiler.transform
 leak:js_printer.BufferWriter.writeAll__anon
 # test/bundler/esbuild/tsconfig.test.ts
 leak:logger.Location.clone
+# test/bundler/bundler_browser.test.ts
+leak:bundler.bundle_v2.BundleV2.runResolutionForParseTask

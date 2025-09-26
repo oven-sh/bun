@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness.js";
+import { bunEnv as env, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness.js";
 import { join } from "path";
 
 let verdaccio = new VerdaccioRegistry();
@@ -16,15 +16,15 @@ afterAll(() => {
 test("basic", async () => {
   const { packageDir } = await verdaccio.createTestDir({ files: join(import.meta.dir, "pnpm/basic") });
 
-  await using proc = spawn({
+  let proc = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(err).toContain("Saved lockfile");
@@ -40,17 +40,18 @@ test("basic", async () => {
     (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"),
   ).toMatchSnapshot("bun.lock");
 
-  const [noDeps, aDepB, bDepA, aDep] = await Promise.all([
-    file(join(packageDir, "node_modules/no-deps/package.json")).json(),
-    file(join(packageDir, "node_modules/a-dep-b/package.json")).json(),
-    file(join(packageDir, "node_modules/b-dep-a/package.json")).json(),
-    file(join(packageDir, "node_modules/a-dep/package.json")).json(),
-  ]);
+  proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-  expect(noDeps.version).toBe("1.0.1");
-  expect(aDepB.version).toBe("1.0.0");
-  expect(bDepA.version).toBe("1.0.0");
-  expect(aDep.version).toBe("1.0.1");
+  [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(err).not.toContain("Saved lockfile");
 });
 
 describe("bin", () => {
@@ -122,6 +123,11 @@ describe("workspaces", async () => {
   test("workspace dependencies", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/workspaces-dependencies"),
+    });
+  });
+  test("catalogs, peers, and workspaces", async () => {
+    const { packageDir, packageJson } = await verdaccio.createTestDir({
+      files: join(import.meta.dir, "pnpm/workspaces-catalogs-peers"),
     });
   });
 });

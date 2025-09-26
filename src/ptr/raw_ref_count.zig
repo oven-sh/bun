@@ -40,7 +40,12 @@ pub fn RawRefCount(comptime Int: type, comptime thread_safety: ThreadSafety) typ
                     self.raw_value += 1;
                 },
                 .thread_safe => {
-                    _ = self.raw_value.fetchAdd(1, .monotonic);
+                    const old = self.raw_value.fetchAdd(1, .monotonic);
+                    bun.assertf(
+                        old != std.math.maxInt(Int),
+                        "overflow of thread-safe ref count",
+                        .{},
+                    );
                 },
             }
         }

@@ -227,6 +227,91 @@ pub fn deinit(this: *SSLConfig) void {
         this.ca = null;
     }
 }
+pub fn clone(this: *const SSLConfig) SSLConfig {
+    var cloned: SSLConfig = .{
+        .secure_options = this.secure_options,
+        .request_cert = this.request_cert,
+        .reject_unauthorized = this.reject_unauthorized,
+        .ssl_ciphers = this.ssl_ciphers,
+        .protos = this.protos,
+        .protos_len = this.protos_len,
+        .client_renegotiation_limit = this.client_renegotiation_limit,
+        .client_renegotiation_window = this.client_renegotiation_window,
+        .requires_custom_request_ctx = this.requires_custom_request_ctx,
+        .is_using_default_ciphers = this.is_using_default_ciphers,
+        .low_memory_mode = this.low_memory_mode,
+    };
+    const fields = .{
+        "server_name",
+        "key_file_name",
+        "cert_file_name",
+        "ca_file_name",
+        "dh_params_file_name",
+        "passphrase",
+        "protos",
+    };
+
+    if (!this.is_using_default_ciphers) {
+        if (this.ssl_ciphers) |slice_ptr| {
+            const slice = std.mem.span(slice_ptr);
+            if (slice.len > 0) {
+                cloned.ssl_ciphers = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+            } else {
+                cloned.ssl_ciphers = null;
+            }
+        }
+    }
+
+    inline for (fields) |field| {
+        if (@field(this, field)) |slice_ptr| {
+            const slice = std.mem.span(slice_ptr);
+            @field(cloned, field) = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+        }
+    }
+
+    if (this.cert) |cert| {
+        const cloned_cert = bun.handleOom(bun.default_allocator.alloc([*c]const u8, this.cert_count));
+        cloned.cert = cloned_cert;
+        cloned.cert_count = this.cert_count;
+        for (0..this.cert_count) |i| {
+            const slice = std.mem.span(cert[i]);
+            if (slice.len > 0) {
+                cloned_cert[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+            } else {
+                cloned_cert[i] = "";
+            }
+        }
+    }
+
+    if (this.key) |key| {
+        const cloned_key = bun.handleOom(bun.default_allocator.alloc([*c]const u8, this.key_count));
+        cloned.key = cloned_key;
+        cloned.key_count = this.key_count;
+        for (0..this.key_count) |i| {
+            const slice = std.mem.span(key[i]);
+            if (slice.len > 0) {
+                cloned_key[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+            } else {
+                cloned_key[i] = "";
+            }
+        }
+    }
+
+    if (this.ca) |ca| {
+        const cloned_ca = bun.handleOom(bun.default_allocator.alloc([*c]const u8, this.ca_count));
+        cloned.ca = cloned_ca;
+        cloned.ca_count = this.ca_count;
+        for (0..this.ca_count) |i| {
+            const slice = std.mem.span(ca[i]);
+            if (slice.len > 0) {
+                cloned_ca[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+            } else {
+                cloned_ca[i] = "";
+            }
+        }
+    }
+    return cloned;
+}
 
 pub const zero = SSLConfig{};
 

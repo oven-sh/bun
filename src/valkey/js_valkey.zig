@@ -412,10 +412,8 @@ pub const JSValkeyClient = struct {
         const orig_hostname = this.client.address.hostname();
         const hostname = bun.memory.rebaseSlice(orig_hostname, base_ptr, new_base);
         const new_alloc = this.client.allocator;
-        const tls: valkey.TLS = if (this.client.tls != .none) this.client.tls else if (this.client.protocol.isTLS()) .enabled else .none;
-        // if (tls == .custom) {
-        //     tls.custom = tls.custom.clone();
-        // }
+        // TODO: we could ref count it instead of cloning it
+        const tls: valkey.TLS = this.client.tls.clone();
         return JSValkeyClient.new(.{
             .ref_count = .init(),
             ._subscription_ctx = null,

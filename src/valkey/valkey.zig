@@ -87,6 +87,13 @@ pub const TLS = union(enum) {
     enabled,
     custom: jsc.API.ServerConfig.SSLConfig,
 
+    pub fn clone(this: *const TLS) TLS {
+        return switch (this.*) {
+            .custom => |*ssl_config| .{ .custom = ssl_config.clone() },
+            else => this.*,
+        };
+    }
+
     pub fn deinit(this: *TLS) void {
         switch (this.*) {
             .custom => |*ssl_config| ssl_config.deinit(),

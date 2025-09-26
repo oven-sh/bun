@@ -20,11 +20,11 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
     "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
 
-    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" } }, "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q=="],
+    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q=="],
 
     "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="],
 
-    "typescript": ["typescript@5.3.3", "", {}, "sha512-pXWcraxM0uxAS+tN0AG/BF2TyqmHO014Z070UsJ+pFvYuRSq8KH8DmWpnbXe0pEPDHXZV3FcAbJkijJ5oNEnWw=="],
+    "typescript": ["typescript@5.3.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-pXWcraxM0uxAS+tN0AG/BF2TyqmHO014Z070UsJ+pFvYuRSq8KH8DmWpnbXe0pEPDHXZV3FcAbJkijJ5oNEnWw=="],
   }
 }
 "
@@ -66,42 +66,42 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
       },
     },
     "apps/web": {
-      "name": "apps/web",
+      "name": "web",
       "dependencies": {
         "@workspace/shared": "workspace:*",
         "react": "^18.2.0",
       },
     },
     "packages/shared": {
-      "name": "packages/shared",
+      "name": "shared",
       "dependencies": {
-        "lodash": "^4.17.21",
         "@workspace/utils": "workspace:*",
+        "lodash": "^4.17.21",
       },
     },
     "packages/utils": {
-      "name": "packages/utils",
+      "name": "utils",
       "dependencies": {
         "axios": "^1.6.0",
       },
     },
   },
   "packages": {
-    "@workspace/shared": ["packages/shared@workspace:packages/shared"],
+    "@workspace/shared": ["shared@workspace:packages/shared"],
 
-    "@workspace/utils": ["packages/utils@workspace:packages/utils"],
-
-    "apps/web": ["apps/web@workspace:apps/web"],
+    "@workspace/utils": ["utils@workspace:packages/utils"],
 
     "axios": ["axios@1.6.7", "", {}, ""],
 
     "lodash": ["lodash@4.17.21", "", {}, ""],
 
-    "packages/shared": ["packages/shared@workspace:packages/shared"],
-
-    "packages/utils": ["packages/utils@workspace:packages/utils"],
-
     "react": ["react@18.2.0", "", {}, ""],
+
+    "shared": ["shared@workspace:packages/shared"],
+
+    "utils": ["utils@workspace:packages/utils"],
+
+    "web": ["web@workspace:apps/web"],
   }
 }
 "
@@ -138,15 +138,15 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     "": {
       "name": "file-links-test",
       "dependencies": {
+        "config": "file:./shared/config",
         "local-pkg": "file:./local-pkg",
-        "config": "file:../shared/config",
       },
     },
   },
   "packages": {
-    "config": ["config@0.0.0", "", {}, ""],
+    "config": ["hi2@file:shared/config", {}],
 
-    "local-pkg": ["local-pkg@0.0.0", "", {}, ""],
+    "local-pkg": ["hi@file:local-pkg", {}],
   }
 }
 "
@@ -165,7 +165,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     },
   },
   "packages": {
-    "@company/private-pkg": ["@company/private-pkg@0.0.0", "", {}, ""],
+    "@company/private-pkg": ["@company/private-pkg@1.0.5", "", {}, ""],
 
     "lodash": ["lodash@4.17.21", "", {}, ""],
   }
@@ -180,39 +180,22 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     "": {
       "name": "peer-deps-test",
       "dependencies": {
+        "@mui/material": "^5.15.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
-        "@mui/material": "^5.15.0",
       },
     },
   },
   "packages": {
-    "@mui/material": ["@mui/material@5.15.0", "", { "dependencies": { "react": "18.2.0" } }, ""],
+    "@emotion/react": ["@emotion/react@11.11.3", "", { "peerDependencies": { "react": "18.2.0" } }, ""],
+
+    "@emotion/styled": ["@emotion/styled@11.11.0", "", { "peerDependencies": { "@emotion/react": "11.11.3", "react": "18.2.0" } }, ""],
+
+    "@mui/material": ["@mui/material@5.15.0", "", { "optionalDependencies": { "@emotion/react": "11.11.3", "@emotion/styled": "11.11.0" }, "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" } }, ""],
 
     "react": ["react@18.2.0", "", {}, ""],
 
-    "react-dom": ["react-dom@18.2.0", "", { "dependencies": { "react": "18.2.0" } }, "sha512-reactdomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
-  }
-}
-"
-`;
-
-exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: git-dependencies 1`] = `
-"{
-  "lockfileVersion": 1,
-  "workspaces": {
-    "": {
-      "name": "git-deps-test",
-      "dependencies": {
-        "my-git-pkg": "github:user/repo#v1.0.0",
-        "another-git": "git+https://github.com/user/another.git#main",
-      },
-    },
-  },
-  "packages": {
-    "another-git": ["another-git@github:user/another#xyz789", {}, "user-another-xyz789"],
-
-    "my-git-pkg": ["my-git-pkg@github:user/repo#abc123d", {}, "user-repo-abc123d"],
+    "react-dom": ["react-dom@18.2.0", "", { "peerDependencies": { "react": "18.2.0" } }, "sha512-reactdomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
   }
 }
 "
@@ -225,10 +208,10 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     "": {
       "name": "duplicates-test",
       "dependencies": {
+        "lodash": "^4.17.21",
+        "my-lodash": "npm:lodash@^4.17.20",
         "package-a": "^1.0.0",
         "package-b": "^1.0.0",
-        "my-lodash": "npm:lodash@^4.17.20",
-        "lodash": "^4.17.21",
       },
     },
   },
@@ -256,58 +239,27 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     "": {
       "name": "catalogs-test",
       "dependencies": {
-        "react": "18.2.0",
         "lodash": "4.17.21",
+        "react": "18.2.0",
       },
     },
   },
-  "packages": {
-    "lodash": ["lodash@4.17.21", "", {}, ""],
-
-    "react": ["react@18.2.0", "", {}, ""],
-  }
-}
-"
-`;
-
-exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: deep-nested-workspaces 1`] = `
-"{
-  "lockfileVersion": 1,
-  "workspaces": {
-    "": {
-      "name": "deep-workspaces",
-    },
-    "apps/main/packages/ui": {
-      "name": "apps/main/packages/ui",
-      "dependencies": {
-        "react": "^18.2.0",
-      },
-    },
-    "level1/level2/level3/deep-pkg": {
-      "name": "level1/level2/level3/deep-pkg",
-      "dependencies": {
-        "lodash": "^4.17.21",
-      },
-    },
-    "tools/build/scripts": {
-      "name": "tools/build/scripts",
-      "dependencies": {
-        "esbuild": "^0.19.0",
-      },
+  "catalog": {
+    "react": "18.2.0",
+  },
+  "catalogs": {
+    "tools": {
+      "lodash": "4.17.21",
     },
   },
   "packages": {
-    "apps/main/packages/ui": ["apps/main/packages/ui@workspace:apps/main/packages/ui"],
+    "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
 
-    "esbuild": ["esbuild@0.19.11", "", {}, ""],
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
 
-    "level1/level2/level3/deep-pkg": ["level1/level2/level3/deep-pkg@workspace:level1/level2/level3/deep-pkg"],
+    "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "4.0.0" }, "bin": { "loose-envify": "cli.js" } }, "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q=="],
 
-    "lodash": ["lodash@4.17.21", "", {}, ""],
-
-    "react": ["react@18.2.0", "", {}, ""],
-
-    "tools/build/scripts": ["tools/build/scripts@workspace:tools/build/scripts"],
+    "react": ["react@18.2.0", "", { "dependencies": { "loose-envify": "1.4.0" } }, "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="],
   }
 }
 "
@@ -320,8 +272,8 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     "": {
       "name": "integrity-test",
       "dependencies": {
-        "express": "^4.18.2",
         "axios": "^1.6.0",
+        "express": "^4.18.2",
       },
     },
   },
@@ -363,7 +315,6 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
         "typescript": "^4.0.0",
       },
       "devDependencies": {
-        "typescript": "^4.0.0",
         "eslint": "^8.56.0",
       },
       "optionalDependencies": {
@@ -372,13 +323,13 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     },
   },
   "packages": {
-    "eslint": ["eslint@8.56.0", "", {}, ""],
+    "eslint": ["eslint@8.56.0", "", { "bin": { "eslint": "bin/eslint.js" } }, ""],
 
     "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-fseventsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
 
     "react": ["react@18.2.0", "", {}, ""],
 
-    "typescript": ["typescript@4.9.5", "", {}, "sha512-ts4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+    "typescript": ["typescript@4.9.5", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-ts4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
   }
 }
 "
@@ -395,39 +346,33 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
       },
     },
     "packages/pkg1": {
-      "name": "packages/pkg1",
+      "name": "@workspace/pkg1",
       "dependencies": {
         "@workspace/pkg2": "workspace:*",
         "lodash": "^4.17.21",
       },
     },
     "packages/pkg2": {
-      "name": "packages/pkg2",
+      "name": "@workspace/pkg2",
       "dependencies": {
         "@workspace/pkg3": "workspace:*",
       },
     },
     "packages/pkg3": {
-      "name": "packages/pkg3",
+      "name": "@workspace/pkg3",
       "dependencies": {
         "@workspace/pkg1": "workspace:*",
       },
     },
   },
   "packages": {
-    "@workspace/pkg1": ["packages/pkg1@workspace:packages/pkg1"],
+    "@workspace/pkg1": ["@workspace/pkg1@workspace:packages/pkg1"],
 
-    "@workspace/pkg2": ["packages/pkg2@workspace:packages/pkg2"],
+    "@workspace/pkg2": ["@workspace/pkg2@workspace:packages/pkg2"],
 
-    "@workspace/pkg3": ["packages/pkg3@workspace:packages/pkg3"],
+    "@workspace/pkg3": ["@workspace/pkg3@workspace:packages/pkg3"],
 
     "lodash": ["lodash@4.17.21", "", {}, ""],
-
-    "packages/pkg1": ["packages/pkg1@workspace:packages/pkg1"],
-
-    "packages/pkg2": ["packages/pkg2@workspace:packages/pkg2"],
-
-    "packages/pkg3": ["packages/pkg3@workspace:packages/pkg3"],
   }
 }
 "

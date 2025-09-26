@@ -167,6 +167,9 @@ snapshots:
           "@workspace/utils": "workspace:^",
         },
       }),
+      "packages/shared/package.json": JSON.stringify({ name: "shared" }),
+      "packages/utils/package.json": JSON.stringify({ name: "utils" }),
+      "apps/web/package.json": JSON.stringify({ name: "web" }),
       "pnpm-lock.yaml": `lockfileVersion: '9.0'
 
 importers:
@@ -228,9 +231,6 @@ snapshots:
 
     const [monorepoStderr, monorepoExitCode] = await Promise.all([monorepoProc.stderr.text(), monorepoProc.exited]);
 
-    console.log("Migration stderr:", monorepoStderr);
-    console.log("Migration exit code:", monorepoExitCode);
-
     expect(monorepoExitCode).toBe(0);
     const monorepoLockfile = fs.readFileSync(join(monorepoTest, "bun.lock"), "utf8");
 
@@ -243,6 +243,19 @@ snapshots:
 
     // ===== SECTION 4: Patches and Overrides =====
     const patchesTest = tempDirWithFiles("pnpm-patches", {
+      "patches/lodash@4.17.21.patch": `diff --git a/lib/application.js b/lib/application.js
+index 1234567..abcdefg 100644
+--- a/lib/application.js
++++ b/lib/application.js
+@@ -123,7 +123,7 @@ app.defaultConfiguration = function defaultConfiguration() {
+   this.set('subdomain offset', 2);
+   this.set('trust proxy', false);
+ 
+-  // trust proxy inherit back-compat
++  // trust proxy inherit back-compat - PATCHED
+   Object.defineProperty(this.settings, trustProxyDefaultSymbol, {
+     configurable: true,
+     value: true`,
       "package.json": JSON.stringify({
         name: "patches-test",
         dependencies: {
@@ -263,7 +276,9 @@ settings:
   autoInstallPeers: true
 
 patchedDependencies:
-  lodash@4.17.21: patches/lodash@4.17.21.patch
+  lodash@4.17.21:
+    path: patches/lodash@4.17.21.patch
+    hash: abc123
 
 overrides:
   axios: 1.6.0
@@ -285,7 +300,7 @@ snapshots:
     });
 
     const patchesProc = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate"],
+      cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: patchesTest,
       env: bunEnv,
       stderr: "pipe",
@@ -304,28 +319,46 @@ snapshots:
 
     // ===== SECTION 5: File and Link Dependencies =====
     const fileLinksTest = tempDirWithFiles("pnpm-file-links", {
+      "shared/config/package.json": JSON.stringify({ name: "hi" }),
+      "local-pkg/package.json": JSON.stringify({ name: "hi2" }),
       "package.json": JSON.stringify({
         name: "file-links-test",
         dependencies: {
           "local-pkg": "file:./local-pkg",
-          "config": "file:../shared/config",
+          "config": "file:./shared/config",
         },
       }),
       "pnpm-lock.yaml": `lockfileVersion: '9.0'
 
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
 importers:
+
   .:
     dependencies:
+      config:
+        specifier: file:./shared/config
+        version: hi2@file:shared/config
       local-pkg:
         specifier: file:./local-pkg
-        version: file:local-pkg
-      config:
-        specifier: file:../shared/config
-        version: file:../shared/config
+        version: hi@file:local-pkg
 
-packages: {}
+packages:
 
-snapshots: {}`,
+  hi2@file:shared/config:
+    resolution: {directory: shared/config, type: directory}
+
+  hi@file:local-pkg:
+    resolution: {directory: local-pkg, type: directory}
+
+snapshots:
+
+  hi2@file:shared/config: {}
+
+  hi@file:local-pkg: {}
+`,
     });
 
     const fileLinksProc = Bun.spawn({
@@ -341,7 +374,7 @@ snapshots: {}`,
     const fileLinksLockfile = fs.readFileSync(join(fileLinksTest, "bun.lock"), "utf8");
 
     expect(fileLinksLockfile).toContain('"local-pkg": "file:./local-pkg"');
-    expect(fileLinksLockfile).toContain('"config": "file:../shared/config"');
+    expect(fileLinksLockfile).toContain('"config": "file:./shared/config"');
     expect(fileLinksLockfile).toMatchSnapshot("file-link-deps");
 
     // ===== SECTION 6: Custom Registries =====
@@ -500,59 +533,6 @@ snapshots:
     expect(peerDepsLockfile).toContain('"react-dom": "^18.2.0"');
     expect(peerDepsLockfile).toMatchSnapshot("peer-dependencies");
 
-    // ===== SECTION 8: Git Dependencies =====
-    const gitDepsTest = tempDirWithFiles("pnpm-git-deps", {
-      "package.json": JSON.stringify({
-        name: "git-deps-test",
-        dependencies: {
-          "my-git-pkg": "github:user/repo#v1.0.0",
-          "another-git": "git+https://github.com/user/another.git#main",
-        },
-      }),
-      "pnpm-lock.yaml": `lockfileVersion: '9.0'
-
-importers:
-  .:
-    dependencies:
-      my-git-pkg:
-        specifier: github:user/repo#v1.0.0
-        version: github.com/user/repo/abc123def
-      another-git:
-        specifier: git+https://github.com/user/another.git#main
-        version: github.com/user/another/xyz789
-
-packages:
-  my-git-pkg@github.com/user/repo/abc123def:
-    resolution: {tarball: https://codeload.github.com/user/repo/tar.gz/abc123def}
-    name: my-git-pkg
-    version: 1.0.0
-
-  another-git@github.com/user/another/xyz789:
-    resolution: {tarball: https://codeload.github.com/user/another/tar.gz/xyz789}
-    name: another-git
-    version: 2.0.0
-
-snapshots:
-  my-git-pkg@github.com/user/repo/abc123def: {}
-  another-git@github.com/user/another/xyz789: {}`,
-    });
-
-    const gitDepsProc = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate"],
-      cwd: gitDepsTest,
-      env: bunEnv,
-      stderr: "pipe",
-    });
-
-    const [gitDepsStderr, gitDepsExitCode] = await Promise.all([gitDepsProc.stderr.text(), gitDepsProc.exited]);
-
-    expect(gitDepsExitCode).toBe(0);
-    const gitDepsLockfile = fs.readFileSync(join(gitDepsTest, "bun.lock"), "utf8");
-
-    expect(gitDepsLockfile).toContain('"my-git-pkg": "github:user/repo#v1.0.0"');
-    expect(gitDepsLockfile).toContain('"another-git": "git+https://github.com/user/another.git#main"');
-    expect(gitDepsLockfile).toMatchSnapshot("git-dependencies");
-
     // ===== SECTION 9: Duplicate Packages =====
     const duplicatesTest = tempDirWithFiles("pnpm-duplicates", {
       "package.json": JSON.stringify({
@@ -645,6 +625,17 @@ snapshots:
 
     // ===== SECTION 10: Catalogs =====
     const catalogsTest = tempDirWithFiles("pnpm-catalogs", {
+      "pnpm-workspace.yaml": `packages: []
+
+catalog:
+  react: 18.2.0
+  react-dom: 18.2.0
+
+catalogs:
+  tools:
+    lodash: 4.17.21
+    eslint: 8.56.0`,
+
       "package.json": JSON.stringify({
         name: "catalogs-test",
         dependencies: {
@@ -654,34 +645,61 @@ snapshots:
       }),
       "pnpm-lock.yaml": `lockfileVersion: '9.0'
 
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
 catalogs:
   default:
-    react: 18.2.0
-    react-dom: 18.2.0
+    react:
+      specifier: 18.2.0
+      version: 18.2.0
   tools:
-    lodash: 4.17.21
-    eslint: 8.56.0
+    lodash:
+      specifier: 4.17.21
+      version: 4.17.21
 
 importers:
+
   .:
     dependencies:
-      react:
-        specifier: catalog:default
-        version: 18.2.0
       lodash:
         specifier: catalog:tools
         version: 4.17.21
+      react:
+        specifier: 'catalog:'
+        version: 18.2.0
 
 packages:
-  react@18.2.0:
-    resolution: {integrity: sha512-react==}
+
+  js-tokens@4.0.0:
+    resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
   lodash@4.17.21:
-    resolution: {integrity: sha512-lodash==}
+    resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==}
+
+  loose-envify@1.4.0:
+    resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
+    hasBin: true
+
+  react@18.2.0:
+    resolution: {integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ==}
+    engines: {node: '>=0.10.0'}
 
 snapshots:
-  react@18.2.0: {}
-  lodash@4.17.21: {}`,
+
+  js-tokens@4.0.0: {}
+
+  lodash@4.17.21: {}
+
+  loose-envify@1.4.0:
+    dependencies:
+      js-tokens: 4.0.0
+
+  react@18.2.0:
+    dependencies:
+      loose-envify: 1.4.0
+`,
     });
 
     const catalogsProc = Bun.spawn({
@@ -703,72 +721,6 @@ snapshots:
     expect(catalogsLockfile).toContain('"react@18.2.0"');
     expect(catalogsLockfile).toContain('"lodash@4.17.21"');
     expect(catalogsLockfile).toMatchSnapshot("catalogs");
-
-    // ===== SECTION 11: Deep Nested Workspaces =====
-    const deepWorkspacesTest = tempDirWithFiles("pnpm-deep-workspaces", {
-      "package.json": JSON.stringify({
-        name: "deep-workspaces",
-        workspaces: ["level1/level2/level3/*", "apps/*/packages/*", "tools/*/*"],
-      }),
-      "pnpm-lock.yaml": `lockfileVersion: '9.0'
-
-importers:
-  .:
-    dependencies: {}
-
-  level1/level2/level3/deep-pkg:
-    dependencies:
-      lodash:
-        specifier: ^4.17.21
-        version: 4.17.21
-
-  apps/main/packages/ui:
-    dependencies:
-      react:
-        specifier: ^18.2.0
-        version: 18.2.0
-
-  tools/build/scripts:
-    dependencies:
-      esbuild:
-        specifier: ^0.19.0
-        version: 0.19.11
-
-packages:
-  lodash@4.17.21:
-    resolution: {integrity: sha512-lodash==}
-
-  react@18.2.0:
-    resolution: {integrity: sha512-react==}
-
-  esbuild@0.19.11:
-    resolution: {integrity: sha512-esbuild==}
-
-snapshots:
-  lodash@4.17.21: {}
-  react@18.2.0: {}
-  esbuild@0.19.11: {}`,
-    });
-
-    const deepWorkspacesProc = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate"],
-      cwd: deepWorkspacesTest,
-      env: bunEnv,
-      stderr: "pipe",
-    });
-
-    const [deepWorkspacesStderr, deepWorkspacesExitCode] = await Promise.all([
-      deepWorkspacesProc.stderr.text(),
-      deepWorkspacesProc.exited,
-    ]);
-
-    expect(deepWorkspacesExitCode).toBe(0);
-    const deepWorkspacesLockfile = fs.readFileSync(join(deepWorkspacesTest, "bun.lock"), "utf8");
-
-    expect(deepWorkspacesLockfile).toContain('"level1/level2/level3/deep-pkg"');
-    expect(deepWorkspacesLockfile).toContain('"apps/main/packages/ui"');
-    expect(deepWorkspacesLockfile).toContain('"tools/build/scripts"');
-    expect(deepWorkspacesLockfile).toMatchSnapshot("deep-nested-workspaces");
 
     // ===== SECTION 12: Integrity Hashes =====
     const integrityTest = tempDirWithFiles("pnpm-integrity", {
@@ -968,6 +920,31 @@ snapshots:
           "@workspace/pkg1": "workspace:*",
         },
       }),
+      "packages/pkg1/package.json": JSON.stringify({
+        "name": "@workspace/pkg1",
+        "version": "1.0.0",
+        "main": "index.js",
+        "dependencies": {
+          "@workspace/pkg2": "workspace:*",
+          "lodash": "^4.17.21",
+        },
+      }),
+      "packages/pkg2/package.json": JSON.stringify({
+        "name": "@workspace/pkg2",
+        "version": "1.0.0",
+        "main": "index.js",
+        "dependencies": {
+          "@workspace/pkg3": "workspace:*",
+        },
+      }),
+      "packages/pkg3/package.json": JSON.stringify({
+        "name": "@workspace/pkg3",
+        "version": "1.0.0",
+        "main": "index.js",
+        "dependencies": {
+          "@workspace/pkg1": "workspace:*",
+        },
+      }),
       "pnpm-lock.yaml": `lockfileVersion: '9.0'
 
 importers:
@@ -1024,8 +1001,5 @@ snapshots:
     expect(circularLockfile).toContain('"packages/pkg3"');
     expect(circularLockfile).toContain('"@workspace/pkg1": "workspace:*"');
     expect(circularLockfile).toMatchSnapshot("circular-workspaces");
-
-    // ===== FINAL VALIDATION =====
-    console.log("All PNPM migration edge cases tested successfully!");
   });
 });

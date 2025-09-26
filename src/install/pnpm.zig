@@ -1031,7 +1031,7 @@ fn parseAppendImporterDependencies(
 
                 const entry = try importer_versions.getOrPut(name_str);
                 if (entry.found_existing) {
-                    return invalidPnpmLockfile();
+                    continue;
                 }
                 entry.value_ptr.* = removeSuffix(version_str);
 

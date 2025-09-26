@@ -4443,7 +4443,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
         frame.function_name = Bun::toStringRef(functionName);
     }
 
-    frame.is_async = stackFrame.isAsyncFrameWithoutCodeBlock();
+    frame.is_async = stackFrame.isAsyncFrame();
 }
 
 static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,

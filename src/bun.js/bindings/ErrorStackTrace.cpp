@@ -341,7 +341,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     , m_sourceURL()
     , m_functionName()
     , m_isWasmFrame(false)
-    , m_isAsync(frame.isAsyncFrameWithoutCodeBlock())
+    , m_isAsync(frame.isAsyncFrame())
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
     m_callee = frame.callee();

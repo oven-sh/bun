@@ -1,6 +1,6 @@
 /// A shared pointer whose reference count is managed externally; e.g., by extern functions.
 ///
-/// `T.external_shared_desciptor` must be a struct of the following form:
+/// `T.external_shared_descriptor` must be a struct of the following form:
 ///
 ///     pub const external_shared_descriptor = struct {
 ///         pub fn ref(T*) void;

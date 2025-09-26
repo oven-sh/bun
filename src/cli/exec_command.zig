@@ -8,6 +8,8 @@ pub const ExecCommand = struct {
             try @import("../bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
+        bundle.options.env.behavior = ctx.bundler_options.env_behavior;
+        bundle.options.env.prefix = ctx.bundler_options.env_prefix;
         try bundle.runEnvLoader(false);
         var buf: bun.PathBuffer = undefined;
         const cwd = switch (bun.sys.getcwd(&buf)) {

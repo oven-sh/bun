@@ -785,7 +785,7 @@ pub fn init(
     };
 
     try env.loadProcess();
-    try env.load(entries_option.entries, &[_][]u8{}, .production, false);
+    try env.loadRuntime(entries_option.entries, &[_][]u8{}, env.getSuffixFromEnv(), false);
 
     initializeStore();
     if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {

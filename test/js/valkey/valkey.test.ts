@@ -4,16 +4,18 @@ import {
   awaitableCounter,
   ConnectionType,
   createClient,
-  ctx,
+  ctx as _ctx,
   DEFAULT_REDIS_URL,
   expectType,
   isEnabled,
   randomCoinFlip,
   setupDockerContainer,
   TLS_REDIS_URL,
+  TLS_REDIS_OPTIONS,
 } from "./test-utils";
 
 for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
+  const ctx = { ..._ctx, redis: connectionType ? _ctx.redis : _ctx.redisTLS };
   describe.skipIf(!isEnabled)(`Valkey Redis Client (${connectionType})`, () => {
     beforeAll(async () => {
       // Ensure container is ready before tests run
@@ -190,10 +192,12 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
     describe("Connection Options", () => {
       test("connection errors", async () => {
-        const url = new URL(DEFAULT_REDIS_URL);
+        const url = new URL(connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL);
         url.username = "badusername";
         url.password = "secretpassword";
-        const customRedis = new RedisClient(url.toString());
+        const customRedis = new RedisClient(url.toString(), {
+          tls: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tls : false,
+        });
 
         expect(async () => {
           await customRedis.get("test");
@@ -201,13 +205,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       });
 
       const testKeyUniquePerDb = crypto.randomUUID();
-      test.only("Connecting to database with url $url succeeds", async () => {
-        if (connectionType === ConnectionType.TCP) {
-          return;
-        }
-        const redis = createClient(connectionType);
-        await redis.connect();
-        console.log("Connected!");
+      test.each([...Array(16).keys()])("Connecting to database with url $url succeeds", async (dbId: number) => {
+        const redis = createClient(connectionType, {}, dbId);
+
         // Ensure the value is not in the database.
         const testValue = await redis.get(testKeyUniquePerDb);
         expect(testValue).toBeNull();

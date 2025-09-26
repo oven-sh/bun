@@ -1001,7 +1001,10 @@ pub const JSValkeyClient = struct {
                     vm.rareData().valkey_context.tcp orelse brk_ctx: {
                         // TCP socket
                         const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient)) orelse {
-                            this.failWithJSValue(this.globalObject.ERR(.REDIS_FAILED_TO_OPEN_SOCKET, "failed to create TCP socket", .{}).toJS());
+                            // if the context is invalid is not worth retrying
+                            this.client.flags.enable_auto_reconnect = false;
+                            this.clientFail("Failed to create TCP context", protocol.RedisError.ConnectionClosed);
+                            this.client.onValkeyClose();
                             return;
                         };
                         uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
@@ -1015,7 +1018,10 @@ pub const JSValkeyClient = struct {
                         // TLS socket, default config
                         var err: uws.create_bun_socket_error_t = .none;
                         const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.SocketContext.BunSocketContextOptions{}, &err) orelse {
-                            this.failWithJSValue(err.toJS(this.globalObject));
+                            // if the context is invalid is not worth retrying
+                            this.client.flags.enable_auto_reconnect = false;
+                            this.clientFail(err.message() orelse "Failed to create TLS context", protocol.RedisError.ConnectionClosed);
+                            this.client.onValkeyClose();
                             return;
                         };
                         uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
@@ -1033,7 +1039,10 @@ pub const JSValkeyClient = struct {
                     const options = custom.asUSockets();
 
                     const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err) orelse {
-                        this.failWithJSValue(err.toJS(this.globalObject));
+                        // if the context is invalid is not worth retrying
+                        this.client.flags.enable_auto_reconnect = false;
+                        this.clientFail(err.message() orelse "Failed to create TLS context", protocol.RedisError.ConnectionClosed);
+                        this.client.onValkeyClose();
                         return;
                     };
                     uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
@@ -1289,7 +1298,12 @@ fn SocketHandler(comptime ssl: bool) type {
         }
 
         fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-            debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+            debug("onHandshake: {d} {d} {s} {s}", .{
+                success,
+                ssl_error.error_no,
+                if (ssl_error.reason != null) bun.span(ssl_error.reason[0..bun.len(ssl_error.reason) :0]) else "no reason",
+                if (ssl_error.code != null) bun.span(ssl_error.code[0..bun.len(ssl_error.code) :0]) else "no code",
+            });
             const handshake_success = if (success == 1) true else false;
             this.ref();
             defer this.deref();

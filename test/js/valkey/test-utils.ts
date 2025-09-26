@@ -83,7 +83,7 @@ export const TLS_REDIS_OPTIONS = {
   tls: {
     cert: Bun.file(path.join(import.meta.dir, "docker-unified", "server.crt")),
     key: Bun.file(path.join(import.meta.dir, "docker-unified", "server.key")),
-    ca: path.join(import.meta.dir, "docker-unified", "server.crt"),
+    ca: Bun.file(path.join(import.meta.dir, "docker-unified", "server.crt")),
   },
 };
 

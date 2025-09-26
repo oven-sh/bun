@@ -6484,13 +6484,16 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSMap__create(JSC::JSG
 // JSMap::get never returns JSValue::zero, even in the case of an exception. The
 // best we can, therefore, do is manually test for exceptions.
 // NOLINTNEXTLINE(bun-bindgen-force-zero_is_throw-for-jsvalue)
-CPP_DECL [[ZIG_EXPORT(check_slow)]] JSC::EncodedJSValue JSC__JSMap__get(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSMap__get(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
+    auto& vm = JSC::getVM(arg1);
     const JSC::JSValue key = JSC::JSValue::decode(JSValue2);
 
     // JSMap::get never returns JSValue::zero, even in the case of an exception.
     // It will return JSValue::undefined and set an exception on the VM.
+    auto scope = DECLARE_THROW_SCOPE(vm);
     const JSValue value = map->get(arg1, key);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(value);
 }
 

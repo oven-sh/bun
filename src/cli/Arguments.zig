@@ -198,6 +198,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--concurrent                     Treat all tests as `test.concurrent()` tests") catch unreachable,
     clap.parseParam("--randomize                      Run tests in random order") catch unreachable,
+    clap.parseParam("--seed <INT>                     Set the random seed for test randomization") catch unreachable,
     clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
     clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
@@ -497,6 +498,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.concurrent = args.flag("--concurrent");
         ctx.test_options.randomize = args.flag("--randomize");
+
+        if (args.option("--seed")) |seed_str| {
+            ctx.test_options.seed = std.fmt.parseInt(u64, seed_str, 10) catch {
+                Output.prettyErrorln("<red>error<r>: Invalid seed value: {s}", .{seed_str});
+                std.process.exit(1);
+            };
+        }
     }
 
     ctx.args.absolute_working_dir = cwd;

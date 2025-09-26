@@ -4,6 +4,7 @@ groups: std.ArrayList(ConcurrentGroup),
 sequences: std.ArrayList(ExecutionSequence),
 entries: std.ArrayList(*ExecutionEntry),
 previous_group_was_concurrent: bool = false,
+actual_seed: ?u64 = null,
 
 pub fn init(gpa: std.mem.Allocator) Order {
     return .{
@@ -39,6 +40,7 @@ pub const AllOrderResult = struct {
 pub const Config = struct {
     always_use_hooks: bool = false,
     randomize: bool = false,
+    seed: ?u64 = null,
 };
 pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, _: Config) bun.JSError!AllOrderResult {
     const start = this.groups.items.len;
@@ -64,7 +66,9 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope, cfg: Config)
 
     // shuffle entries if randomize flag is set
     if (cfg.randomize) {
-        var prng = std.Random.DefaultPrng.init(bun.fastRandom());
+        const seed = cfg.seed orelse bun.fastRandom();
+        this.actual_seed = seed;
+        var prng = std.Random.DefaultPrng.init(seed);
         const random = prng.random();
         random.shuffle(TestScheduleEntry, current.entries.items);
     }

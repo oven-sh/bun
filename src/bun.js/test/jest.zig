@@ -56,6 +56,7 @@ pub const TestRunner = struct {
     run_todo: bool = false,
     concurrent: bool = false,
     randomize: bool = false,
+    seed: ?u64 = null,
     concurrent_test_glob: ?[]const []const u8 = null,
     last_file: u64 = 0,
     bail: u32 = 0,

@@ -38,6 +38,7 @@ pub const AllOrderResult = struct {
 };
 pub const Config = struct {
     always_use_hooks: bool = false,
+    randomize: bool = false,
 };
 pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, _: Config) bun.JSError!AllOrderResult {
     const start = this.groups.items.len;
@@ -60,6 +61,13 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope, cfg: Config)
 
     // gather beforeAll
     const beforeall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.beforeAll.items, cfg) else .empty;
+
+    // shuffle entries if randomize flag is set
+    if (cfg.randomize) {
+        var prng = std.Random.DefaultPrng.init(bun.fastRandom());
+        const random = prng.random();
+        random.shuffle(TestScheduleEntry, current.entries.items);
+    }
 
     // gather children
     for (current.entries.items) |entry| {

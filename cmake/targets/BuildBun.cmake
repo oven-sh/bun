@@ -1011,6 +1011,7 @@ if(LINUX)
     -Wl,--wrap=exp2
     -Wl,--wrap=expf
     -Wl,--wrap=fcntl64
+    -Wl,--wrap=gettid
     -Wl,--wrap=log
     -Wl,--wrap=log2
     -Wl,--wrap=log2f

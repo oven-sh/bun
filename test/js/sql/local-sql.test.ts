@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
@@ -9,7 +9,7 @@ import net from "net";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
-const dockerCLI = Bun.which("docker") as string;
+const dockerCLI = dockerExe() as string;
 
 async function findRandomPort() {
   return new Promise((resolve, reject) => {
@@ -199,7 +199,7 @@ if (isDockerEnabled()) {
 
               const searchs = await db\`
                 WITH cte AS (
-                  SELECT 
+                  SELECT
                     post.id,
                     post."content",
                     post.created_at AS "createdAt",
@@ -214,10 +214,10 @@ if (isDockerEnabled()) {
                   \${fragment}
                   ORDER BY post.created_at DESC
                 )
-                SELECT 
-                  * 
+                SELECT
+                  *
                 FROM cte
-                -- LIMIT 5 
+                -- LIMIT 5
               \`;
             return Response.json(searchs);
           } catch {

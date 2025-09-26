@@ -435,7 +435,9 @@ pub const ArrayBuffer = extern struct {
 
         pub fn fromJSValue(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?BinaryType {
             if (input.isString()) {
-                return Map.getWithEql(try input.toBunString(globalThis), bun.String.eqlComptime);
+                const str = try input.toBunString(globalThis);
+                defer str.deref();
+                return Map.getWithEql(str, bun.String.eqlComptime);
             }
 
             return null;

@@ -151,3 +151,5 @@ leak:ast.P.NewParser_(*).newSymbol
 leak:transpiler.Transpiler.transform
 # test/bundler/bundler_naming.test.ts
 leak:js_printer.BufferWriter.writeAll__anon
+# test/bundler/esbuild/tsconfig.test.ts
+leak:logger.Location.clone

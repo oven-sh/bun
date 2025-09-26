@@ -765,6 +765,7 @@ pub const JSValkeyClient = struct {
         }
 
         if (this.this_value == .finalized) {
+            // TODO: how this is even possible?
             return;
         }
         bun.debugAssert(this.this_value.isStrong());

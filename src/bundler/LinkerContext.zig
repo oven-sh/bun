@@ -832,6 +832,15 @@ pub const LinkerContext = struct {
         // needs to be done for JavaScript files, not CSS files.
         if (chunk.content == .javascript) {
             const sources = c.parse_graph.input_files.items(.source);
+
+            // If this is an entry point chunk with no parts (common for SSR chunks),
+            // we still need to include the entry point path in the hash
+            if (chunk.entry_point.is_entry_point and chunk.content.javascript.parts_in_chunk_in_order.len == 0) {
+                const source = &sources[chunk.entry_point.source_index];
+                hasher.write(source.path.namespace);
+                hasher.write(source.path.pretty);
+            }
+
             for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
                 const source: *Logger.Source = &sources[part_range.source_index.get()];
 

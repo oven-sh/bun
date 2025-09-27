@@ -558,6 +558,11 @@ pub fn setRefInternal(this: *WebWorker, value: bool) void {
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
     this.notifyNeedTermination();
+    if (this.vm) |vm| {
+        if (!vm.isShuttingDown()) {
+            vm.jsc_vm.notifyNeedTermination();
+        }
+    }
 }
 
 /// Request a terminate from any thread.

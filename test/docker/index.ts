@@ -11,6 +11,8 @@ export type ServiceName =
   | "postgres_tls"
   | "postgres_auth"
   | "mysql_plain"
+  | "mysql_plain_empty_password"
+  | "mysql_plain_9"
   | "mysql_native_password"
   | "mysql_tls"
   | "redis_plain"
@@ -41,14 +43,14 @@ class DockerComposeHelper {
   private runningServices: Set<ServiceName> = new Set();
 
   constructor(options: DockerComposeOptions = {}) {
-    this.projectName = options.projectName ||
+    this.projectName =
+      options.projectName ||
       process.env.BUN_DOCKER_PROJECT_NAME ||
       process.env.COMPOSE_PROJECT_NAME ||
-      "bun-test-services";  // Default project name for all test services
+      "bun-test-services"; // Default project name for all test services
 
-    this.composeFile = options.composeFile ||
-      process.env.BUN_DOCKER_COMPOSE_FILE ||
-      join(__dirname, "docker-compose.yml");
+    this.composeFile =
+      options.composeFile || process.env.BUN_DOCKER_COMPOSE_FILE || join(__dirname, "docker-compose.yml");
 
     // Verify the compose file exists
     const fs = require("fs");
@@ -70,10 +72,7 @@ class DockerComposeHelper {
       stderr: "pipe",
     });
 
-    const [stdout, stderr] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-    ]);
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
 
     const exitCode = await proc.exited;
 
@@ -151,12 +150,12 @@ class DockerComposeHelper {
       try {
         const socket = new net.Socket();
         await new Promise<void>((resolve, reject) => {
-          socket.once('connect', () => {
+          socket.once("connect", () => {
             socket.destroy();
             resolve();
           });
-          socket.once('error', reject);
-          socket.connect(port, '127.0.0.1');
+          socket.once("error", reject);
+          socket.connect(port, "127.0.0.1");
         });
         return;
       } catch {
@@ -281,12 +280,14 @@ class DockerComposeHelper {
         break;
 
       case "mysql_plain":
+      case "mysql_plain_empty_password":
+      case "mysql_plain_9":
       case "mysql_native_password":
       case "mysql_tls":
         env.MYSQL_HOST = info.host;
         env.MYSQL_PORT = info.ports[3306].toString();
         env.MYSQL_USER = "root";
-        env.MYSQL_PASSWORD = service === "mysql_plain" ? "" : "bun";
+        env.MYSQL_PASSWORD = service === "mysql_plain_empty_password" ? "" : "bun123456@#$%^&*()";
         env.MYSQL_DATABASE = "bun_sql_test";
 
         if (info.tls) {
@@ -449,7 +450,7 @@ export async function prepareImages(): Promise<void> {
 // Higher-level wrappers for tests
 export async function withPostgres(
   opts: { variant?: "plain" | "tls" | "auth" },
-  fn: (info: ServiceInfo & { url: string }) => Promise<void>
+  fn: (info: ServiceInfo & { url: string }) => Promise<void>,
 ): Promise<void> {
   const variant = opts.variant || "plain";
   const serviceName = `postgres_${variant}` as ServiceName;
@@ -467,7 +468,7 @@ export async function withPostgres(
 
 export async function withMySQL(
   opts: { variant?: "plain" | "native_password" | "tls" },
-  fn: (info: ServiceInfo & { url: string }) => Promise<void>
+  fn: (info: ServiceInfo & { url: string }) => Promise<void>,
 ): Promise<void> {
   const variant = opts.variant || "plain";
   const serviceName = `mysql_${variant}` as ServiceName;
@@ -485,7 +486,7 @@ export async function withMySQL(
 
 export async function withRedis(
   opts: { variant?: "plain" | "unified" },
-  fn: (info: ServiceInfo & { url: string; tlsUrl?: string }) => Promise<void>
+  fn: (info: ServiceInfo & { url: string; tlsUrl?: string }) => Promise<void>,
 ): Promise<void> {
   const variant = opts.variant || "plain";
   const serviceName = `redis_${variant}` as ServiceName;
@@ -502,7 +503,7 @@ export async function withRedis(
 }
 
 export async function withMinio(
-  fn: (info: ServiceInfo & { endpoint: string; accessKeyId: string; secretAccessKey: string }) => Promise<void>
+  fn: (info: ServiceInfo & { endpoint: string; accessKeyId: string; secretAccessKey: string }) => Promise<void>,
 ): Promise<void> {
   const info = await ensure("minio");
 
@@ -518,9 +519,7 @@ export async function withMinio(
   }
 }
 
-export async function withAutobahn(
-  fn: (info: ServiceInfo & { url: string }) => Promise<void>
-): Promise<void> {
+export async function withAutobahn(fn: (info: ServiceInfo & { url: string }) => Promise<void>): Promise<void> {
   const info = await ensure("autobahn");
 
   try {

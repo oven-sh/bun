@@ -7,6 +7,7 @@ Docker Compose is a tool for defining and running multi-container Docker applica
 ### Why Use Docker Compose Instead of Plain Docker?
 
 **Without Docker Compose (the old way):**
+
 ```javascript
 // Each test file manages its own container
 const container = await Bun.spawn({
@@ -21,6 +22,7 @@ const container = await Bun.spawn({
 ```
 
 **With Docker Compose (the new way):**
+
 ```javascript
 // All tests share managed containers
 const postgres = await dockerCompose.ensure("postgres_plain");
@@ -34,26 +36,31 @@ const postgres = await dockerCompose.ensure("postgres_plain");
 ## Benefits of This Setup
 
 ### 1. **Speed** 🚀
+
 - Containers start once and stay running
 - Tests run 10-100x faster (no container startup overhead)
 - Example: PostgreSQL tests went from 30s to 3s
 
 ### 2. **No Port Conflicts** 🔌
+
 - Docker Compose assigns random available ports automatically
 - No more "port already in use" errors
 - Multiple developers can run tests simultaneously
 
 ### 3. **Centralized Configuration** 📝
+
 - All services defined in one `docker-compose.yml` file
 - Easy to update versions, add services, or change settings
 - No need to hunt through test files to find container configs
 
 ### 4. **Lazy Loading** 💤
+
 - Services only start when actually needed
 - Running MySQL tests? Only MySQL starts
 - Saves memory and CPU
 
 ### 5. **Better CI/CD** 🔄
+
 - Predictable, reproducible test environments
 - Same setup locally and in CI
 - Easy to debug when things go wrong
@@ -63,6 +70,7 @@ const postgres = await dockerCompose.ensure("postgres_plain");
 ### The Setup
 
 1. **docker-compose.yml** - Defines all test services:
+
 ```yaml
 services:
   postgres_plain:
@@ -70,11 +78,12 @@ services:
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - target: 5432      # Container's port
-        published: 0      # 0 = let Docker pick a random port
+      - target: 5432 # Container's port
+        published: 0 # 0 = let Docker pick a random port
 ```
 
 2. **index.ts** - TypeScript helper for managing services:
+
 ```typescript
 // Start a service (if not already running)
 const info = await dockerCompose.ensure("postgres_plain");
@@ -83,6 +92,7 @@ const info = await dockerCompose.ensure("postgres_plain");
 ```
 
 3. **Test Integration**:
+
 ```typescript
 import * as dockerCompose from "../../docker/index.ts";
 
@@ -90,7 +100,7 @@ test("database test", async () => {
   const pg = await dockerCompose.ensure("postgres_plain");
   const client = new PostgresClient({
     host: pg.host,
-    port: pg.ports[5432],  // Use the mapped port
+    port: pg.ports[5432], // Use the mapped port
   });
   // ... run tests
 });
@@ -98,22 +108,24 @@ test("database test", async () => {
 
 ## Available Services
 
-| Service | Description | Ports | Special Features |
-|---------|-------------|-------|------------------|
-| **PostgreSQL** | | | |
-| `postgres_plain` | Basic PostgreSQL | 5432 | No auth required |
-| `postgres_tls` | PostgreSQL with TLS | 5432 | SSL certificates included |
-| `postgres_auth` | PostgreSQL with auth | 5432 | Username/password required |
-| **MySQL** | | | |
-| `mysql_plain` | Basic MySQL | 3306 | Root user, no password |
-| `mysql_native_password` | MySQL with legacy auth | 3306 | For compatibility testing |
-| `mysql_tls` | MySQL with TLS | 3306 | SSL certificates included |
-| **Redis/Valkey** | | | |
-| `redis_unified` | Redis with all features | 6379 (TCP), 6380 (TLS) | Persistence, Unix sockets, ACLs |
-| **S3/MinIO** | | | |
-| `minio` | S3-compatible storage | 9000 (API), 9001 (Console) | AWS S3 API testing |
-| **WebSocket** | | | |
-| `autobahn` | WebSocket test suite | 9002 | 517 conformance tests |
+| Service                      | Description             | Ports                      | Special Features                |
+| ---------------------------- | ----------------------- | -------------------------- | ------------------------------- |
+| **PostgreSQL**               |                         |                            |                                 |
+| `postgres_plain`             | Basic PostgreSQL        | 5432                       | No auth required                |
+| `postgres_tls`               | PostgreSQL with TLS     | 5432                       | SSL certificates included       |
+| `postgres_auth`              | PostgreSQL with auth    | 5432                       | Username/password required      |
+| **MySQL**                    |                         |                            |                                 |
+| `mysql_plain`                | Basic MySQL 8           | 3306                       | Root user                       |
+| `mysql_plain_empty_password` | Basic MySQL 8           | 3306                       | Root user, no password          |
+| `mysql_native_password`      | MySQL with legacy auth  | 3306                       | For compatibility testing       |
+| `mysql_tls`                  | MySQL with TLS          | 3306                       | SSL certificates included       |
+| `mysql_plain_9`              | Basic MySQL 9           | 3306                       | Root user                       |
+| **Redis/Valkey**             |                         |                            |                                 |
+| `redis_unified`              | Redis with all features | 6379 (TCP), 6380 (TLS)     | Persistence, Unix sockets, ACLs |
+| **S3/MinIO**                 |                         |                            |                                 |
+| `minio`                      | S3-compatible storage   | 9000 (API), 9001 (Console) | AWS S3 API testing              |
+| **WebSocket**                |                         |                            |                                 |
+| `autobahn`                   | WebSocket test suite    | 9002                       | 517 conformance tests           |
 
 ## Usage Examples
 
@@ -193,27 +205,32 @@ This is different from the old approach where every test started and stopped its
 ## Debugging
 
 ### View Running Services
+
 ```bash
 cd test/docker
 docker-compose ps
 ```
 
 ### Check Service Logs
+
 ```bash
 docker-compose logs postgres_plain
 ```
 
 ### Stop All Services
+
 ```bash
 docker-compose down
 ```
 
 ### Remove Everything (Including Data)
+
 ```bash
 docker-compose down -v  # -v removes volumes too
 ```
 
 ### Connection Issues?
+
 ```bash
 # Check if service is healthy
 docker-compose ps
@@ -238,12 +255,14 @@ const pg = await dockerCompose.ensure("postgres_plain");
 ### Persistent Data
 
 Some services use volumes to persist data across container restarts:
+
 - Redis: Uses volume for AOF persistence
 - PostgreSQL/MySQL: Can be configured with volumes if needed
 
 ### Environment Variables
 
 Control behavior with environment variables:
+
 - `COMPOSE_PROJECT_NAME`: Prefix for container names (default: "bun-test-services")
 - `BUN_DOCKER_COMPOSE_PATH`: Override docker-compose.yml location
 
@@ -258,6 +277,7 @@ If you're migrating tests from direct Docker usage:
 5. **Cleanup**: Remove old Docker management code
 
 Example migration:
+
 ```javascript
 // OLD
 const container = spawn(["docker", "run", "-d", "postgres"]);
@@ -298,13 +318,13 @@ A: This tells Docker to pick any available port, preventing conflicts.
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| "Connection refused" | Service might still be starting. Add `waitTcp()` or increase timeout |
-| "Port already in use" | Another service using the port. Use dynamic ports (`published: 0`) |
-| "Container not found" | Run `docker-compose up -d SERVICE_NAME` manually |
-| Tests suddenly slow | Containers might have been stopped. Check with `docker-compose ps` |
-| "Permission denied" | Docker daemon might require sudo. Check Docker installation |
+| Problem               | Solution                                                             |
+| --------------------- | -------------------------------------------------------------------- |
+| "Connection refused"  | Service might still be starting. Add `waitTcp()` or increase timeout |
+| "Port already in use" | Another service using the port. Use dynamic ports (`published: 0`)   |
+| "Container not found" | Run `docker-compose up -d SERVICE_NAME` manually                     |
+| Tests suddenly slow   | Containers might have been stopped. Check with `docker-compose ps`   |
+| "Permission denied"   | Docker daemon might require sudo. Check Docker installation          |
 
 ## Contributing
 

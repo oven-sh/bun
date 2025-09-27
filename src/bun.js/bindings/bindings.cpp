@@ -4621,6 +4621,15 @@ public:
             openingParentheses = WTF::notFound;
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+            // Special case: "unknown" frames don't have parentheses but are valid
+            // These appear in stack traces from certain error paths
+            if (line == "unknown"_s) {
+                frame.sourceURL = line;
+                frame.functionName = StringView();
+                return true;
+            }
+
+            // For any other frame without parentheses, terminate parsing as before
             offset = stack.length();
             return false;
         }

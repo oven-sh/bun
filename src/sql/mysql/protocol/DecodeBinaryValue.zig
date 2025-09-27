@@ -61,7 +61,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
                 }
                 var buffer: [22]u8 = undefined;
                 const slice = std.fmt.bufPrint(&buffer, "{d}", .{val}) catch unreachable;
-                return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice) else .dead }, .free_value = 1 };
             }
             const val = try reader.int(i64);
             if (val >= std.math.minInt(i32) and val <= std.math.maxInt(i32)) {
@@ -72,7 +72,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             }
             var buffer: [22]u8 = undefined;
             const slice = std.fmt.bufPrint(&buffer, "{d}", .{val}) catch unreachable;
-            return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+            return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice) else .dead }, .free_value = 1 };
         },
         .MYSQL_TYPE_FLOAT => {
             if (raw) {
@@ -135,7 +135,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             defer string_data.deinit();
 
             const slice = string_data.slice();
-            return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+            return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice) else .dead }, .free_value = 1 };
         },
 
         .MYSQL_TYPE_JSON => {
@@ -147,7 +147,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             var string_data = try reader.encodeLenString();
             defer string_data.deinit();
             const slice = string_data.slice();
-            return SQLDataCell{ .tag = .json, .value = .{ .json = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+            return SQLDataCell{ .tag = .json, .value = .{ .json = if (slice.len > 0) bun.String.cloneUTF8(slice) else .dead }, .free_value = 1 };
         },
         .MYSQL_TYPE_BIT => {
             // BIT(1) is a special case, it's a boolean

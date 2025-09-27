@@ -86,7 +86,7 @@ pub fn deinit(ptr_or_slice: anytype) void {
     switch (comptime ptr_info.pointer.size) {
         .slice => {
             for (ptr_or_slice) |*elem| {
-                bun.memory.deinit(elem);
+                deinit(elem);
             }
             return;
         },

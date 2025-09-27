@@ -125,7 +125,12 @@ pub const Integrity = extern struct {
         }
 
         pub fn parse(buf: []const u8) struct { Tag, usize } {
-            const Matcher = strings.ExactSizeMatcher(8);
+            const TagMap = bun.ComptimeStringMap(Tag, .{
+                .{ "sha1", Tag.sha1 },
+                .{ "sha256", Tag.sha256 },
+                .{ "sha384", Tag.sha384 },
+                .{ "sha512", Tag.sha512 },
+            });
 
             const i = strings.indexOfChar(buf[0..@min(buf.len, 7)], '-') orelse return .{ Tag.unknown, 0 };
 
@@ -133,13 +138,11 @@ pub const Integrity = extern struct {
                 return .{ Tag.unknown, 0 };
             }
 
-            return switch (Matcher.match(buf[0..i])) {
-                Matcher.case("sha1") => .{ Tag.sha1, i + 1 },
-                Matcher.case("sha256") => .{ Tag.sha256, i + 1 },
-                Matcher.case("sha384") => .{ Tag.sha384, i + 1 },
-                Matcher.case("sha512") => .{ Tag.sha512, i + 1 },
-                else => .{ Tag.unknown, 0 },
-            };
+            const tag = TagMap.get(buf[0..i]) orelse Tag.unknown;
+            if (tag == Tag.unknown) {
+                return .{ Tag.unknown, 0 };
+            }
+            return .{ tag, i + 1 };
         }
 
         pub inline fn digestLen(this: Tag) usize {

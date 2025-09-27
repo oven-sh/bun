@@ -108,17 +108,17 @@ pub const Bunfig = struct {
 
         fn loadLogLevel(this: *Parser, expr: js_ast.Expr) !void {
             try this.expectString(expr);
-            const Matcher = strings.ExactSizeMatcher(8);
+            const LogLevelMap = bun.ComptimeStringMap(api.MessageLevel, .{
+                .{ "debug", api.MessageLevel.debug },
+                .{ "error", api.MessageLevel.err },
+                .{ "warn", api.MessageLevel.warn },
+                .{ "info", api.MessageLevel.info },
+            });
 
-            this.bunfig.log_level = switch (Matcher.match(expr.asString(this.allocator).?)) {
-                Matcher.case("debug") => api.MessageLevel.debug,
-                Matcher.case("error") => api.MessageLevel.err,
-                Matcher.case("warn") => api.MessageLevel.warn,
-                Matcher.case("info") => api.MessageLevel.info,
-                else => {
-                    try this.addError(expr.loc, "Invalid log level, must be one of debug, error, or warn");
-                    unreachable;
-                },
+            const log_str = expr.asString(this.allocator).?;
+            this.bunfig.log_level = LogLevelMap.get(log_str) orelse {
+                try this.addError(expr.loc, "Invalid log level, must be one of debug, error, or warn");
+                unreachable;
             };
         }
 

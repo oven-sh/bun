@@ -319,7 +319,7 @@ pub fn load(
             // For client components, the import record index currently points to the original source index, instead of the reference source index.
             for (this.reachable_files) |source_id| {
                 for (import_records_list[source_id.get()].slice()) |*import_record| {
-                    if (import_record.source_index.isValid() and this.is_scb_bitset.isSet(import_record.source_index.get())) {
+                    if (import_record.source_index.isValid() and this.is_scb_bitset.isSet(import_record.source_index.get()) and this.ast.items(.target)[source_id.get()] != .browser) {
                         // Only rewrite if this is an original SCB file, not a reference file
                         if (scb.getReferenceSourceIndex(import_record.source_index.get())) |ref_index| {
                             import_record.source_index = Index.init(ref_index);

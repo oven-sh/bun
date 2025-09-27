@@ -494,11 +494,16 @@ pub const OutdatedCommand = struct {
 
         // Recalculate max workspace length after grouping
         var new_max_workspace: usize = max_workspace;
+        var has_catalog_deps = false;
         for (grouped_ids.items) |item| {
             if (item.grouped_workspace_names) |names| {
                 if (names.len > new_max_workspace) new_max_workspace = names.len;
+                has_catalog_deps = true;
             }
         }
+
+        // Show workspace column if filtered OR if there are catalog dependencies
+        const show_workspace_column = was_filtered or has_catalog_deps;
 
         const package_column_inside_length = @max("Packages".len, max_name);
         const current_column_inside_length = @max("Current".len, max_current);
@@ -510,7 +515,7 @@ pub const OutdatedCommand = struct {
         const column_right_pad = 1;
 
         const table = Table("blue", column_left_pad, column_right_pad, enable_ansi_colors).init(
-            &if (was_filtered)
+            &if (show_workspace_column)
                 [_][]const u8{
                     "Package",
                     "Current",
@@ -525,7 +530,7 @@ pub const OutdatedCommand = struct {
                     "Update",
                     "Latest",
                 },
-            &if (was_filtered)
+            &if (show_workspace_column)
                 [_]usize{
                     package_column_inside_length,
                     current_column_inside_length,
@@ -631,7 +636,7 @@ pub const OutdatedCommand = struct {
                     version_buf.clearRetainingCapacity();
                 }
 
-                if (was_filtered) {
+                if (show_workspace_column) {
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 

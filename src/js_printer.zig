@@ -774,12 +774,20 @@ fn NewPrinter(
                     p.printSpace();
                 }
 
+                // When minifying, use == instead of === in numeric contexts
+                var op_text = entry.text;
+                if (p.options.minify_syntax and (e.op == .bin_strict_eq or e.op == .bin_strict_ne)) {
+                    if (p.isNumericContext(e)) {
+                        op_text = if (e.op == .bin_strict_eq) "==" else "!=";
+                    }
+                }
+
                 if (entry.is_keyword) {
                     p.printSpaceBeforeIdentifier();
-                    p.print(entry.text);
+                    p.print(op_text);
                 } else {
                     p.printSpaceBeforeOperator(e.op);
-                    p.print(entry.text);
+                    p.print(op_text);
                     p.prev_op = e.op;
                     p.prev_op_end = p.writer.written;
                 }
@@ -1531,6 +1539,21 @@ fn NewPrinter(
                 return;
             }
 
+            // When minifying, drop leading zeros from fractional numbers
+            if (p.options.minify_syntax) {
+                if (float > 0 and float < 1) {
+                    // Format as .XXX instead of 0.XXX
+                    var buf: [128]u8 = undefined;
+                    const str = std.fmt.bufPrint(&buf, "{d}", .{float}) catch {
+                        p.fmt("{d}", .{float}) catch {};
+                        return;
+                    };
+                    if (strings.startsWith(str, "0.")) {
+                        p.print(str[1..]);
+                        return;
+                    }
+                }
+            }
             p.fmt("{d}", .{float}) catch {};
         }
 
@@ -1571,6 +1594,41 @@ fn NewPrinter(
 
         inline fn symbols(p: *Printer) js_ast.Symbol.Map {
             return p.renamer.symbols();
+        }
+
+        // Check if a binary expression is in a numeric context (safe to use == instead of ===)
+        fn isNumericContext(p: *Printer, e: *E.Binary) bool {
+            _ = p;
+
+            // Helper to check if an expression is guaranteed to be numeric
+            const isDefinitelyNumeric = struct {
+                fn check(expr: Expr) bool {
+                    return switch (expr.data) {
+                        .e_number => true, // Numeric literals are definitely numeric
+                        .e_unary => |un| switch (un.op) {
+                            // Unary numeric operators always return numbers
+                            .un_pos, .un_neg, .un_cpl => true,
+                            .un_post_dec, .un_post_inc, .un_pre_dec, .un_pre_inc => true,
+                            else => false,
+                        },
+                        .e_binary => |bin| switch (bin.op) {
+                            // Bitwise operators always return 32-bit integers
+                            .bin_bitwise_and, .bin_bitwise_or, .bin_bitwise_xor, .bin_shl, .bin_shr, .bin_u_shr => true,
+                            // Arithmetic operators always return numbers
+                            .bin_add, .bin_sub, .bin_mul, .bin_div, .bin_rem, .bin_pow => true,
+                            else => false,
+                        },
+                        else => false,
+                    };
+                }
+            }.check;
+
+            const left_is_numeric = isDefinitelyNumeric(e.left);
+            const right_is_numeric = isDefinitelyNumeric(e.right);
+
+            // Safe to use == if at least one side is definitely numeric
+            // because == with a number coerces the other side to number
+            return left_is_numeric or right_is_numeric;
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
@@ -2762,9 +2820,15 @@ fn NewPrinter(
                             const e2 = copy.fold(p.options.allocator, expr.loc);
                             switch (e2.data) {
                                 .e_string => {
-                                    p.print('"');
-                                    p.printStringCharactersUTF8(e2.data.e_string.data, '"');
-                                    p.print('"');
+                                    // Use existing quote selection logic
+                                    const quote = bestQuoteCharForEString(e2.data.e_string, false);
+                                    p.print(&[_]u8{quote});
+                                    if (quote == '`') {
+                                        p.printStringCharactersEString(e2.data.e_string, '`');
+                                    } else {
+                                        p.printStringCharactersUTF8(e2.data.e_string.data, quote);
+                                    }
+                                    p.print(&[_]u8{quote});
                                     return;
                                 },
                                 .e_template => {

@@ -54,6 +54,19 @@ const MigratePnpmLockfileError = OOM || error{
     NonExistentWorkspaceDependency,
     WorkspaceNameMissing,
     DependencyLoop,
+    PnpmLockfileNotObject,
+    PnpmLockfileMissingVersion,
+    PnpmLockfileMissingImporters,
+    PnpmLockfileInvalidImporter,
+    PnpmLockfileMissingRootPackage,
+    PnpmLockfileInvalidSnapshot,
+    PnpmLockfileInvalidPackage,
+    PnpmLockfileMissingDependencyVersion,
+    PnpmLockfileInvalidDependency,
+    PnpmLockfileInvalidOverride,
+    PnpmLockfileInvalidPatchedDependency,
+    PnpmLockfileMissingCatalogEntry,
+    PnpmLockfileUnresolvableDependency,
 };
 
 pub fn migratePnpmLockfile(
@@ -82,11 +95,13 @@ pub fn migratePnpmLockfile(
     const root = try _root.deepClone(allocator);
 
     if (root.data != .e_object) {
-        return invalidPnpmLockfile();
+        try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml root must be an object, got {s}", .{@tagName(root.data)});
+        return error.PnpmLockfileNotObject;
     }
 
     const lockfile_version_expr = root.get("lockfileVersion") orelse {
-        return invalidPnpmLockfile();
+        try log.addError(null, logger.Loc.Empty, "pnpm-lock.yaml missing 'lockfileVersion' field");
+        return error.PnpmLockfileMissingVersion;
     };
 
     const lockfile_version_num: u32 = lockfile_version: {
@@ -109,7 +124,8 @@ pub fn migratePnpmLockfile(
             }
         }
 
-        return invalidPnpmLockfile();
+        try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml 'lockfileVersion' must be a number or string, got {s}", .{@tagName(lockfile_version_expr.data)});
+        return error.PnpmLockfileVersionInvalid;
     };
 
     if (lockfile_version_num < 7) {
@@ -205,7 +221,8 @@ pub fn migratePnpmLockfile(
         }
 
         const importers_obj = root.getObject("importers") orelse {
-            return invalidPnpmLockfile();
+            try log.addError(null, logger.Loc.Empty, "pnpm-lock.yaml missing 'importers' field");
+            return error.PnpmLockfileMissingImporters;
         };
 
         var has_root_pkg_expr: ?Expr = null;
@@ -260,7 +277,8 @@ pub fn migratePnpmLockfile(
         }
 
         const root_pkg_expr = has_root_pkg_expr orelse {
-            return invalidPnpmLockfile();
+            try log.addError(null, logger.Loc.Empty, "pnpm-lock.yaml missing root package entry (importers['.'])");
+            return error.PnpmLockfileMissingRootPackage;
         };
 
         var importer_dep_res_versions: bun.StringArrayHashMap(bun.StringArrayHashMap([]const u8)) = .init(allocator);
@@ -477,7 +495,8 @@ pub fn migratePnpmLockfile(
 
         if (root.getObject("packages")) |packages_obj| {
             const snapshots_obj = root.getObject("snapshots") orelse {
-                return invalidPnpmLockfile();
+                try log.addError(null, logger.Loc.Empty, "pnpm-lock.yaml has 'packages' but missing 'snapshots' field");
+                return error.PnpmLockfileInvalidSnapshot;
             };
 
             for (snapshots_obj.data.e_object.properties.slice()) |snapshot_prop| {
@@ -542,7 +561,8 @@ pub fn migratePnpmLockfile(
                 }
 
                 const snapshot = snapshots.get(key_str) orelse {
-                    return invalidPnpmLockfile();
+                    try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml package '{s}' missing corresponding snapshot entry", .{key_str});
+                    return error.PnpmLockfileInvalidSnapshot;
                 };
 
                 const name_str, const res_str = Dependency.splitNameAndVersion(key_str) catch {
@@ -666,7 +686,8 @@ pub fn migratePnpmLockfile(
 
             const dep_name = dep.name.slice(string_buf);
             var version_maybe_alias = importer_versions.get(dep_name) orelse {
-                return invalidPnpmLockfile();
+                try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml cannot resolve root dependency '{s}' - missing version in importer", .{dep_name});
+                return error.PnpmLockfileUnresolvableDependency;
             };
             if (strings.hasPrefixComptime(version_maybe_alias, "npm:")) {
                 version_maybe_alias = version_maybe_alias["npm:".len..];
@@ -714,7 +735,8 @@ pub fn migratePnpmLockfile(
             const dep = &lockfile.buffers.dependencies.items[dep_id];
             const dep_name = dep.name.slice(string_buf);
             var version_maybe_alias = importer_versions.get(dep_name) orelse {
-                return invalidPnpmLockfile();
+                try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml cannot resolve workspace dependency '{s}' in '{s}' - missing version", .{ dep_name, workspace_path });
+                return error.PnpmLockfileUnresolvableDependency;
             };
             if (strings.hasPrefixComptime(version_maybe_alias, "npm:")) {
                 version_maybe_alias = version_maybe_alias["npm:".len..];
@@ -806,7 +828,12 @@ fn invalidPnpmLockfile() error{InvalidPnpmLockfile} {
     return error.InvalidPnpmLockfile;
 }
 
-const ParseAppendDependenciesError = OOM || error{InvalidPnpmLockfile};
+const ParseAppendDependenciesError = OOM || error{
+    InvalidPnpmLockfile,
+    PnpmLockfileInvalidDependency,
+    PnpmLockfileMissingDependencyVersion,
+    PnpmLockfileMissingCatalogEntry,
+};
 
 fn parseAppendPackageDependencies(
     lockfile: *Lockfile,
@@ -1056,11 +1083,13 @@ fn parseAppendImporterDependencies(
                 const name = try string_buf.appendExternalWithHash(name_str, name_hash);
 
                 const specifier_expr = value.get("specifier") orelse {
-                    return invalidPnpmLockfile();
+                    try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml dependency '{s}' missing 'specifier' field", .{name_str});
+                    return error.PnpmLockfileInvalidDependency;
                 };
 
                 const version_expr = value.get("version") orelse {
-                    return invalidPnpmLockfile();
+                    try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml dependency '{s}' missing 'version' field", .{name_str});
+                    return error.PnpmLockfileMissingDependencyVersion;
                 };
 
                 const version_str = try version_expr.asStringCloned(allocator) orelse {
@@ -1082,7 +1111,8 @@ fn parseAppendImporterDependencies(
                     const catalog_group_name = try string_buf.append(catalog_group_name_str);
                     var dep = lockfile.catalogs.get(lockfile, catalog_group_name, name.value) orelse {
                         // catalog is missing an entry in the "catalogs" object in the lockfile
-                        return invalidPnpmLockfile();
+                        try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml catalog '{s}' missing entry for dependency '{s}'", .{ catalog_group_name_str, name_str });
+                        return error.PnpmLockfileMissingCatalogEntry;
                     };
 
                     dep.behavior = group_behavior;

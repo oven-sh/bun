@@ -1483,7 +1483,7 @@ pub fn appendSourceMapChunk(
     prev_end_state_: SourceMapState,
     start_state_: SourceMapState,
     source_map_: []const u8,
-) !void {
+) bun.OOM!void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
@@ -1527,7 +1527,7 @@ pub fn appendSourceMapChunk(
     start_state.original_column += original_column.value;
 
     var str = MutableString.initEmpty(allocator);
-    appendMappingToBuffer(&str, j.lastByte(), prev_end_state, start_state);
+    try appendMappingToBuffer(&str, j.lastByte(), prev_end_state, start_state);
     j.push(str.slice(), allocator);
 
     // Then append everything after that without modification.
@@ -1553,7 +1553,7 @@ pub fn appendSourceMappingURLRemote(
 }
 
 /// This function is extremely hot.
-pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) void {
+pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: SourceMapState, current_state: SourceMapState) bun.OOM!void {
     const needs_comma = last_byte != 0 and last_byte != ';' and last_byte != '"';
 
     const vlqs = [_]VLQ{
@@ -1574,7 +1574,7 @@ pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: 
         @as(usize, vlqs[3].len);
 
     // Instead of updating .len 5 times, we only need to update it once.
-    var writable = buffer.writableNBytes(total_len + @as(usize, @intFromBool(needs_comma))) catch unreachable;
+    var writable = try buffer.writableNBytes(total_len + @as(usize, @intFromBool(needs_comma)));
 
     // Put commas in between mappings
     if (needs_comma) {
@@ -1625,7 +1625,7 @@ pub const Chunk = struct {
         mutable: *MutableString,
         include_sources_contents: bool,
         comptime ascii_only: bool,
-    ) !void {
+    ) bun.OOM!void {
         try printSourceMapContentsAtOffset(
             chunk,
             source,
@@ -1643,7 +1643,7 @@ pub const Chunk = struct {
         include_sources_contents: bool,
         offset: usize,
         comptime ascii_only: bool,
-    ) !void {
+    ) bun.OOM!void {
         // attempt to pre-allocate
 
         var filename_buf: bun.PathBuffer = undefined;
@@ -1656,9 +1656,9 @@ pub const Chunk = struct {
             filename = filename_buf[0 .. filename.len + 1];
         }
 
-        mutable.growIfNeeded(
+        try mutable.growIfNeeded(
             filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + (chunk.buffer.list.items.len - offset) + 32 + 39 + 29 + 22 + 20,
-        ) catch unreachable;
+        );
         try mutable.append("{\n  \"version\":3,\n  \"sources\": [");
 
         try JSPrinter.quoteForJSON(filename, mutable, ascii_only);
@@ -1683,11 +1683,11 @@ pub const Chunk = struct {
                 return .{ .ctx = Type.init(allocator, prepend_count) };
             }
 
-            pub inline fn appendLineSeparator(this: *Format) anyerror!void {
+            pub inline fn appendLineSeparator(this: *Format) bun.OOM!void {
                 try this.ctx.appendLineSeparator();
             }
 
-            pub inline fn append(this: *Format, current_state: SourceMapState, prev_state: SourceMapState) anyerror!void {
+            pub inline fn append(this: *Format, current_state: SourceMapState, prev_state: SourceMapState) bun.OOM!void {
                 try this.ctx.append(current_state, prev_state);
             }
 
@@ -1729,17 +1729,17 @@ pub const Chunk = struct {
             return map;
         }
 
-        pub fn appendLineSeparator(this: *VLQSourceMap) anyerror!void {
+        pub fn appendLineSeparator(this: *VLQSourceMap) bun.OOM!void {
             try this.data.appendChar(';');
         }
 
-        pub fn append(this: *VLQSourceMap, current_state: SourceMapState, prev_state: SourceMapState) anyerror!void {
+        pub fn append(this: *VLQSourceMap, current_state: SourceMapState, prev_state: SourceMapState) bun.OOM!void {
             const last_byte: u8 = if (this.data.list.items.len > this.offset)
                 this.data.list.items[this.data.list.items.len - 1]
             else
                 0;
 
-            appendMappingToBuffer(&this.data, last_byte, prev_state, current_state);
+            try appendMappingToBuffer(&this.data, last_byte, prev_state, current_state);
             this.count += 1;
         }
 
@@ -1792,8 +1792,8 @@ pub const Chunk = struct {
 
             pub const SourceMapper = SourceMapFormat(SourceMapFormatType);
 
-            pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
-                b.updateGeneratedLineAndColumn(output);
+            pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) bun.OOM!Chunk {
+                try b.updateGeneratedLineAndColumn(output);
                 var buffer = b.source_map.getBuffer();
                 if (b.prepend_count) {
                     buffer.list.items[0..8].* = @as([8]u8, @bitCast(buffer.list.items.len));
@@ -1811,7 +1811,7 @@ pub const Chunk = struct {
 
             // Scan over the printed text since the last source mapping and update the
             // generated line and column numbers
-            pub fn updateGeneratedLineAndColumn(b: *ThisBuilder, output: []const u8) void {
+            pub fn updateGeneratedLineAndColumn(b: *ThisBuilder, output: []const u8) bun.OOM!void {
                 const slice = output[b.last_generated_update..];
                 var needs_mapping = b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state;
 
@@ -1859,7 +1859,7 @@ pub const Chunk = struct {
                             b.prev_state.generated_line += 1;
                             b.prev_state.generated_column = 0;
                             b.generated_column = 0;
-                            b.source_map.appendLineSeparator() catch unreachable;
+                            try b.source_map.appendLineSeparator();
 
                             // This new line doesn't have a mapping yet
                             b.line_starts_with_mapping = false;
@@ -1887,7 +1887,7 @@ pub const Chunk = struct {
                 b.has_prev_state = true;
             }
 
-            pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, output: []const u8) void {
+            pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, output: []const u8) bun.OOM!void {
                 if (
                 // don't insert mappings for same location twice
                 b.prev_loc.eql(loc) or
@@ -1917,7 +1917,7 @@ pub const Chunk = struct {
                     original_column = line.columns_for_non_ascii.slice()[@as(u32, @intCast(original_column)) - line.byte_offset_to_first_non_ascii];
                 }
 
-                b.updateGeneratedLineAndColumn(output);
+                try b.updateGeneratedLineAndColumn(output);
 
                 // If this line doesn't start with a mapping and we're about to add a mapping
                 // that's not at the start, insert a mapping first so the line starts with one.

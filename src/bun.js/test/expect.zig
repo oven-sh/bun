@@ -779,7 +779,7 @@ pub const Expect = struct {
             try runner.snapshots.addInlineSnapshotToWrite(file_id, .{
                 .line = srcloc.line,
                 .col = srcloc.column,
-                .value = pretty_value.toOwnedSlice(),
+                .value = try pretty_value.toOwnedSlice(),
                 .has_matchers = property_matchers != null,
                 .is_added = result == null,
                 .kind = fn_name,

@@ -363,9 +363,7 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
-    JSC::JSGlobalObject* global,
     const BunString* specifier,
-    const BunString* referrer,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
     void* bunVM,

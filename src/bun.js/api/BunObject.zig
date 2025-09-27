@@ -1294,7 +1294,9 @@ pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, c
 }
 
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var valkey = jsc.API.Valkey.createNoJs(globalThis, &.{.js_undefined}) catch |err| {
+    const SubscriptionCtx = @import("../../valkey/js_valkey.zig").SubscriptionCtx;
+
+    var valkey = jsc.API.Valkey.createNoJsNoPubsub(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {
             _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
             return .zero;
@@ -1305,6 +1307,13 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
     const as_js = valkey.toJS(globalThis);
 
     valkey.this_value = jsc.JSRef.initWeak(as_js);
+    valkey._subscription_ctx = SubscriptionCtx.init(valkey) catch |err| {
+        if (err != error.JSError) {
+            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
+            return .zero;
+        }
+        return .zero;
+    };
 
     return as_js;
 }

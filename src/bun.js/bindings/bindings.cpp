@@ -6506,6 +6506,11 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] bool JSC__JSMap__remove(JSC::JSMap* map, JSC
     return map->remove(arg1, value);
 }
 
+CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__clear(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+{
+    map->clear(arg1);
+}
+
 CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3)
 {
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));

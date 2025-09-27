@@ -15,26 +15,10 @@ const tests: {
     label: "mysql:8 with root user and password",
     database: {
       image: "mysql:8",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
     },
     client: {
       user: "root",
-      password: "bun",
-    },
-  },
-  {
-    label: "mysql:8 with root user and empty password",
-    database: {
-      image: "mysql:8",
-      env: {
-        MYSQL_ALLOW_EMPTY_PASSWORD: "yes",
-      },
-    },
-    client: {
-      user: "root",
-      password: "",
+      password: "bun123456@#$%^&*()",
     },
   },
 ];

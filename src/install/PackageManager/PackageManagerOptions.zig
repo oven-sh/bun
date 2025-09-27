@@ -85,6 +85,7 @@ pub const PublishConfig = struct {
     tag: string = "",
     otp: string = "",
     auth_type: ?AuthType = null,
+    tolerate_republish: bool = false,
 };
 
 pub const Access = enum {
@@ -646,6 +647,7 @@ pub fn load(
         if (cli.publish_config.auth_type) |auth_type| {
             this.publish_config.auth_type = auth_type;
         }
+        this.publish_config.tolerate_republish = cli.tolerate_republish;
 
         if (cli.ca.len > 0) {
             this.ca = cli.ca;

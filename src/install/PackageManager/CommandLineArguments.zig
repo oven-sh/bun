@@ -160,6 +160,7 @@ const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
     clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
+    clap.parseParam("--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number") catch unreachable,
 });
 
 const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -219,6 +220,8 @@ patch: PatchOpts = .{ .nothing = .{} },
 registry: string = "",
 
 publish_config: Options.PublishConfig = .{},
+
+tolerate_republish: bool = false,
 
 ca: []const string = &.{},
 ca_file_name: string = "",
@@ -611,6 +614,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
                 \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
                 \\
+                \\  <d>Publish without failing when republishing over an existing version.<r>
+                \\  <b><green>bun publish<r> <cyan>--tolerate-republish<r>
+                \\
                 \\Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
                 \\
             ;
@@ -896,6 +902,8 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
                 Global.crash();
             };
         }
+
+        cli.tolerate_republish = args.flag("--tolerate-republish");
     }
 
     // link and unlink default to not saving, all others default to

@@ -33,6 +33,26 @@ pub const InternalLoopData = extern struct {
         return this.sweep_timer_count > 0;
     }
 
+    pub fn assertCorrectThread(this: *const InternalLoopData) void {
+        if (comptime bun.Environment.isDebug or bun.Environment.enable_asan) {
+            if (this.jsc_vm) |vm| {
+                const is_correct_js_vm = brk: {
+                    // VirtualMachine.get() is a threadlocal variable. So if it
+                    // doesn't exist or doesn't match, we're on a different
+                    // thread.
+                    if (jsc.VirtualMachine.getOrNull()) |vm_| {
+                        break :brk vm_.jsc_vm == vm;
+                    }
+                    break :brk false;
+                };
+
+                if (!is_correct_js_vm) {
+                    @panic("Threadsafety violation: EventLoop can only be ref'd or unref'd from the owning thread. Doing that on another thread is not thread safe, and will cause bugs.");
+                }
+            }
+        }
+    }
+
     pub fn setParentEventLoop(this: *InternalLoopData, parent: jsc.EventLoopHandle) void {
         switch (parent) {
             .js => |ptr| {

@@ -719,10 +719,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             {
-                var js_string = message_value.toString(globalThis);
-                if (globalThis.hasException()) {
-                    return .zero;
-                }
+                var js_string = try message_value.toJSString(globalThis);
                 const view = js_string.view(globalThis);
                 const slice = view.toSlice(bun.default_allocator);
                 defer slice.deinit();
@@ -961,18 +958,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // obviously invalid pointer marks it as used
             upgrader.upgrade_context = @as(*uws.SocketContext, @ptrFromInt(std.math.maxInt(usize)));
             const signal = upgrader.signal;
-
             upgrader.signal = null;
             upgrader.resp = null;
             request.request_context = AnyRequestContext.Null;
             upgrader.request_weakref.deref();
 
             data_value.ensureStillAlive();
-            const ws = ServerWebSocket.new(.{
-                .handler = &this.config.websocket.?.handler,
-                .this_value = data_value,
-                .signal = signal,
-            });
+            const ws = ServerWebSocket.init(&this.config.websocket.?.handler, data_value, signal);
             data_value.ensureStillAlive();
 
             var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
@@ -2151,7 +2143,36 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool, create_js_request: bool, method: ?bun.http.Method) ?PreparedRequest {
             jsc.markBinding(@src());
+
+            // We need to register the handler immediately since uSockets will not buffer.
+            //
+            // We first validate the self-reported request body length so that
+            // we avoid needing to worry as much about what memory to free.
+            const request_body_length: ?usize = request_body_length: {
+                if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
+                    const len: usize = brk: {
+                        if (req.header("content-length")) |content_length| {
+                            break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
+                        }
+
+                        break :brk 0;
+                    };
+
+                    // Abort the request very early.
+                    if (len > this.config.max_request_body_size) {
+                        resp.writeStatus("413 Request Entity Too Large");
+                        resp.endWithoutBody(true);
+                        return null;
+                    }
+
+                    break :request_body_length len;
+                }
+
+                break :request_body_length null;
+            };
+
             this.onPendingRequest();
+
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
             }
@@ -2201,25 +2222,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 };
             }
 
-            // we need to do this very early unfortunately
-            // it seems to work fine for synchronous requests but anything async will take too long to register the handler
-            // we do this only for HTTP methods that support request bodies, so not GET, HEAD, OPTIONS, or CONNECT.
-            if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
-                const req_len: usize = brk: {
-                    if (req.header("content-length")) |content_length| {
-                        break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
-                    }
-
-                    break :brk 0;
-                };
-
-                if (req_len > this.config.max_request_body_size) {
-                    resp.writeStatus("413 Request Entity Too Large");
-                    resp.endWithoutBody(true);
-                    this.finalize();
-                    return null;
-                }
-
+            if (request_body_length) |req_len| {
                 ctx.request_body_content_len = req_len;
                 ctx.flags.is_transfer_encoding = req.header("transfer-encoding") != null;
                 if (req_len > 0 or ctx.flags.is_transfer_encoding) {
@@ -2643,7 +2646,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // If onNodeHTTPRequest is configured, it might be needed for Node.js compatibility layer
             // for specific Node API routes, even if it's not the main "/*" handler.
             if (this.config.onNodeHTTPRequest != .zero) {
-                NodeHTTP_assignOnCloseFunction(ssl_enabled, app);
+                NodeHTTP_assignOnNodeJSCompat(ssl_enabled, app);
             }
 
             return route_list_value;
@@ -2815,7 +2818,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onClientErrorCallback(this: *ThisServer, socket: *uws.Socket, error_code: u8, raw_packet: []const u8) void {
             if (this.on_clienterror.get()) |callback| {
                 const is_ssl = protocol_enum == .https;
-                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocket, .{ is_ssl, socket, this.globalThis }) catch return;
+                const node_socket = bun.jsc.fromJSHostCall(this.globalThis, @src(), Bun__createNodeHTTPServerSocketForClientError, .{ is_ssl, socket, this.globalThis }) catch return;
                 if (node_socket.isUndefinedOrNull()) return;
 
                 const error_code_value = JSValue.jsNumber(error_code);
@@ -3313,9 +3316,8 @@ extern fn NodeHTTPServer__onRequest_https(
     node_response_ptr: *?*NodeHTTPResponse,
 ) jsc.JSValue;
 
-extern fn Bun__createNodeHTTPServerSocket(bool, *anyopaque, *jsc.JSGlobalObject) jsc.JSValue;
-extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
-extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
+extern fn Bun__createNodeHTTPServerSocketForClientError(bool, *anyopaque, *jsc.JSGlobalObject) jsc.JSValue;
+
 extern "c" fn Bun__ServerRouteList__callRoute(
     globalObject: *jsc.JSGlobalObject,
     index: u32,
@@ -3343,6 +3345,9 @@ fn throwSSLErrorIfNecessary(globalThis: *jsc.JSGlobalObject) bool {
 
     return false;
 }
+
+extern fn NodeHTTP_assignOnNodeJSCompat(bool, *anyopaque) void;
+extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 const string = []const u8;
 

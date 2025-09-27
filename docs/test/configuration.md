@@ -46,6 +46,25 @@ smol = true  # Reduce memory usage during test runs
 
 This is equivalent to using the `--smol` flag on the command line.
 
+### Test execution
+
+#### concurrentTestGlob
+
+Automatically run test files matching a glob pattern with concurrent test execution enabled. This is useful for gradually migrating test suites to concurrent execution or for running specific test types concurrently.
+
+```toml
+[test]
+concurrentTestGlob = "**/concurrent-*.test.ts"  # Run files matching this pattern concurrently
+```
+
+Test files matching this pattern will behave as if the `--concurrent` flag was passed, running all tests within those files concurrently. This allows you to:
+
+- Gradually migrate your test suite to concurrent execution
+- Run integration tests concurrently while keeping unit tests sequential
+- Separate fast concurrent tests from tests that require sequential execution
+
+The `--concurrent` CLI flag will override this setting when specified, forcing all tests to run concurrently regardless of the glob pattern.
+
 ### Coverage options
 
 In addition to the options documented in the [coverage documentation](./coverage.md), the following options are available:

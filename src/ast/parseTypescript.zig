@@ -105,7 +105,7 @@ pub fn ParseTypescript(
                                 .index = p.newExpr(E.PrivateIdentifier{
                                     .ref = try p.storeNameInRef(private_name),
                                 }, private_loc),
-                                .optional_chain = if (is_optional) .start else .non_optional,
+                                .optional_chain = if (is_optional) .start else null,
                             }, member_expr.loc);
                         } else {
                             const name_loc = p.lexer.loc();
@@ -115,7 +115,7 @@ pub fn ParseTypescript(
                                 .target = member_expr,
                                 .name = field_name,
                                 .name_loc = name_loc,
-                                .optional_chain = if (is_optional) .start else .non_optional,
+                                .optional_chain = if (is_optional) .start else null,
                             }, member_expr.loc);
                         }
                     },
@@ -123,11 +123,9 @@ pub fn ParseTypescript(
                         const args = try p.parseCallArgs();
                         member_expr = p.newExpr(E.Call{
                             .target = member_expr,
-                            .args = args.args,
-                            .close_paren_loc = args.close_paren_loc,
-                            .is_multi_line = args.is_multi_line,
-                            .optional_chain = .non_optional,
-                            .kind = .target_was_originally_property_access,
+                            .args = args.list,
+                            .close_paren_loc = args.loc,
+                            .optional_chain = null,
                         }, member_expr.loc);
                         // Grammar forbids anything after call expression in decorators
                         break;

@@ -1127,7 +1127,7 @@ pub const PackageInstaller = struct {
                         .root, .workspace => {
                             // these will never be blocked
                         },
-                        else => if (!is_trusted and this.metas[package_id].hasInstallScript()) {
+                        else => if (!is_trusted and this.metas[package_id].has_install_script) {
                             // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                             // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
                             var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);

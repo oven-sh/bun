@@ -668,21 +668,6 @@ pub fn saveLockfile(
     }
 }
 
-pub fn updateLockfileIfNeeded(
-    manager: *PackageManager,
-    load_result: Lockfile.LoadResult,
-) !void {
-    if (load_result == .ok and load_result.ok.serializer_result.packages_need_update) {
-        const slice = manager.lockfile.packages.slice();
-        for (slice.items(.meta)) |*meta| {
-            // these are possibly updated later, but need to make sure non are zero
-            meta.setHasInstallScript(false);
-        }
-    }
-
-    return;
-}
-
 pub fn writeYarnLock(this: *PackageManager) !void {
     var printer = Lockfile.Printer{
         .lockfile = this.lockfile,

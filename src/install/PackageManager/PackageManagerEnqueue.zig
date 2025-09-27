@@ -1679,7 +1679,7 @@ fn getOrPutResolvedPackage(
                     });
 
                     package.scripts.filled = true;
-                    package.meta.setHasInstallScript(false);
+                    package.meta.has_install_script = false;
 
                     builder.clamp();
                 }

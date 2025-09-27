@@ -29,8 +29,6 @@ pub fn installWithManager(
     else
         .{ .not_found = {} };
 
-    try manager.updateLockfileIfNeeded(load_result);
-
     var root = Lockfile.Package{};
     var needs_new_lockfile = load_result != .ok or
         (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
@@ -615,7 +613,7 @@ pub fn installWithManager(
         const packages = manager.lockfile.packages.slice();
         for (packages.items(.resolution), packages.items(.meta), packages.items(.scripts)) |resolution, meta, scripts| {
             if (resolution.tag == .workspace) {
-                if (meta.hasInstallScript()) {
+                if (meta.has_install_script) {
                     if (scripts.hasAny()) {
                         const first_index, _, const entries = scripts.getScriptEntries(
                             manager.lockfile,
@@ -782,7 +780,7 @@ pub fn installWithManager(
             (did_meta_hash_change or
                 had_any_diffs or
                 manager.update_requests.len > 0 or
-                (load_result == .ok and (load_result.ok.serializer_result.packages_need_update or load_result.ok.serializer_result.migrated_from_lockb_v2)) or
+                (load_result == .ok and load_result.ok.serializer_result.migrated_from_lockb_v2) or
                 manager.lockfile.isEmpty() or
                 manager.options.enable.force_save_lockfile));
 

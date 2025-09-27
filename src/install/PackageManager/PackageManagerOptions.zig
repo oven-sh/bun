@@ -80,6 +80,9 @@ cpu: Npm.Architecture = Npm.Architecture.current,
 /// Override OS for optional dependencies filtering
 os: Npm.OperatingSystem = Npm.OperatingSystem.current,
 
+/// Override libc for optional dependencies filtering
+libc: Npm.Libc = Npm.Libc.current,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -585,9 +588,10 @@ pub fn load(
             PackageInstall.supported_method = backend;
         }
 
-        // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+        // CPU, OS, and libc are now parsed as enums in CommandLineArguments, just copy them
         this.cpu = cli.cpu;
         this.os = cli.os;
+        this.libc = cli.libc;
 
         this.do.update_to_latest = cli.latest;
         this.do.recursive = cli.recursive;

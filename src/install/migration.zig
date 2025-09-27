@@ -445,8 +445,6 @@ pub fn migrateNPMLockfile(
             .meta = .{
                 .id = package_id,
 
-                .origin = if (package_id == 0) .local else .npm,
-
                 .arch = if (pkg.get("cpu")) |cpu_array| arch: {
                     var arch = Npm.Architecture.none.negatable();
                     if (cpu_array.data != .e_array) return error.InvalidNPMLockfile;
@@ -475,15 +473,26 @@ pub fn migrateNPMLockfile(
                     break :arch os.combine();
                 } else .all,
 
+                .libc = if (pkg.get("libc")) |libc_array| libc: {
+                    var libc = Npm.Libc.none.negatable();
+                    if (libc_array.data != .e_array) return error.InvalidNPMLockfile;
+                    if (libc_array.data.e_array.items.len == 0) {
+                        break :libc .all;
+                    }
+
+                    for (libc_array.data.e_array.items.slice()) |item| {
+                        if (item.data != .e_string) return error.InvalidNPMLockfile;
+                        libc.apply(item.data.e_string.data);
+                    }
+                    break :libc libc.combine();
+                } else .all,
+
                 .man_dir = String{},
 
                 .has_install_script = if (pkg.get("hasInstallScript")) |has_install_script_expr| brk: {
                     if (has_install_script_expr.data != .e_boolean) return error.InvalidNPMLockfile;
-                    break :brk if (has_install_script_expr.data.e_boolean.value)
-                        .true
-                    else
-                        .false;
-                } else .false,
+                    break :brk has_install_script_expr.data.e_boolean.value;
+                } else false,
 
                 .integrity = if (pkg.get("integrity")) |integrity|
                     Integrity.parse(
@@ -577,7 +586,6 @@ pub fn migrateNPMLockfile(
     }
 
     var resolutions = this.packages.items(.resolution);
-    var metas = this.packages.items(.meta);
     var dependencies_list = this.packages.items(.dependencies);
     var resolution_list = this.packages.items(.resolutions);
 
@@ -589,7 +597,6 @@ pub fn migrateNPMLockfile(
 
     // Root resolution isn't hit through dependency tracing.
     resolutions[0] = Resolution.init(.{ .root = {} });
-    metas[0].origin = .local;
     try this.getOrPutID(0, this.packages.items(.name_hash)[0]);
 
     // made it longer than max path just in case something stupid happens
@@ -903,11 +910,6 @@ pub fn migrateNPMLockfile(
                                 debug("-> {}", .{res.fmtForDebug(string_buf.bytes.items)});
 
                                 resolutions[id] = res;
-                                metas[id].origin = switch (res.tag) {
-                                    // This works?
-                                    .root => .local,
-                                    else => .npm,
-                                };
 
                                 try this.getOrPutID(id, this.packages.items(.name_hash)[id]);
                             }

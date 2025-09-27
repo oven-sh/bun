@@ -1,4 +1,4 @@
-pub fn Package(comptime SemverIntType: type) type {
+pub fn Package(comptime is_v3: bool) type {
     return extern struct {
         name: String = .{},
         name_hash: PackageNameHash = 0,
@@ -39,10 +39,10 @@ pub fn Package(comptime SemverIntType: type) type {
 
         const PackageType = @This();
 
-        const Resolution = ResolutionType(SemverIntType);
+        const Resolution = ResolutionType(if (is_v3) u64 else u32);
 
         pub const Scripts = @import("./Package/Scripts.zig").Scripts;
-        pub const Meta = @import("./Package/Meta.zig").Meta;
+        pub const Meta = if (is_v3) @import("./Package/Meta.zig").Meta else @import("./Package/Meta.zig").MetaV2;
         pub const WorkspaceMap = @import("./Package/WorkspaceMap.zig");
 
         pub const DependencyGroup = struct {
@@ -57,8 +57,8 @@ pub fn Package(comptime SemverIntType: type) type {
             pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
         };
 
-        pub inline fn isDisabled(this: *const @This(), cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
-            return this.meta.isDisabled(cpu, os);
+        pub inline fn isDisabled(this: *const @This(), cpu: Npm.Architecture, os: Npm.OperatingSystem, libc: Npm.Libc) bool {
+            return this.meta.isDisabled(cpu, os, libc);
         }
 
         pub const Alphabetizer = struct {
@@ -282,6 +282,7 @@ pub fn Package(comptime SemverIntType: type) type {
 
                 package.meta.arch = package_json.arch;
                 package.meta.os = package_json.os;
+                package.meta.libc = package_json.libc;
 
                 package.dependencies.off = @as(u32, @truncate(dependencies_list.items.len));
                 package.dependencies.len = total_dependencies_count - @as(u32, @truncate(dependencies.len));
@@ -492,8 +493,9 @@ pub fn Package(comptime SemverIntType: type) type {
 
                 package.meta.arch = package_version.cpu;
                 package.meta.os = package_version.os;
+                package.meta.libc = if (package_version.libc == .none) .all else package_version.libc;
                 package.meta.integrity = package_version.integrity;
-                package.meta.setHasInstallScript(package_version.has_install_script);
+                package.meta.has_install_script = package_version.has_install_script;
 
                 package.dependencies.off = @as(u32, @truncate(dependencies_list.items.len));
                 package.dependencies.len = total_dependencies_count;
@@ -1283,7 +1285,6 @@ pub fn Package(comptime SemverIntType: type) type {
             var string_builder = lockfile.stringBuilder();
             var total_dependencies_count: u32 = 0;
 
-            package.meta.origin = if (features.is_main) .local else .npm;
             package.name = String{};
             package.name_hash = 0;
 
@@ -2040,11 +2041,6 @@ pub fn Package(comptime SemverIntType: type) type {
                     const value = sliced.items(@field(List.Field, field.name));
                     if (comptime Environment.allow_assert) {
                         debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
-                        if (comptime strings.eqlComptime(field.name, "meta")) {
-                            for (value) |meta| {
-                                assert(meta.has_install_script != .old);
-                            }
-                        }
                     }
                     comptime assertNoUninitializedPadding(@TypeOf(value));
                     if (comptime strings.eqlComptime(field.name, "resolution")) {
@@ -2066,7 +2062,6 @@ pub fn Package(comptime SemverIntType: type) type {
 
             const PackagesLoadResult = struct {
                 list: List,
-                needs_update: bool = false,
             };
 
             pub fn load(
@@ -2110,16 +2105,15 @@ pub fn Package(comptime SemverIntType: type) type {
                 stream.pos = begin_at;
                 try list.ensureTotalCapacity(allocator, list_len);
 
-                var needs_update = false;
                 if (migrate_from_v2) {
-                    const OldPackageV2 = Package(u32);
+                    const OldPackageV2 = Package(false);
                     var list_for_migrating_from_v2 = OldPackageV2.List{};
                     defer list_for_migrating_from_v2.deinit(allocator);
 
                     try list_for_migrating_from_v2.ensureTotalCapacity(allocator, list_len);
                     list_for_migrating_from_v2.len = list_len;
 
-                    try loadFields(stream, OldPackageV2.List, &list_for_migrating_from_v2, &needs_update);
+                    try loadFields(stream, OldPackageV2.List, &list_for_migrating_from_v2);
 
                     for (0..list_for_migrating_from_v2.len) |_pkg_id| {
                         const pkg_id: PackageID = @intCast(_pkg_id);
@@ -2127,11 +2121,19 @@ pub fn Package(comptime SemverIntType: type) type {
                         const new: PackageType = .{
                             .name = old.name,
                             .name_hash = old.name_hash,
-                            .meta = old.meta,
                             .bin = old.bin,
                             .dependencies = old.dependencies,
                             .resolutions = old.resolutions,
                             .scripts = old.scripts,
+                            .meta = .{
+                                .id = old.meta.id,
+                                .arch = old.meta.arch,
+                                .os = old.meta.os,
+                                .man_dir = old.meta.man_dir,
+                                .integrity = old.meta.integrity,
+                                .libc = .all,
+                                .has_install_script = old.meta.has_install_script == .true,
+                            },
                             .resolution = switch (old.resolution.tag) {
                                 .uninitialized => .init(.{ .uninitialized = old.resolution.value.uninitialized }),
                                 .root => .init(.{ .root = old.resolution.value.root }),
@@ -2152,16 +2154,15 @@ pub fn Package(comptime SemverIntType: type) type {
                     }
                 } else {
                     list.len = list_len;
-                    try loadFields(stream, List, &list, &needs_update);
+                    try loadFields(stream, List, &list);
                 }
 
                 return .{
                     .list = list,
-                    .needs_update = needs_update,
                 };
             }
 
-            fn loadFields(stream: *Stream, comptime ListType: type, list: *ListType, needs_update: *bool) !void {
+            fn loadFields(stream: *Stream, comptime ListType: type, list: *ListType) !void {
                 var sliced = list.slice();
 
                 inline for (FieldsEnum.fields) |field| {
@@ -2173,17 +2174,6 @@ pub fn Package(comptime SemverIntType: type) type {
                     if (end_pos <= end_pos) {
                         @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
                         stream.pos = end_pos;
-                        if (comptime strings.eqlComptime(field.name, "meta")) {
-                            // need to check if any values were created from an older version of bun
-                            // (currently just `has_install_script`). If any are found, the values need
-                            // to be updated before saving the lockfile.
-                            for (value) |*meta| {
-                                if (meta.needsUpdate()) {
-                                    needs_update.* = true;
-                                    break;
-                                }
-                            }
-                        }
                     } else if (comptime strings.eqlComptime(field.name, "scripts")) {
                         @memset(bytes, 0);
                     } else {

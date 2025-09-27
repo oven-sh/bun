@@ -2334,7 +2334,7 @@ pub const Resolver = struct {
                 ) catch |err| {
                     return .{ .failure = err };
                 };
-                package.meta.setHasInstallScript(package.scripts.hasAny());
+                package.meta.has_install_script = package.scripts.hasAny();
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
@@ -2349,7 +2349,7 @@ pub const Resolver = struct {
                         .value = .{ .root = {} },
                     },
                 };
-                package.meta.setHasInstallScript(package.scripts.hasAny());
+                package.meta.has_install_script = package.scripts.hasAny();
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };

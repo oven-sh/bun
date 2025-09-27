@@ -1169,7 +1169,6 @@ pub const pathForCachedNPMPath = directories.pathForCachedNPMPath;
 pub const pathForResolution = directories.pathForResolution;
 pub const saveLockfile = directories.saveLockfile;
 pub const setupGlobalDir = directories.setupGlobalDir;
-pub const updateLockfileIfNeeded = directories.updateLockfileIfNeeded;
 pub const writeYarnLock = directories.writeYarnLock;
 
 pub const enqueue = @import("./PackageManager/PackageManagerEnqueue.zig");

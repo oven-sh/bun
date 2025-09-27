@@ -551,7 +551,6 @@ test("node:net has nice stack trace", async () => {
             at writeOrBuffer (internal:streams/writable:<num>:<num>)
             at <anonymous> (internal:streams/writable:<num>:<num>)
             at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
-            at asyncFunctionResume (<num>:<num>)
             at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
       "
     `);

@@ -1311,6 +1311,7 @@ pub const TestCommand = struct {
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
                 .bail = ctx.test_options.bail,
+                .max_concurrency = ctx.test_options.max_concurrency,
                 .filter_regex = ctx.test_options.test_filter_regex,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,

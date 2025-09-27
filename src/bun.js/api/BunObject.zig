@@ -1337,7 +1337,6 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         const input_blob = file.blob(globalThis);
         const blob = jsc.WebCore.Blob.new(input_blob.dupeWithContentType(true));
-        blob.allocator = bun.default_allocator;
         blob.name = input_blob.name.dupeRef();
         try array.putIndex(globalThis, i, blob.toJS(globalThis));
         i += 1;
@@ -2048,7 +2047,6 @@ pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue 
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -2059,7 +2057,6 @@ pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -2070,7 +2067,6 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 

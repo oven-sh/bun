@@ -2143,7 +2143,36 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool, create_js_request: bool, method: ?bun.http.Method) ?PreparedRequest {
             jsc.markBinding(@src());
+
+            // We need to register the handler immediately since uSockets will not buffer.
+            //
+            // We first validate the self-reported request body length so that
+            // we avoid needing to worry as much about what memory to free.
+            const request_body_length: ?usize = request_body_length: {
+                if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
+                    const len: usize = brk: {
+                        if (req.header("content-length")) |content_length| {
+                            break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
+                        }
+
+                        break :brk 0;
+                    };
+
+                    // Abort the request very early.
+                    if (len > this.config.max_request_body_size) {
+                        resp.writeStatus("413 Request Entity Too Large");
+                        resp.endWithoutBody(true);
+                        return null;
+                    }
+
+                    break :request_body_length len;
+                }
+
+                break :request_body_length null;
+            };
+
             this.onPendingRequest();
+
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
             }
@@ -2193,25 +2222,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 };
             }
 
-            // we need to do this very early unfortunately
-            // it seems to work fine for synchronous requests but anything async will take too long to register the handler
-            // we do this only for HTTP methods that support request bodies, so not GET, HEAD, OPTIONS, or CONNECT.
-            if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
-                const req_len: usize = brk: {
-                    if (req.header("content-length")) |content_length| {
-                        break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
-                    }
-
-                    break :brk 0;
-                };
-
-                if (req_len > this.config.max_request_body_size) {
-                    resp.writeStatus("413 Request Entity Too Large");
-                    resp.endWithoutBody(true);
-                    this.finalize();
-                    return null;
-                }
-
+            if (request_body_length) |req_len| {
                 ctx.request_body_content_len = req_len;
                 ctx.flags.is_transfer_encoding = req.header("transfer-encoding") != null;
                 if (req_len > 0 or ctx.flags.is_transfer_encoding) {

@@ -2946,10 +2946,9 @@ pub fn finalizeBundle(
     if (current_bundle.promise.strong.hasValue()) {
         defer current_bundle.promise.deinit();
         current_bundle.promise.setRouteBundleState(dev, .loaded);
-        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.true);
         dev.vm.eventLoop().enter();
-        defer dev.vm.eventLoop().exit();
-        dev.vm.drainMicrotasks();
+        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.true);
+        dev.vm.eventLoop().exit();
     }
 
     while (current_bundle.requests.popFirst()) |node| {
@@ -3358,10 +3357,9 @@ fn sendSerializedFailures(
                     .headers = fetch_headers,
                 },
             };
-            r.promise.reject(r.global, response.toJS(r.global));
             dev.vm.eventLoop().enter();
+            r.promise.reject(r.global, response.toJS(r.global));
             defer dev.vm.eventLoop().exit();
-            dev.vm.drainMicrotasks();
         },
     }
 }
@@ -4608,6 +4606,7 @@ fn newRouteParamsForBundlePromiseForJS(global: *bun.jsc.JSGlobalObject, callfram
     const route_bundle_index = RouteBundle.Index.init(@intCast(route_bundle_index_js.toInt32()));
 
     const url = try url_js.toBunString(global);
+    defer url.deref();
     const url_utf8 = url.toUTF8(bun.default_allocator);
     defer url_utf8.deinit();
 
@@ -4659,7 +4658,9 @@ fn extractPathnameFromUrl(url: []const u8) []const u8 {
     if (std.mem.indexOfScalar(u8, pathname, '/')) |path_start| {
         const path_with_query = pathname[path_start..];
         // Remove query string and hash
-        const end = bun.strings.lastIndexOf(path_with_query, "?") orelse path_with_query.len;
+        const query_index = std.mem.indexOfScalar(u8, path_with_query, '?') orelse path_with_query.len;
+        const hash_index = std.mem.indexOfScalar(u8, path_with_query, '#') orelse path_with_query.len;
+        const end = @min(query_index, hash_index);
         pathname = path_with_query[0..end];
     }
 

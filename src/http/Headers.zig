@@ -16,6 +16,9 @@ pub fn memoryCost(this: *const Headers) usize {
 }
 
 pub fn toFetchHeaders(this: *Headers, global: *bun.jsc.JSGlobalObject) !*FetchHeaders {
+    if (this.entries.len == 0) {
+        return FetchHeaders.createEmpty();
+    }
     return FetchHeaders.create(
         global,
         this.entries.items(.name).ptr,

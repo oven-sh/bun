@@ -2253,7 +2253,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return .{
                 .js_request = switch (create_js_request) {
                     .yes => request_object.toJS(this.globalThis),
-                    .bake => request_object.toJSForBake(this.globalThis) catch |err| this.globalThis.takeException(err),
+                    .bake => request_object.toJSForBake(this.globalThis) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        else => return null,
+                    },
                     .no => .zero,
                 },
                 .request_object = request_object,

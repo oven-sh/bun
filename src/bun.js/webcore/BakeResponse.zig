@@ -128,9 +128,10 @@ pub fn constructRender(
 fn assertStreamingDisabled(globalThis: *jsc.JSGlobalObject, async_local_storage: JSValue, display_function: []const u8) bun.JSError!void {
     if (async_local_storage.isEmptyOrUndefinedOrNull() or !async_local_storage.isObject()) return globalThis.throwInvalidArguments("store value must be an object", .{});
     const getStoreFn = (try async_local_storage.getPropertyValue(globalThis, "getStore")) orelse return globalThis.throwInvalidArguments("store value must have a \"getStore\" field", .{});
+    if (!getStoreFn.isCallable()) return globalThis.throwInvalidArguments("\"getStore\" must be a function", .{});
     const store_value = try getStoreFn.call(globalThis, async_local_storage, &.{});
     const streaming_val = (try store_value.getPropertyValue(globalThis, "streaming")) orelse return globalThis.throwInvalidArguments("store value must have a \"streaming\" field", .{});
-    if (!streaming_val.isBoolean()) return globalThis.throwInvalidArguments("\"streaming\" fied must be a boolean", .{});
+    if (!streaming_val.isBoolean()) return globalThis.throwInvalidArguments("\"streaming\" field must be a boolean", .{});
     if (streaming_val.asBoolean()) return globalThis.throwInvalidArguments("\"{s}\" is not available when `export const streaming = true`", .{display_function});
 }
 

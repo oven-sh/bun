@@ -2,12 +2,12 @@ import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
+import * as net from "node:net";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
 import { InspectorSession, JUnitReporter, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
-import * as net from "node:net";
 
 let inspectee: Subprocess;
 const anyPort = expect.stringMatching(/^\d+$/);

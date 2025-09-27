@@ -113,10 +113,16 @@ pub fn deinit(ptr_or_slice: anytype) void {
             return;
         },
         .@"struct" => {},
-        inline .optional, .error_union => {
+        .optional => {
             if (ptr_or_slice.*) |*payload| {
                 deinit(payload);
             }
+            return;
+        },
+        .error_union => {
+            if (ptr_or_slice.*) |*payload| {
+                deinit(payload);
+            } else |_| {}
             return;
         },
         .@"union" => |u| {

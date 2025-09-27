@@ -1,6 +1,6 @@
 import type { MySQLErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
+import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
 const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,
@@ -549,7 +549,9 @@ class MySQLAdapter
       connection.queries.delete(handler);
     }
   }
-
+  array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {
+    throw new Error("MySQL doesn't support arrays");
+  }
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
     let BEGIN = "START TRANSACTION";
     if (options) {

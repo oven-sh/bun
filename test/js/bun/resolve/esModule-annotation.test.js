@@ -10,59 +10,71 @@ import * as WithoutTypeModuleExportEsModuleNoAnnotation from "./without-type-mod
 
 describe('without type: "module"', () => {
   test("module.exports = {}", () => {
+    // CommonJS always exports entire module.exports as default
     expect(WithoutTypeModuleExportEsModuleAnnotationMissingDefault.default).toEqual({});
     expect(WithoutTypeModuleExportEsModuleAnnotationMissingDefault.__esModule).toBeUndefined();
   });
 
   test("exports.__esModule = true", () => {
+    // CommonJS exports entire module.exports as default, including __esModule property
     expect(WithoutTypeModuleExportEsModuleAnnotationNoDefault.default).toEqual({
       __esModule: true,
     });
 
-    // The module namespace object will not have the __esModule property.
-    expect(WithoutTypeModuleExportEsModuleAnnotationNoDefault.__esModule).toBeUndefined();
+    // The module namespace object should have __esModule as a named export
+    expect(WithoutTypeModuleExportEsModuleAnnotationNoDefault.__esModule).toBe(true);
   });
 
   test("exports.default = true; exports.__esModule = true;", () => {
-    expect(WithoutTypeModuleExportEsModuleAnnotation.default).toBeTrue();
-    expect(WithoutTypeModuleExportEsModuleAnnotation.__esModule).toBeUndefined();
+    // CommonJS exports entire module.exports as default
+    expect(WithoutTypeModuleExportEsModuleAnnotation.default).toEqual({
+      default: true,
+      __esModule: true,
+    });
+    expect(WithoutTypeModuleExportEsModuleAnnotation.__esModule).toBe(true);
   });
 
   test("exports.default = true;", () => {
+    // CommonJS exports entire module.exports as default
     expect(WithoutTypeModuleExportEsModuleNoAnnotation.default).toEqual({
       default: true,
     });
-    expect(WithoutTypeModuleExportEsModuleAnnotation.__esModule).toBeUndefined();
+    expect(WithoutTypeModuleExportEsModuleNoAnnotation.__esModule).toBeUndefined();
   });
 });
 
 describe('with type: "module"', () => {
   test("module.exports = {}", () => {
+    // CommonJS always exports entire module.exports as default, regardless of type:module
     expect(WithTypeModuleExportEsModuleAnnotationMissingDefault.default).toEqual({});
     expect(WithTypeModuleExportEsModuleAnnotationMissingDefault.__esModule).toBeUndefined();
   });
 
   test("exports.__esModule = true", () => {
+    // CommonJS exports entire module.exports as default, including __esModule property
     expect(WithTypeModuleExportEsModuleAnnotationNoDefault.default).toEqual({
       __esModule: true,
     });
 
-    // The module namespace object WILL have the __esModule property.
-    expect(WithTypeModuleExportEsModuleAnnotationNoDefault.__esModule).toBeTrue();
+    // The module namespace object should have __esModule as a named export
+    expect(WithTypeModuleExportEsModuleAnnotationNoDefault.__esModule).toBe(true);
   });
 
   test("exports.default = true; exports.__esModule = true;", () => {
+    // CommonJS exports entire module.exports as default
     expect(WithTypeModuleExportEsModuleAnnotation.default).toEqual({
       default: true,
       __esModule: true,
     });
-    expect(WithTypeModuleExportEsModuleAnnotation.__esModule).toBeTrue();
+    // __esModule should be available as a named export
+    expect(WithTypeModuleExportEsModuleAnnotation.__esModule).toBe(true);
   });
 
   test("exports.default = true;", () => {
+    // CommonJS exports entire module.exports as default
     expect(WithTypeModuleExportEsModuleNoAnnotation.default).toEqual({
       default: true,
     });
-    expect(WithTypeModuleExportEsModuleAnnotation.__esModule).toBeTrue();
+    expect(WithTypeModuleExportEsModuleNoAnnotation.__esModule).toBeUndefined();
   });
 });

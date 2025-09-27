@@ -310,7 +310,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 for (expr.data.e_object.properties.slice()) |property_| {
                     const property: G.Property = property_;
                     if (property.key == null or property.key.?.data != .e_string or property.value == null or
-                        property.key.?.data.e_string.eqlComptime("default") or property.key.?.data.e_string.eqlComptime("__esModule"))
+                        property.key.?.data.e_string.eqlComptime("default"))
                     {
                         continue;
                     }

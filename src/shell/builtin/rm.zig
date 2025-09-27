@@ -507,8 +507,6 @@ pub const ShellRmTask = struct {
         task: jsc.WorkPoolTask = .{ .callback = runFromThreadPool },
         deleted_entries: std.ArrayList(u8),
         concurrent_task: jsc.EventLoopTask,
-        ref: bun.Async.KeepAlive = .{},
-        event_loop: bun.jsc.EventLoopHandle,
 
         const EntryKindHint = enum { idk, dir, file };
 
@@ -521,7 +519,6 @@ pub const ShellRmTask = struct {
 
         pub fn runFromMainThread(this: *DirTask) void {
             debug("DirTask(0x{x}, path={s}) runFromMainThread", .{ @intFromPtr(this), this.path });
-            this.ref.unref(this.event_loop);
             this.task_manager.rm.writeVerbose(this).run();
         }
 
@@ -695,7 +692,6 @@ pub const ShellRmTask = struct {
                 .kind_hint = .idk,
                 .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
                 .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
-                .event_loop = rm.bltn().eventLoop(),
             },
             .event_loop = rm.bltn().eventLoop(),
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
@@ -741,7 +737,6 @@ pub const ShellRmTask = struct {
             .kind_hint = kind_hint,
             .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.event_loop),
-            .event_loop = this.event_loop,
         };
 
         const count = parent_task.subtask_count.fetchAdd(1, .monotonic);
@@ -749,7 +744,6 @@ pub const ShellRmTask = struct {
             assert(count > 0);
         }
 
-        subtask.ref.ref(subtask.event_loop);
         jsc.WorkPool.schedule(&subtask.task);
     }
 

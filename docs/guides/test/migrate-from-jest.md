@@ -60,7 +60,7 @@ describe("my test suite", () => {
 
 ---
 
-Bun implements the vast majority of Jest's matchers, but compatibility isn't 100% yet. Refer to the full compatibility table at [Docs > Test runner > Writing tests](https://bun.sh/docs/test/writing#matchers).
+Bun implements the vast majority of Jest's matchers, but compatibility isn't 100% yet. Refer to the full compatibility table at [Docs > Test runner > Writing tests](https://bun.com/docs/test/writing#matchers).
 
 Some notable missing features:
 
@@ -125,11 +125,11 @@ $ bun test --timeout 10000
 
 Many other flags become irrelevant or obsolete when using `bun test`.
 
-- `transform` — Bun supports TypeScript & JSX. Other file types can be configured with [Plugins](https://bun.sh/docs/runtime/plugins).
+- `transform` — Bun supports TypeScript & JSX. Other file types can be configured with [Plugins](https://bun.com/docs/runtime/plugins).
 - `extensionsToTreatAsEsm`
 - `haste` — Bun uses it's own internal source maps
 - `watchman`, `watchPlugins`, `watchPathIgnorePatterns` — use `--watch` to run tests in watch mode
-- `verbose` — set `logLevel: "debug"` in [`bunfig.toml`](https://bun.sh/docs/runtime/bunfig#loglevel)
+- `verbose` — set `logLevel: "debug"` in [`bunfig.toml`](https://bun.com/docs/runtime/bunfig#loglevel)
 
 ---
 
@@ -140,4 +140,4 @@ Settings that aren't mentioned here are not supported or have no equivalent. Ple
 See also:
 
 - [Mark a test as a todo](/guides/test/todo-tests)
-- [Docs > Test runner > Writing tests](https://bun.sh/docs/test/writing)
+- [Docs > Test runner > Writing tests](https://bun.com/docs/test/writing)

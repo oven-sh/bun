@@ -46,7 +46,7 @@ test
 The `snap.test.ts.snap` file is a JavaScript file that exports a serialized version of the value passed into `expect()`. The `{foo: "bar"}` object has been serialized to JSON.
 
 ```js
-// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+// Bun Snapshot v1, https://bun.com/docs/test/snapshots
 
 exports[`snapshot 1`] = `
 {
@@ -92,4 +92,4 @@ Ran 1 tests across 1 files. [102.00ms]
 
 ---
 
-See [Docs > Test Runner > Snapshots](https://bun.sh/docs/test/snapshots) for complete documentation on snapshots with the Bun test runner.
+See [Docs > Test Runner > Snapshots](https://bun.com/docs/test/snapshots) for complete documentation on snapshots with the Bun test runner.

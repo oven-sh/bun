@@ -699,7 +699,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
                 \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
                 \\
             ;
 

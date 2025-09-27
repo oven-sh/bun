@@ -1,4 +1,4 @@
-// https://bun.sh/docs/api/http#bun-serve
+// https://bun.com/docs/api/http#bun-serve
 const a: string = "hello";
 console.log(a);
 

@@ -64,4 +64,4 @@ $ echo $?
 See also:
 
 - [Skip a test](/guides/test/skip-tests)
-- [Docs > Test runner > Writing tests](https://bun.sh/docs/test/writing)
+- [Docs > Test runner > Writing tests](https://bun.com/docs/test/writing)

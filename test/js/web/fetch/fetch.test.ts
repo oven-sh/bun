@@ -33,6 +33,7 @@ function startServer({ fetch, ...options }: ServeOptions) {
     fetch,
     port: 0,
   });
+  return server;
 }
 
 afterEach(() => {
@@ -294,7 +295,42 @@ describe("AbortSignal", () => {
         method: "POST",
         body: new ReadableStream({
           pull(event_controller) {
+            console.count("pull");
             event_controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+            //this will abort immediately should abort before connected
+            controller.abort();
+          },
+          cancel(reason) {
+            console.log("cancel", reason);
+          },
+        }),
+        signal: controller.signal,
+      });
+      expect.unreachable();
+    } catch (ex: any) {
+      expect(ex?.message).toEqual("The operation was aborted.");
+      expect(ex?.name).toEqual("AbortError");
+      expect(ex?.constructor.name).toEqual("DOMException");
+    }
+  });
+
+  it("abort while uploading prevents pull() from being called", async () => {
+    const controller = new AbortController();
+    await fetch(`http://localhost:${server.port}`, {
+      method: "POST",
+      body: new Blob(["a"]),
+    });
+
+    try {
+      await fetch(`http://localhost:${server.port}`, {
+        method: "POST",
+        body: new ReadableStream({
+          async pull(event_controller) {
+            expect(controller.signal.aborted).toBeFalse();
+            const chunk = Buffer.alloc(256 * 1024, "abc");
+            for (let i = 0; i < 64; i++) {
+              event_controller.enqueue(chunk);
+            }
             //this will abort immediately should abort before connected
             controller.abort();
           },
@@ -505,7 +541,7 @@ describe("fetch", () => {
     } else {
       name = url as string;
     }
-    it(name, async () => {
+    it.concurrent(name, async () => {
       gc();
       const response = await fetch(url, { verbose: true });
       gc();
@@ -515,8 +551,9 @@ describe("fetch", () => {
     });
   }
 
-  it('redirect: "manual"', async () => {
-    startServer({
+  it.concurrent('redirect: "manual"', async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -534,8 +571,9 @@ describe("fetch", () => {
     expect(response.redirected).toBe(false); // not redirected
   });
 
-  it('redirect: "follow"', async () => {
-    startServer({
+  it.concurrent('redirect: "follow"', async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -553,8 +591,9 @@ describe("fetch", () => {
     expect(response.redirected).toBe(true);
   });
 
-  it('redirect: "error" #2819', async () => {
-    startServer({
+  it.concurrent('redirect: "error" #2819', async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -574,7 +613,7 @@ describe("fetch", () => {
     }
   });
 
-  it("should properly redirect to another port #7793", async () => {
+  it.concurrent("should properly redirect to another port #7793", async () => {
     var socket: net.Server | null = null;
     try {
       using server = Bun.serve({
@@ -610,8 +649,9 @@ describe("fetch", () => {
     }
   });
 
-  it("provide body", async () => {
-    startServer({
+  it.concurrent("provide body", async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(req.body);
       },
@@ -626,7 +666,7 @@ describe("fetch", () => {
   });
 
   ["GET", "HEAD", "OPTIONS"].forEach(method =>
-    it(`fail on ${method} with body`, async () => {
+    it.concurrent(`fail on ${method} with body`, async () => {
       const url = `http://${server.hostname}:${server.port}`;
       expect(async () => {
         await fetch(url, { body: "buntastic" });
@@ -634,8 +674,9 @@ describe("fetch", () => {
     }),
   );
 
-  it("content length is inferred", async () => {
-    startServer({
+  it.concurrent("content length is inferred", async () => {
+    using server = Bun.serve({
+      port: 0,
       fetch(req) {
         return new Response(req.headers.get("content-length"));
       },
@@ -653,7 +694,7 @@ describe("fetch", () => {
     expect(await response2.text()).toBe("0");
   });
 
-  it("should work with ipv6 localhost", async () => {
+  it.concurrent("should work with ipv6 localhost", async () => {
     using server = Bun.serve({
       port: 0,
       fetch(req) {
@@ -671,7 +712,7 @@ describe("fetch", () => {
   });
 });
 
-it("simultaneous HTTPS fetch", async () => {
+it.concurrent("simultaneous HTTPS fetch", async () => {
   const urls = ["https://example.com", "https://www.example.com"];
   for (let batch = 0; batch < 4; batch++) {
     const promises = new Array(20);
@@ -687,7 +728,7 @@ it("simultaneous HTTPS fetch", async () => {
   }
 });
 
-it("website with tlsextname", async () => {
+it.concurrent("website with tlsextname", async () => {
   // irony
   await fetch("https://bun.sh", { method: "HEAD" });
 });
@@ -700,23 +741,27 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         hello: "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
       },
     ]) {
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} json${withGC ? " (with gc) " : ""}`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(JSON.stringify(jsonObject));
-        if (withGC) gc();
-        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
-        if (withGC) gc();
-      });
+      it.concurrent(
+        `${jsonObject.hello === true ? "latin1" : "utf16"} json${withGC ? " (with gc) " : ""}`,
+        async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(JSON.stringify(jsonObject));
+          if (withGC) gc();
+          expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+          if (withGC) gc();
+        },
+      );
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-        if (withGC) gc();
-        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
-        if (withGC) gc();
-      });
+      it.concurrent(
+        `${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${withGC ? " (with gc) " : ""}`,
+        async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+          if (withGC) gc();
+          expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+          if (withGC) gc();
+        },
+      );
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${
         withGC ? " (with gc) " : ""
@@ -882,7 +927,7 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
   }
 }
 
-describe("Bun.file", () => {
+describe.concurrent("Bun.file", () => {
   let count = 0;
   testBlobInterface(data => {
     const blob = new Blob([data]);
@@ -1834,7 +1879,7 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
-it("should allow very long redirect URLS", async () => {
+it.concurrent("should allow very long redirect URLS", async () => {
   const Location = "/" + "B".repeat(7 * 1024);
   using server = Bun.serve({
     port: 0,
@@ -1862,7 +1907,7 @@ it("should allow very long redirect URLS", async () => {
   }
 });
 
-it("304 not modified with missing content-length does not cause a request timeout", async () => {
+it.concurrent("304 not modified with missing content-length does not cause a request timeout", async () => {
   const server = await Bun.listen({
     socket: {
       open(socket) {

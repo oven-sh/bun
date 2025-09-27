@@ -2313,7 +2313,6 @@ pub const addNTPathPrefix = paths_.addNTPathPrefix;
 pub const addNTPathPrefixIfNeeded = paths_.addNTPathPrefixIfNeeded;
 pub const addLongPathPrefix = paths_.addLongPathPrefix;
 pub const addLongPathPrefixIfNeeded = paths_.addLongPathPrefixIfNeeded;
-pub const assertIsValidWindowsPath = paths_.assertIsValidWindowsPath;
 pub const charIsAnySlash = paths_.charIsAnySlash;
 pub const cloneNormalizingSeparators = paths_.cloneNormalizingSeparators;
 pub const fromWPath = paths_.fromWPath;

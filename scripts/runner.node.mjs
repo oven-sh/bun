@@ -72,6 +72,7 @@ const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
+const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
@@ -79,7 +80,7 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
     return 90_000;
   }
-  return 10_000;
+  return 20_000;
 }
 
 process.on("SIGTRAP", () => {
@@ -592,7 +593,7 @@ async function runTests() {
             }
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
-              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
+              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
               env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
@@ -653,6 +654,16 @@ async function runTests() {
         throw new Error(`Unsupported package manager: ${packageManager}`);
       }
 
+      // build
+      const buildResult = await spawnBun(execPath, {
+        cwd: vendorPath,
+        args: ["run", "build"],
+        timeout: 60_000,
+      });
+      if (!buildResult.ok) {
+        throw new Error(`Failed to build vendor: ${buildResult.error}`);
+      }
+
       for (const testPath of testPaths) {
         const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
 
@@ -673,6 +684,9 @@ async function runTests() {
       }
     }
   }
+
+  // tests are all over, close the group from the final test. any further output should print ungrouped.
+  startGroup("End");
 
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
@@ -1123,10 +1137,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
 
-  if (basename(execPath).includes("asan") && bunEnv.ASAN_OPTIONS === undefined) {
-    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
-  }
-
   if (isWindows && bunEnv.Path) {
     delete bunEnv.Path;
   }
@@ -1142,6 +1152,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       delete bunEnv[tmpdir];
     }
     bunEnv["TEMP"] = tmpdirPath;
+  }
+  if (timeout === undefined) {
+    timeout = spawnBunTimeout;
   }
   try {
     const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];
@@ -1322,7 +1335,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   }
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
-    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore
     env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }

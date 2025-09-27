@@ -12,7 +12,7 @@ pub fn toContainAllKeys(
         return globalObject.throwInvalidArguments("toContainAllKeys() takes 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected = arguments[0];
     expected.ensureStillAlive();
@@ -69,7 +69,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

@@ -468,9 +468,7 @@ pub const ShellRmTask = struct {
 
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
-    task: jsc.WorkPoolTask = .{
-        .callback = workPoolCallback,
-    },
+    task: jsc.WorkPoolTask = .{ .callback = workPoolCallback },
     join_style: JoinStyle,
 
     /// On Windows we allow posix path separators
@@ -695,7 +693,7 @@ pub const ShellRmTask = struct {
                 .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
                 .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             },
-            .event_loop = rm.bltn().parentCmd().base.eventLoop(),
+            .event_loop = rm.bltn().eventLoop(),
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             .error_signal = error_signal,
             .root_is_absolute = is_absolute,
@@ -730,7 +728,7 @@ pub const ShellRmTask = struct {
             return;
         }
 
-        var subtask = bun.handleOom(bun.default_allocator.create(DirTask));
+        var subtask: *DirTask = bun.handleOom(bun.default_allocator.create(DirTask));
         subtask.* = DirTask{
             .task_manager = this,
             .path = path,

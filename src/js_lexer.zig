@@ -882,7 +882,7 @@ fn NewLexer_(
                     lexer.step();
 
                     if (lexer.code_point != 'u') {
-                        try lexer.syntaxError();
+                        try lexer.addSyntaxError(lexer.loc().toUsize(), "{any}", .{InvalidEscapeSequenceFormatter{ .code_point = lexer.code_point }});
                     }
                     lexer.step();
                     if (lexer.code_point == '{') {
@@ -3366,6 +3366,20 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }
+
+const InvalidEscapeSequenceFormatter = struct {
+    code_point: i32,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self.code_point) {
+            '"' => try writer.writeAll("Unexpected escaped double quote '\"'"),
+            '\'' => try writer.writeAll("Unexpected escaped single quote \"'\""),
+            '`' => try writer.writeAll("Unexpected escaped backtick '`'"),
+            '\\' => try writer.writeAll("Unexpected escaped backslash '\\'"),
+            else => try writer.writeAll("Unexpected escape sequence"),
+        }
+    }
+};
 
 const string = []const u8;
 

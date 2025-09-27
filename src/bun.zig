@@ -3257,8 +3257,8 @@ pub fn getRoughTickCountMs() u64 {
 }
 
 pub const timespec = extern struct {
-    sec: isize,
-    nsec: isize,
+    sec: i64,
+    nsec: i64,
 
     pub const epoch: timespec = .{ .sec = 0, .nsec = 0 };
 
@@ -3371,6 +3371,22 @@ pub const timespec = extern struct {
 
     pub fn msFromNow(interval: i64) timespec {
         return now().addMs(interval);
+    }
+
+    pub fn min(a: timespec, b: timespec) timespec {
+        return if (a.order(&b) == .lt) a else b;
+    }
+    pub fn max(a: timespec, b: timespec) timespec {
+        return if (a.order(&b) == .gt) a else b;
+    }
+    pub fn orderIgnoreEpoch(a: timespec, b: timespec) std.math.Order {
+        if (a.eql(&b)) return .eq;
+        if (a.eql(&.epoch)) return .gt;
+        if (b.eql(&.epoch)) return .lt;
+        return a.order(&b);
+    }
+    pub fn minIgnoreEpoch(a: timespec, b: timespec) timespec {
+        return if (a.orderIgnoreEpoch(b) == .lt) a else b;
     }
 };
 
@@ -3752,7 +3768,7 @@ pub const highway = @import("./highway.zig");
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
 /// Automatically generated C++ bindings for functions marked with `[[ZIG_EXPORT(...)]]`
-pub const cpp = @import("cpp").bindings;
+pub const cpp = @import("cpp");
 
 pub const asan = @import("./asan.zig");
 
@@ -3765,6 +3781,14 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
 }
 
 pub const safety = @import("./safety.zig");
+
+// Export function to check if --use-system-ca flag is set
+pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{ JSError, OutOfMemory }!jsc.JSValue {
+    _ = globalObject;
+    _ = callFrame;
+    const Arguments = @import("./cli/Arguments.zig");
+    return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
+}
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

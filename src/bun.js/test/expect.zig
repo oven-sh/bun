@@ -3,10 +3,6 @@ pub const Counter = struct {
     actual: u32 = 0,
 };
 
-pub var active_test_expectation_counter: Counter = .{};
-pub var is_expecting_assertions: bool = false;
-pub var is_expecting_assertions_count: bool = false;
-
 /// Helper to retrieve matcher flags from a jsvalue of a class like ExpectAny, ExpectStringMatching, etc.
 pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
     if (T.flagsGetCached(value)) |flagsValue| {
@@ -26,7 +22,7 @@ pub const Expect = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     flags: Flags = .{},
-    parent: ParentScope = .{ .global = {} },
+    parent: ?*bun.jsc.Jest.bun_test.BunTest.RefData,
     custom_label: bun.String = bun.String.empty,
 
     pub const TestScope = struct {
@@ -34,17 +30,23 @@ pub const Expect = struct {
         describe: *DescribeScope,
     };
 
-    pub const ParentScope = union(enum) {
-        global: void,
-        TestScope: TestScope,
-    };
-
-    pub fn testScope(this: *const Expect) ?*const TestScope {
-        if (this.parent == .TestScope) {
-            return &this.parent.TestScope;
+    pub fn incrementExpectCallCounter(this: *Expect) void {
+        const parent = this.parent orelse return; // not in bun:test
+        const buntest = parent.bunTest() orelse return; // the test file this expect() call was for is no longer
+        if (parent.phase.sequence(buntest)) |sequence| {
+            // found active sequence
+            sequence.expect_call_count +|= 1;
+        } else {
+            // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
+            if (buntest.reporter) |reporter| {
+                reporter.summary().expectations +|= 1;
+            }
         }
+    }
 
-        return null;
+    pub fn bunTest(this: *Expect) ?*bun.jsc.Jest.bun_test.BunTest {
+        const parent = this.parent orelse return null;
+        return parent.bunTest();
     }
 
     pub const Flags = packed struct(u8) {
@@ -272,17 +274,19 @@ pub const Expect = struct {
     }
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
-        const parent = this.testScope() orelse return error.NoTest;
+        const parent = this.parent orelse return error.NoTest;
+        const buntest = parent.bunTest() orelse return error.TestNotActive;
+        const execution_entry = parent.phase.entry(buntest) orelse return error.SnapshotInConcurrentGroup;
 
-        const test_name = parent.describe.tests.items[parent.test_id].label;
+        const test_name = execution_entry.base.name orelse "(unnamed)";
 
         var length: usize = 0;
-        var curr_scope: ?*DescribeScope = parent.describe;
+        var curr_scope = execution_entry.base.parent;
         while (curr_scope) |scope| {
-            if (scope.label.len > 0) {
-                length += scope.label.len + 1;
+            if (scope.base.name != null and scope.base.name.?.len > 0) {
+                length += scope.base.name.?.len + 1;
             }
-            curr_scope = scope.parent;
+            curr_scope = scope.base.parent;
         }
         length += test_name.len;
         if (hint.len > 0) {
@@ -303,14 +307,14 @@ pub const Expect = struct {
             bun.copy(u8, buf[index..], test_name);
         }
         // copy describe scopes in reverse order
-        curr_scope = parent.describe;
+        curr_scope = execution_entry.base.parent;
         while (curr_scope) |scope| {
-            if (scope.label.len > 0) {
-                index -= scope.label.len + 1;
-                bun.copy(u8, buf[index..], scope.label);
-                buf[index + scope.label.len] = ' ';
+            if (scope.base.name != null and scope.base.name.?.len > 0) {
+                index -= scope.base.name.?.len + 1;
+                bun.copy(u8, buf[index..], scope.base.name.?);
+                buf[index + scope.base.name.?.len] = ' ';
             }
-            curr_scope = scope.parent;
+            curr_scope = scope.base.parent;
         }
 
         return buf;
@@ -320,6 +324,7 @@ pub const Expect = struct {
         this: *Expect,
     ) callconv(.C) void {
         this.custom_label.deref();
+        if (this.parent) |parent| parent.deref();
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -341,18 +346,16 @@ pub const Expect = struct {
             return globalThis.throwOutOfMemory();
         };
 
+        const active_execution_entry_ref = if (bun.jsc.Jest.bun_test.cloneActiveStrong()) |buntest_strong_| blk: {
+            var buntest_strong = buntest_strong_;
+            defer buntest_strong.deinit();
+            break :blk bun.jsc.Jest.bun_test.BunTest.ref(buntest_strong, buntest_strong.get().getCurrentStateData());
+        } else null;
+        errdefer if (active_execution_entry_ref) |entry_ref| entry_ref.deinit();
+
         expect.* = .{
             .custom_label = custom_label,
-            .parent = if (Jest.runner) |runner|
-                if (runner.pending_test) |pending|
-                    Expect.ParentScope{ .TestScope = Expect.TestScope{
-                        .describe = pending.describe,
-                        .test_id = pending.test_id,
-                    } }
-                else
-                    Expect.ParentScope{ .global = {} }
-            else
-                Expect.ParentScope{ .global = {} },
+            .parent = active_execution_entry_ref,
         };
         const expect_js_value = expect.toJS(globalThis);
         expect_js_value.ensureStillAlive();
@@ -401,7 +404,7 @@ pub const Expect = struct {
             _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
 
-        incrementExpectCallCounter();
+        this.incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = true;
@@ -446,7 +449,7 @@ pub const Expect = struct {
             _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
 
-        incrementExpectCallCounter();
+        this.incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = false;
@@ -687,12 +690,18 @@ pub const Expect = struct {
         comptime fn_name: []const u8,
     ) bun.JSError!JSValue {
         // jest counts inline snapshots towards the snapshot counter for some reason
-        _ = Jest.runner.?.snapshots.addCount(this, "") catch |e| switch (e) {
+        const runner = Jest.runner orelse {
+            const signature = comptime getSignature(fn_name, "", false);
+            return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
+        };
+        _ = runner.snapshots.addCount(this, "") catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
             error.NoTest => {},
+            error.SnapshotInConcurrentGroup => {},
+            error.TestNotActive => {},
         };
 
-        const update = Jest.runner.?.snapshots.update_snapshots;
+        const update = runner.snapshots.update_snapshots;
         var needs_write = false;
 
         var pretty_value: MutableString = try MutableString.init(default_allocator, 0);
@@ -702,20 +711,20 @@ pub const Expect = struct {
         var start_indent: ?[]const u8 = null;
         var end_indent: ?[]const u8 = null;
         if (result) |saved_value| {
-            const buf = try Jest.runner.?.snapshots.allocator.alloc(u8, saved_value.len);
-            defer Jest.runner.?.snapshots.allocator.free(buf);
+            const buf = try runner.snapshots.allocator.alloc(u8, saved_value.len);
+            defer runner.snapshots.allocator.free(buf);
             const trim_res = trimLeadingWhitespaceForInlineSnapshot(saved_value, buf);
 
             if (strings.eqlLong(pretty_value.slice(), trim_res.trimmed, true)) {
-                Jest.runner.?.snapshots.passed += 1;
+                runner.snapshots.passed += 1;
                 return .js_undefined;
             } else if (update) {
-                Jest.runner.?.snapshots.passed += 1;
+                runner.snapshots.passed += 1;
                 needs_write = true;
                 start_indent = trim_res.start_indent;
                 end_indent = trim_res.end_indent;
             } else {
-                Jest.runner.?.snapshots.failed += 1;
+                runner.snapshots.failed += 1;
                 const signature = comptime getSignature(fn_name, "<green>expected<r>", false);
                 const fmt = signature ++ "\n\n{any}\n";
                 const diff_format = DiffFormatter{
@@ -731,19 +740,27 @@ pub const Expect = struct {
         }
 
         if (needs_write) {
-            if (this.testScope() == null) {
-                const signature = comptime getSignature(fn_name, "", true);
-                return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
+            if (bun.FeatureFlags.breaking_changes_1_3) {
+                if (bun.detectCI()) |_| {
+                    if (!update) {
+                        const signature = comptime getSignature(fn_name, "", false);
+                        return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot updates are not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{});
+                    }
+                }
             }
+            const buntest = this.bunTest() orelse {
+                const signature = comptime getSignature(fn_name, "", false);
+                return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
+            };
 
             // 1. find the src loc of the snapshot
             const srcloc = callFrame.getCallerSrcLoc(globalThis);
             defer srcloc.str.deref();
-            const describe = this.testScope().?.describe;
-            const fget = Jest.runner.?.files.get(describe.file_id);
+            const file_id = buntest.file_id;
+            const fget = runner.files.get(file_id);
 
             if (!srcloc.str.eqlUTF8(fget.source.path.text)) {
-                const signature = comptime getSignature(fn_name, "", true);
+                const signature = comptime getSignature(fn_name, "", false);
                 return this.throw(globalThis, signature,
                     \\
                     \\
@@ -754,20 +771,20 @@ pub const Expect = struct {
                 , .{
                     std.zig.fmtEscapes(fget.source.path.text),
                     fn_name,
-                    std.zig.fmtEscapes(srcloc.str.toUTF8(Jest.runner.?.snapshots.allocator).slice()),
+                    std.zig.fmtEscapes(srcloc.str.toUTF8(runner.snapshots.allocator).slice()),
                 });
             }
 
             // 2. save to write later
-            try Jest.runner.?.snapshots.addInlineSnapshotToWrite(describe.file_id, .{
+            try runner.snapshots.addInlineSnapshotToWrite(file_id, .{
                 .line = srcloc.line,
                 .col = srcloc.column,
                 .value = try pretty_value.toOwnedSlice(),
                 .has_matchers = property_matchers != null,
                 .is_added = result == null,
                 .kind = fn_name,
-                .start_indent = if (start_indent) |ind| try Jest.runner.?.snapshots.allocator.dupe(u8, ind) else null,
-                .end_indent = if (end_indent) |ind| try Jest.runner.?.snapshots.allocator.dupe(u8, ind) else null,
+                .start_indent = if (start_indent) |ind| try runner.snapshots.allocator.dupe(u8, ind) else null,
+                .end_indent = if (end_indent) |ind| try runner.snapshots.allocator.dupe(u8, ind) else null,
             });
         }
 
@@ -808,12 +825,16 @@ pub const Expect = struct {
         const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.slice(), hint) catch |err| {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
-            const test_file_path = Jest.runner.?.files.get(this.testScope().?.describe.file_id).source.path.text;
+            const buntest = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
+            const test_file_path = Jest.runner.?.files.get(buntest.file_id).source.path.text;
             return switch (err) {
                 error.FailedToOpenSnapshotFile => globalThis.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
+                error.SnapshotCreationNotAllowedInCI => globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{}),
+                error.SnapshotInConcurrentGroup => globalThis.throw("Snapshot matchers are not supported in concurrent tests", .{}),
+                error.TestNotActive => globalThis.throw("Snapshot matchers are not supported after the test has finished executing", .{}),
                 else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
             };
         };
@@ -1116,7 +1137,7 @@ pub const Expect = struct {
         value = try processPromise(expect.custom_label, expect.flags, globalThis, value, matcher_name, matcher_params, false);
         value.ensureStillAlive();
 
-        incrementExpectCallCounter();
+        expect.incrementExpectCallCounter();
 
         // prepare the args array
         const args = callFrame.arguments();
@@ -1136,7 +1157,14 @@ pub const Expect = struct {
         _ = callFrame;
         defer globalThis.bunVM().autoGarbageCollect();
 
-        is_expecting_assertions = true;
+        var buntest_strong = bun.jsc.Jest.bun_test.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        defer buntest_strong.deinit();
+        const buntest = buntest_strong.get();
+        const state_data = buntest.getCurrentStateData();
+        const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", .{});
+        if (execution.expect_assertions != .exact) {
+            execution.expect_assertions = .at_least_one;
+        }
 
         return .js_undefined;
     }
@@ -1166,8 +1194,12 @@ pub const Expect = struct {
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
-        is_expecting_assertions_count = true;
-        active_test_expectation_counter.expected = unsigned_expected_assertions;
+        var buntest_strong = bun.jsc.Jest.bun_test.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        defer buntest_strong.deinit();
+        const buntest = buntest_strong.get();
+        const state_data = buntest.getCurrentStateData();
+        const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", .{});
+        execution.expect_assertions = .{ .exact = unsigned_expected_assertions };
 
         return .js_undefined;
     }
@@ -2080,10 +2112,6 @@ comptime {
     @export(&ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
     @export(&Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
     @export(&ExpectCustomAsymmetricMatcher.execute, .{ .name = "ExpectCustomAsymmetricMatcher__execute" });
-}
-
-pub fn incrementExpectCallCounter() void {
-    active_test_expectation_counter.actual += 1;
 }
 
 fn testTrimLeadingWhitespaceForSnapshot(src: []const u8, expected: []const u8) !void {

@@ -2949,7 +2949,7 @@ pub fn finalizeBundle(
         defer current_bundle.promise.deinitIdempotently();
         current_bundle.promise.setRouteBundleState(dev, .loaded);
         dev.vm.eventLoop().enter();
-        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.jsBoolean(true));
+        current_bundle.promise.strong.resolve(dev.vm.global, .true);
         dev.vm.eventLoop().exit();
     }
 
@@ -4470,7 +4470,7 @@ const PromiseEnsureRouteBundledCtx = struct {
 
     fn onLoaded(this: *PromiseEnsureRouteBundledCtx) bun.JSError!void {
         _ = this.ensurePromise();
-        this.p.?.resolve(this.global, JSValue.jsBoolean(true));
+        this.p.?.resolve(this.global, .true);
         this.dev.vm.drainMicrotasks();
     }
 

@@ -9,6 +9,7 @@ const { deprecate } = require("internal/util/deprecate");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
 const parseEnv = $newZigFunction("node_util_binding.zig", "parseEnv", 1);
+const getSystemErrorMapZig = $newZigFunction("node_util_binding.zig", "getSystemErrorMap", 0);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
@@ -227,6 +228,16 @@ function getSystemErrorName(err: any) {
   return internalErrorName(err);
 }
 
+// Cached system error map - lazily initialized
+let systemErrorMap: Map<number, [string, string]> | null = null;
+
+function getSystemErrorMap() {
+  if (systemErrorMap === null) {
+    systemErrorMap = getSystemErrorMapZig();
+  }
+  return systemErrorMap;
+}
+
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
   unregisterToken: (...args: any[]) => void;
@@ -296,7 +307,7 @@ cjs_exports = {
   formatWithOptions,
   // getCallSite,
   // getCallSites,
-  // getSystemErrorMap,
+  getSystemErrorMap,
   getSystemErrorName,
   // getSystemErrorMessage,
   inherits,

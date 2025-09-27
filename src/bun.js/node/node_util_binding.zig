@@ -106,6 +106,130 @@ pub fn enobufsErrorCode(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!j
     return jsc.JSValue.jsNumberFromInt32(-bun.sys.UV_E.NOBUFS);
 }
 
+// Structure to define all system errors for getSystemErrorMap
+const SystemError = struct {
+    code: i32,
+    name: [:0]const u8,
+    message: [:0]const u8,
+};
+
+// Define all system errors with their codes, names, and messages
+// These match Node.js's error definitions
+const system_errors = [_]SystemError{
+    // Special errors
+    .{ .code = -4095, .name = "EOF", .message = "end of file" },
+    .{ .code = -4094, .name = "UNKNOWN", .message = "unknown error" },
+
+    // EAI errors (getaddrinfo errors)
+    .{ .code = -3000, .name = "EAI_ADDRFAMILY", .message = "address family not supported" },
+    .{ .code = -3001, .name = "EAI_AGAIN", .message = "temporary failure" },
+    .{ .code = -3002, .name = "EAI_BADFLAGS", .message = "bad ai_flags value" },
+    .{ .code = -3003, .name = "EAI_CANCELED", .message = "request canceled" },
+    .{ .code = -3004, .name = "EAI_FAIL", .message = "permanent failure" },
+    .{ .code = -3005, .name = "EAI_FAMILY", .message = "ai_family not supported" },
+    .{ .code = -3006, .name = "EAI_MEMORY", .message = "out of memory" },
+    .{ .code = -3007, .name = "EAI_NODATA", .message = "no address" },
+    .{ .code = -3008, .name = "EAI_NONAME", .message = "unknown node or service" },
+    .{ .code = -3009, .name = "EAI_OVERFLOW", .message = "argument buffer overflow" },
+    .{ .code = -3010, .name = "EAI_SERVICE", .message = "service not available for socket type" },
+    .{ .code = -3011, .name = "EAI_SOCKTYPE", .message = "socket type not supported" },
+    .{ .code = -3013, .name = "EAI_BADHINTS", .message = "invalid hints" },
+    .{ .code = -3014, .name = "EAI_PROTOCOL", .message = "resolved protocol is unknown" },
+
+    // Standard errno errors
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.@"2BIG")), .name = "E2BIG", .message = "argument list too long" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.ACCES)), .name = "EACCES", .message = "permission denied" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.ADDRINUSE)), .name = "EADDRINUSE", .message = "address already in use" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.ADDRNOTAVAIL)), .name = "EADDRNOTAVAIL", .message = "address not available" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.AFNOSUPPORT)), .name = "EAFNOSUPPORT", .message = "address family not supported" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.AGAIN)), .name = "EAGAIN", .message = "resource temporarily unavailable" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.ALREADY)), .name = "EALREADY", .message = "connection already in progress" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.BADF)), .name = "EBADF", .message = "bad file descriptor" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.BUSY)), .name = "EBUSY", .message = "resource busy or locked" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.CANCELED)), .name = "ECANCELED", .message = "operation canceled" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.CHARSET)), .name = "ECHARSET", .message = "invalid Unicode character" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.CONNABORTED)), .name = "ECONNABORTED", .message = "software caused connection abort" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.CONNREFUSED)), .name = "ECONNREFUSED", .message = "connection refused" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.CONNRESET)), .name = "ECONNRESET", .message = "connection reset by peer" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.DESTADDRREQ)), .name = "EDESTADDRREQ", .message = "destination address required" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.EXIST)), .name = "EEXIST", .message = "file already exists" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.FAULT)), .name = "EFAULT", .message = "bad address in system call argument" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.FBIG)), .name = "EFBIG", .message = "file too large" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.HOSTUNREACH)), .name = "EHOSTUNREACH", .message = "host is unreachable" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.INTR)), .name = "EINTR", .message = "interrupted system call" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.INVAL)), .name = "EINVAL", .message = "invalid argument" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.IO)), .name = "EIO", .message = "i/o error" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.ISCONN)), .name = "EISCONN", .message = "socket is already connected" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.ISDIR)), .name = "EISDIR", .message = "illegal operation on a directory" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.LOOP)), .name = "ELOOP", .message = "too many symbolic links encountered" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.MFILE)), .name = "EMFILE", .message = "too many open files" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.MSGSIZE)), .name = "EMSGSIZE", .message = "message too long" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NAMETOOLONG)), .name = "ENAMETOOLONG", .message = "name too long" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NETDOWN)), .name = "ENETDOWN", .message = "network is down" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NETUNREACH)), .name = "ENETUNREACH", .message = "network is unreachable" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NFILE)), .name = "ENFILE", .message = "file table overflow" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOBUFS)), .name = "ENOBUFS", .message = "no buffer space available" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NODEV)), .name = "ENODEV", .message = "no such device" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOENT)), .name = "ENOENT", .message = "no such file or directory" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOMEM)), .name = "ENOMEM", .message = "not enough memory" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NONET)), .name = "ENONET", .message = "machine is not on the network" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOPROTOOPT)), .name = "ENOPROTOOPT", .message = "protocol not available" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOSPC)), .name = "ENOSPC", .message = "no space left on device" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOSYS)), .name = "ENOSYS", .message = "function not implemented" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOTCONN)), .name = "ENOTCONN", .message = "socket is not connected" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOTDIR)), .name = "ENOTDIR", .message = "not a directory" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOTEMPTY)), .name = "ENOTEMPTY", .message = "directory not empty" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOTSOCK)), .name = "ENOTSOCK", .message = "socket operation on non-socket" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOTSUP)), .name = "ENOTSUP", .message = "operation not supported on socket" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.PERM)), .name = "EPERM", .message = "operation not permitted" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.PIPE)), .name = "EPIPE", .message = "broken pipe" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.PROTO)), .name = "EPROTO", .message = "protocol error" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.PROTONOSUPPORT)), .name = "EPROTONOSUPPORT", .message = "protocol not supported" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.PROTOTYPE)), .name = "EPROTOTYPE", .message = "protocol wrong type for socket" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.RANGE)), .name = "ERANGE", .message = "result too large" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.ROFS)), .name = "EROFS", .message = "read-only file system" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.SHUTDOWN)), .name = "ESHUTDOWN", .message = "cannot send after transport endpoint shutdown" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.SPIPE)), .name = "ESPIPE", .message = "invalid seek" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.SRCH)), .name = "ESRCH", .message = "no such process" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.TIMEDOUT)), .name = "ETIMEDOUT", .message = "connection timed out" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.TXTBSY)), .name = "ETXTBSY", .message = "text file is busy" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.XDEV)), .name = "EXDEV", .message = "cross-device link not permitted" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NXIO)), .name = "ENXIO", .message = "no such device or address" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.MLINK)), .name = "EMLINK", .message = "too many links" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.HOSTDOWN)), .name = "EHOSTDOWN", .message = "host is down" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.REMOTEIO)), .name = "EREMOTEIO", .message = "remote I/O error" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOTTY)), .name = "ENOTTY", .message = "inappropriate ioctl for device" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.FTYPE)), .name = "EFTYPE", .message = "inappropriate file type or format" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.ILSEQ)), .name = "EILSEQ", .message = "illegal byte sequence" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.OVERFLOW)), .name = "EOVERFLOW", .message = "value too large for defined data type" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.SOCKTNOSUPPORT)), .name = "ESOCKTNOSUPPORT", .message = "socket type not supported" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NODATA)), .name = "ENODATA", .message = "no data available" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.UNATCH)), .name = "EUNATCH", .message = "protocol driver not attached" },
+    .{ .code = -@as(i32, @intCast(bun.sys.UV_E.NOEXEC)), .name = "ENOEXEC", .message = "exec format error" },
+};
+
+pub fn getSystemErrorMap(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    // Create a new Map()
+    const map_value = jsc.JSMap.create(globalThis);
+    const map = jsc.JSMap.fromJS(map_value).?;
+
+    // For each error, add an entry to the map
+    for (system_errors) |err| {
+        // Create the [name, message] array for the value
+        var value_array = try jsc.JSValue.createEmptyArray(globalThis, 2);
+        const name_js = bun.String.static(err.name).toJS(globalThis);
+        const message_js = bun.String.static(err.message).toJS(globalThis);
+        try value_array.putIndex(globalThis, 0, name_js);
+        try value_array.putIndex(globalThis, 1, message_js);
+
+        // Add to the map: map.set(code, [name, message])
+        const key = jsc.JSValue.jsNumberFromInt32(err.code);
+        map.set(globalThis, key, value_array);
+    }
+
+    return map_value;
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///

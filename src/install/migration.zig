@@ -103,6 +103,13 @@ pub fn detectAndLoadOtherLockfile(
                     Output.err("PnpmLockfileMiration", "Workspace link dependencies to non-existent folders aren't supported yet. Please follow along here for more information <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
                     Global.exit(1);
                 },
+                error.WorkspaceNameMissing => {
+                    if (log.hasErrors()) {
+                        log.print(Output.errorWriter()) catch {};
+                    }
+                    Output.errGeneric("pnpm-lock.yaml migration failed due to missing workspace name", .{});
+                    Global.exit(1);
+                },
                 error.YamlParseError => {
                     if (log.hasErrors()) {
                         log.print(Output.errorWriter()) catch {};

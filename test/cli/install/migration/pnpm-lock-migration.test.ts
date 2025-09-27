@@ -208,7 +208,7 @@ packages:
     hasBin: true
 
   loose-envify@1.4.0:
-    resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/tNVBQAZ8HW+WqwP25nGsjKeMZk13HGBF7YbJSi1KyeKwGAteWUa/ZKPUKAZNiIrUqZg==}
+    resolution: {}
     hasBin: true
 
   js-tokens@4.0.0:

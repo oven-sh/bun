@@ -52,6 +52,7 @@ const MigratePnpmLockfileError = OOM || error{
     InvalidPnpmLockfile,
     YamlParseError,
     NonExistentWorkspaceDependency,
+    WorkspaceNameMissing,
     DependencyLoop,
 };
 
@@ -237,7 +238,7 @@ pub fn migratePnpmLockfile(
 
             const name, _ = try workspace_root.getString(allocator, "name") orelse {
                 // we require workspace names.
-                return invalidPnpmLockfile();
+                return error.WorkspaceNameMissing;
             };
 
             const name_hash = String.Builder.stringHash(name);
@@ -425,8 +426,15 @@ pub fn migratePnpmLockfile(
                         if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |link_path| {
                             // create a link package for the workspace dependency only if it doesn't already exist
                             if (dep.version.tag == .workspace) {
+                                var link_path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                                defer link_path_buf.deinit();
+                                link_path_buf.join(&.{ workspace_path, link_path });
+
                                 for (lockfile.workspace_paths.values()) |existing_workspace_path| {
-                                    if (strings.eqlLong(existing_workspace_path.slice(string_buf.bytes.items), link_path, true)) {
+                                    var workspace_path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                                    defer workspace_path_buf.deinit();
+                                    workspace_path_buf.append(existing_workspace_path.slice(string_buf.bytes.items));
+                                    if (strings.eqlLong(workspace_path_buf.slice(), link_path_buf.slice(), true)) {
                                         continue :next_dep;
                                     }
                                 }

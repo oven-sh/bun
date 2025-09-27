@@ -57,3 +57,70 @@ test("concurrent order", async () => {
     }
   `);
 });
+
+test("max-concurrency limits concurrent tests", async () => {
+  // Test with max-concurrency=3
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", "--max-concurrency", "3", import.meta.dir + "/concurrent-max.fixture.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+
+  expect(exitCode).toBe(0);
+
+  // Extract max concurrent value from output
+  const maxMatch = stdout.match(/Execution pattern: ([^\n]+)/);
+  expect(maxMatch).toBeTruthy();
+  const executionPattern = JSON.parse(maxMatch![1]);
+
+  // Should be 1,2,3,3,3,3,3,...
+  const expected = Array.from({ length: 100 }, (_, i) => Math.min(i + 1, 3));
+  expect(executionPattern).toEqual(expected);
+});
+
+test("max-concurrency default is 20", async () => {
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/concurrent-max.fixture.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+
+  expect(exitCode).toBe(0);
+
+  // Extract max concurrent value from output
+  const maxMatch = stdout.match(/Execution pattern: ([^\n]+)/);
+  expect(maxMatch).toBeTruthy();
+  const executionPattern = JSON.parse(maxMatch![1]);
+
+  // Should be 1,2,3,...,18,19,20,20,20,20,20,20,...
+  const expected = Array.from({ length: 100 }, (_, i) => Math.min(i + 1, 20));
+  expect(executionPattern).toEqual(expected);
+});
+
+test("zero removes max-concurrency", async () => {
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", "--max-concurrency", "0", import.meta.dir + "/concurrent-max.fixture.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+
+  expect(exitCode).toBe(0);
+
+  // Extract max concurrent value from output
+  const maxMatch = stdout.match(/Execution pattern: ([^\n]+)/);
+  expect(maxMatch).toBeTruthy();
+  const executionPattern = JSON.parse(maxMatch![1]);
+
+  // Should be 1,2,3,...,18,19,20,20,20,20,20,20,...
+  const expected = Array.from({ length: 100 }, (_, i) => i + 1);
+  expect(executionPattern).toEqual(expected);
+});

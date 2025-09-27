@@ -1,12 +1,18 @@
 import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
-const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
+import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
+const { SQLHelper, SSLMode, SQLResultArray, SQLArrayParameter } = require("internal/sql/shared");
 const {
   Query,
   SQLQueryFlags,
   symbols: { _strings, _values, _flags, _results, _handle },
 } = require("internal/sql/query");
+function isTypedArray(value: any) {
+  // Buffer should be treated as a normal object
+  // Typed arrays should be treated like an array
+  return ArrayBuffer.isView(value) && !Buffer.isBuffer(value);
+}
+
 const { PostgresError } = require("internal/sql/errors");
 
 const {
@@ -16,6 +22,203 @@ const {
 } = $zig("postgres.zig", "createBinding") as PostgresDotZig;
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
+
+const escapeBackslash = /\\/g;
+const escapeQuote = /"/g;
+
+function arrayEscape(value: string) {
+  return value.replace(escapeBackslash, "\\\\").replace(escapeQuote, '\\"');
+}
+const POSTGRES_ARRAY_TYPES = {
+  // Boolean
+  1000: "BOOLEAN", // bool_array
+
+  // Binary
+  1001: "BYTEA", // bytea_array
+
+  // Character types
+  1002: "CHAR", // char_array
+  1003: "NAME", // name_array
+  1009: "TEXT", // text_array
+  1014: "CHAR", // bpchar_array
+  1015: "VARCHAR", // varchar_array
+
+  // Numeric types
+  1005: "SMALLINT", // int2_array
+  1006: "INT2VECTOR", // int2vector_array
+  1007: "INTEGER", // int4_array
+  1016: "BIGINT", // int8_array
+  1021: "REAL", // float4_array
+  1022: "DOUBLE PRECISION", // float8_array
+  1231: "NUMERIC", // numeric_array
+  791: "MONEY", // money_array
+
+  // OID types
+  1028: "OID", // oid_array
+  1010: "TID", // tid_array
+  1011: "XID", // xid_array
+  1012: "CID", // cid_array
+
+  // JSON types
+  199: "JSON", // json_array
+  3802: "JSONB", // jsonb (not array)
+  3807: "JSONB", // jsonb_array
+  4072: "JSONPATH", // jsonpath
+  4073: "JSONPATH", // jsonpath_array
+
+  // XML
+  143: "XML", // xml_array
+
+  // Geometric types
+  1017: "POINT", // point_array
+  1018: "LSEG", // lseg_array
+  1019: "PATH", // path_array
+  1020: "BOX", // box_array
+  1027: "POLYGON", // polygon_array
+  629: "LINE", // line_array
+  719: "CIRCLE", // circle_array
+
+  // Network types
+  651: "CIDR", // cidr_array
+  1040: "MACADDR", // macaddr_array
+  1041: "INET", // inet_array
+  775: "MACADDR8", // macaddr8_array
+
+  // Date/Time types
+  1182: "DATE", // date_array
+  1183: "TIME", // time_array
+  1115: "TIMESTAMP", // timestamp_array
+  1185: "TIMESTAMPTZ", // timestamptz_array
+  1187: "INTERVAL", // interval_array
+  1270: "TIMETZ", // timetz_array
+
+  // Bit string types
+  1561: "BIT", // bit_array
+  1563: "VARBIT", // varbit_array
+
+  // ACL
+  1034: "ACLITEM", // aclitem_array
+
+  // System catalog types
+  12052: "PG_DATABASE", // pg_database_array
+  10052: "PG_DATABASE", // pg_database_array2
+};
+
+function isPostgresNumericType(type: string) {
+  switch (type) {
+    case "BIT": // bit_array
+    case "VARBIT": // varbit_array
+    case "SMALLINT": // int2_array
+    case "INT2VECTOR": // int2vector_array
+    case "INTEGER": // int4_array
+    case "INT": // int4_array
+    case "BIGINT": // int8_array
+    case "REAL": // float4_array
+    case "DOUBLE PRECISION": // float8_array
+    case "NUMERIC": // numeric_array
+    case "MONEY": // money_array
+      return true;
+    default:
+      return false;
+  }
+}
+function isPostgresJsonType(type: string) {
+  switch (type) {
+    case "JSON":
+    case "JSONB":
+      return true;
+    default:
+      return false;
+  }
+}
+function getPostgresArrayType(typeId: number) {
+  return POSTGRES_ARRAY_TYPES[typeId] || null;
+}
+
+function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boolean, value: any) {
+  // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
+  // postgres will try to convert string -> array type
+  // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
+  if ($isArray(value) || isTypedArray(value)) {
+    if (!value.length) return "{}";
+    const delimiter = type === "BOX" ? ";" : ",";
+    return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
+  }
+
+  switch (typeof value) {
+    case "undefined":
+      return "null";
+    case "string":
+      if (is_json) {
+        return `"${arrayEscape(JSON.stringify(value))}"`;
+      }
+      return `"${arrayEscape(value)}"`;
+
+    case "bigint":
+    case "number":
+      if (is_numeric || is_json) {
+        return "" + value;
+      }
+      return `"${value}"`;
+    case "boolean":
+      switch (type) {
+        case "BOOLEAN":
+          return value === true ? "t" : "f";
+        case "JSON":
+        case "JSONB":
+          return value === true ? "true" : "false";
+        default:
+          if (is_numeric) {
+            // convert to int if is a numeric array
+            return "" + (value ? 1 : 0);
+          }
+          // fallback to string
+          return value === true ? '"true"' : '"false"';
+      }
+    default:
+      if (value instanceof Date) {
+        const isoValue = value.toISOString();
+        if (is_json) {
+          return `"${arrayEscape(JSON.stringify(isoValue))}"`;
+        }
+        return `"${arrayEscape(isoValue)}"`;
+      }
+      if (Buffer.isBuffer(value)) {
+        const hexValue = value.toString("hex");
+        // bytea array
+        if (type === "BYTEA") {
+          return `"\\x${arrayEscape(hexValue)}"`;
+        }
+        if (is_json) {
+          return `"${arrayEscape(JSON.stringify(hexValue))}"`;
+        }
+        return `"${arrayEscape(hexValue)}"`;
+      }
+      // fallback to JSON.stringify
+      return `"${arrayEscape(JSON.stringify(value))}"`;
+  }
+}
+function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined): ArrayType {
+  const typeOfType = typeof typeNameOrID;
+  if (typeOfType === "number") {
+    return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
+  }
+  if (typeOfType === "string") {
+    return (typeNameOrID as string)?.toUpperCase();
+  }
+  // default to JSON so we accept most of the types
+  return "JSON";
+}
+function serializeArray(values: any[], type: ArrayType) {
+  if (!$isArray(values) && !isTypedArray(values)) return values;
+
+  if (!values.length) return "{}";
+
+  // Only _box (1020) has the ';' delimiter for arrays, all other types use the ',' delimiter
+  const delimiter = type === "BOX" ? ";" : ",";
+
+  return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
+}
 
 function wrapPostgresError(error: Error | PostgresErrorOptions) {
   if (Error.isError(error)) {
@@ -572,6 +775,11 @@ class PostgresAdapter
     }
   }
 
+  array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter {
+    const arrayType = getArrayType(typeNameOrID);
+    return new SQLArrayParameter(serializeArray(values, arrayType), arrayType);
+  }
+
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
     let BEGIN = "BEGIN";
     if (options) {
@@ -1015,6 +1223,11 @@ class PostgresAdapter
   }
 
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
+    // This function handles array values in single fields:
+    // - JSON/JSONB are the only field types that can be arrays themselves, so we serialize them
+    // - SQL array field types (e.g., INTEGER[], TEXT[]) require the sql.array() helper
+    // - All other types are handled natively
+
     if (typeof strings === "string") {
       // identifier or unsafe query
       return [strings, values || []];
@@ -1089,6 +1302,8 @@ class PostgresAdapter
                     query += `$${binding_idx++}${k < lastColumnIndex ? ", " : ""}`;
                     if (typeof columnValue === "undefined") {
                       binding_values.push(null);
+                    } else if ($isArray(columnValue)) {
+                      binding_values.push(serializeArray(columnValue, "JSON"));
                     } else {
                       binding_values.push(columnValue);
                     }
@@ -1108,6 +1323,12 @@ class PostgresAdapter
                   query += `$${binding_idx++}${j < lastColumnIndex ? ", " : ""}`;
                   if (typeof columnValue === "undefined") {
                     binding_values.push(null);
+                  } else if ($isArray(columnValue)) {
+                    // Handle array values in single fields:
+                    // - JSON/JSONB fields can be an array
+                    // - For dedicated SQL array field types (e.g., INTEGER[], TEXT[]),
+                    //   users should use the sql.array() helper instead
+                    binding_values.push(serializeArray(columnValue, "JSON"));
                   } else {
                     binding_values.push(columnValue);
                   }
@@ -1139,6 +1360,8 @@ class PostgresAdapter
 
                     if (typeof value_from_key === "undefined") {
                       binding_values.push(null);
+                    } else if ($isArray(value_from_key)) {
+                      binding_values.push(serializeArray(value_from_key, "JSON"));
                     } else {
                       binding_values.push(value_from_key);
                     }
@@ -1147,6 +1370,8 @@ class PostgresAdapter
                   const value = items[j];
                   if (typeof value === "undefined") {
                     binding_values.push(null);
+                  } else if ($isArray(value)) {
+                    binding_values.push(serializeArray(value, "JSON"));
                   } else {
                     binding_values.push(value);
                   }
@@ -1175,18 +1400,28 @@ class PostgresAdapter
                 if (typeof columnValue === "undefined") {
                   binding_values.push(null);
                 } else {
-                  binding_values.push(columnValue);
+                  if ($isArray(columnValue)) {
+                    binding_values.push(serializeArray(columnValue, "JSON"));
+                  } else {
+                    binding_values.push(columnValue);
+                  }
                 }
               }
               query += " "; // the user can add where clause after this
             }
+          } else if (value instanceof SQLArrayParameter) {
+            query += `$${binding_idx++}::${value.arrayType}[] `;
+            binding_values.push(value.serializedValues);
           } else {
-            //TODO: handle sql.array parameters
             query += `$${binding_idx++} `;
             if (typeof value === "undefined") {
               binding_values.push(null);
             } else {
-              binding_values.push(value);
+              if ($isArray(value)) {
+                binding_values.push(serializeArray(value, "JSON"));
+              } else {
+                binding_values.push(value);
+              }
             }
           }
         }

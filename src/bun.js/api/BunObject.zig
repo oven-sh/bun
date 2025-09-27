@@ -1294,7 +1294,9 @@ pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, c
 }
 
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    const valkey = jsc.API.Valkey.create(globalThis, &.{.js_undefined}) catch |err| {
+    const SubscriptionCtx = @import("../../valkey/js_valkey.zig").SubscriptionCtx;
+
+    var valkey = jsc.API.Valkey.createNoJsNoPubsub(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {
             _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
             return .zero;
@@ -1302,7 +1304,18 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
         return .zero;
     };
 
-    return valkey.toJS(globalThis);
+    const as_js = valkey.toJS(globalThis);
+
+    valkey.this_value = jsc.JSRef.initWeak(as_js);
+    valkey._subscription_ctx = SubscriptionCtx.init(valkey) catch |err| {
+        if (err != error.JSError) {
+            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
+            return .zero;
+        }
+        return .zero;
+    };
+
+    return as_js;
 }
 
 pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1333,7 +1346,6 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         const input_blob = file.blob(globalThis);
         const blob = jsc.WebCore.Blob.new(input_blob.dupeWithContentType(true));
-        blob.allocator = bun.default_allocator;
         blob.name = input_blob.name.dupeRef();
         try array.putIndex(globalThis, i, blob.toJS(globalThis));
         i += 1;
@@ -2044,7 +2056,6 @@ pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue 
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -2055,7 +2066,6 @@ pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -2066,7 +2076,6 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 

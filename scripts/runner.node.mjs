@@ -490,7 +490,7 @@ async function runTests() {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const style = flaky ? "warning" : "error";
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
@@ -654,15 +654,13 @@ async function runTests() {
         throw new Error(`Unsupported package manager: ${packageManager}`);
       }
 
-      if (build) {
-        const buildResult = await spawnBun(execPath, {
-          cwd: vendorPath,
-          args: ["run", "build"],
-          timeout: 60_000,
-        });
-        if (!buildResult.ok) {
-          throw new Error(`Failed to build vendor: ${buildResult.error}`);
-        }
+      const buildResult = await spawnBun(execPath, {
+        cwd: vendorPath,
+        args: ["run", "build"],
+        timeout: 60_000,
+      });
+      if (build && !buildResult.ok) {
+        throw new Error(`Failed to build vendor: ${buildResult.error}`);
       }
 
       for (const testPath of testPaths) {

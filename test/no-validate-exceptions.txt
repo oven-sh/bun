@@ -23,7 +23,7 @@ test/js/node/test/parallel/test-require-dot.js
 test/js/node/test/parallel/test-util-promisify-custom-names.mjs
 test/js/node/test/parallel/test-whatwg-readablestream.mjs
 test/js/node/test/parallel/test-worker.mjs
-test/js/node/test/system-ca/test-native-root-certs.test.mjs 
+test/js/node/test/system-ca/test-native-root-certs.test.mjs
 test/js/node/events/event-emitter.test.ts
 test/js/node/module/node-module-module.test.js
 test/js/node/process/call-constructor.test.js
@@ -150,3 +150,8 @@ test/cli/install/bun-repl.test.ts
 test/bundler/esbuild/default.test.ts
 test/integration/vite-build/vite-build.test.ts
 test/cli/inspect/HTTPServerAgent.test.ts
+
+vendor/piscina/test/idle-timeout.test.ts
+vendor/piscina/test/nice.test.ts
+vendor/piscina/test/simple-test.test.ts
+vendor/piscina/test/test-uncaught-exception-from-handler.test.ts

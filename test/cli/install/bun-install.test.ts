@@ -17,6 +17,7 @@ import {
   bunExe,
   bunEnv as env,
   isWindows,
+  joinP,
   readdirSorted,
   runBunInstall,
   tempDirWithFiles,
@@ -24,7 +25,6 @@ import {
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
-  joinP,
 } from "harness";
 import { join, resolve, sep } from "path";
 import {

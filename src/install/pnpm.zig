@@ -329,7 +329,7 @@ pub fn migratePnpmLockfile(
                     .value = .{ .workspace = try string_buf.append(path) },
                 };
 
-                var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                 defer path_buf.deinit();
 
                 path_buf.append(path);
@@ -426,14 +426,20 @@ pub fn migratePnpmLockfile(
                         if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |link_path| {
                             // create a link package for the workspace dependency only if it doesn't already exist
                             if (dep.version.tag == .workspace) {
-                                var link_path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                                var link_path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                                 defer link_path_buf.deinit();
-                                link_path_buf.join(&.{ workspace_path, link_path });
+                                link_path_buf.append(workspace_path);
+                                link_path_buf.join(&.{link_path});
 
                                 for (lockfile.workspace_paths.values()) |existing_workspace_path| {
-                                    var workspace_path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                                    var workspace_path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                                     defer workspace_path_buf.deinit();
                                     workspace_path_buf.append(existing_workspace_path.slice(string_buf.bytes.items));
+
+                                    std.debug.print("comparing '{s}' and '{s}'\n", .{
+                                        workspace_path_buf.slice(),
+                                        link_path_buf.slice(),
+                                    });
                                     if (strings.eqlLong(workspace_path_buf.slice(), link_path_buf.slice(), true)) {
                                         continue :next_dep;
                                     }
@@ -448,7 +454,7 @@ pub fn migratePnpmLockfile(
                                 .resolution = .init(.{ .symlink = try string_buf.append(link_path) }),
                             };
 
-                            var abs_link_path: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                            var abs_link_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                             defer abs_link_path.deinit();
 
                             abs_link_path.join(&.{ workspace_path, link_path });
@@ -653,7 +659,7 @@ pub fn migratePnpmLockfile(
             // implicit workspace dependencies
             if (dep.behavior.isWorkspace()) {
                 const workspace_path = dep.version.value.workspace.slice(string_buf);
-                var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                 defer path_buf.deinit();
                 path_buf.join(&.{workspace_path});
                 if (pkg_map.get(path_buf.slice())) |workspace_pkg_id| {
@@ -673,7 +679,7 @@ pub fn migratePnpmLockfile(
             const version_without_suffix = removeSuffix(version);
 
             if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |maybe_symlink_or_folder_or_workspace_path| {
-                var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                 defer path_buf.deinit();
                 path_buf.join(&.{maybe_symlink_or_folder_or_workspace_path});
                 if (pkg_map.get(path_buf.slice())) |pkg_id| {
@@ -721,7 +727,7 @@ pub fn migratePnpmLockfile(
             const version_without_suffix = removeSuffix(version);
 
             if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |maybe_symlink_or_folder_or_workspace_path| {
-                var path_buf: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                 defer path_buf.deinit();
                 path_buf.join(&.{ workspace_path, maybe_symlink_or_folder_or_workspace_path });
                 if (pkg_map.get(path_buf.slice())) |link_pkg_id| {

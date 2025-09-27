@@ -71,7 +71,7 @@ pub const Entry = struct {
         return Entry{
             .serialized_data = try command.serialize(allocator),
             .meta = command.meta, // TODO(markovejnovic): We should be calling .check against command here but due
-                                  // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
+            // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             .promise = promise,
         };
     }

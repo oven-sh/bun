@@ -455,19 +455,17 @@ pub const JSValkeyClient = struct {
                     // If the user manually closed the connection, then duplicating a closed client
                     // means the new client remains finalized.
                     .is_manually_closed = this.client.flags.is_manually_closed,
-                    .enable_offline_queue =
-                        if (this._subscription_ctx.is_subscriber)
-                            this._subscription_ctx.original_enable_offline_queue
-                        else
-                            this.client.flags.enable_offline_queue,
+                    .enable_offline_queue = if (this._subscription_ctx.is_subscriber)
+                        this._subscription_ctx.original_enable_offline_queue
+                    else
+                        this.client.flags.enable_offline_queue,
                     .needs_to_open_socket = true,
                     .enable_auto_reconnect = this.client.flags.enable_auto_reconnect,
                     .is_reconnecting = false,
-                    .enable_auto_pipelining =
-                        if (this._subscription_ctx.is_subscriber)
-                            this._subscription_ctx.original_enable_auto_pipelining
-                        else
-                            this.client.flags.enable_auto_pipelining,
+                    .enable_auto_pipelining = if (this._subscription_ctx.is_subscriber)
+                        this._subscription_ctx.original_enable_auto_pipelining
+                    else
+                        this.client.flags.enable_auto_pipelining,
                     // Duplicating a finalized client means it stays finalized.
                     .finalized = this.client.flags.finalized,
                 },
@@ -497,9 +495,7 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn removeSubscription(this: *JSValkeyClient) void {
-        debug("removeSubscription: entering, has subscriptions: {}", .{
-            this._subscription_ctx.hasSubscriptions(this.globalObject) catch false
-        });
+        debug("removeSubscription: entering, has subscriptions: {}", .{this._subscription_ctx.hasSubscriptions(this.globalObject) catch false});
         this.ref();
         defer this.deref();
 

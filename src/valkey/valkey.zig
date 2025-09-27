@@ -544,7 +544,7 @@ pub const ValkeyClient = struct {
     ///
     /// Caller refs / derefs.
     pub fn onData(this: *ValkeyClient, data: []const u8) void {
-        debug("Low-level onData called with {d} bytes: {s}", .{data.len, data});
+        debug("Low-level onData called with {d} bytes: {s}", .{ data.len, data });
         // Path 1: Buffer already has data, append and process from buffer
         if (this.read_buffer.remaining().len > 0) {
             this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");

@@ -348,6 +348,73 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         repr.cross_chunk_suffix_stmts = stmts;
                     }
                 },
+                .cjs => {
+                    // For CommonJS format, we need to export values using exports object
+                    c.sortedCrossChunkExportItems(
+                        chunk_meta.exports,
+                        &stable_ref_list,
+                    );
+
+                    if (stable_ref_list.items.len == 0) continue;
+
+                    repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator(), stable_ref_list.items.len) catch unreachable;
+                    r.clearRetainingCapacity();
+
+                    // For CommonJS chunks, we need to use the global exports object
+                    // Create a ref for the exports object
+                    const exports_ref = c.graph.generateNewSymbol(chunk.entry_point.source_index, .unbound, "exports");
+
+                    var stmts = BabyList(js_ast.Stmt){};
+
+                    for (stable_ref_list.items) |stable_ref| {
+                        const ref = stable_ref.ref;
+                        const symbol = c.graph.symbols.get(ref).?;
+                        const alias = if (c.options.minify_identifiers)
+                            try r.nextMinifiedName(c.allocator())
+                        else
+                            r.nextRenamedName(symbol.original_name);
+
+                        // Store the export alias for cross-chunk imports
+                        repr.exports_to_other_chunks.putAssumeCapacity(
+                            ref,
+                            alias,
+                        );
+
+                        // Create exports.aliasName = localName;
+                        const member = Expr.allocate(
+                            c.allocator(),
+                            E.Dot,
+                            .{
+                                .target = Expr.initIdentifier(exports_ref, Logger.Loc.Empty),
+                                .name = alias,
+                                .name_loc = Logger.Loc.Empty,
+                            },
+                            Logger.Loc.Empty,
+                        );
+
+                        const stmt = Stmt.alloc(
+                            S.SExpr,
+                            .{
+                                .value = Expr.init(
+                                    E.Binary,
+                                    .{
+                                        .op = .bin_assign,
+                                        .left = member,
+                                        .right = Expr.initIdentifier(ref, Logger.Loc.Empty),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            },
+                            Logger.Loc.Empty,
+                        );
+
+                        stmts.append(c.allocator(), stmt) catch unreachable;
+                    }
+
+                    if (stmts.len > 0) {
+                        repr.cross_chunk_suffix_stmts = stmts;
+                    }
+                },
                 else => {},
             }
         }
@@ -405,6 +472,113 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             },
                         ) catch unreachable;
                     },
+                    .cjs => {
+                        // For CommonJS format, we need to require() other chunks
+                        const import_record_index = @as(u32, @intCast(cross_chunk_imports.len));
+
+                        cross_chunk_imports.append(c.allocator(), .{
+                            .import_kind = .stmt,
+                            .chunk_index = cross_chunk_import.chunk_index,
+                        }) catch unreachable;
+
+                        // Generate: const {alias1, alias2, ...} = require('./chunk-name.js');
+                        if (cross_chunk_import.sorted_import_items.len > 0) {
+                            var properties = bun.BabyList(G.Property){};
+
+                            for (cross_chunk_import.sorted_import_items.slice()) |item| {
+                                properties.append(c.allocator(), .{
+                                    .key = Expr.init(
+                                        E.String,
+                                        .{ .data = item.export_alias },
+                                        Logger.Loc.Empty,
+                                    ),
+                                    .value = Expr.initIdentifier(item.ref, Logger.Loc.Empty),
+                                    .kind = .normal,
+                                }) catch unreachable;
+                            }
+
+                            // Create B.Object.Property array for destructuring
+                            const b_props = c.allocator().alloc(B.Property, properties.len) catch unreachable;
+                            for (b_props, properties.slice()) |*b_prop, g_prop| {
+                                // Get the ref from the value expression
+                                const ref = if (g_prop.value) |val|
+                                    if (val.data == .e_identifier) val.data.e_identifier.ref else Ref.None
+                                else
+                                    Ref.None;
+
+                                // Create B.Identifier for the binding
+                                const identifier = c.allocator().create(B.Identifier) catch unreachable;
+                                identifier.* = .{ .ref = ref };
+
+                                b_prop.* = .{
+                                    .key = g_prop.key orelse Expr.init(E.String, .{ .data = "" }, Logger.Loc.Empty),
+                                    .value = Binding{
+                                        .loc = Logger.Loc.Empty,
+                                        .data = .{ .b_identifier = identifier },
+                                    },
+                                };
+                            }
+
+                            // Create B.Object
+                            const b_object = c.allocator().create(B.Object) catch unreachable;
+                            b_object.* = .{
+                                .properties = b_props,
+                                .is_single_line = true,
+                            };
+
+                            const binding = Binding{
+                                .loc = Logger.Loc.Empty,
+                                .data = .{ .b_object = b_object },
+                            };
+
+                            const decl = c.allocator().create(G.Decl) catch unreachable;
+                            decl.* = .{
+                                .binding = binding,
+                                .value = Expr.init(
+                                    E.RequireString,
+                                    .{
+                                        .import_record_index = import_record_index,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            };
+
+                            const local_stmt = Stmt.allocate(
+                                c.allocator(),
+                                S.Local,
+                                .{
+                                    .kind = .k_const,
+                                    .decls = bun.BabyList(G.Decl).fromSlice(c.allocator(), &[_]G.Decl{decl.*}) catch unreachable,
+                                },
+                                Logger.Loc.Empty,
+                            );
+
+                            cross_chunk_prefix_stmts.append(
+                                c.allocator(),
+                                local_stmt,
+                            ) catch unreachable;
+                        } else {
+                            // Just require the chunk for side effects
+                            const require_stmt = Stmt.alloc(
+                                S.SExpr,
+                                .{
+                                    .value = Expr.init(
+                                        E.RequireString,
+                                        .{
+                                            .import_record_index = import_record_index,
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                },
+                                Logger.Loc.Empty,
+                            );
+
+                            cross_chunk_prefix_stmts.append(
+                                c.allocator(),
+                                require_stmt,
+                            ) catch unreachable;
+                        }
+                    },
                     else => {},
                 }
             }
@@ -452,3 +626,8 @@ const debug = LinkerContext.debug;
 
 const Logger = bun.logger;
 const Loc = Logger.Loc;
+const Expr = js_ast.Expr;
+const E = js_ast.E;
+const G = js_ast.G;
+const B = js_ast.B;
+const Binding = js_ast.Binding;

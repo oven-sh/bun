@@ -1753,7 +1753,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             }
 
                             const allocator = req.allocator;
-                            const fallback_container = allocator.create(Api.FallbackMessageContainer) catch bun.outOfMemory();
+                            const fallback_container = bun.handleOom(allocator.create(Api.FallbackMessageContainer));
                             defer allocator.destroy(fallback_container);
 
                             // Create error message for the stream rejection

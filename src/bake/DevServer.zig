@@ -2949,7 +2949,7 @@ pub fn finalizeBundle(
         defer current_bundle.promise.deinitIdempotently();
         current_bundle.promise.setRouteBundleState(dev, .loaded);
         dev.vm.eventLoop().enter();
-        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.true);
+        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.jsBoolean(true));
         dev.vm.eventLoop().exit();
     }
 
@@ -4445,23 +4445,23 @@ const PromiseEnsureRouteBundledCtx = struct {
         switch (bundle_field) {
             .current_bundle => {
                 if (this.dev.current_bundle.?.promise.strong.hasValue()) {
-                    this.dev.current_bundle.?.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}) catch bun.outOfMemory();
+                    bun.handleOom(this.dev.current_bundle.?.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}));
                     this.p = this.dev.current_bundle.?.promise.strong.get();
                     return;
                 }
                 const strong_promise = this.ensurePromise();
-                this.dev.current_bundle.?.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}) catch bun.outOfMemory();
+                bun.handleOom(this.dev.current_bundle.?.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}));
                 this.dev.current_bundle.?.promise.strong = strong_promise;
                 return;
             },
             .next_bundle => {
                 if (this.dev.next_bundle.promise.strong.hasValue()) {
-                    this.dev.next_bundle.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}) catch bun.outOfMemory();
+                    bun.handleOom(this.dev.next_bundle.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}));
                     this.p = this.dev.next_bundle.promise.strong.get();
                     return;
                 }
                 const strong_promise = this.ensurePromise();
-                this.dev.next_bundle.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}) catch bun.outOfMemory();
+                bun.handleOom(this.dev.next_bundle.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}));
                 this.dev.next_bundle.promise.strong = strong_promise;
                 return;
             },
@@ -4470,7 +4470,7 @@ const PromiseEnsureRouteBundledCtx = struct {
 
     fn onLoaded(this: *PromiseEnsureRouteBundledCtx) bun.JSError!void {
         _ = this.ensurePromise();
-        this.p.?.resolve(this.global, JSValue.true);
+        this.p.?.resolve(this.global, JSValue.jsBoolean(true));
         this.dev.vm.drainMicrotasks();
     }
 

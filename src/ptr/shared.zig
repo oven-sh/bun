@@ -241,7 +241,7 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// Turns a shared pointer into a raw pointer without decrementing the reference count.
         ///
         /// This method invalidates `self`. To avoid leaks, the raw pointer should be turned back
-        /// into a raw pointer with `adoptRawUnsafe`.
+        /// into a shared pointer with `adoptRawUnsafe`.
         pub fn leak(self: *Self) Pointer {
             defer self.* = undefined;
             return self.#pointer;

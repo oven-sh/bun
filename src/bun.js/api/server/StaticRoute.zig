@@ -108,9 +108,49 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 },
 
                 .Blob, .InternalBlob, .WTFStringImpl => {
+                    // For standalone executables, Bun.file() returns bytes blobs (already in memory)
+                    // which work fine. Only actual file blobs that need disk I/O are problematic.
+                    // Since we can't easily handle async file I/O in static routes yet, we check for that.
                     if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
-                        return globalThis.throwTODO("TODO: support Bun.file(path) in static routes");
+                        // Try to read the file synchronously into memory
+                        const store = response.body.value.Blob.store orelse {
+                            return globalThis.throwTODO("TODO: support async file reads in static routes");
+                        };
+
+                        if (store.data == .file) {
+                            // Convert file blob to bytes blob by reading it into memory
+                            const file_contents = store.data.file.pathlike.path.slice();
+                            const file = std.fs.openFileAbsolute(file_contents, .{}) catch |err| {
+                                return globalThis.throwInvalidArguments("Failed to open file: {s}", .{@errorName(err)});
+                            };
+                            defer file.close();
+
+                            const file_size = file.getEndPos() catch |err| {
+                                return globalThis.throwInvalidArguments("Failed to get file size: {s}", .{@errorName(err)});
+                            };
+
+                            const buffer = bun.default_allocator.alloc(u8, file_size) catch {
+                                return globalThis.throwOutOfMemory();
+                            };
+
+                            _ = file.read(buffer) catch |err| {
+                                bun.default_allocator.free(buffer);
+                                return globalThis.throwInvalidArguments("Failed to read file: {s}", .{@errorName(err)});
+                            };
+
+                            // Create a new bytes blob with the file contents
+                            const new_store = Blob.Store.init(buffer, bun.default_allocator);
+                            new_store.mime_type = store.mime_type;
+
+                            var new_blob = Blob.initWithStore(new_store, globalThis);
+                            new_blob.content_type = response.body.value.Blob.content_type;
+                            new_blob.content_type_was_set = response.body.value.Blob.content_type_was_set;
+
+                            response.body.value = .{ .Blob = new_blob.dupe() };
+                            break :brk .{ .Blob = new_blob };
+                        }
                     }
+
                     var blob = response.body.value.use();
                     blob.globalThis = globalThis;
                     blob.allocator = null;
@@ -161,6 +201,32 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
             .headers = headers,
             .server = null,
             .status_code = response.statusCode(),
+        });
+    }
+
+    // Accept direct Blob objects (e.g., from Bun.file())
+    // This is needed for standalone executables where Bun.file() returns bytes blobs
+    if (argument.as(Blob)) |blob_ptr| {
+        var blob: AnyBlob = .{ .Blob = blob_ptr.dupe() };
+        blob.Blob.allocator = null;
+
+        var headers = Headers{
+            .allocator = bun.default_allocator,
+        };
+
+        // Generate ETag if not already present
+        if (blob.slice().len > 0) {
+            try ETag.appendToHeaders(blob.slice(), &headers);
+        }
+
+        return bun.new(StaticRoute, .{
+            .ref_count = .init(),
+            .blob = blob,
+            .cached_blob_size = blob.size(),
+            .has_content_disposition = false,
+            .headers = headers,
+            .server = null,
+            .status_code = 200,
         });
     }
 
@@ -383,6 +449,7 @@ const api = bun.schema.api;
 const AnyServer = jsc.API.AnyServer;
 const writeStatus = bun.api.server.writeStatus;
 const AnyBlob = jsc.WebCore.Blob.Any;
+const Blob = jsc.WebCore.Blob;
 
 const ETag = bun.http.ETag;
 const Headers = bun.http.Headers;

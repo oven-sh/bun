@@ -98,8 +98,8 @@ function createPerformanceNodeTiming() {
   // All timing values should be relative offsets from performance.timeOrigin, not absolute timestamps
   // For now, we set them all to 0 since we're running after bootstrap
   // In a proper implementation, these would be captured during actual startup phases
-  object.nodeStart = 0;  // Node started at timeOrigin
-  object.v8Start = 0;    // V8 started at timeOrigin
+  object.nodeStart = 0; // Node started at timeOrigin
+  object.v8Start = 0; // V8 started at timeOrigin
   object.environment = 0; // Environment setup at timeOrigin
   object.bootstrapComplete = 0; // Bootstrap completed at timeOrigin
 
@@ -110,31 +110,37 @@ function createPerformanceNodeTiming() {
   object.loopExit = -1; // -1 means still running
 
   // Define the getter properties on the instance to match Node.js behavior
-  Object.defineProperty(object, 'name', {
+  Object.defineProperty(object, "name", {
     enumerable: true,
     configurable: true,
-    get() { return 'node'; }
+    get() {
+      return "node";
+    },
   });
 
-  Object.defineProperty(object, 'entryType', {
+  Object.defineProperty(object, "entryType", {
     enumerable: true,
     configurable: true,
-    get() { return 'node'; }
+    get() {
+      return "node";
+    },
   });
 
   // startTime is a value property in Node.js
-  Object.defineProperty(object, 'startTime', {
+  Object.defineProperty(object, "startTime", {
     value: 0,
     writable: false,
     enumerable: true,
-    configurable: true
+    configurable: true,
   });
 
   // duration is a getter property in Node.js
-  Object.defineProperty(object, 'duration', {
+  Object.defineProperty(object, "duration", {
     enumerable: true,
     configurable: true,
-    get() { return performance.now(); }
+    get() {
+      return performance.now();
+    },
   });
 
   return object;

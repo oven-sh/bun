@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { performance } from "node:perf_hooks";
 
 test("perf_hooks: PerformanceNodeTiming properties should be accessible without throwing", () => {

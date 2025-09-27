@@ -66,12 +66,12 @@ fn deinitIsVoid(comptime T: type) bool {
 }
 
 /// Calls `deinit` on `ptr_or_slice`, or on every element of `ptr_or_slice`, if the pointer points
-/// to a struct or enum.
+/// to a struct or tagged union.
 ///
 /// This function first does the following:
 ///
 /// * If `ptr_or_slice` is a single-item pointer of type `*T`:
-///   - If `T` is a struct or enum, calls `ptr_or_slice.deinit()`
+///   - If `T` is a struct or tagged union, calls `ptr_or_slice.deinit()`
 ///   - If `T` is an optional, checks if `ptr_or_slice` points to a non-null value, and if so,
 ///     calls `bun.memory.deinit` with a pointer to the payload.
 /// * If `ptr_or_slice` is a slice, for each element of the slice, calls `bun.memory.deinit` with

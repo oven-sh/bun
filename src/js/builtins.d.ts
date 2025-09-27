@@ -39,7 +39,7 @@ declare function $isPromiseRejected(promise: Promise<any>): boolean;
 /** Asserts the input is a promise. Returns `true` if the promise is pending */
 declare function $isPromisePending(promise: Promise<any>): boolean;
 
-declare const IS_BUN_DEVELOPMENT: boolean;
+declare var IS_BUN_DEVELOPMENT: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
@@ -766,7 +766,6 @@ declare function $ERR_ASYNC_CALLBACK(name): TypeError;
 declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
 declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
-
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_IPC_CHANNEL_CLOSED(): Error;

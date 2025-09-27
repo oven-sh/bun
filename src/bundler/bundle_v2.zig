@@ -275,6 +275,11 @@ pub const BundleV2 = struct {
         /// Files which are imported by CSS and inlined in CSS
         additional_files_imported_by_css_and_inlined: *bun.bit_set.DynamicBitSetUnmanaged,
 
+        /// Target context for target-aware server component boundary handling
+        current_target: options.Target,
+        /// Framework configuration for server component logic
+        framework: ?*const bake.Framework,
+
         const MAX_REDIRECTS: usize = 64;
 
         // Find all files reachable from all entry points. This order should be
@@ -292,13 +297,38 @@ pub const BundleV2 = struct {
                 }
                 return;
             }
+
             v.visited.set(source_index.get());
 
             if (v.scb_bitset) |scb_bitset| {
                 if (scb_bitset.isSet(source_index.get())) {
                     const scb_index = v.scb_list.getIndex(source_index.get()) orelse unreachable;
-                    v.visit(Index.init(v.scb_list.list.items(.reference_source_index)[scb_index]), false, check_dynamic_imports);
-                    v.visit(Index.init(v.scb_list.list.items(.ssr_source_index)[scb_index]), false, check_dynamic_imports);
+                    const separate_ssr = v.framework != null and
+                        v.framework.?.server_components != null and
+                        v.framework.?.server_components.?.separate_ssr_graph;
+
+                    if (separate_ssr) {
+                        switch (v.current_target) {
+                            .browser => {
+                                // Browser: continue normal traversal, don't visit proxies/SSR
+                            },
+                            .bake_server_components_ssr => {
+                                // SSR: visit SSR version, skip original
+                                v.visit(Index.init(v.scb_list.list.items(.ssr_source_index)[scb_index]), false, check_dynamic_imports);
+                                return;
+                            },
+                            else => {
+                                // Server: visit reference proxy, skip original
+                                v.visit(Index.init(v.scb_list.list.items(.reference_source_index)[scb_index]), false, check_dynamic_imports);
+                                return;
+                            },
+                        }
+                    } else {
+                        // Legacy behavior: visit both files
+                        v.visit(Index.init(v.scb_list.list.items(.reference_source_index)[scb_index]), false, check_dynamic_imports);
+                        v.visit(Index.init(v.scb_list.list.items(.ssr_source_index)[scb_index]), false, check_dynamic_imports);
+                        return;
+                    }
                 }
             }
 
@@ -403,6 +433,8 @@ pub const BundleV2 = struct {
                 undefined, // will never be read since the above bitset is `null`
             .additional_files_imported_by_js_and_inlined_in_css = &additional_files_imported_by_js_and_inlined_in_css,
             .additional_files_imported_by_css_and_inlined = &additional_files_imported_by_css_and_inlined,
+            .current_target = this.transpiler.options.target,
+            .framework = if (this.framework) |*fw| fw else null,
         };
         defer visitor.visited.deinit();
 
@@ -1156,7 +1188,7 @@ pub const BundleV2 = struct {
         this.linker.graph.takeAstOwnership();
     }
 
-    /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
+    /// This generates the two asts for 'bun:app/client' and 'bun:app/server'. Both are generated
     /// at the same time in one pass over the SCB list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If a server components is not configured, do nothing
@@ -3848,7 +3880,14 @@ pub const BundleV2 = struct {
                         break :brk .{ server_index, Index.invalid.get() };
                     };
 
-                    graph.pathToSourceIndexMap(result.ast.target).put(
+                    // Only put reference proxy mappings in the server target map, not the client target map.
+                    // Client components should map to themselves in the client map.
+                    const server_target: options.Target = if (this.framework.?.server_components.?.separate_ssr_graph)
+                        this.transpiler.options.target
+                    else
+                        .bake_server_components_ssr;
+
+                    graph.pathToSourceIndexMap(server_target).put(
                         this.allocator(),
                         result.source.path.text,
                         reference_source_index,

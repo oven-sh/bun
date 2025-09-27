@@ -643,13 +643,32 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                             gop.value_ptr.is_client_component_boundary = true;
                             try dev.incremental_result.client_components_added.append(dev.allocator(), file_index);
                         } else if (gop.value_ptr.is_client_component_boundary) {
+                            // IMPORTANT: Only delete from client graph if this file no longer exists there at all
+                            // The same file can appear with different source indices in server vs client bundles
                             const client_graph = &g.owner().client_graph;
-                            const client_index = client_graph.getFileIndex(gop.key_ptr.*) orelse
-                                Output.panic("Client graph's SCB was already deleted", .{});
-                            client_graph.disconnectAndDeleteFile(client_index);
-                            gop.value_ptr.is_client_component_boundary = false;
+                            const client_index = client_graph.getFileIndex(gop.key_ptr.*);
 
-                            try dev.incremental_result.client_components_removed.append(dev.allocator(), file_index);
+                            // Only delete if:
+                            // 1. The file doesn't exist in client graph anymore, OR
+                            // 2. The file exists but has no dependencies (meaning it's not actually used)
+                            if (client_index) |idx| {
+                                // Check if this file is still needed in the client graph
+                                // by checking if it has any dependencies or is marked as special
+                                const client_file = client_graph.getFileByIndex(idx);
+
+                                // If the file has dependencies or is an HMR root, don't delete it
+                                if (client_graph.first_dep.items[idx.get()] != .none or client_file.is_hmr_root) {
+                                    // File is still needed in client graph, don't delete
+                                } else {
+                                    // File has no dependencies in client graph, safe to delete
+                                    client_graph.disconnectAndDeleteFile(idx);
+                                    gop.value_ptr.is_client_component_boundary = false;
+                                    try dev.incremental_result.client_components_removed.append(dev.allocator(), file_index);
+                                }
+                            } else {
+                                // File doesn't exist in client graph, mark as not a boundary
+                                gop.value_ptr.is_client_component_boundary = false;
+                            }
                         }
 
                         if (gop.value_ptr.failed) {
@@ -1357,6 +1376,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
         } {
             g.owner().graph_safety_lock.assertLocked();
             const dev_alloc = g.allocator();
+
             const gop = try g.bundled_files.getOrPut(dev_alloc, abs_path);
             if (!gop.found_existing) {
                 gop.key_ptr.* = try dev_alloc.dupe(u8, abs_path);

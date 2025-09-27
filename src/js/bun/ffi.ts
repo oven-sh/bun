@@ -117,20 +117,17 @@ class JSCallback {
 
 class CString extends String {
   constructor(ptr, byteOffset?, byteLength?) {
+    byteOffset ||= 0;
     super(
       ptr
         ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
-          ? BunCString(ptr, byteOffset || 0, byteLength)
-          : BunCString(ptr, byteOffset || 0)
+          ? BunCString(ptr, byteOffset, byteLength)
+          : BunCString(ptr, byteOffset)
         : "",
     );
+    this.byteLength = byteLength || Buffer.byteLength(this.toString(), 'utf-8');
+    this.byteOffset = byteOffset;
     this.ptr = typeof ptr === "number" ? ptr : 0;
-    if (typeof byteOffset !== "undefined") {
-      this.byteOffset = byteOffset;
-    }
-    if (typeof byteLength !== "undefined") {
-      this.byteLength = byteLength;
-    }
   }
 
   ptr;

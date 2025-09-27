@@ -44,6 +44,8 @@ static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetCookies);
 
 static JSC_DECLARE_HOST_FUNCTION(jsJSBunRequestClone);
 
+extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
+
 static const HashTableValue JSBunRequestPrototypeValues[] = {
     { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetParams, nullptr } },
     { "cookies"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetCookies, nullptr } },
@@ -52,6 +54,10 @@ static const HashTableValue JSBunRequestPrototypeValues[] = {
 
 JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSObject* params)
 {
+    // Do this **extremely** early, before we create the JSValue.
+    // We do not want to risk the GC running before this function is called.
+    Bun__JSRequest__calculateEstimatedByteSize(sinkPtr);
+
     JSBunRequest* ptr = new (NotNull, JSC::allocateCell<JSBunRequest>(vm)) JSBunRequest(vm, structure, sinkPtr);
     ptr->finishCreation(vm, params);
     return ptr;
@@ -147,13 +153,12 @@ JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr
 {
 }
 extern "C" size_t Request__estimatedSize(void* requestPtr);
-extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
+
 void JSBunRequest::finishCreation(JSC::VM& vm, JSObject* params)
 {
     Base::finishCreation(vm);
     m_params.setMayBeNull(vm, this, params);
     m_cookies.clear();
-    Bun__JSRequest__calculateEstimatedByteSize(this->wrapped());
 
     auto size = Request__estimatedSize(this->wrapped());
     vm.heap.reportExtraMemoryAllocated(this, size);

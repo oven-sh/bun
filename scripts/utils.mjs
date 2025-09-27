@@ -2866,6 +2866,12 @@ export function printEnvironment() {
           spawnSync([shell, "-c", "free -m -w"], { stdio: "inherit" });
         }
       });
+      startGroup("Docker", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
+        }
+      });
     }
     if (isWindows) {
       startGroup("Disk (win)", () => {

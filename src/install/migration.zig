@@ -99,21 +99,36 @@ pub fn detectAndLoadOtherLockfile(
                     , .{});
                 },
                 error.NonExistentWorkspaceDependency => {
-                    Output.warn("Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Doing fresh install. See <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
+                    Output.warn("Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
+                },
+                error.RelativeLinkDependency => {
+                    Output.warn("Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
                 },
                 error.WorkspaceNameMissing => {
                     if (log.hasErrors()) {
                         log.print(Output.errorWriter()) catch {};
                     }
-                    Output.warn("pnpm-lock.yaml migration failed due to missing workspace name. Doing fresh install.", .{});
+                    Output.warn("pnpm-lock.yaml migration failed due to missing workspace name.", .{});
                 },
                 error.YamlParseError => {
                     if (log.hasErrors()) {
                         log.print(Output.errorWriter()) catch {};
                     }
-                    Output.warn("Failed to parse pnpm-lock.yaml. Doing fresh install.", .{});
+                    Output.warn("Failed to parse pnpm-lock.yaml.", .{});
                 },
-                error.PnpmLockfileNotObject, error.PnpmLockfileMissingVersion, error.PnpmLockfileVersionInvalid, error.PnpmLockfileMissingImporters, error.PnpmLockfileMissingRootPackage, error.PnpmLockfileInvalidSnapshot, error.PnpmLockfileInvalidDependency, error.PnpmLockfileMissingDependencyVersion, error.PnpmLockfileInvalidOverride, error.PnpmLockfileInvalidPatchedDependency, error.PnpmLockfileMissingCatalogEntry, error.PnpmLockfileUnresolvableDependency => {
+                error.PnpmLockfileNotObject,
+                error.PnpmLockfileMissingVersion,
+                error.PnpmLockfileVersionInvalid,
+                error.PnpmLockfileMissingImporters,
+                error.PnpmLockfileMissingRootPackage,
+                error.PnpmLockfileInvalidSnapshot,
+                error.PnpmLockfileInvalidDependency,
+                error.PnpmLockfileMissingDependencyVersion,
+                error.PnpmLockfileInvalidOverride,
+                error.PnpmLockfileInvalidPatchedDependency,
+                error.PnpmLockfileMissingCatalogEntry,
+                error.PnpmLockfileUnresolvableDependency,
+                => {
                     // These errors are continuable - log the error but don't exit
                     // The install will continue with a fresh install instead of migration
                     if (log.hasErrors()) {

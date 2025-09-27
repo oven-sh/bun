@@ -52,6 +52,7 @@ const MigratePnpmLockfileError = OOM || error{
     InvalidPnpmLockfile,
     YamlParseError,
     NonExistentWorkspaceDependency,
+    RelativeLinkDependency,
     WorkspaceNameMissing,
     DependencyLoop,
     PnpmLockfileNotObject,
@@ -480,6 +481,15 @@ pub fn migratePnpmLockfile(
                             }
 
                             pkg_entry.value_ptr.* = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
+                        }
+                    },
+                    .symlink => {
+                        if (!strings.isNPMPackageName(dep.version.value.symlink.slice(string_buf.bytes.items))) {
+                            try log.addWarningFmt(null, .Empty, allocator, "relative link dependency not supported: {s}@{s}\n", .{
+                                dep.name.slice(string_buf.bytes.items),
+                                dep.version.literal.slice(string_buf.bytes.items),
+                            });
+                            return error.RelativeLinkDependency;
                         }
                     },
                     else => {},

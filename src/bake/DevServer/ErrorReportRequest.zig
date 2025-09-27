@@ -209,7 +209,6 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
                 continue; // skip runtime frames
             }
 
-            frame.ref();
             frames.items[i] = frame;
             i += 1;
         }

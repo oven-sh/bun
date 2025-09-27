@@ -2686,7 +2686,6 @@ pub fn remapZigException(
                     continue;
                 }
 
-                frame.ref();
                 frames[j] = frame;
                 j += 1;
             }

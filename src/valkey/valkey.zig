@@ -87,6 +87,13 @@ pub const TLS = union(enum) {
     enabled,
     custom: jsc.API.ServerConfig.SSLConfig,
 
+    pub fn clone(this: *const TLS) TLS {
+        return switch (this.*) {
+            .custom => |*ssl_config| .{ .custom = ssl_config.clone() },
+            else => this.*,
+        };
+    }
+
     pub fn deinit(this: *TLS) void {
         switch (this.*) {
             .custom => |*ssl_config| ssl_config.deinit(),
@@ -457,6 +464,9 @@ pub const ValkeyClient = struct {
 
     /// Handle connection closed event
     pub fn onClose(this: *ValkeyClient) void {
+        this.socket = .{ .SocketTCP = .detached };
+        this.status = .disconnected;
+
         this.unregisterAutoFlusher();
         this.write_buffer.clearAndFree(this.allocator);
 
@@ -489,7 +499,6 @@ pub const ValkeyClient = struct {
 
         debug("reconnect in {d}ms (attempt {d}/{d})", .{ delay_ms, this.retry_attempts, this.max_retries });
 
-        this.status = .disconnected;
         this.flags.is_reconnecting = true;
         this.flags.is_authenticated = false;
         this.flags.is_selecting_db_internal = false;
@@ -945,11 +954,15 @@ pub const ValkeyClient = struct {
         this.socket = socket;
         this.write_buffer.clearAndFree(this.allocator);
         this.read_buffer.clearAndFree(this.allocator);
-        this.start();
+        if (this.socket == .SocketTCP) {
+            // if is tcp, we need to start the connection process
+            // if is tls, we need to wait for the handshake to complete
+            this.start();
+        }
     }
 
     /// Start the connection process
-    fn start(this: *ValkeyClient) void {
+    pub fn start(this: *ValkeyClient) void {
         this.authenticate();
         _ = this.flushData();
     }
@@ -1064,7 +1077,7 @@ pub const ValkeyClient = struct {
         const js_promise = promise.promise.get();
         // Handle disconnected state with offline queue
         switch (this.status) {
-            .connecting, .connected => {
+            .connected => {
                 try this.enqueue(command, &promise);
 
                 // Schedule auto-flushing to process this command if pipelining is enabled
@@ -1076,7 +1089,7 @@ pub const ValkeyClient = struct {
                     this.registerAutoFlusher(this.vm);
                 }
             },
-            .disconnected => {
+            .connecting, .disconnected => {
                 // Only queue if offline queue is enabled
                 if (this.flags.enable_offline_queue) {
                     try this.enqueue(command, &promise);
@@ -1104,7 +1117,6 @@ pub const ValkeyClient = struct {
         this.flags.is_manually_closed = true;
         this.unregisterAutoFlusher();
         if (this.status == .connected or this.status == .connecting) {
-            this.status = .disconnected;
             this.close();
         }
     }

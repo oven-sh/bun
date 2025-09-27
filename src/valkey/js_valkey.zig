@@ -227,7 +227,7 @@ pub const JSValkeyClient = struct {
     poll_ref: bun.Async.KeepAlive = .{},
 
     _subscription_ctx: ?SubscriptionCtx,
-
+    _socket_ctx: ?*uws.SocketContext = null,
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
         .next = .{
@@ -362,6 +362,7 @@ pub const JSValkeyClient = struct {
                         },
                     },
                 },
+                .tls = if (options.tls != .none) options.tls else if (uri.isTLS()) .enabled else .none,
                 .database = database,
                 .allocator = this_allocator,
                 .flags = .{
@@ -409,6 +410,8 @@ pub const JSValkeyClient = struct {
         const orig_hostname = this.client.address.hostname();
         const hostname = bun.memory.rebaseSlice(orig_hostname, base_ptr, new_base);
         const new_alloc = this.client.allocator;
+        // TODO: we could ref count it instead of cloning it
+        const tls: valkey.TLS = this.client.tls.clone();
 
         return JSValkeyClient.new(.{
             .ref_count = .init(),
@@ -438,6 +441,7 @@ pub const JSValkeyClient = struct {
                         },
                     },
                 },
+                .tls = tls,
                 .database = this.client.database,
                 .allocator = new_alloc,
                 .flags = .{
@@ -537,7 +541,7 @@ pub const JSValkeyClient = struct {
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
-        this.this_value.setStrong(this_value, globalObject);
+        defer this.updatePollRef();
 
         if (this.client.flags.needs_to_open_socket) {
             debug("Need to open socket, starting connection process.", .{});
@@ -565,7 +569,6 @@ pub const JSValkeyClient = struct {
                 this.reconnect();
             },
             .failed => {
-                this.client.status = .disconnected;
                 this.client.flags.is_reconnecting = true;
                 this.client.retry_attempts = 0;
                 this.reconnect();
@@ -735,8 +738,6 @@ pub const JSValkeyClient = struct {
         this.ref();
         defer this.deref();
 
-        this.client.status = .connecting;
-
         // Ref the poll to keep event loop alive during connection
         this.poll_ref.disable();
         this.poll_ref = .{};
@@ -755,14 +756,28 @@ pub const JSValkeyClient = struct {
     // Callback for when Valkey client connects
     pub fn onValkeyConnect(this: *JSValkeyClient, value: *protocol.RESPValue) void {
         bun.debugAssert(this.client.status == .connected);
+        // we should always have a strong reference to the object here
+        bun.debugAssert(this.this_value.isStrong());
 
+        defer {
+            this.client.onWritable();
+            // update again after running the callback
+            this.updatePollRef();
+        }
         const globalObject = this.globalObject;
         const event_loop = this.client.vm.eventLoop();
         event_loop.enter();
         defer event_loop.exit();
 
         if (this.this_value.tryGet()) |this_value| {
-            const hello_value: JSValue = value.toJS(globalObject) catch .js_undefined;
+            const hello_value: JSValue = js_hello: {
+                break :js_hello value.toJS(globalObject) catch |err| {
+                    // TODO: how should we handle this? old code ignore the exception instead of cleaning it up
+                    // now we clean it up, and behave the same as old code
+                    _ = globalObject.takeException(err);
+                    break :js_hello .js_undefined;
+                };
+            };
             js.helloSetCached(this_value, globalObject, hello_value);
             // Call onConnect callback if defined by the user
             if (js.onconnectGetCached(this_value)) |on_connect| {
@@ -776,8 +791,7 @@ pub const JSValkeyClient = struct {
                 const js_promise = promise.asPromise().?;
                 if (this.client.flags.connection_promise_returns_client) {
                     debug("Resolving connection promise with client instance", .{});
-                    const this_js = this.toJS(globalObject);
-                    js_promise.resolve(globalObject, this_js);
+                    js_promise.resolve(globalObject, this_value);
                 } else {
                     debug("Resolving connection promise with HELLO response", .{});
                     js_promise.resolve(globalObject, hello_value);
@@ -785,9 +799,6 @@ pub const JSValkeyClient = struct {
                 this.client.flags.connection_promise_returns_client = false;
             }
         }
-
-        this.client.onWritable();
-        this.updatePollRef();
     }
 
     /// Invoked when the Valkey client receives a new listener.
@@ -897,13 +908,15 @@ pub const JSValkeyClient = struct {
     // Callback for when Valkey client closes
     pub fn onValkeyClose(this: *JSValkeyClient) void {
         const globalObject = this.globalObject;
-        this.poll_ref.disable();
-        defer this.deref();
+
+        defer {
+            // Update poll reference to allow garbage collection of disconnected clients
+            this.updatePollRef();
+            this.deref();
+        }
 
         const this_jsvalue = this.this_value.tryGet() orelse return;
-        this.this_value.setWeak(this_jsvalue);
-        this.ref();
-        defer this.deref();
+        this_jsvalue.ensureStillAlive();
 
         // Create an error value
         const error_value = protocol.valkeyErrorToJS(globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
@@ -927,9 +940,6 @@ pub const JSValkeyClient = struct {
                 &[_]JSValue{error_value},
             ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
         }
-
-        // Update poll reference to allow garbage collection of disconnected clients
-        this.updatePollRef();
     }
 
     // Callback for when Valkey client times out
@@ -956,15 +966,39 @@ pub const JSValkeyClient = struct {
         }
     }
 
-    pub fn finalize(this: *JSValkeyClient) void {
+    fn closeSocketNextTick(this: *JSValkeyClient) void {
+        if (this.client.socket.isClosed()) return;
+
         this.ref();
+        // socket close can potentially call JS so we need to enqueue the deinit
+        const Holder = struct {
+            ctx: *JSValkeyClient,
+            task: jsc.AnyTask,
+
+            pub fn run(self: *@This()) void {
+                defer bun.default_allocator.destroy(self);
+
+                self.ctx.client.close();
+                self.ctx.deref();
+            }
+        };
+        var holder = bun.handleOom(bun.default_allocator.create(Holder));
+        holder.* = .{
+            .ctx = this,
+            .task = undefined,
+        };
+        holder.task = jsc.AnyTask.New(Holder, Holder.run).init(holder);
+
+        this.client.vm.enqueueTask(jsc.Task.init(&holder.task));
+    }
+
+    pub fn finalize(this: *JSValkeyClient) void {
         defer this.deref();
 
         this.stopTimers();
         this.this_value.finalize();
         this.client.flags.finalized = true;
-        this.client.close();
-
+        this.closeSocketNextTick();
         // We do not need to free the subscription context here because we're
         // guaranteed to have freed it by virtue of the fact that we are
         // garbage collected now and the subscription context holds a reference
@@ -983,17 +1017,27 @@ pub const JSValkeyClient = struct {
         }
     }
 
+    fn failWithInvalidSocketContext(this: *JSValkeyClient) void {
+        // if the context is invalid is not worth retrying
+        this.client.flags.enable_auto_reconnect = false;
+        this.clientFail(if (this.client.tls == .none) "Failed to create TCP context" else "Failed to create TLS context", protocol.RedisError.ConnectionClosed);
+        this.client.onValkeyClose();
+    }
+
     fn connect(this: *JSValkeyClient) !void {
         debug("Connecting to Redis.", .{});
         this.client.flags.needs_to_open_socket = false;
         const vm = this.client.vm;
 
-        const ctx: *uws.SocketContext, const deinit_context: bool =
+        const ctx: *uws.SocketContext, const own_ctx: bool =
             switch (this.client.tls) {
                 .none => .{
                     vm.rareData().valkey_context.tcp orelse brk_ctx: {
                         // TCP socket
-                        const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient)).?;
+                        const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient)) orelse {
+                            this.failWithInvalidSocketContext();
+                            return;
+                        };
                         uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
                         vm.rareData().valkey_context.tcp = ctx_;
                         break :brk_ctx ctx_;
@@ -1004,7 +1048,10 @@ pub const JSValkeyClient = struct {
                     vm.rareData().valkey_context.tls orelse brk_ctx: {
                         // TLS socket, default config
                         var err: uws.create_bun_socket_error_t = .none;
-                        const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.SocketContext.BunSocketContextOptions{}, &err).?;
+                        const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.SocketContext.BunSocketContextOptions{}, &err) orelse {
+                            this.failWithInvalidSocketContext();
+                            return;
+                        };
                         uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                         vm.rareData().valkey_context.tls = ctx_;
                         break :brk_ctx ctx_;
@@ -1012,31 +1059,35 @@ pub const JSValkeyClient = struct {
                     false,
                 },
                 .custom => |*custom| brk_ctx: {
+                    if (this._socket_ctx) |ctx| {
+                        break :brk_ctx .{ ctx, true };
+                    }
                     // TLS socket, custom config
                     var err: uws.create_bun_socket_error_t = .none;
                     const options = custom.asUSockets();
-                    const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err).?;
+
+                    const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err) orelse {
+                        this.failWithInvalidSocketContext();
+                        return;
+                    };
                     uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
                     break :brk_ctx .{ ctx_, true };
                 },
             };
         this.ref();
 
-        defer {
-            if (deinit_context) {
-                // This is actually unref(). uws.Context is reference counted.
-                ctx.deinit(true);
-            }
+        if (own_ctx) {
+            // save the context so we deinit it later (if we reconnect we can reuse the same context)
+            this._socket_ctx = ctx;
         }
+        this.client.status = .connecting;
+        this.updatePollRef();
         this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
-    pub fn send(this: *JSValkeyClient, globalThis: *jsc.JSGlobalObject, this_jsvalue: JSValue, command: *const Command) !*jsc.JSPromise {
+    pub fn send(this: *JSValkeyClient, globalThis: *jsc.JSGlobalObject, _: JSValue, command: *const Command) !*jsc.JSPromise {
         if (this.client.flags.needs_to_open_socket) {
             @branchHint(.unlikely);
-
-            if (this.this_value != .strong)
-                this.this_value.setStrong(this_jsvalue, globalThis);
 
             this.connect() catch |err| {
                 this.client.flags.needs_to_open_socket = true;
@@ -1073,14 +1124,38 @@ pub const JSValkeyClient = struct {
         return memory_cost;
     }
 
+    fn deinitSocketContextNextTick(this: *JSValkeyClient) void {
+        const ctx = this._socket_ctx orelse return;
+        this._socket_ctx = null;
+        // socket close can potentially call JS so we need to enqueue the deinit
+        // this should only be the case tls socket with custom config
+        const Holder = struct {
+            ctx: *uws.SocketContext,
+            task: jsc.AnyTask,
+
+            pub fn run(self: *@This()) void {
+                defer bun.default_allocator.destroy(self);
+                self.ctx.deinit(true);
+            }
+        };
+        var holder = bun.handleOom(bun.default_allocator.create(Holder));
+        holder.* = .{
+            .ctx = ctx,
+            .task = undefined,
+        };
+        holder.task = jsc.AnyTask.New(Holder, Holder.run).init(holder);
+
+        this.client.vm.enqueueTask(jsc.Task.init(&holder.task));
+    }
+
     fn deinit(this: *JSValkeyClient) void {
         bun.debugAssert(this.client.socket.isClosed());
-
+        this.deinitSocketContextNextTick();
         this.client.deinit(null);
         this.poll_ref.disable();
         this.stopTimers();
-        this.this_value.finalize();
         this.ref_count.assertNoRefs();
+
         bun.destroy(this);
     }
 
@@ -1103,7 +1178,7 @@ pub const JSValkeyClient = struct {
         else
             true;
 
-        const has_activity = has_pending_commands or !subs_deletable;
+        const has_activity = has_pending_commands or !subs_deletable or this.client.flags.is_reconnecting;
 
         // There's a couple cases to handle here:
         if (has_activity) {
@@ -1117,6 +1192,7 @@ pub const JSValkeyClient = struct {
         }
 
         if (this.this_value.isEmpty()) {
+            debug("this_value is empty, skipping updatePollRef", .{});
             return;
         }
 
@@ -1135,16 +1211,19 @@ pub const JSValkeyClient = struct {
                 //
                 // It is 100% safe to drop the strong reference there and let
                 // the object be GC'd, but we're not doing that now.
+                debug("upgrading this_value since we are connected/connecting", .{});
                 this.this_value.upgrade(this.globalObject);
             },
             .disconnected, .failed => {
                 // If we're disconnected or failed, we need to check if we have
                 // any pending activity.
                 if (has_activity) {
+                    debug("upgrading this_value since there is pending activity", .{});
                     // If we have pending activity, we need to keep the object
                     // alive.
                     this.this_value.upgrade(this.globalObject);
                 } else {
+                    debug("downgrading this_value since there is no pending activity", .{});
                     // If we don't have any pending activity, we can drop the
                     // strong reference.
                     this.this_value.downgrade();
@@ -1244,10 +1323,16 @@ fn SocketHandler(comptime ssl: bool) type {
         }
 
         fn onHandshake_(this: *JSValkeyClient, _: anytype, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-            debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+            debug("onHandshake: {d} error={d} reason={s} code={s}", .{
+                success,
+                ssl_error.error_no,
+                if (ssl_error.reason != null) bun.span(ssl_error.reason[0..bun.len(ssl_error.reason) :0]) else "no reason",
+                if (ssl_error.code != null) bun.span(ssl_error.code[0..bun.len(ssl_error.code) :0]) else "no code",
+            });
             const handshake_success = if (success == 1) true else false;
             this.ref();
             defer this.deref();
+            defer this.updatePollRef();
             if (handshake_success) {
                 const vm = this.client.vm;
                 if (this.client.tls.rejectUnauthorized(vm)) {
@@ -1262,14 +1347,15 @@ fn SocketHandler(comptime ssl: bool) type {
                                 const loop = vm.eventLoop();
                                 loop.enter();
                                 defer loop.exit();
-                                this.client.status = .failed;
                                 this.client.flags.is_manually_closed = true;
                                 this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
                                 this.client.close();
+                                return;
                             }
                         }
                     }
                 }
+                this.client.start();
             }
         }
 

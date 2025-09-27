@@ -954,12 +954,8 @@ pub fn duplicate(
     var new_client: *JSValkeyClient = try this.cloneWithoutConnecting(globalObject);
 
     const new_client_js = new_client.toJS(globalObject);
-    new_client.this_value =
-        if (this.client.status == .connected and !this.client.flags.is_manually_closed)
-            jsc.JSRef.initStrong(new_client_js, globalObject)
-        else
-            jsc.JSRef.initWeak(new_client_js);
 
+    new_client.this_value = jsc.JSRef.initWeak(new_client_js);
     // If the original client is already connected and not manually closed, start connecting the new client.
     if (this.client.status == .connected and !this.client.flags.is_manually_closed) {
         // Use strong reference during connection to prevent premature GC

@@ -448,11 +448,12 @@ const jsc = bun.jsc;
 const api = bun.schema.api;
 const AnyServer = jsc.API.AnyServer;
 const writeStatus = bun.api.server.writeStatus;
-const AnyBlob = jsc.WebCore.Blob.Any;
-const Blob = jsc.WebCore.Blob;
 
 const ETag = bun.http.ETag;
 const Headers = bun.http.Headers;
+
+const Blob = jsc.WebCore.Blob;
+const AnyBlob = jsc.WebCore.Blob.Any;
 
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

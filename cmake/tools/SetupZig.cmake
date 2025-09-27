@@ -90,6 +90,7 @@ register_command(
       -DZIG_PATH=${ZIG_PATH}
       -DZIG_COMMIT=${ZIG_COMMIT}
       -DENABLE_ASAN=${ENABLE_ASAN}
+      -DENABLE_VALGRIND=${ENABLE_VALGRIND}
       -DZIG_COMPILER_SAFE=${ZIG_COMPILER_SAFE}
       -P ${CWD}/cmake/scripts/DownloadZig.cmake
   SOURCES

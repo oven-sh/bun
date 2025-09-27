@@ -2201,19 +2201,38 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
-                // We also always include "__promiseAll" for ESM wrappers since they might have
-                // multiple async dependencies. Tree-shaking will remove it if unused.
+
+                // Count async dependencies to determine if we need __promiseAll
+                var async_import_count: usize = 0;
+                const import_records = c.graph.ast.items(.import_records)[source_index].slice();
+                const meta_flags = c.graph.meta.items(.flags);
+
+                for (import_records) |record| {
+                    if (!record.source_index.isValid()) {
+                        continue;
+                    }
+                    const other_flags = meta_flags[record.source_index.get()];
+                    if (other_flags.is_async_or_has_async_dependency) {
+                        async_import_count += 1;
+                        if (async_import_count >= 2) {
+                            break;
+                        }
+                    }
+                }
+
+                const needs_promise_all = async_import_count >= 2;
+
                 const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
 
-                const promise_all_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
+                const promise_all_parts = if (needs_promise_all and wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.promise_all_runtime_ref)
                 else
                     &.{};
 
-                // generate a dummy part that depends on the "__esm" and "__promiseAll" symbols
+                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
                 const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len + promise_all_parts.len) catch unreachable;
                 var dep_index: usize = 0;
                 for (esm_parts) |part| {
@@ -2254,13 +2273,16 @@ pub const LinkerContext = struct {
                         Index.runtime,
                     ) catch |err| bun.handleOom(err);
 
-                    c.graph.generateSymbolImportAndUse(
-                        source_index,
-                        part_index,
-                        c.promise_all_runtime_ref,
-                        1,
-                        Index.runtime,
-                    ) catch |err| bun.handleOom(err);
+                    // Only mark __promiseAll as used if we have multiple async dependencies
+                    if (needs_promise_all) {
+                        c.graph.generateSymbolImportAndUse(
+                            source_index,
+                            part_index,
+                            c.promise_all_runtime_ref,
+                            1,
+                            Index.runtime,
+                        ) catch |err| bun.handleOom(err);
+                    }
                 }
             },
             else => {},

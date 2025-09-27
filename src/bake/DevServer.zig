@@ -276,7 +276,7 @@ const DeferredPromise = struct {
         self.route_bundle_indices.clearRetainingCapacity();
     }
 
-    pub fn deinit(self: *DeferredPromise) void {
+    pub fn deinitIdempotently(self: *DeferredPromise) void {
         self.strong.deinit();
         self.route_bundle_indices.deinit(bun.default_allocator);
         self.route_bundle_indices = .{};
@@ -674,7 +674,7 @@ pub fn deinit(dev: *DevServer) void {
                 r = request.next;
             }
             dev.next_bundle.route_queue.deinit(alloc);
-            dev.next_bundle.promise.deinit();
+            dev.next_bundle.promise.deinitIdempotently();
         },
         .route_lookup = dev.route_lookup.deinit(alloc),
         .source_maps = {
@@ -2201,7 +2201,7 @@ pub fn finalizeBundle(
     defer {
         var heap = bv2.graph.heap;
         bv2.deinitWithoutFreeingArena();
-        if (dev.current_bundle) |*cb| cb.promise.deinit();
+        if (dev.current_bundle) |*cb| cb.promise.deinitIdempotently();
         dev.current_bundle = null;
         dev.log.clearAndFree();
         heap.deinit();
@@ -2946,10 +2946,10 @@ pub fn finalizeBundle(
     }
 
     if (current_bundle.promise.strong.hasValue()) {
-        defer current_bundle.promise.deinit();
+        defer current_bundle.promise.deinitIdempotently();
         current_bundle.promise.setRouteBundleState(dev, .loaded);
         dev.vm.eventLoop().enter();
-        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.true);
+        current_bundle.promise.strong.resolve(dev.vm.global, JSValue.jsBoolean(true));
         dev.vm.eventLoop().exit();
     }
 
@@ -4445,23 +4445,23 @@ const PromiseEnsureRouteBundledCtx = struct {
         switch (bundle_field) {
             .current_bundle => {
                 if (this.dev.current_bundle.?.promise.strong.hasValue()) {
-                    this.dev.current_bundle.?.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}) catch bun.outOfMemory();
+                    bun.handleOom(this.dev.current_bundle.?.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}));
                     this.p = this.dev.current_bundle.?.promise.strong.get();
                     return;
                 }
                 const strong_promise = this.ensurePromise();
-                this.dev.current_bundle.?.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}) catch bun.outOfMemory();
+                bun.handleOom(this.dev.current_bundle.?.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}));
                 this.dev.current_bundle.?.promise.strong = strong_promise;
                 return;
             },
             .next_bundle => {
                 if (this.dev.next_bundle.promise.strong.hasValue()) {
-                    this.dev.next_bundle.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}) catch bun.outOfMemory();
+                    bun.handleOom(this.dev.next_bundle.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}));
                     this.p = this.dev.next_bundle.promise.strong.get();
                     return;
                 }
                 const strong_promise = this.ensurePromise();
-                this.dev.next_bundle.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}) catch bun.outOfMemory();
+                bun.handleOom(this.dev.next_bundle.promise.route_bundle_indices.put(bun.default_allocator, this.route_bundle_index, {}));
                 this.dev.next_bundle.promise.strong = strong_promise;
                 return;
             },
@@ -4470,7 +4470,7 @@ const PromiseEnsureRouteBundledCtx = struct {
 
     fn onLoaded(this: *PromiseEnsureRouteBundledCtx) bun.JSError!void {
         _ = this.ensurePromise();
-        this.p.?.resolve(this.global, JSValue.true);
+        this.p.?.resolve(this.global, JSValue.jsBoolean(true));
         this.dev.vm.drainMicrotasks();
     }
 

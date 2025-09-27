@@ -1,5 +1,6 @@
 #include "BakeAdditionsToGlobalObject.h"
 #include "JSBakeResponse.h"
+#include "JSBunRequest.h"
 #include "JavaScriptCore/SlotVisitorMacros.h"
 #include "ErrorCode.h"
 
@@ -103,9 +104,9 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
         return JSValue::encode(jsUndefined());
     }
 
-    JSRequest* request = jsDynamicCast<JSRequest*>(requestValue);
+    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(requestValue);
     if (!request) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "request must be a JSRequest"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "request must be a JSBunRequest"_s);
         return JSValue::encode(jsUndefined());
     }
 
@@ -116,6 +117,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
     }
 
     BunString url = Bun::toString(urlValue.getString(globalObject));
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     return Bake__bundleNewRouteJSFunctionImpl(globalObject, request->m_ctx, url);
 }

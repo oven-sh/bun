@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
@@ -54,7 +54,14 @@ setTimeout(() => {
 
   // Build standalone executable with our debug build
   const buildProc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--outfile", path.join(String(dir), "server"), path.join(String(dir), "server.ts")],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--outfile",
+      path.join(String(dir), "server"),
+      path.join(String(dir), "server.ts"),
+    ],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",

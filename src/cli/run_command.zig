@@ -246,7 +246,7 @@ pub const RunCommand = struct {
         }
 
         if (!use_system_shell) {
-            const mini = bun.jsc.MiniEventLoop.initGlobal(env);
+            const mini = bun.jsc.MiniEventLoop.initGlobal(env, cwd);
             const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items, cwd) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
@@ -294,7 +294,7 @@ pub const RunCommand = struct {
             .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
-                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env, null)),
             },
         }) catch |err| {
             if (!silent) {
@@ -467,7 +467,7 @@ pub const RunCommand = struct {
             .use_execve_on_macos = silent,
 
             .windows = if (Environment.isWindows) .{
-                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env, null)),
             },
         }) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -1603,6 +1603,12 @@ pub const RunCommand = struct {
             return true;
         }
 
+        if (ctx.filters.len == 0 and !ctx.workspaces and CLI.Cli.cmd != null and CLI.Cli.cmd.? == .AutoCommand) {
+            if (bun.strings.eqlComptime(target_name, "feedback")) {
+                try @"bun feedback"(ctx);
+            }
+        }
+
         if (log_errors) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
@@ -1664,6 +1670,19 @@ pub const RunCommand = struct {
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
             Global.exit(1);
         };
+    }
+
+    fn @"bun feedback"(ctx: Command.Context) !noreturn {
+        const trigger = bun.pathLiteral("/[eval]");
+        var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+        const cwd = try std.posix.getcwd(&entry_point_buf);
+        @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+        ctx.runtime_options.eval.script = if (bun.Environment.codegen_embed)
+            @embedFile("eval/feedback.ts")
+        else
+            bun.runtimeEmbedFile(.codegen, "eval/feedback.ts");
+        try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+        Global.exit(0);
     }
 };
 

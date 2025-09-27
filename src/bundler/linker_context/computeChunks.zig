@@ -286,7 +286,7 @@ pub noinline fn computeChunks(
         }
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
-        try sorted_chunks.append(this.allocator(), html_chunks.values());
+        try sorted_chunks.appendSlice(this.allocator(), html_chunks.values());
 
         break :sort_chunks sorted_chunks.slice();
     };

@@ -713,7 +713,7 @@ pub const PmPkgCommand = struct {
         }
 
         if (!found) return false;
-        var new_props: std.ArrayList(js_ast.G.Property) = try .initCapacity(allocator, old_props.len - 1);
+        var new_props: bun.BabyList(js_ast.G.Property) = try .initCapacity(allocator, old_props.len - 1);
         for (old_props) |prop| {
             if (prop.key) |k| {
                 switch (k.data) {
@@ -727,8 +727,7 @@ pub const PmPkgCommand = struct {
             }
             new_props.appendAssumeCapacity(prop);
         }
-        const new_list = js_ast.G.Property.List.fromList(new_props);
-        obj.data.e_object.properties = new_list;
+        obj.data.e_object.properties = new_props;
 
         return true;
     }

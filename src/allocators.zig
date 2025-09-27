@@ -229,6 +229,11 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
                 this.data[index] = item;
                 return &this.data[index];
             }
+
+            pub fn deinit(this: *OverflowBlock) void {
+                if (this.prev) |p| p.deinit();
+                bun.default_allocator.destroy(this);
+            }
         };
 
         const Self = @This();
@@ -262,6 +267,12 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             }
 
             return instance;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.head.deinit();
+            bun.default_allocator.destroy(instance);
+            loaded = false;
         }
 
         pub fn isOverflowing() bool {
@@ -348,6 +359,12 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             }
 
             return instance;
+        }
+
+        pub fn deinit(self: *const Self) void {
+            _ = self;
+            bun.default_allocator.destroy(instance);
+            loaded = false;
         }
 
         pub inline fn isOverflowing() bool {
@@ -530,6 +547,12 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             return instance;
         }
 
+        pub fn deinit(self: *Self) void {
+            self.index.deinit(self.allocator);
+            bun.default_allocator.destroy(instance);
+            loaded = false;
+        }
+
         pub fn isOverflowing() bool {
             return instance.backing_buf_used >= @as(u16, count);
         }
@@ -653,6 +676,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             // }
 
         }
+
+        pub fn values(self: *Self) []ValueType {
+            return (&self.backing_buf)[0..self.backing_buf_used];
+        }
     };
     if (!store_keys) {
         return BSSMapType;
@@ -682,6 +709,12 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             }
 
             return instance;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.map.deinit();
+            bun.default_allocator.destroy(instance);
+            instance_loaded = false;
         }
 
         pub fn isOverflowing() bool {
@@ -886,6 +919,8 @@ pub const Default = struct {
         _ = self;
         return c_allocator;
     }
+
+    pub const deinit = void;
 };
 
 const basic = if (bun.use_mimalloc)

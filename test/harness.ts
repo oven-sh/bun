@@ -7,13 +7,13 @@
 
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { ChildProcess, fork } from "child_process";
+import { beforeAll, describe, expect } from "bun:test";
+import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import { execSync } from "child_process";
+import * as numeric from "_util/numeric.ts";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -31,7 +31,7 @@ export const libcFamily: "glibc" | "musl" =
   process.platform !== "linux"
     ? "glibc"
     : // process.report.getReport() has incorrect type definitions.
-      (process.report.getReport() as any).header.glibcVersionRuntime
+      (process.report.getReport() as { header: { glibcVersionRuntime: boolean } }).header.glibcVersionRuntime
       ? "glibc"
       : "musl";
 
@@ -61,6 +61,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
+  WANTS_LOUD: "0",
 };
 
 const ciEnv = { ...bunEnv };
@@ -357,7 +358,7 @@ export function bunRunAsScript(
 }
 
 export function randomLoneSurrogate() {
-  const n = randomRange(0, 2);
+  const n = numeric.random.between(0, 2, { domain: "integral" });
   if (n === 0) return randomLoneHighSurrogate();
   return randomLoneLowSurrogate();
 }
@@ -370,16 +371,12 @@ export function randomInvalidSurrogatePair() {
 
 // Generates a random lone high surrogate (from the range D800-DBFF)
 export function randomLoneHighSurrogate() {
-  return String.fromCharCode(randomRange(0xd800, 0xdbff));
+  return String.fromCharCode(numeric.random.between(0xd800, 0xdbff, { domain: "integral" }));
 }
 
 // Generates a random lone high surrogate (from the range DC00-DFFF)
 export function randomLoneLowSurrogate() {
-  return String.fromCharCode(randomRange(0xdc00, 0xdfff));
-}
-
-function randomRange(low: number, high: number): number {
-  return low + Math.floor(Math.random() * (high - low));
+  return String.fromCharCode(numeric.random.between(0xdc00, 0xdfff, { domain: "integral" }));
 }
 
 export function runWithError(cb: () => unknown): Error | undefined {
@@ -860,18 +857,24 @@ export function dockerExe(): string | null {
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 
-  // TODO: investigate why its not starting on Linux arm64
-  if ((isLinux && process.arch === "arm64") || isMacOS) {
+  // TODO: investigate why Docker tests are not working on Linux arm64
+  if (isLinux && process.arch === "arm64") {
     return false;
   }
 
   try {
-    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
+    const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 }
@@ -910,78 +913,98 @@ export async function describeWithContainer(
     env = {},
     args = [],
     archs,
+    concurrent = false,
   }: {
     image: string;
     env?: Record<string, string>;
     args?: string[];
     archs?: NodeJS.Architecture[];
+    concurrent?: boolean;
   },
-  fn: (port: number) => void,
+  fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
-  describe(label, () => {
-    const docker = dockerExe();
-    if (!docker) {
-      test.skip(`docker is not installed, skipped: ${image}`, () => {});
+  // Skip if Docker is not available
+  if (!isDockerEnabled()) {
+    describe.todo(label);
+    return;
+  }
+
+  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
+    // Check if this is one of our docker-compose services
+    const services: Record<string, number> = {
+      "postgres_plain": 5432,
+      "postgres_tls": 5432,
+      "postgres_auth": 5432,
+      "mysql_plain": 3306,
+      "mysql_native_password": 3306,
+      "mysql_tls": 3306,
+      "mysql:8": 3306, // Map mysql:8 to mysql_plain
+      "mysql:9": 3306, // Map mysql:9 to mysql_native_password
+      "redis_plain": 6379,
+      "redis_unified": 6379,
+      "minio": 9000,
+      "autobahn": 9002,
+    };
+
+    const servicePort = services[image];
+    if (servicePort) {
+      // Map mysql:8 and mysql:9 based on environment variables
+      let actualService = image;
+      if (image === "mysql:8" || image === "mysql:9") {
+        if (env.MYSQL_ROOT_PASSWORD === "bun") {
+          actualService = "mysql_native_password"; // Has password "bun"
+        } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
+          actualService = "mysql_plain"; // No password
+        } else {
+          actualService = "mysql_plain"; // Default to no password
+        }
+      }
+
+      // Create a container descriptor with stable references and a ready promise
+      let readyResolver: () => void;
+      let readyRejecter: (error: any) => void;
+      const readyPromise = new Promise<void>((resolve, reject) => {
+        readyResolver = resolve;
+        readyRejecter = reject;
+      });
+
+      // Internal state that will be updated when container is ready
+      let _host = "127.0.0.1";
+      let _port = 0;
+
+      // Container descriptor with live getters and ready promise
+      const containerDescriptor = {
+        get host() {
+          return _host;
+        },
+        get port() {
+          return _port;
+        },
+        ready: readyPromise,
+      };
+
+      // Start the service before any tests
+      beforeAll(async () => {
+        try {
+          const dockerHelper = await import("./docker/index.ts");
+          const info = await dockerHelper.ensure(actualService as any);
+          _host = info.host;
+          _port = info.ports[servicePort];
+          console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
+          readyResolver!();
+        } catch (error) {
+          readyRejecter!(error);
+          throw error;
+        }
+      });
+
+      fn(containerDescriptor);
       return;
     }
-    const { arch, platform } = process;
-    if ((archs && !archs?.includes(arch)) || platform === "win32" || platform === "darwin") {
-      test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
-      return false;
-    }
-    let containerId: string;
-    {
-      const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);
-      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
-        cmd: [docker, "run", "--rm", "-dPit", ...envs, image, ...args],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (exitCode !== 0) {
-        process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to start (exit: ${exitCode})`, () => {});
-        return false;
-      }
-      if (signalCode) {
-        test.skip(`docker container for ${image} failed to start (signal: ${signalCode})`, () => {});
-        return false;
-      }
-      containerId = stdout.toString("utf-8").trim();
-    }
-    let port: number;
-    {
-      const { exitCode, stdout, stderr, signalCode } = Bun.spawnSync({
-        cmd: [docker, "port", containerId],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (exitCode !== 0) {
-        process.stderr.write(stderr);
-        test.skip(`docker container for ${image} failed to find a port (exit: ${exitCode})`, () => {});
-        return false;
-      }
-      if (signalCode) {
-        test.skip(`docker container for ${image} failed to find a port (signal: ${signalCode})`, () => {});
-        return false;
-      }
-      const [firstPort] = stdout
-        .toString("utf-8")
-        .trim()
-        .split("\n")
-        .map(line => parseInt(line.split(":").pop()!));
-      port = firstPort;
-    }
-    beforeAll(async () => {
-      await waitForPort(port);
-    });
-    afterAll(() => {
-      Bun.spawnSync({
-        cmd: [docker, "rm", "-f", containerId],
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-    });
-    fn(port);
+    // No fallback - if the image isn't in docker-compose, it should fail
+    throw new Error(
+      `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
+    );
   });
 }
 

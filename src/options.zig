@@ -1220,7 +1220,6 @@ pub const JSX = struct {
         .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
         .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
         .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
-        .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
     });
 
     pub const Pragma = struct {
@@ -1789,6 +1788,7 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+    keep_names: bool = false,
     dead_code_elimination: bool = true,
     css_chunking: bool,
 
@@ -1896,6 +1896,10 @@ pub const BundleOptions = struct {
             this.dead_code_elimination and this.minify_syntax,
         );
         this.defines_loaded = true;
+    }
+
+    pub fn deinit(this: *const BundleOptions) void {
+        this.define.deinit();
     }
 
     pub fn loader(this: *const BundleOptions, ext: string) Loader {

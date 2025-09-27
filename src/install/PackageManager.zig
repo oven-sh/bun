@@ -1,9 +1,5 @@
 cache_directory_: ?std.fs.Dir = null,
-
 cache_directory_path: stringZ = "",
-temp_dir_: ?std.fs.Dir = null,
-temp_dir_path: stringZ = "",
-temp_dir_name: string = "",
 root_dir: *Fs.FileSystem.DirEntry,
 allocator: std.mem.Allocator,
 log: *logger.Log,
@@ -155,6 +151,7 @@ pub const Subcommand = enum {
     audit,
     info,
     why,
+    scan,
 
     // bin,
     // hash,
@@ -462,7 +459,7 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
         // used later for adding to path for scripts
         manager.node_gyp_tempdir_name = try manager.allocator.dupe(u8, node_gyp_tempdir_name);
 
-        var node_gyp_tempdir = tempdir.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
+        var node_gyp_tempdir = tempdir.handle.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
             if (err == error.EEXIST) {
                 // it should not exist
                 Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
@@ -515,17 +512,17 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
 
         // Add our node-gyp tempdir to the path
         const existing_path = manager.env.get("PATH") orelse "";
-        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + manager.temp_dir_name.len + 1 + manager.node_gyp_tempdir_name.len);
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + tempdir.name.len + 1 + manager.node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
-        try PATH.appendSlice(strings.withoutTrailingSlash(manager.temp_dir_name));
+        try PATH.appendSlice(strings.withoutTrailingSlash(tempdir.name));
         try PATH.append(std.fs.path.sep);
         try PATH.appendSlice(manager.node_gyp_tempdir_name);
         try manager.env.map.put("PATH", PATH.items);
 
         const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
-            strings.withoutTrailingSlash(manager.temp_dir_name),
+            strings.withoutTrailingSlash(tempdir.name),
             std.fs.path.sep_str,
             strings.withoutTrailingSlash(manager.node_gyp_tempdir_name),
             std.fs.path.sep_str,
@@ -580,7 +577,10 @@ pub fn init(
     if (comptime Environment.isWindows) {
         _ = Path.pathToPosixBuf(u8, top_level_dir_no_trailing_slash, &cwd_buf);
     } else {
-        @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+        // Avoid memcpy alias when source and dest are the same
+        if (cwd_buf[0..].ptr != top_level_dir_no_trailing_slash.ptr) {
+            bun.copy(u8, cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+        }
     }
 
     var original_package_json_path_buf = bun.handleOom(std.ArrayListUnmanaged(u8).initCapacity(ctx.allocator, top_level_dir_no_trailing_slash.len + "/package.json".len + 1));

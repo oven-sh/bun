@@ -165,6 +165,5 @@ if (Bun.main === import.meta.path) {
   setHandler(dummyRegistry([]));
   console.log("Running dummy registry!\n\n URL: ", root_url!, "\n", "DIR: ", package_dir!);
 } else {
-  // @ts-expect-error
   ({ expect } = Bun.jest(import.meta.path));
 }

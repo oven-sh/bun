@@ -436,10 +436,6 @@ pub fn migratePnpmLockfile(
                                     defer workspace_path_buf.deinit();
                                     workspace_path_buf.append(existing_workspace_path.slice(string_buf.bytes.items));
 
-                                    std.debug.print("comparing '{s}' and '{s}'\n", .{
-                                        workspace_path_buf.slice(),
-                                        link_path_buf.slice(),
-                                    });
                                     if (strings.eqlLong(workspace_path_buf.slice(), link_path_buf.slice(), true)) {
                                         continue :next_dep;
                                     }

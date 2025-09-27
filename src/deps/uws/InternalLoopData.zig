@@ -33,7 +33,7 @@ pub const InternalLoopData = extern struct {
         return this.sweep_timer_count > 0;
     }
 
-    pub fn assertCorrectThread(this: *const InternalLoopData) void {
+    pub inline fn assertCorrectThread(this: *const InternalLoopData) void {
         if (comptime bun.Environment.isDebug or bun.Environment.enable_asan) {
             if (this.jsc_vm) |vm| {
                 const is_correct_js_vm = brk: {

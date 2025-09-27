@@ -1,5 +1,5 @@
 pub const Snapshots = struct {
-    const file_header = "// Bun Snapshot v1, https://bun.com/docs/test/snapshots\n";
+    const file_header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
     const snapshots_dir_name = "__snapshots__" ++ [_]u8{std.fs.path.sep};
     pub const ValuesHashMap = std.HashMap(usize, string, bun.IdentityContext(usize), std.hash_map.default_max_load_percentage);
 

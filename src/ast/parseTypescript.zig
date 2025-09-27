@@ -78,7 +78,8 @@ pub fn ParseTypescript(
 
             // Check for invalid identifiers
             if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name, "await")) or
-                (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(name, "yield"))) {
+                (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(name, "yield")))
+            {
                 try p.log.addRangeError(p.source, name_range, try std.fmt.allocPrint(p.allocator, "Cannot use \"{s}\" as an identifier here", .{name}));
             }
 

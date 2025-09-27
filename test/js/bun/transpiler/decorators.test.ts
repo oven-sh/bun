@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("ECMAScript Decorators", () => {
@@ -33,11 +33,7 @@ describe("ECMAScript Decorators", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("decorator called: class Foo");
@@ -77,11 +73,7 @@ describe("ECMAScript Decorators", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("decorating method: method add");
@@ -123,16 +115,12 @@ describe("ECMAScript Decorators", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("decorating field: field name");
     expect(stdout).toContain("decorating field: field timeout");
-    expect(stdout).toContain('name: default');
+    expect(stdout).toContain("name: default");
     expect(stdout).toContain("timeout: 100");
   });
 
@@ -176,11 +164,7 @@ describe("ECMAScript Decorators", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("decorating accessor: accessor value");
@@ -227,11 +211,7 @@ describe("ECMAScript Decorators", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("second decorator");
@@ -280,11 +260,7 @@ describe("ECMAScript Decorators", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("class metadata type: component");
@@ -316,11 +292,7 @@ describe("ECMAScript Decorators", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Standard decorator context: class");
@@ -352,11 +324,7 @@ describe("ECMAScript Decorators", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Experimental decorator target: Foo");

@@ -68,7 +68,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
             var blob = response.body.value.use();
 
             blob.globalThis = globalThis;
-            blob.allocator = null;
+            bun.assertf(!blob.isHeapAllocated(), "expected blob not to be heap-allocated", .{});
             response.body.value = .{ .Blob = blob.dupe() };
             const headers = bun.handleOom(Headers.from(response.init.headers, bun.default_allocator, .{ .body = &.{ .Blob = blob } }));
 
@@ -87,7 +87,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
         if (blob.needsToReadFile()) {
             var b = blob.dupe();
             b.globalThis = globalThis;
-            b.allocator = null;
+            bun.assertf(!b.isHeapAllocated(), "expected blob not to be heap-allocated", .{});
             return bun.new(FileRoute, .{
                 .ref_count = .init(),
                 .server = null,

@@ -337,11 +337,30 @@ pub fn load(
                     );
                     defer workspace_package_name_hashes.deinit(allocator);
 
-                    var workspace_versions_list = try Lockfile.Buffers.readArray(
-                        stream,
-                        allocator,
-                        std.ArrayListUnmanaged(Semver.Version),
-                    );
+                    var workspace_versions_list = workspace_versions_list: {
+                        if (!migrate_from_v2) {
+                            break :workspace_versions_list try Lockfile.Buffers.readArray(
+                                stream,
+                                allocator,
+                                std.ArrayListUnmanaged(Semver.Version),
+                            );
+                        }
+
+                        var old_versions_list = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(Semver.VersionType(u32)),
+                        );
+                        defer old_versions_list.deinit(allocator);
+
+                        var versions_list: std.ArrayListUnmanaged(Semver.Version) = try .initCapacity(allocator, old_versions_list.items.len);
+                        for (old_versions_list.items) |old_version| {
+                            versions_list.appendAssumeCapacity(old_version.migrate());
+                        }
+
+                        break :workspace_versions_list versions_list;
+                    };
+
                     comptime {
                         if (PackageNameHash != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).key)) {
                             @compileError("VersionHashMap must be in sync with serialization");

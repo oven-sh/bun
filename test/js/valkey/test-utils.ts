@@ -1,14 +1,12 @@
 import { RedisClient, type SpawnOptions } from "bun";
 import { afterAll, beforeAll, expect } from "bun:test";
-import { bunEnv, isCI, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, dockerExe, isCI, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
-import * as fs from "node:fs";
-import * as os from "node:os";
 
-const dockerCLI = Bun.which("docker") as string;
+const dockerCLI = dockerExe() as string;
 export const isEnabled =
   !!dockerCLI &&
   (() => {
@@ -82,10 +80,16 @@ export const DEFAULT_REDIS_OPTIONS = {
 export const TLS_REDIS_OPTIONS = {
   ...DEFAULT_REDIS_OPTIONS,
   db: 1,
-  tls: true,
-  tls_cert_file: path.join(import.meta.dir, "docker-unified", "server.crt"),
-  tls_key_file: path.join(import.meta.dir, "docker-unified", "server.key"),
-  tls_ca_file: path.join(import.meta.dir, "docker-unified", "server.crt"),
+  tls: {
+    cert: Bun.file(path.join(import.meta.dir, "docker-unified", "server.crt")),
+    key: Bun.file(path.join(import.meta.dir, "docker-unified", "server.key")),
+    ca: Bun.file(path.join(import.meta.dir, "docker-unified", "server.crt")),
+  },
+  tlsPaths: {
+    cert: path.join(import.meta.dir, "docker-unified", "server.crt"),
+    key: path.join(import.meta.dir, "docker-unified", "server.key"),
+    ca: path.join(import.meta.dir, "docker-unified", "server.crt"),
+  },
 };
 
 export const UNIX_REDIS_OPTIONS = {
@@ -165,7 +169,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
     REDIS_PORT = port;
     REDIS_TLS_PORT = tlsPort;
     REDIS_HOST = redisInfo.host;
-    REDIS_UNIX_SOCKET = unixSocketProxy.path;  // Use the proxy socket
+    REDIS_UNIX_SOCKET = unixSocketProxy.path; // Use the proxy socket
     DEFAULT_REDIS_URL = `redis://${REDIS_HOST}:${REDIS_PORT}`;
     TLS_REDIS_URL = `rediss://${REDIS_HOST}:${REDIS_TLS_PORT}`;
     UNIX_REDIS_URL = `redis+unix://${REDIS_UNIX_SOCKET}`;
@@ -223,12 +227,12 @@ import { tmpdir } from "os";
  * Create a new client with specific connection type
  */
 export function createClient(
-    connectionType: ConnectionType = ConnectionType.TCP,
-    customOptions = {},
-    dbId: number | undefined = undefined,
+  connectionType: ConnectionType = ConnectionType.TCP,
+  customOptions = {},
+  dbId: number | undefined = undefined,
 ) {
   let url: string;
-  const mkUrl = (baseUrl: string) => dbId ? `${baseUrl}/${dbId}`: baseUrl;
+  const mkUrl = (baseUrl: string) => (dbId ? `${baseUrl}/${dbId}` : baseUrl);
 
   let options: any = {};
   context.id++;
@@ -314,6 +318,9 @@ export interface TestContext {
   redisWriteOnly?: RedisClient;
   id: number;
   restartServer: () => Promise<void>;
+  __subscriberClientPool: RedisClient[];
+  newSubscriberClient: (connectionType: ConnectionType) => Promise<RedisClient>;
+  cleanupSubscribers: () => Promise<void>;
 }
 
 // Create a singleton promise for Docker initialization
@@ -336,10 +343,30 @@ export const context: TestContext = {
   redisWriteOnly: undefined,
   id,
   restartServer: restartRedisContainer,
+  __subscriberClientPool: [],
+  newSubscriberClient: async function (connectionType: ConnectionType) {
+    const client = createClient(connectionType);
+    this.__subscriberClientPool.push(client);
+    await client.connect();
+    return client;
+  },
+  cleanupSubscribers: async function () {
+    for (const client of this.__subscriberClientPool) {
+      try {
+        await client.unsubscribe();
+      } catch {}
+
+      if (client.connected) {
+        client.close();
+      }
+    }
+
+    this.__subscriberClientPool = [];
+  },
 };
 export { context as ctx };
 
-if (isEnabled)
+if (isEnabled) {
   beforeAll(async () => {
     // Initialize Docker container once for all tests
     if (!dockerInitPromise) {
@@ -405,8 +432,9 @@ if (isEnabled)
     //   console.warn("Test initialization failed - tests may be skipped");
     // }
   });
+}
 
-if (isEnabled)
+if (isEnabled) {
   afterAll(async () => {
     console.log("Cleaning up Redis container");
     if (!context.redis?.connected) {
@@ -426,26 +454,26 @@ if (isEnabled)
       }
 
       // Disconnect all clients
-      await context.redis.close();
+      context.redis.close();
 
       if (context.redisTLS) {
-        await context.redisTLS.close();
+        context.redisTLS.close();
       }
 
       if (context.redisUnix) {
-        await context.redisUnix.close();
+        context.redisUnix.close();
       }
 
       if (context.redisAuth) {
-        await context.redisAuth.close();
+        context.redisAuth.close();
       }
 
       if (context.redisReadOnly) {
-        await context.redisReadOnly.close();
+        context.redisReadOnly.close();
       }
 
       if (context.redisWriteOnly) {
-        await context.redisWriteOnly.close();
+        context.redisWriteOnly.close();
       }
 
       // Clean up Unix socket proxy if it exists
@@ -456,6 +484,7 @@ if (isEnabled)
       console.error("Error during test cleanup:", err);
     }
   });
+}
 
 if (!isEnabled) {
   console.warn("Redis is not enabled, skipping tests");
@@ -545,6 +574,14 @@ async function getRedisContainerName(): Promise<string> {
 
 /**
  * Restart the Redis container to simulate connection drop
+ *
+ * Restarts the container identified by the test harness and waits briefly for it
+ * to come back online (approximately 2 seconds). Use this to simulate a server
+ * restart or connection drop during tests.
+ *
+ * @returns A promise that resolves when the restart and short wait complete.
+ * @throws If the Docker restart command exits with a non-zero code; the error
+ *         message includes the container's stderr output.
  */
 export async function restartRedisContainer(): Promise<void> {
   // If using docker-compose, get the actual container name
@@ -610,4 +647,51 @@ export async function restartRedisContainer(): Promise<void> {
       throw new Error(`Failed to restart container: ${stderr}`);
     }
   }
+}
+
+/**
+ * @returns true or false with approximately equal probability
+ */
+export function randomCoinFlip(): boolean {
+  return Math.floor(Math.random() * 2) == 0;
+}
+
+/**
+ * Utility for creating a counter that can be awaited until it reaches a target value.
+ */
+export function awaitableCounter(timeoutMs: number = 1000) {
+  let activeResolvers: [number, NodeJS.Timeout, (value: number) => void][] = [];
+  let currentCount = 0;
+
+  return {
+    increment: () => {
+      currentCount++;
+
+      for (const [value, alarm, resolve] of activeResolvers) {
+        alarm.close();
+
+        if (currentCount >= value) {
+          resolve(currentCount);
+        }
+      }
+
+      // Remove resolved promises
+      activeResolvers = activeResolvers.filter(([value]) => currentCount < value);
+    },
+    count: () => currentCount,
+
+    untilValue: (value: number) =>
+      new Promise<number>((resolve, reject) => {
+        if (currentCount >= value) {
+          resolve(currentCount);
+          return;
+        }
+
+        const alarm = setTimeout(() => {
+          reject(new Error(`Timeout waiting for counter to reach ${value}, current is ${currentCount}.`));
+        }, timeoutMs);
+
+        activeResolvers.push([value, alarm, resolve]);
+      }),
+  };
 }

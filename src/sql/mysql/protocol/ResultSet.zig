@@ -8,7 +8,7 @@ pub const Row = struct {
     bigint: bool = false,
     globalObject: *jsc.JSGlobalObject,
 
-    pub fn toJS(this: *Row, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: SQLQueryResultMode, cached_structure: ?CachedStructure) JSValue {
+    pub fn toJS(this: *Row, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: SQLQueryResultMode, cached_structure: ?CachedStructure) !JSValue {
         var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
         var names_count: u32 = 0;
         if (cached_structure) |c| {
@@ -18,7 +18,7 @@ pub const Row = struct {
             }
         }
 
-        return SQLDataCell.JSC__constructObjectFromDataCell(
+        return SQLDataCell.constructObjectFromDataCell(
             globalObject,
             array,
             structure,

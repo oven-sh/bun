@@ -658,6 +658,7 @@ async function runTests() {
       const buildResult = await spawnBun(execPath, {
         cwd: vendorPath,
         args: ["run", "build"],
+        timeout: 60_000,
       });
       if (!buildResult.ok) {
         throw new Error(`Failed to build vendor: ${buildResult.error}`);

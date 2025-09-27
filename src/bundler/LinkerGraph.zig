@@ -96,7 +96,7 @@ pub fn addPartToFile(
     graph: *LinkerGraph,
     id: u32,
     part: Part,
-) !u32 {
+) bun.OOM!u32 {
     var parts: *Part.List = &graph.ast.items(.parts)[id];
     const part_id = @as(u32, @truncate(parts.len));
     try parts.append(graph.allocator, part);

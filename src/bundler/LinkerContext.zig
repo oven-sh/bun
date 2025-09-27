@@ -2201,18 +2201,34 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
+                // We also always include "__promiseAll" for ESM wrappers since they might have
+                // multiple async dependencies. Tree-shaking will remove it if unused.
                 const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
 
-                // generate a dummy part that depends on the "__esm" symbol
-                const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len) catch unreachable;
-                for (esm_parts, dependencies) |part, *esm| {
-                    esm.* = .{
+                const promise_all_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
+                    c.topLevelSymbolsToPartsForRuntime(c.promise_all_runtime_ref)
+                else
+                    &.{};
+
+                // generate a dummy part that depends on the "__esm" and "__promiseAll" symbols
+                const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len + promise_all_parts.len) catch unreachable;
+                var dep_index: usize = 0;
+                for (esm_parts) |part| {
+                    dependencies[dep_index] = .{
                         .part_index = part,
                         .source_index = Index.runtime,
                     };
+                    dep_index += 1;
+                }
+                for (promise_all_parts) |part| {
+                    dependencies[dep_index] = .{
+                        .part_index = part,
+                        .source_index = Index.runtime,
+                    };
+                    dep_index += 1;
                 }
 
                 var symbol_uses: Part.SymbolUseMap = .empty;
@@ -2234,6 +2250,14 @@ pub const LinkerContext = struct {
                         source_index,
                         part_index,
                         c.esm_runtime_ref,
+                        1,
+                        Index.runtime,
+                    ) catch |err| bun.handleOom(err);
+
+                    c.graph.generateSymbolImportAndUse(
+                        source_index,
+                        part_index,
+                        c.promise_all_runtime_ref,
                         1,
                         Index.runtime,
                     ) catch |err| bun.handleOom(err);

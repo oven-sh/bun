@@ -100,7 +100,7 @@ pub fn detectAndLoadOtherLockfile(
                     Global.exit(1);
                 },
                 error.NonExistentWorkspaceDependency => {
-                    Output.err("PnpmLockfileMiration", "Workspace link dependencies to non-existent folders aren't supported yet. Please follow along here for more information <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
+                    Output.err("PnpmLockfileMigration", "Workspace link dependencies to non-existent folders aren't supported yet. Please follow along here for more information <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
                     Global.exit(1);
                 },
                 error.WorkspaceNameMissing => {

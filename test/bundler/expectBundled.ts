@@ -1087,14 +1087,16 @@ function expectBundled(
           define: define ?? {},
           throw: _throw ?? false,
           compile,
-          jsx: jsx ? {
-            runtime: jsx.runtime,
-            importSource: jsx.importSource,
-            factory: jsx.factory,
-            fragment: jsx.fragment,
-            sideEffects: jsx.sideEffects,
-            development: jsx.development,
-          } : undefined,
+          jsx: jsx
+            ? {
+                runtime: jsx.runtime,
+                importSource: jsx.importSource,
+                factory: jsx.factory,
+                fragment: jsx.fragment,
+                sideEffects: jsx.sideEffects,
+                development: jsx.development,
+              }
+            : undefined,
         } as BuildConfig;
 
         if (dotenv) {

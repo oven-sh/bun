@@ -116,7 +116,7 @@ for (const testType of testTypes) {
             if (!testType.isTransferable) {
               expect(() =>
                 structuredCloneAdvanced(original, transferList, !!isForTransfer, isForStorage, context),
-              ).toThrowError("The object can not be cloned.");
+              ).toThrowError("The object could not be cloned.");
             } else {
               const cloned = structuredCloneAdvanced(original, transferList, !!isForTransfer, isForStorage, context);
               testType.expectedAfterClone(original, cloned, isForTransfer, isForStorage);

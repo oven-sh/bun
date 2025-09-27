@@ -71,9 +71,6 @@ function openTerminal(): TerminalIO | null {
 const logError = (message: string) => {
   process.stderr.write(`${symbols.cross} ${message}\n`);
 };
-const logInfo = (message: string) => {
-  process.stdout.write(`${bold}${message}${reset}\n`);
-};
 
 const isValidEmail = (value: string | undefined): value is string => {
   if (!value) return false;
@@ -548,7 +545,7 @@ function getOldestGitSha(): string | undefined {
 }
 
 async function main() {
-  const rawArgv = [...process.argv.slice(1)];
+  const rawArgv = process.argv.slice(1);
 
   let terminal: TerminalIO | null = null;
   try {
@@ -634,7 +631,6 @@ async function main() {
 
     const form = new FormData();
     form.append("email", normalizedEmail);
-    const fileList = positionalContent.files.map(file => file.filename);
     form.append("message", messageBody);
     for (const file of positionalContent.files) {
       form.append("files[]", new Blob([file.content]), file.filename);
@@ -672,7 +668,7 @@ async function main() {
     try {
       const networkInterfaces = Object.entries(os.networkInterfaces() || {});
 
-      for (const [name, interfaces] of networkInterfaces) {
+      for (const [_name, interfaces] of networkInterfaces) {
         for (const networkInterface of interfaces || []) {
           if (networkInterface.family === "IPv4") {
             if (networkInterface.internal) {

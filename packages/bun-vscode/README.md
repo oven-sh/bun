@@ -22,7 +22,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 ## Features:
 
 - Live in-editor error messages (gif below)
-- Test runner codelens
+- Vscode test runner support
 - Debugger support
 - Run scripts from package.json
 - Visual lockfile viewer for old binary lockfiles (`bun.lockb`)

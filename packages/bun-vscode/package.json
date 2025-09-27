@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.29",
+  "version": "0.0.31",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -116,20 +116,6 @@
         "category": "Bun",
         "enablement": "!inDebugMode && resourceLangId =~ /^(javascript|typescript|javascriptreact|typescriptreact)$/ && !isInDiffEditor && resourceScheme == 'untitled'",
         "icon": "$(play-circle)"
-      },
-      {
-        "command": "extension.bun.runTest",
-        "title": "Run all tests",
-        "shortTitle": "Run Test",
-        "category": "Bun",
-        "icon": "$(play)"
-      },
-      {
-        "command": "extension.bun.watchTest",
-        "title": "Run all tests in watch mode",
-        "shortTitle": "Run Test Watch",
-        "category": "Bun",
-        "icon": "$(sync)"
       }
     ],
     "menus": {

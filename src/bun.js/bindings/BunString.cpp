@@ -624,6 +624,13 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr
     return Bun::toStringRef(url.string());
 }
 
+extern "C" BunString URL__hash(WTF::URL* url) {
+    const auto& fragment = url->fragmentIdentifier().isEmpty()
+      ? emptyString()
+      : url->fragmentIdentifierWithLeadingNumberSign().toString();
+    return Bun::toStringRef(fragment);
+}
+
 extern "C" WTF::URL* URL__fromString(BunString* input)
 {
     auto&& str = input->toWTFString();

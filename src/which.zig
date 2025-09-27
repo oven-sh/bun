@@ -41,7 +41,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         return null;
     }
 
-    if (bun.strings.containsChar(bin, '/')) {
+    if (bun.path.hasPathSlashes(bin)) {
         if (cwd.len > 0) {
             if (isValid(
                 buf,
@@ -141,7 +141,7 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     }
 
     // check if bin is in cwd
-    if (bun.strings.containsChar(bin, '/') or bun.strings.containsChar(bin, '\\')) {
+    if (bun.path.hasPathSlashes(bin)) {
         if (searchBinInPath(
             buf,
             path_buf,

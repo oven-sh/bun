@@ -1010,6 +1010,17 @@ pub const String = extern struct {
         return str.substringWithLen(0, value.len).eqlComptime(value);
     }
 
+    pub fn hasPrefixComptimeCaseInsensitive(this: String, comptime value: []const u8) bool {
+        if (this.tag == .WTFStringImpl) {
+            return this.value.WTFStringImpl.hasPrefixCaseInsensitiveASCII(value);
+        }
+
+        var str = this.toZigString();
+        if (str.len < value.len) return false;
+
+        return str.substringWithLen(0, value.len).eqlComptimeCaseInsensitive(value);
+    }
+
     pub fn isWTFAllocator(this: std.mem.Allocator) bool {
         return this.vtable == StringImplAllocator.VTablePtr;
     }

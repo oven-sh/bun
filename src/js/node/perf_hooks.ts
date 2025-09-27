@@ -44,6 +44,7 @@ var constants = {
 };
 
 // PerformanceEntry is not a valid constructor, so we have to fake it.
+// We don't inherit from PerformanceEntry to avoid type checking issues with the C++ getters.
 class PerformanceNodeTiming {
   bootstrapComplete: number = 0;
   environment: number = 0;
@@ -63,10 +64,12 @@ class PerformanceNodeTiming {
   }
 
   get startTime() {
-    return this.nodeStart;
+    // startTime should always be 0 for PerformanceNodeTiming
+    return 0;
   }
 
   get duration() {
+    // duration is the time from startTime to now
     return performance.now();
   }
 
@@ -86,14 +89,54 @@ class PerformanceNodeTiming {
     };
   }
 }
-$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
+// Don't inherit from PerformanceEntry to avoid C++ type checking issues
+// PerformanceNodeTiming is a special case that doesn't need the full PerformanceEntry behavior
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
 
-  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-  object.loopStart = object.idleTime = 1;
-  object.loopExit = -1;
+  // All timing values should be relative offsets from performance.timeOrigin, not absolute timestamps
+  // For now, we set them all to 0 since we're running after bootstrap
+  // In a proper implementation, these would be captured during actual startup phases
+  object.nodeStart = 0;  // Node started at timeOrigin
+  object.v8Start = 0;    // V8 started at timeOrigin
+  object.environment = 0; // Environment setup at timeOrigin
+  object.bootstrapComplete = 0; // Bootstrap completed at timeOrigin
+
+  // loopStart is when the event loop started, relative to timeOrigin
+  // Since we're already running, use a small positive value
+  object.loopStart = 1;
+  object.idleTime = 0;
+  object.loopExit = -1; // -1 means still running
+
+  // Define the getter properties on the instance to match Node.js behavior
+  Object.defineProperty(object, 'name', {
+    enumerable: true,
+    configurable: true,
+    get() { return 'node'; }
+  });
+
+  Object.defineProperty(object, 'entryType', {
+    enumerable: true,
+    configurable: true,
+    get() { return 'node'; }
+  });
+
+  // startTime is a value property in Node.js
+  Object.defineProperty(object, 'startTime', {
+    value: 0,
+    writable: false,
+    enumerable: true,
+    configurable: true
+  });
+
+  // duration is a getter property in Node.js
+  Object.defineProperty(object, 'duration', {
+    enumerable: true,
+    configurable: true,
+    get() { return performance.now(); }
+  });
+
   return object;
 }
 

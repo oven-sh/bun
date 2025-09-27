@@ -1529,10 +1529,6 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
             },
         ) catch return;
 
-        package_json_writer.flush() catch {
-            return error.OutOfMemory;
-        };
-
         root_pkg_json.source.contents = try allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
 
         // Write the updated package.json

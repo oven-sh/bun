@@ -312,7 +312,7 @@ pub fn getObject(expr: *const Expr, name: string) ?Expr {
 
 pub fn getBoolean(expr: *const Expr, name: string) ?bool {
     if (expr.asProperty(name)) |query| {
-        if (query.expr.isBoolean()) {
+        if (query.expr.data == .e_boolean) {
             return query.expr.data.e_boolean.value;
         }
     }

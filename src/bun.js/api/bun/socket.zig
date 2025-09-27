@@ -878,6 +878,10 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn writeBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+            if (this.socket.socket == .untached) {
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
+                return .false;
+            }
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                 const err: jsc.SystemError = .{

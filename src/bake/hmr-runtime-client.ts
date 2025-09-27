@@ -71,16 +71,35 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   if (!entry) throw new Error("Unknown HMR script: " + id);
   const [script, size] = entry;
   scriptTags.delete(id);
+
+  // Filter out HTML files - they should trigger a full page reload instead
+  const filteredModules: any = {};
+  let hasHtmlFile = false;
+  for (const key in modules) {
+    if (key.endsWith(".html")) {
+      hasHtmlFile = true;
+    } else {
+      filteredModules[key] = modules[key];
+    }
+  }
+
+  // If there were HTML files, trigger a full page reload
+  if (hasHtmlFile) {
+    script.remove();
+    fullReload();
+    return;
+  }
+
   const url = script.src;
   const map: SourceMapURL = {
     id,
     url,
-    refs: Object.keys(modules).length,
+    refs: Object.keys(filteredModules).length,
     size,
   };
   addMapping(url, map);
   script.remove();
-  replaceModules(modules, map).catch(e => {
+  replaceModules(filteredModules, map).catch(e => {
     console.error(e);
     fullReload();
   });

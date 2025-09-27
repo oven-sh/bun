@@ -99,6 +99,17 @@ pub fn detectAndLoadOtherLockfile(
                     , .{});
                     Global.exit(1);
                 },
+                error.NonExistentWorkspaceDependency => {
+                    Output.err("PnpmLockfileMiration", "Workspace link dependencies to non-existent folders aren't supported yet. Please follow along here for more information <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
+                    Global.exit(1);
+                },
+                error.YamlParseError => {
+                    if (log.hasErrors()) {
+                        log.print(Output.errorWriter()) catch {};
+                    }
+                    Output.errGeneric("failed to parse YAML", .{});
+                    Global.exit(1);
+                },
                 else => {},
             }
             if (Environment.isDebug) {

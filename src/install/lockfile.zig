@@ -951,8 +951,8 @@ const PendingResolution = struct {
 
 const PendingResolutions = std.ArrayList(PendingResolution);
 
-pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, manager: *PackageManager) !void {
-    try manager.populateManifestCache(.all);
+pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, manager: *PackageManager) OOM!void {
+    manager.populateManifestCache(.all) catch return;
 
     const pkgs = this.packages.slice();
 

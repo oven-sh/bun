@@ -2118,7 +2118,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     try list_for_migrating_from_v2.ensureTotalCapacity(allocator, list_len);
                     list_for_migrating_from_v2.len = list_len;
 
-                    try loadFields(stream, OldPackageV2.List, &list_for_migrating_from_v2, &needs_update);
+                    try loadFields(stream, end_at, OldPackageV2.List, &list_for_migrating_from_v2, &needs_update);
 
                     for (0..list_for_migrating_from_v2.len) |_pkg_id| {
                         const pkg_id: PackageID = @intCast(_pkg_id);
@@ -2151,7 +2151,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     }
                 } else {
                     list.len = list_len;
-                    try loadFields(stream, List, &list, &needs_update);
+                    try loadFields(stream, end_at, List, &list, &needs_update);
                 }
 
                 return .{
@@ -2160,7 +2160,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 };
             }
 
-            fn loadFields(stream: *Stream, comptime ListType: type, list: *ListType, needs_update: *bool) !void {
+            fn loadFields(stream: *Stream, end_at: u64, comptime ListType: type, list: *ListType, needs_update: *bool) !void {
                 var sliced = list.slice();
 
                 inline for (FieldsEnum.fields) |field| {
@@ -2169,7 +2169,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     comptime assertNoUninitializedPadding(@TypeOf(value));
                     const bytes = std.mem.sliceAsBytes(value);
                     const end_pos = stream.pos + bytes.len;
-                    if (end_pos <= end_pos) {
+                    if (end_pos <= end_at) {
                         @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
                         stream.pos = end_pos;
                         if (comptime strings.eqlComptime(field.name, "meta")) {

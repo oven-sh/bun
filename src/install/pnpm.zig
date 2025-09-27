@@ -46,6 +46,15 @@ fn removeSuffix(path: []const u8) []const u8 {
     return path;
 }
 
+const MigratePnpmLockfileError = OOM || error{
+    PnpmLockfileTooOld,
+    PnpmLockfileVersionInvalid,
+    InvalidPnpmLockfile,
+    YamlParseError,
+    NonExistentWorkspaceDependency,
+    DependencyLoop,
+};
+
 pub fn migratePnpmLockfile(
     lockfile: *Lockfile,
     manager: *PackageManager,
@@ -53,7 +62,7 @@ pub fn migratePnpmLockfile(
     log: *logger.Log,
     data: []const u8,
     dir: bun.FD,
-) !LoadResult {
+) MigratePnpmLockfileError!LoadResult {
     var buf: std.ArrayList(u8) = .init(allocator);
     defer buf.deinit();
 
@@ -99,7 +108,7 @@ pub fn migratePnpmLockfile(
             }
         }
 
-        return error.PnpmLockfileVersionInvalid;
+        return invalidPnpmLockfile();
     };
 
     if (lockfile_version_num < 7) {
@@ -397,36 +406,55 @@ pub fn migratePnpmLockfile(
             };
 
             const deps = lockfile.packages.items(.dependencies)[pkg_id];
-            for (deps.begin()..deps.end()) |_dep_id| {
+            next_dep: for (deps.begin()..deps.end()) |_dep_id| {
                 const dep_id: DependencyID = @intCast(_dep_id);
 
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
 
-                if (dep.version.tag == .folder) {
-                    const version_str = importer_versions.get(dep.name.slice(string_buf.bytes.items)) orelse {
-                        return invalidPnpmLockfile();
-                    };
-                    const version_without_suffix = removeSuffix(version_str);
+                if (dep.behavior.isWorkspace()) {
+                    continue;
+                }
 
-                    if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |link_path| {
-                        var pkg: Lockfile.Package = .{
-                            .name = dep.name,
-                            .name_hash = dep.name_hash,
-                            .resolution = .init(.{ .folder = try string_buf.append(link_path) }),
-                        };
-
-                        var abs_link_path: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
-                        defer abs_link_path.deinit();
-
-                        abs_link_path.join(&.{ workspace_path, link_path });
-
-                        const link_pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
-                        const pkg_entry = try pkg_map.getOrPut(abs_link_path.slice());
-                        if (pkg_entry.found_existing) {
+                switch (dep.version.tag) {
+                    .folder, .workspace => {
+                        const version_str = importer_versions.get(dep.name.slice(string_buf.bytes.items)) orelse {
                             return invalidPnpmLockfile();
+                        };
+                        const version_without_suffix = removeSuffix(version_str);
+
+                        if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |link_path| {
+                            // create a link package for the workspace dependency only if it doesn't already exist
+                            if (dep.version.tag == .workspace) {
+                                for (lockfile.workspace_paths.values()) |existing_workspace_path| {
+                                    if (strings.eqlLong(existing_workspace_path.slice(string_buf.bytes.items), link_path, true)) {
+                                        continue :next_dep;
+                                    }
+                                }
+
+                                return error.NonExistentWorkspaceDependency;
+                            }
+
+                            var pkg: Lockfile.Package = .{
+                                .name = dep.name,
+                                .name_hash = dep.name_hash,
+                                .resolution = .init(.{ .symlink = try string_buf.append(link_path) }),
+                            };
+
+                            var abs_link_path: bun.AbsPath(.{ .sep = .posix }) = .initTopLevelDir();
+                            defer abs_link_path.deinit();
+
+                            abs_link_path.join(&.{ workspace_path, link_path });
+
+                            const pkg_entry = try pkg_map.getOrPut(abs_link_path.slice());
+                            if (pkg_entry.found_existing) {
+                                // they point to the same package
+                                continue;
+                            }
+
+                            pkg_entry.value_ptr.* = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
                         }
-                        pkg_entry.value_ptr.* = link_pkg_id;
-                    }
+                    },
+                    else => {},
                 }
             }
         }

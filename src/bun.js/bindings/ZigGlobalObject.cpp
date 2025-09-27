@@ -164,6 +164,7 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
+#include "JSBakeResponse.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -2739,6 +2740,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_commonStrings.initialize();
     m_http2CommonStrings.initialize();
+    m_bakeAdditions.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(

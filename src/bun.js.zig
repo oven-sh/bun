@@ -465,6 +465,7 @@ pub const Run = struct {
         }
 
         bun.api.napi.fixDeadCodeElimination();
+        bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
         @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();

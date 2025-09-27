@@ -248,9 +248,10 @@ describe("S3 - List Objects", () => {
   it("Should work without provided option", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <Name>my_bucket</Name>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <Name>my_bucket</Name>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -278,9 +279,10 @@ describe("S3 - List Objects", () => {
       reqHeaders = req.headers;
 
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <Name>my_bucket</Name>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <Name>my_bucket</Name>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -307,9 +309,10 @@ describe("S3 - List Objects", () => {
   it("Should work without xmlns attrib", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult  >
-        <Name>my_bucket</Name>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult>
+            <Name>my_bucket</Name>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -334,9 +337,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with bucket Name", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <Name>my_bucket</Name>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <Name>my_bucket</Name>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -360,9 +364,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with Prefix", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <Prefix>some/prefix</Prefix>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <Prefix>some/prefix</Prefix>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -387,9 +392,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with KeyCount", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <KeyCount>18</KeyCount>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <KeyCount>18</KeyCount>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -414,9 +420,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with MaxKeys", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <MaxKeys>2323</MaxKeys>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <MaxKeys>2323</MaxKeys>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -441,9 +448,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with Delimiter", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <Delimiter>good@&/de$</limiter</Delimiter>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <Delimiter>good@&/de$</limiter</Delimiter>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -468,9 +476,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with ContinuationToken", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <ContinuationToken>current pagination token</ContinuationToken>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <ContinuationToken>current pagination token</ContinuationToken>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -495,9 +504,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with EncodingType", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <EncodingType>url</EncodingType>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <EncodingType>url</EncodingType>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -522,9 +532,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with NextContinuationToken", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-         <NextContinuationToken>some next token</NextContinuationToken>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <NextContinuationToken>some next token</NextContinuationToken>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -549,9 +560,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with IsTruncated (false)", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>
-         <IsTruncated>false</IsTruncated>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult>
+            <IsTruncated>false</IsTruncated>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -576,9 +588,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with IsTruncated (true)", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>
-         <IsTruncated>true</IsTruncated>
-        </ListBucketResult>`,
+        `<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult>
+            <IsTruncated>true</IsTruncated>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -603,13 +616,10 @@ describe("S3 - List Objects", () => {
   it("Should return parsed response with StartAfter", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `
-        
-        
-        <ListBucketResult>
-    <StartAfter>some/file/name.pdf</StartAfter> </ListBucketResult>
-    
-    `,
+        `<ListBucketResult>
+          <StartAfter>some/file/name.pdf</StartAfter>
+        </ListBucketResult>
+        `,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -635,7 +645,7 @@ describe("S3 - List Objects", () => {
     using server = createBunServer(async => {
       return new Response(
         `<ListBucketResult>    <CommonPrefixes><Prefix>photos/</Prefix><Prefix>videos/</Prefix>
-  
+
 
         <Prefix>documents/public</Prefix>
 
@@ -675,45 +685,48 @@ describe("S3 - List Objects", () => {
     using server = createBunServer(async => {
       return new Response(
         `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>
-    <Contents>
-        <Key>my_files/important/bun.js</Key>
-        <LastModified>2025-01-20T22:12:38.000Z</LastModified>
-        <RestoreStatus>
-            <IsRestoreInProgress>false</IsRestoreInProgress>
-            <RestoreExpiryDate>2012-12-21T00:00:00.000Z</RestoreExpiryDate>
-        </RestoreStatus>
-        <ETag>&quot;4c6426ac7ef186464ecbb0d81cbfcb1e&quot;</ETag>
-        <Size>102400</Size>
-        <Owner>
-            <ID>someId23Sodgopez</ID>
-        </Owner>
-        <StorageClass>STANDARD</StorageClass>
-    </Contents>
+          <Contents>
+              <Key>my_files/important/bun.js</Key>
+              <LastModified>2025-01-20T22:12:38.000Z</LastModified>
+              <RestoreStatus>
+                  <IsRestoreInProgress>false</IsRestoreInProgress>
+                  <RestoreExpiryDate>2012-12-21T00:00:00.000Z</RestoreExpiryDate>
+              </RestoreStatus>
+              <ChecksumAlgorithm>CRC64NVME</ChecksumAlgorithm>
+              <ETag>&quot;4c6426ac7ef186464ecbb0d81cbfcb1e&quot;</ETag>
+              <Size>102400</Size>
+              <Owner>
+                  <ID>someId23Sodgopez</ID>
+              </Owner>
+              <StorageClass>STANDARD</StorageClass>
+          </Contents>
 
-       <Contents>
-        <Key>my_files/important/bun1.2.3.js</Key>
-        <LastModified>2025-02-07</LastModified>
-        <ETag>"etag-with-quotes"</ETag>
-        <Size></Size>
-        <Owner>
-            <ID>someId23Sodgopez</ID>
-            <DisplayName>some display name</DisplayName>
-        </Owner>
-        <StorageClass>GLACIER</StorageClass>
-    </Contents>
+          <Contents>
+            <Key>my_files/important/bun1.2.3.js</Key>
+            <LastModified>2025-02-07</LastModified>
+            <ChecksumAlgorithm>CRC64NVME</ChecksumAlgorithm>
+            <ETag>"etag-with-quotes"</ETag>
+            <Size></Size>
+            <Owner>
+                <ID>someId23Sodgopez</ID>
+                <DisplayName>some display name</DisplayName>
+            </Owner>
+            <StorageClass>GLACIER</StorageClass>
+          </Contents>
 
 
- <Contents>
-        <Key>all-empty_file</Key>
-        <LastModified></LastModified>
-        <ETag></ETag>
-        <Size></Size>
-        <Owner>
-            <ID></ID>
-            <DisplayName></DisplayName>
-        </Owner>
-        <StorageClass></StorageClass>
-    </Contents>
+          <Contents>
+            <Key>all-empty_file</Key>
+            <LastModified></LastModified>
+            <ChecksumAlgorithm>CRC64NVME</ChecksumAlgorithm>
+            <ETag></ETag>
+            <Size></Size>
+            <Owner>
+                <ID></ID>
+                <DisplayName></DisplayName>
+            </Owner>
+            <StorageClass></StorageClass>
+          </Contents>
 
 
         </ListBucketResult>`,
@@ -737,6 +750,7 @@ describe("S3 - List Objects", () => {
       contents: [
         {
           key: "my_files/important/bun.js",
+          checksumAlgorithm: "CRC64NVME",
           eTag: '"4c6426ac7ef186464ecbb0d81cbfcb1e"',
           lastModified: "2025-01-20T22:12:38.000Z",
           size: 102400,
@@ -747,6 +761,7 @@ describe("S3 - List Objects", () => {
         },
         {
           key: "my_files/important/bun1.2.3.js",
+          checksumAlgorithm: "CRC64NVME",
           eTag: '"etag-with-quotes"',
           lastModified: "2025-02-07",
           storageClass: "GLACIER",
@@ -757,6 +772,7 @@ describe("S3 - List Objects", () => {
         },
         {
           key: "all-empty_file",
+          checksumAlgorithm: "CRC64NVME",
           eTag: "",
           lastModified: "",
           // @ts-expect-error
@@ -770,34 +786,31 @@ describe("S3 - List Objects", () => {
     using server = createBunServer(async => {
       return new Response(
         `<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-    <Name>inqnuam</Name>
-    <Prefix>/</Prefix>
-    <KeyCount>0</KeyCount>
-    <MaxKeys>10000</MaxKeys>
-    <Delimiter>awsome.<files>dummy thing</files></Delimiter>
-    <ContinuationToken>current pagination token</ContinuationToken>
-    <EncodingType>url</EncodingType>
-    <NextContinuationToken>some next token</NextContinuationToken>
-    <IsTruncated>false</IsTruncated>
-    <Contents>
-        <Key>from_static_file</Key>
-        <LastModified>2025-01-20T23:02:53.000Z</LastModified>
-        <ETag>&quot;ef2b83534e23713ee9751d492178109e&quot;</ETag>
-        <Size>922282819299999</Size>
-        <Owner>
-        <DisplayName>some display name</DisplayName>
-            <ID>some_id_</ID>
-        </Owner>
-        <StorageClass>STANDARD_IA</StorageClass>
-    </Contents>
-   
-
-    <StartAfter>some/file/name.pdf</StartAfter>
-
-
-    <CommonPrefixes><Prefix>photos/</Prefix><Prefix>videos/</Prefix></CommonPrefixes>
-</ListBucketResult>`,
+          <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+              <Name>inqnuam</Name>
+              <Prefix>/</Prefix>
+              <KeyCount>0</KeyCount>
+              <MaxKeys>10000</MaxKeys>
+              <Delimiter>awsome.<files>dummy thing</files></Delimiter>
+              <ContinuationToken>current pagination token</ContinuationToken>
+              <EncodingType>url</EncodingType>
+              <NextContinuationToken>some next token</NextContinuationToken>
+              <IsTruncated>false</IsTruncated>
+              <Contents>
+                  <Key>from_static_file</Key>
+                  <LastModified>2025-01-20T23:02:53.000Z</LastModified>
+                  <ChecksumAlgorithm>CRC64NVME</ChecksumAlgorithm>
+                  <ETag>&quot;ef2b83534e23713ee9751d492178109e&quot;</ETag>
+                  <Size>922282819299999</Size>
+                  <Owner>
+                  <DisplayName>some display name</DisplayName>
+                      <ID>some_id_</ID>
+                  </Owner>
+                  <StorageClass>STANDARD_IA</StorageClass>
+              </Contents>
+              <StartAfter>some/file/name.pdf</StartAfter>
+              <CommonPrefixes><Prefix>photos/</Prefix><Prefix>videos/</Prefix></CommonPrefixes>
+          </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -836,6 +849,7 @@ describe("S3 - List Objects", () => {
           key: "from_static_file",
           eTag: '"ef2b83534e23713ee9751d492178109e"',
           lastModified: "2025-01-20T23:02:53.000Z",
+          checksumAlgorithm: "CRC64NVME",
           size: 922282819299999,
           storageClass: "STANDARD_IA",
           owner: {
@@ -884,6 +898,7 @@ describe("S3 - List Objects", () => {
       key: randomUUIDv7(),
       eTag: '"4c6426ac7ef186464ecbb0d81cbfcb1e"',
       lastModified: new Date().toISOString(),
+      checksumAlgorithm: "CRC64NVME",
       size: 922282819299999,
       storageClass: "STANDARD_IA",
       owner: {
@@ -895,15 +910,16 @@ describe("S3 - List Objects", () => {
       const asXml = contents
         .map(
           x => `<Contents>
-        <Key>${x.key}</Key>
-        <LastModified>${x.lastModified}</LastModified>
-        <ETag>&quot;4c6426ac7ef186464ecbb0d81cbfcb1e&quot;</ETag>
-        <Size>922282819299999</Size>
-        <Owner>
-            <ID>some_id_</ID>
-        </Owner>
-        <StorageClass>STANDARD_IA</StorageClass>
-    </Contents>`,
+                  <Key>${x.key}</Key>
+                  <LastModified>${x.lastModified}</LastModified>
+                  <ChecksumAlgorithm>CRC64NVME</ChecksumAlgorithm>
+                  <ETag>&quot;4c6426ac7ef186464ecbb0d81cbfcb1e&quot;</ETag>
+                  <Size>922282819299999</Size>
+                  <Owner>
+                      <ID>some_id_</ID>
+                  </Owner>
+                  <StorageClass>STANDARD_IA</StorageClass>
+                </Contents>`,
         )
         .join("");
 
@@ -931,8 +947,9 @@ describe("S3 - List Objects", () => {
   it("Should not crash with bad xml", async () => {
     using server = createBunServer(async => {
       return new Response(
-        `<ListBucketResult> </Contents>
-    <StartAfter> <Contents> </ListBucketResult>`,
+        `<ListBucketResult>
+          </Contents><StartAfter><Contents>
+         </ListBucketResult>`,
         {
           headers: {
             "Content-Type": "application/xml",
@@ -953,16 +970,12 @@ describe("S3 - List Objects", () => {
 
   it("Should throw Error if request failed", async () => {
     using server = createBunServer(async => {
-      return new Response(
-        `<Error>
-     <Code>WhoKnows</Code></Error>`,
-        {
-          headers: {
-            "Content-Type": "application/xml",
-          },
-          status: 400,
+      return new Response(`<Error><Code>WhoKnows</Code></Error>`, {
+        headers: {
+          "Content-Type": "application/xml",
         },
-      );
+        status: 400,
+      });
     });
 
     const client = new S3Client({
@@ -1005,7 +1018,36 @@ describe("S3 - List Objects", () => {
   it("Should work with an actual S3 output", async () => {
     // do not change any byte in this string
     const actualOutput = `<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>awsome-very-dummy-bucket</Name><Prefix></Prefix><KeyCount>3</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>01951feb-1db5-7000-aee3-213b4df4015f/file_1.txt</Key><LastModified>2025-02-19T20:34:18.000Z</LastModified><ETag>&quot;9297ab3fbd56b42f6566284119238125&quot;</ETag><Size>9</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>01951feb-1db5-7000-aee3-213b4df4015f/file_2.txt</Key><LastModified>2025-02-19T20:34:18.000Z</LastModified><ETag>&quot;6685cd62b95f2c58818cb20e7292168b&quot;</ETag><Size>9</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>01951feb-1db5-7000-aee3-213b4df4015f/file_3.txt</Key><LastModified>2025-02-19T20:34:18.000Z</LastModified><ETag>&quot;bffd51760cd2c6b531756efac72110c3&quot;</ETag><Size>9</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>`;
+                            <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                              <Name>awsome-very-dummy-bucket</Name>
+                              <Prefix></Prefix>
+                              <KeyCount>3</KeyCount>
+                              <MaxKeys>1000</MaxKeys>
+                              <IsTruncated>false</IsTruncated>
+                              <Contents>
+                                <Key>01951feb-1db5-7000-aee3-213b4df4015f/file_1.txt</Key>
+                                <LastModified>2025-02-19T20:34:18.000Z</LastModified>
+                                <ChecksumAlgorithm>CRC64NVME</ChecksumAlgorithm>
+                                <ETag>&quot;9297ab3fbd56b42f6566284119238125&quot;</ETag>
+                                <Size>9</Size>
+                                <StorageClass>STANDARD</StorageClass></Contents>
+                              <Contents>
+                                  <Key>01951feb-1db5-7000-aee3-213b4df4015f/file_2.txt</Key>
+                                  <LastModified>2025-02-19T20:34:18.000Z</LastModified>
+                                  <ChecksumAlgorithm>CRC64NVME</ChecksumAlgorithm>
+                                  <ETag>&quot;6685cd62b95f2c58818cb20e7292168b&quot;</ETag>
+                                  <Size>9</Size>
+                                  <StorageClass>STANDARD</StorageClass>
+                              </Contents>
+                              <Contents>
+                                <Key>01951feb-1db5-7000-aee3-213b4df4015f/file_3.txt</Key>
+                                <LastModified>2025-02-19T20:34:18.000Z</LastModified>
+                                <ChecksumAlgorithm>CRC64NVME</ChecksumAlgorithm>
+                                <ETag>&quot;bffd51760cd2c6b531756efac72110c3&quot;</ETag>
+                                <Size>9</Size>
+                                <StorageClass>STANDARD</StorageClass>
+                              </Contents>
+                            </ListBucketResult>`;
 
     using server = createBunServer(async => {
       return new Response(actualOutput, {
@@ -1033,6 +1075,7 @@ describe("S3 - List Objects", () => {
           key: "01951feb-1db5-7000-aee3-213b4df4015f/file_1.txt",
           eTag: '"9297ab3fbd56b42f6566284119238125"',
           lastModified: "2025-02-19T20:34:18.000Z",
+          checksumAlgorithm: "CRC64NVME",
           size: 9,
           storageClass: "STANDARD",
         },
@@ -1040,6 +1083,7 @@ describe("S3 - List Objects", () => {
           key: "01951feb-1db5-7000-aee3-213b4df4015f/file_2.txt",
           eTag: '"6685cd62b95f2c58818cb20e7292168b"',
           lastModified: "2025-02-19T20:34:18.000Z",
+          checksumAlgorithm: "CRC64NVME",
           size: 9,
           storageClass: "STANDARD",
         },
@@ -1047,6 +1091,7 @@ describe("S3 - List Objects", () => {
           key: "01951feb-1db5-7000-aee3-213b4df4015f/file_3.txt",
           eTag: '"bffd51760cd2c6b531756efac72110c3"',
           lastModified: "2025-02-19T20:34:18.000Z",
+          checksumAlgorithm: "CRC64NVME",
           size: 9,
           storageClass: "STANDARD",
         },

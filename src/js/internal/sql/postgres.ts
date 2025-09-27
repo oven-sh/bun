@@ -419,10 +419,7 @@ function detectCommand(query: string): SQLCommand {
             return command;
           }
           case "in": {
-            if (command === SQLCommand.where) {
-              return SQLCommand.whereIn;
-            }
-            return command;
+            return SQLCommand.whereIn;
           }
           default: {
             token = "";

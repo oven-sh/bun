@@ -584,9 +584,6 @@ function onwrite(stream, er) {
   state.writelen = 0;
 
   if (er) {
-    // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
-    er.stack; // eslint-disable-line no-unused-expressions
-
     if ((state[kState] & kErrored) === 0) {
       state[kErroredValue] = er;
       state[kState] |= kErrored;

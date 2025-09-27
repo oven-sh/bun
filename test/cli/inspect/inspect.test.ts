@@ -7,6 +7,8 @@ import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
 import { InspectorSession, JUnitReporter, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
+import * as net from "node:net";
+
 let inspectee: Subprocess;
 const anyPort = expect.stringMatching(/^\d+$/);
 const anyPathname = expect.stringMatching(/^\/[a-z0-9]+$/);
@@ -525,4 +527,32 @@ test("error.stack doesnt lose frames", () => {
 
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
+});
+
+test("node:net has nice stack trace", async () => {
+  const socket = new net.Socket();
+  const { promise, resolve, reject } = Promise.withResolvers();
+  socket.on("error", resolve);
+  socket.on("data", reject);
+  socket.write("hello");
+  const err = await promise;
+  let str = Bun.inspect(err);
+  str = str.slice(str.indexOf("^") + 1);
+  str = str.slice(str.indexOf("\n"));
+  str = str.replaceAll(import.meta.dirname, "<dir>");
+  str = str.replaceAll("\\", "/");
+  str = str.replace(/\d+/gim, "<num>");
+  expect(str).toMatchInlineSnapshot(`
+      "
+      error: Socket is closed
+       code: "ERR_SOCKET_CLOSED"
+
+            at _write (node:net:<num>:<num>)
+            at writeOrBuffer (internal:streams/writable:<num>:<num>)
+            at <anonymous> (internal:streams/writable:<num>:<num>)
+            at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
+            at asyncFunctionResume (<num>:<num>)
+            at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
+      "
+    `);
 });

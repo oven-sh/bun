@@ -40,9 +40,8 @@ if (isDockerEnabled()) {
       },
       container => {
         let sql: SQL;
-        const password = image.image === "mysql_plain" ? "" : "bun123456@#$%^&*()";
         const getOptions = (): Bun.SQL.Options => ({
-          url: `mysql://root:${encodeURIComponent(password)}@${container.host}:${container.port}/bun_sql_test`,
+          url: `mysql://root:${encodeURIComponent("bun123456@#$%^&*()")}@${container.host}:${container.port}/bun_sql_test`,
           max: 1,
           tls:
             image.name === "MySQL with TLS"

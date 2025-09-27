@@ -82,7 +82,8 @@ fn deinitIsVoid(comptime T: type) bool {
 ///
 /// This method does not free `ptr_or_slice` itself.
 pub fn deinit(ptr_or_slice: anytype) void {
-    const ptr_info = @typeInfo(@TypeOf(ptr_or_slice));
+    const PtrType = @TypeOf(ptr_or_slice);
+    const ptr_info = @typeInfo(PtrType);
     switch (comptime ptr_info.pointer.size) {
         .slice => {
             for (ptr_or_slice) |*elem| {
@@ -91,7 +92,7 @@ pub fn deinit(ptr_or_slice: anytype) void {
             return;
         },
         .one => {},
-        else => @compileError("unsupported pointer type"),
+        else => @compileError("unsupported pointer type: " ++ @typeName(PtrType)),
     }
 
     const Child = ptr_info.pointer.child;
@@ -102,23 +103,33 @@ pub fn deinit(ptr_or_slice: anytype) void {
         }
     }
 
-    const needs_deinit = comptime switch (@typeInfo(Child)) {
-        .@"struct" => true,
-        .@"union" => |u| u.tag_type != null,
-        .optional => {
+    switch (comptime @typeInfo(Child)) {
+        .void, .bool, .int, .float, .pointer, .comptime_float, .comptime_int => return,
+        .undefined, .null, .error_set, .@"enum", .vector => return,
+        .array => {
+            for (ptr_or_slice) |*elem| {
+                deinit(elem);
+            }
+            return;
+        },
+        .@"struct" => {},
+        inline .optional, .error_union => {
             if (ptr_or_slice.*) |*payload| {
                 deinit(payload);
             }
             return;
         },
-        else => false,
-    };
+        .@"union" => |u| {
+            if (comptime u.tag_type == null) {
+                @compileError("cannot deinit an untagged union: " ++ @typeName(Child));
+            }
+        },
+        .type, .noreturn, .@"fn", .@"opaque", .frame, .@"anyframe", .enum_literal => {
+            @compileError("unsupported type for deinit: " ++ @typeName(Child));
+        },
+    }
 
-    const should_call_deinit = comptime needs_deinit and
-        !exemptedFromDeinit(Child) and
-        !deinitIsVoid(Child);
-
-    if (comptime should_call_deinit) {
+    if (comptime !exemptedFromDeinit(Child) and !deinitIsVoid(Child)) {
         ptr_or_slice.deinit();
     }
 }

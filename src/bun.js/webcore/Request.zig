@@ -153,7 +153,7 @@ pub fn getFormDataEncoding(this: *Request) bun.JSError!?*bun.FormData.AsyncFormD
     return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding);
 }
 
-pub fn estimatedSize(this: *Request) callconv(.C) usize {
+pub fn estimatedSize(this: *Request) callconv(bun.jsc.conv) usize {
     return this.reported_estimated_size;
 }
 

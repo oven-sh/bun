@@ -55,6 +55,7 @@ test/js/node/test/parallel/test-worker-terminate-nested.js
 test/js/node/test/parallel/test-worker-terminate-null-handler.js
 test/js/node/test/parallel/test-worker-terminate-timers.js
 test/js/node/test/parallel/test-worker-type-check.js
+test/js/node/test/parallel/test-worker-uncaught-exception-async.js
 test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
 test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
@@ -197,6 +198,7 @@ test/js/bun/util/heap-snapshot.test.ts
 test/regression/issue/02499/02499.test.ts
 test/js/node/test/parallel/test-http-server-stale-close.js
 test/js/third_party/comlink/comlink.test.ts
+test/regression/issue/22635/22635.test.ts
 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData

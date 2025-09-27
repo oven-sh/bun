@@ -245,6 +245,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                         .github = this.value.github.clone(buf, Builder, builder),
                     }),
                     .root => Value.init(.{ .root = {} }),
+                    .uninitialized => Value.init(.{ .uninitialized = {} }),
                     else => {
                         std.debug.panic("Internal error: unexpected resolution tag: {}", .{this.tag});
                     },

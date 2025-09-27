@@ -136,14 +136,27 @@ pub fn installWithManager(
                 lockfile.initEmpty(manager.allocator);
                 var maybe_root = Lockfile.Package{};
 
-                const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
+                const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
                     manager.allocator,
                     manager.log,
                     root_package_json_path,
                     .{},
-                ).unwrap() catch |err| {
-                    Output.err(err, "failed to read/parse package.json at '{s}'", .{root_package_json_path});
-                    Global.exit(1);
+                )) {
+                    .entry => |entry| entry,
+                    .read_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                    .parse_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
                 };
 
                 const source_copy = root_package_json_entry.source;
@@ -412,14 +425,27 @@ pub fn installWithManager(
             Global.crash();
         }
 
-        const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
+        const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
             manager.allocator,
             manager.log,
             root_package_json_path,
             .{},
-        ).unwrap() catch |err| {
-            Output.err(err, "failed to read/parse package.json at '{s}'", .{root_package_json_path});
-            Global.exit(1);
+        )) {
+            .entry => |entry| entry,
+            .read_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+            .parse_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
         };
 
         const source_copy = root_package_json_entry.source;

@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import path from "path";
 
 test("Bun.serve static routes with Bun.file and blobs", async () => {
   using dir = tempDir("test-bunfile-routes", {

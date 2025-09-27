@@ -638,6 +638,7 @@ enum class DOMConstructorID : uint16_t {
     Performance,
     PerformanceEntry,
     PerformanceMark,
+    Profiler,
     PerformanceMeasure,
     PerformanceNavigation,
     PerformanceNavigationTiming,
@@ -860,7 +861,7 @@ enum class DOMConstructorID : uint16_t {
     EventEmitter,
 };
 
-static constexpr unsigned numberOfDOMConstructorsBase = 846;
+static constexpr unsigned numberOfDOMConstructorsBase = 847;
 
 static constexpr unsigned bunExtraConstructors = 3;
 

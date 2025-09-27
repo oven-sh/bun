@@ -43,6 +43,7 @@ const {
   setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
+  kEmptyBuffer,
 } = require("internal/http");
 const NumberIsNaN = Number.isNaN;
 
@@ -59,7 +60,7 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild"
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const GlobalPromise = globalThis.Promise;
-const kEmptyBuffer = Buffer.alloc(0);
+
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
 

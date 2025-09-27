@@ -545,6 +545,9 @@ export class Dev extends EventEmitter {
       await this.devProcess.exited;
       throw new Error("DevServer panicked");
     }
+    if (this.devProcess.exitCode === null) {
+      throw new Error("Timed out while waiting for dev server process to close");
+    }
     if (this.devProcess.exitCode !== 0) {
       const code =
         " with " +
@@ -787,6 +790,7 @@ export class Client extends EventEmitter {
         if (exitCode !== null) {
           this.exitCode = exitCode;
         } else if (signalCode !== null) {
+          console.log("THE SIGNAL CODE IS", signalCode);
           this.exitCode = `${signalCode}`;
         } else {
           this.exitCode = "unknown";
@@ -1845,9 +1849,10 @@ function testImpl<T extends DevServerTest>(
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
-          BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
-          BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
-          BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_QUIET_LOGS: "0",
+          // BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
         },
       ]),

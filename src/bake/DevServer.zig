@@ -1311,9 +1311,9 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
     }
 }
 
-extern "C" fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *bun.jsc.JSGlobalObject) bun.jsc.JSValue;
-extern "C" fn Bake__getBundleNewRouteJSFunction(global: *bun.jsc.JSGlobalObject) bun.jsc.JSValue;
-extern "C" fn Bake__getNewRouteParamsJSFunction(global: *bun.jsc.JSGlobalObject) bun.jsc.JSValue;
+extern "C" fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
+extern "C" fn Bake__getBundleNewRouteJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
+extern "C" fn Bake__getNewRouteParamsJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
 
 fn computeArgumentsForFrameworkRequest(
     dev: *DevServer,
@@ -4503,10 +4503,7 @@ const PromiseEnsureRouteBundledCtx = struct {
 };
 
 export fn Bake__bundleNewRouteJSFunctionImpl(global: *bun.jsc.JSGlobalObject, request_ptr: *anyopaque, url: bun.String) callconv(jsc.conv) bun.jsc.JSValue {
-    return bundleNewRouteJSFunctionImpl(global, request_ptr, url) catch |e| {
-        if (e == error.OutOfMemory) bun.outOfMemory();
-        return .zero;
-    };
+    return bun.jsc.toJSHostCall(global, @src(), bundleNewRouteJSFunctionImpl, .{ global, request_ptr, url });
 }
 
 fn bundleNewRouteJSFunctionImpl(global: *bun.jsc.JSGlobalObject, request_ptr: *anyopaque, url_bunstr: bun.String) bun.JSError!bun.jsc.JSValue {
@@ -4583,10 +4580,7 @@ pub fn createDevServerFrameworkRequestArgsObject(
 }
 
 export fn Bake__getNewRouteParamsJSFunctionImpl(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) bun.jsc.JSValue {
-    return newRouteParamsForBundlePromiseForJS(global, callframe) catch |e| {
-        if (e == error.OutOfMemory) bun.outOfMemory();
-        return .zero;
-    };
+    return bun.jsc.toJSHostCall(global, @src(), newRouteParamsForBundlePromiseForJS, .{ global, callframe });
 }
 
 fn newRouteParamsForBundlePromiseForJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!bun.jsc.JSValue {

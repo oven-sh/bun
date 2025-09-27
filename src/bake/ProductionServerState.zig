@@ -236,6 +236,109 @@ export fn Bun__BakeProductionSSRRouteInfo__dataForInitialization(
     return 1;
 }
 
+export fn Bake__getProdNewRouteParamsJSFunctionImpl(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) bun.jsc.JSValue {
+    return jsc.toJSHostCall(global, @src(), newRouteParamsJS, .{ global, callframe });
+}
+
+fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
+    if (callframe.argumentsCount() != 2) {
+        return global.throw("Expected 3 arguments", .{});
+    }
+
+    const request_js = callframe.argument(0);
+    const url_js = callframe.argument(1);
+
+    if (!request_js.isObject()) return global.throw("Request must be an object", .{});
+    if (!url_js.isString()) return global.throw("URL must be a string", .{});
+
+    const request = request_js.as(bun.webcore.Request) orelse return global.throw("Request must be a Request object", .{});
+    const self = request.request_context.getBakeProdState() orelse return global.throw("Request context is not a production server state", .{});
+
+    const url = try url_js.toBunString(global);
+    const url_utf8 = url.toUTF8(bun.default_allocator);
+    defer url_utf8.deinit();
+
+    const pathname = FrameworkRouter.extractPathnameFromUrl(url_utf8.byteSlice());
+    var params: bun.bake.FrameworkRouter.MatchedParams = undefined;
+    const route_index = self.router().matchSlow(pathname, &params) orelse return global.throw("No route found for path: {s}", .{url_utf8.byteSlice()});
+
+    const route = self.manifest.routes[route_index.get()];
+    switch (route) {
+        .ssr => {},
+        .ssg => |*ssg| {
+            const html_store = ssg.store orelse return global.throw("No HML blob found for path: {s}", .{url_utf8.byteSlice()});
+            html_store.ref();
+            const blob = jsc.WebCore.Blob{
+                .size = jsc.WebCore.Blob.max_size,
+                .store = html_store,
+                .content_type = bun.http.MimeType.html.value,
+                .globalThis = global,
+            };
+            return jsc.WebCore.Blob.new(blob).toJS(global);
+        },
+        .ssg_many => {
+            @panic("FIXME: Zack implement this");
+        },
+        .empty => return global.throw("Path points to an invalid route: {s}", .{url_utf8.byteSlice()}),
+    }
+
+    const route_info = try self.getRouteInfo(global, route_index);
+    const framework_route = self.router().routes.items[route_index.get()];
+    const router_type_index = framework_route.type.get();
+
+    var result = try JSValue.createEmptyArray(global, 4);
+    result.putIndex(global, 0, JSValue.jsNumberFromUint64(route_index.get())) catch unreachable;
+    result.putIndex(global, 1, JSValue.jsNumberFromUint64(router_type_index)) catch unreachable;
+    result.putIndex(global, 2, route_info) catch unreachable;
+    result.putIndex(global, 3, params.toJS(global)) catch unreachable;
+
+    return result;
+}
+
+extern "C" fn Bake__getProdNewRouteParamsJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
+
+pub fn newRouteParams(
+    self: *Self,
+    global: *bun.jsc.JSGlobalObject,
+    route_index: bun.bake.FrameworkRouter.Route.Index,
+    params: *const bun.bake.FrameworkRouter.MatchedParams,
+) bun.JSError!struct {
+    route_index: JSValue,
+    router_type_index: JSValue,
+    route_info: JSValue,
+    params: JSValue,
+    newRouteParams: JSValue,
+    setAsyncLocalStorage: JSValue,
+} {
+    const r = self.router();
+
+    // Look up the route to get its router type
+    const framework_route = &r.routes.items[route_index.get()];
+    const router_type_index = framework_route.type.get();
+
+    // Convert params to JSValue
+    const params_js = params.toJS(global);
+
+    // Get the setAsyncLocalStorage function that properly sets up the AsyncLocalStorage instance
+    const setAsyncLocalStorage = Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global);
+
+    const route_info = try self.getRouteInfo(global, route_index);
+
+    return .{
+        .route_index = JSValue.jsNumberFromUint64(route_index.get()),
+        .router_type_index = JSValue.jsNumberFromUint64(router_type_index),
+        .route_info = route_info,
+        .params = params_js,
+        .newRouteParams = Bake__getProdNewRouteParamsJSFunction(global),
+        .setAsyncLocalStorage = setAsyncLocalStorage,
+    };
+}
+
+pub fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *jsc.JSGlobalObject) jsc.JSValue {
+    const f = @extern(*const fn (*jsc.JSGlobalObject) callconv(.c) jsc.JSValue, .{ .name = "Bake__getEnsureAsyncLocalStorageInstanceJSFunction" }).*;
+    return f(global);
+}
+
 const bun = @import("bun");
 const bake = bun.bake;
 const strings = bun.strings;

@@ -666,6 +666,7 @@ pub const Route = union(enum) {
         entrypoint: []const u8,
         params: bun.BabyList(ParamEntry),
         styles: Styles,
+        store: ?*jsc.WebCore.Blob.Store = null,
     };
 
     /// A route which has been statically generated and has multiple pages

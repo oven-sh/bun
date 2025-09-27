@@ -2697,7 +2697,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         fn handleSingleSSGRoute(
             this: *ThisServer,
             app: *App,
-            ssg: *const bun.bake.Manifest.Route.SSG,
+            ssg: *bun.bake.Manifest.Route.SSG,
             route_index: usize,
             client_entrypoints_seen: *std.hash_map.HashMap([]const u8, void, bun.StringHashMapContext, 80),
         ) void {
@@ -2728,6 +2728,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 bun.http.MimeType.html,
                 bun.default_allocator,
             ) catch bun.outOfMemory();
+
+            html_store.ref();
+            ssg.store = html_store;
 
             const html_blob = jsc.WebCore.Blob{
                 .size = jsc.WebCore.Blob.max_size,
@@ -3061,11 +3064,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
-        fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *jsc.JSGlobalObject) jsc.JSValue {
-            const f = @extern(*const fn (*jsc.JSGlobalObject) callconv(.c) jsc.JSValue, .{ .name = "Bake__getEnsureAsyncLocalStorageInstanceJSFunction" }).*;
-            return f(global);
-        }
-
         pub fn onBakeFrameworkSSRRequest(
             this: *ThisServer,
             req: *uws.Request,
@@ -3090,37 +3088,23 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 httplog("[Bake SSR] {s} - {s}", .{ req.method(), req.url() });
 
             const bake_prod = this.bake_prod.get().?;
-
             const server_request_callback = bake_prod.bake_server_runtime_handler.get();
-
             const global = this.globalThis;
-
-            const router = this.bake_prod.get().?.router();
-
-            // Look up the route to get its router type
-            const framework_route = &router.routes.items[route_index.get()];
-            const router_type_index = framework_route.type.get();
-
-            // Convert params to JSValue
-            const params_js = params.toJS(global);
-
-            // Get the setAsyncLocalStorage function that properly sets up the AsyncLocalStorage instance
-            const setAsyncLocalStorage = Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global);
-
-            const route_info = try bake_prod.getRouteInfo(global, route_index);
+            const args = try bake_prod.newRouteParams(global, route_index, params);
 
             // Call the server runtime's handleRequest function using onSavedRequest
             this.onSavedRequest(
                 .{ .stack = req },
                 resp,
                 server_request_callback,
-                5,
+                6,
                 .{
-                    JSValue.jsNumberFromUint64(route_index.get()),
-                    JSValue.jsNumberFromUint64(router_type_index),
-                    route_info,
-                    params_js,
-                    setAsyncLocalStorage, // setAsyncLocalStorage
+                    args.route_index,
+                    args.router_type_index,
+                    args.route_info,
+                    args.params,
+                    args.newRouteParams,
+                    args.setAsyncLocalStorage,
                 },
             );
         }

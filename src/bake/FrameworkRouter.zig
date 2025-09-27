@@ -845,6 +845,22 @@ pub const MatchedParams = struct {
         }
         return obj;
     }
+
+    pub fn hash(self: *const MatchedParams) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        for (self.params.slice()) |param| {
+            hasher.update(param.key);
+            switch (param.value) {
+                .single => |val| hasher.update(val),
+                .multiple => |vals| {
+                    for (vals.slice()) |val| {
+                        hasher.update(val);
+                    }
+                },
+            }
+        }
+        return @truncate(hasher.final());
+    }
 };
 
 /// Fast enough for development to be seamless, but avoids building a
@@ -1146,6 +1162,24 @@ fn scanInner(
             }
         }
     }
+}
+
+// TODO: this is shitty
+pub fn extractPathnameFromUrl(url: []const u8) []const u8 {
+    // Extract pathname from URL (remove protocol, host, query, hash)
+    var pathname = if (std.mem.indexOf(u8, url, "://")) |proto_end| blk: {
+        const after_proto = url[proto_end + 3 ..];
+        break :blk after_proto;
+    } else url;
+
+    if (std.mem.indexOfScalar(u8, pathname, '/')) |path_start| {
+        const path_with_query = pathname[path_start..];
+        // Remove query string and hash
+        const end = bun.strings.lastIndexOf(path_with_query, "?") orelse path_with_query.len;
+        pathname = path_with_query[0..end];
+    }
+
+    return pathname;
 }
 
 /// This binding is currently only intended for testing FrameworkRouter, and not

@@ -126,4 +126,11 @@ extern "C" JSC::EncodedJSValue Bake__getDevNewRouteParamsJSFunction(JSC::JSGloba
     return JSValue::encode(value);
 }
 
+extern "C" JSC::EncodedJSValue Bake__getProdNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
+{
+    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto value = zig->bakeAdditions().getProdNewRouteParamsJSFunction(zig);
+    return JSValue::encode(value);
+}
+
 } // namespace Bun

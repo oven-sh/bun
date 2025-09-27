@@ -111,6 +111,7 @@ server_exports = {
               pageModule,
               modulepreload: [],
               params,
+              request: pageModule.mode === "ssr" ? req : undefined,
             },
             responseOptionsALS,
           );

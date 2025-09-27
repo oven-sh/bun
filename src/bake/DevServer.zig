@@ -1458,7 +1458,7 @@ fn onFrameworkRequestWithBundle(
     defer url.deinit();
 
     // Extract pathname from URL (remove protocol, host, query, hash)
-    const pathname = extractPathnameFromUrl(url.byteSlice());
+    const pathname = FrameworkRouter.extractPathnameFromUrl(url.byteSlice());
 
     // Create params JSValue
     // TODO: lazy structure caching since we are making these objects a lot
@@ -4532,7 +4532,7 @@ fn bundleNewRouteJSFunctionImpl(global: *bun.jsc.JSGlobalObject, request_ptr: *a
         return global.throw("Request context does not belong to dev server", .{});
     };
     // Extract pathname from URL (remove protocol, host, query, hash)
-    const pathname = extractPathnameFromUrl(url.byteSlice());
+    const pathname = FrameworkRouter.extractPathnameFromUrl(url.byteSlice());
 
     if (pathname.len == 0 or pathname[0] != '/') {
         return global.throw("Invalid path \"{s}\" it should be non-empty and start with a slash", .{pathname});
@@ -4632,7 +4632,7 @@ fn newRouteParamsForBundlePromise(
     const route_bundle = dev.routeBundlePtr(route_bundle_index);
     const framework_bundle = &route_bundle.data.framework;
 
-    const pathname = extractPathnameFromUrl(url);
+    const pathname = FrameworkRouter.extractPathnameFromUrl(url);
 
     var params: FrameworkRouter.MatchedParams = undefined;
     const route_index = dev.router.matchSlow(pathname, &params) orelse return dev.vm.global.throw("No route found for path: {s}", .{pathname});
@@ -4656,24 +4656,6 @@ fn newRouteParamsForBundlePromise(
         args.styles,
         args.params,
     );
-}
-
-// TODO: this is shitty
-fn extractPathnameFromUrl(url: []const u8) []const u8 {
-    // Extract pathname from URL (remove protocol, host, query, hash)
-    var pathname = if (std.mem.indexOf(u8, url, "://")) |proto_end| blk: {
-        const after_proto = url[proto_end + 3 ..];
-        break :blk after_proto;
-    } else url;
-
-    if (std.mem.indexOfScalar(u8, pathname, '/')) |path_start| {
-        const path_with_query = pathname[path_start..];
-        // Remove query string and hash
-        const end = bun.strings.lastIndexOf(path_with_query, "?") orelse path_with_query.len;
-        pathname = path_with_query[0..end];
-    }
-
-    return pathname;
 }
 
 const bun = @import("bun");

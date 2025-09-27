@@ -493,6 +493,7 @@ declare module "bun" {
        * A list of css files that the route will need to be styled.
        */
       readonly styles: ReadonlyArray<string>;
+      readonly request: Request | undefined;
     }
 
     /**

@@ -201,7 +201,9 @@ describe.concurrent("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal }).then(res =>
+          res.text(),
+        );
       } catch (err: any) {
         expect(err).toBeDefined();
         expect(err?.name).toBe("AbortError");
@@ -230,7 +232,9 @@ describe.concurrent("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal }).then(res =>
+          res.text(),
+        );
       } catch {
         fetchAborted = true;
       }
@@ -279,7 +283,9 @@ describe.concurrent("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal }).then(res =>
+          res.text(),
+        );
       } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
@@ -375,7 +381,9 @@ describe.concurrent("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal }).then(res =>
+          res.text(),
+        );
       } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);

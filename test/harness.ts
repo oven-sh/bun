@@ -7,12 +7,13 @@
 
 import { gc as bunGC, readableStreamToText, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect } from "bun:test";
 import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import * as numeric from "_util/numeric.ts";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -357,7 +358,7 @@ export function bunRunAsScript(
 }
 
 export function randomLoneSurrogate() {
-  const n = randomRange(0, 2);
+  const n = numeric.random.between(0, 2, { domain: "integral" });
   if (n === 0) return randomLoneHighSurrogate();
   return randomLoneLowSurrogate();
 }
@@ -370,16 +371,12 @@ export function randomInvalidSurrogatePair() {
 
 // Generates a random lone high surrogate (from the range D800-DBFF)
 export function randomLoneHighSurrogate() {
-  return String.fromCharCode(randomRange(0xd800, 0xdbff));
+  return String.fromCharCode(numeric.random.between(0xd800, 0xdbff, { domain: "integral" }));
 }
 
 // Generates a random lone high surrogate (from the range DC00-DFFF)
 export function randomLoneLowSurrogate() {
-  return String.fromCharCode(randomRange(0xdc00, 0xdfff));
-}
-
-function randomRange(low: number, high: number): number {
-  return low + Math.floor(Math.random() * (high - low));
+  return String.fromCharCode(numeric.random.between(0xdc00, 0xdfff, { domain: "integral" }));
 }
 
 export function runWithError(cb: () => unknown): Error | undefined {
@@ -892,6 +889,9 @@ export function dockerExe(): string | null {
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 
@@ -904,6 +904,9 @@ export function isDockerEnabled(): boolean {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 }

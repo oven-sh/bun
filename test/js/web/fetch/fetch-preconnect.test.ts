@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import "harness";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 // TODO: on Windows, these tests fail.
 // This feature is mostly meant for serverless JS environments, so we can no-op it on Windows.
-describe.todoIf(isWindows)("fetch.preconnect", () => {
+describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
   it("fetch.preconnect works", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<Bun.Socket>();
     using listener = Bun.listen({
       port: 0,
       hostname: "localhost",
@@ -29,12 +29,12 @@ describe.todoIf(isWindows)("fetch.preconnect", () => {
     expect(response.status).toBe(200);
   });
 
-  describe("doesn't break the request when", () => {
+  describe.concurrent("doesn't break the request when", () => {
     for (let endOrTerminate of ["end", "terminate", "shutdown"]) {
       describe(endOrTerminate, () => {
         for (let at of ["before", "middle", "after"]) {
           it(at, async () => {
-            let { promise, resolve } = Promise.withResolvers();
+            let { promise, resolve } = Promise.withResolvers<Bun.Socket>();
             using listener = Bun.listen({
               port: 0,
               hostname: "localhost",
@@ -48,7 +48,7 @@ describe.todoIf(isWindows)("fetch.preconnect", () => {
             });
             fetch.preconnect(`http://localhost:${listener.port}`);
             let socket = await promise;
-            ({ promise, resolve } = Promise.withResolvers());
+            ({ promise, resolve } = Promise.withResolvers<Bun.Socket>());
             if (at === "before") {
               await Bun.sleep(16);
               socket[endOrTerminate]();
@@ -86,7 +86,7 @@ describe.todoIf(isWindows)("fetch.preconnect", () => {
   });
 
   it("--fetch-preconnect works", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<void>();
     using listener = Bun.listen({
       port: 0,
       hostname: "localhost",
@@ -102,7 +102,13 @@ describe.todoIf(isWindows)("fetch.preconnect", () => {
     });
 
     // Do --fetch-preconnect, but don't actually send a request.
-    expect([`--fetch-preconnect=http://localhost:${listener.port}`, "--eval", "Bun.sleep(64)"]).toRun();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `--fetch-preconnect=http://localhost:${listener.port}`, "--eval", "Bun.sleep(64)"],
+      stdio: ["inherit", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await proc.exited).toBe(0);
 
     await promise;
   });

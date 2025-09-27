@@ -5,7 +5,7 @@ pub var default_allocator: std.mem.Allocator = undefined;
 pub var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
 //TODO: this needs to be freed when Worker Threads are implemented
-pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
+pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.AnySocket).init(bun.default_allocator);
 pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 
@@ -106,7 +106,10 @@ pub fn registerAbortTracker(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     if (client.signals.aborted != null) {
-        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
+        switch (is_ssl) {
+            true => socket_async_http_abort_tracker.put(client.async_http_id, .{ .SocketTLS = socket }) catch unreachable,
+            false => socket_async_http_abort_tracker.put(client.async_http_id, .{ .SocketTCP = socket }) catch unreachable,
+        }
     }
 }
 
@@ -137,6 +140,9 @@ pub fn onOpen(
         client.closeAndAbort(comptime is_ssl, socket);
         return error.ClientAborted;
     }
+
+    if (client.state.request_stage == .pending)
+        client.state.request_stage = .opened;
 
     if (comptime is_ssl) {
         var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
@@ -180,8 +186,11 @@ pub fn firstCall(
         }
     }
 
-    if (client.state.request_stage == .pending) {
-        client.onWritable(true, comptime is_ssl, socket);
+    switch (client.state.request_stage) {
+        .opened, .pending => {
+            client.onWritable(true, comptime is_ssl, socket);
+        },
+        else => {},
     }
 }
 pub fn onClose(
@@ -723,10 +732,7 @@ pub fn doRedirect(
         log("close the tunnel in redirect", .{});
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
-        if (!socket.isClosed()) {
-            log("close socket in redirect", .{});
-            NewHTTPContext(is_ssl).closeSocket(socket);
-        }
+        NewHTTPContext(is_ssl).closeSocket(socket);
     } else {
         // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
         if (this.isKeepAlivePossible()) {
@@ -761,6 +767,8 @@ pub fn doRedirect(
 
     return this.start(.{ .bytes = request_body }, body_out_str);
 }
+
+/// **Not thread safe while request is in-flight**
 pub fn isHTTPS(this: *HTTPClient) bool {
     if (this.http_proxy) |proxy| {
         if (proxy.isHTTPS()) {
@@ -773,6 +781,7 @@ pub fn isHTTPS(this: *HTTPClient) bool {
     }
     return false;
 }
+
 pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableString) void {
     body_out_str.reset();
 
@@ -787,6 +796,8 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    this.unregisterAbortTracker();
+
     // mark that we are connecting
     this.flags.defer_fail_until_connecting_is_complete = true;
     // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
@@ -817,6 +828,18 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         NewHTTPContext(is_ssl).markSocketAsDead(socket);
         this.fail(error.ConnectionClosed);
         return;
+    }
+
+    // If we haven't already called onOpen(), then that means we need to
+    // register the abort tracker. We need to do this in cases where the
+    // connection takes a long time to happen such as when it's not routable.
+    // See test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts.
+    //
+    // We have to be careful here because if .connect() had finished
+    // synchronously, then this socket is on longer valid and the pointer points
+    // to invalid memory.
+    if (this.state.request_stage == .pending) {
+        this.registerAbortTracker(is_ssl, socket);
     }
 }
 
@@ -1002,8 +1025,8 @@ fn writeToSocketWithBufferFallback(comptime is_ssl: bool, socket: NewHTTPContext
 
 /// Write buffered data to the socket returning true if there is backpressure
 fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) !bool {
-    if (buffer.isNotEmpty()) {
-        const to_send = buffer.slice();
+    const to_send = buffer.slice();
+    if (to_send.len > 0) {
         const amount = try writeToSocket(is_ssl, socket, to_send);
         this.state.request_sent_len += amount;
         buffer.cursor += amount;
@@ -1019,6 +1042,7 @@ fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
             buffer.reset();
         }
     }
+
     // ok we flushed all pending data so we can reset the backpressure
     if (data.len > 0) {
         // no backpressure everything was sended so we can just try to send
@@ -1108,7 +1132,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
     }
 
     switch (this.state.request_stage) {
-        .pending, .headers => {
+        .pending, .headers, .opened => {
             log("sendInitialRequestPayload", .{});
             this.setTimeout(socket, 5);
             const result = sendInitialRequestPayload(this, is_first_call, is_ssl, socket) catch |err| {
@@ -1163,13 +1187,15 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             switch (this.state.original_request_body) {
                 .bytes => {
                     const to_send = this.state.request_body;
-                    const sent = writeToSocket(is_ssl, socket, to_send) catch |err| {
-                        this.closeAndFail(err, is_ssl, socket);
-                        return;
-                    };
+                    if (to_send.len > 0) {
+                        const sent = writeToSocket(is_ssl, socket, to_send) catch |err| {
+                            this.closeAndFail(err, is_ssl, socket);
+                            return;
+                        };
 
-                    this.state.request_sent_len += sent;
-                    this.state.request_body = this.state.request_body[sent..];
+                        this.state.request_sent_len += sent;
+                        this.state.request_body = this.state.request_body[sent..];
+                    }
 
                     if (this.state.request_body.len == 0) {
                         this.state.request_stage = .done;
@@ -1311,9 +1337,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("closeAndFail: {s}", .{@errorName(err)});
-    if (!socket.isClosed()) {
-        NewHTTPContext(is_ssl).terminateSocket(socket);
-    }
+    NewHTTPContext(is_ssl).terminateSocket(socket);
     this.fail(err);
 }
 
@@ -1683,10 +1707,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                 this.proxy_tunnel = null;
                 tunnel.shutdown();
                 tunnel.detachAndDeref();
-                if (!socket.isClosed()) {
-                    log("close socket", .{});
-                    NewHTTPContext(is_ssl).closeSocket(socket);
-                }
+                NewHTTPContext(is_ssl).closeSocket(socket);
             } else {
                 if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
                     log("release socket", .{});
@@ -1696,8 +1717,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                         this.connected_url.hostname,
                         this.connected_url.getPortAuto(),
                     );
-                } else if (!socket.isClosed()) {
-                    log("close socket", .{});
+                } else {
                     NewHTTPContext(is_ssl).closeSocket(socket);
                 }
             }

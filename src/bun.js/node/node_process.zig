@@ -189,8 +189,6 @@ fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
         }
     }
 
-    defer allocator.free(args);
-
     if (vm.worker) |worker| {
         for (worker.argv) |arg| {
             args_list.appendAssumeCapacity(bun.String.init(arg));

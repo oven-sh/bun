@@ -231,6 +231,11 @@ declare module "bun:test" {
      */
     concurrent: Describe<T>;
     /**
+     * Marks this group of tests to be executed serially (one after another),
+     * even when the --concurrent flag is used.
+     */
+    serial: Describe<T>;
+    /**
      * Runs this group of tests, only if `condition` is true.
      *
      * This is the opposite of `describe.skipIf()`.
@@ -460,6 +465,11 @@ declare module "bun:test" {
      */
     concurrent: Test<T>;
     /**
+     * Forces the test to run serially (not in parallel),
+     * even when the --concurrent flag is used.
+     */
+    serial: Test<T>;
+    /**
      * Runs this test, if `condition` is true.
      *
      * This is the opposite of `test.skipIf()`.
@@ -491,6 +501,13 @@ declare module "bun:test" {
      * @param condition if the test should run concurrently
      */
     concurrentIf(condition: boolean): Test<T>;
+    /**
+     * Forces the test to run serially (not in parallel), if `condition` is true.
+     * This applies even when the --concurrent flag is used.
+     *
+     * @param condition if the test should run serially
+     */
+    serialIf(condition: boolean): Test<T>;
     /**
      * Returns a function that runs for each item in `table`.
      *

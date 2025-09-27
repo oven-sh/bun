@@ -16,6 +16,13 @@ pub const URL = opaque {
     extern fn URL__getFileURLString(*String) String;
     extern fn URL__getHrefJoin(*String, *String) String;
     extern fn URL__pathFromFileURL(*String) String;
+    extern fn URL__hash(*URL) String;
+
+    /// Includes the leading '#'.
+    pub fn hash(url: *URL) String {
+        jsc.markBinding(@src());
+        return URL__hash(url);
+    }
 
     pub fn hrefFromString(str: bun.String) String {
         jsc.markBinding(@src());

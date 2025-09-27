@@ -113,10 +113,6 @@ export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindin
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
 
-// Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
-export type Dependency = any;
-export const npa: (name: string) => Dependency = $newZigFunction("dependency.zig", "fromJS", 1);
-
 export const npmTag: (
   name: string,
 ) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
@@ -203,3 +199,17 @@ export const structuredCloneAdvanced: (
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
+
+export const hostedGitInfo = {
+  parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
+  fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
+};
+
+export const Npa = {
+  npa: $newZigFunction("npm_package_arg.zig", "TestingAPIs.jsNpa", 3),
+  resolve: $newZigFunction("npm_package_arg.zig", "TestingAPIs.jsResolve", 4),
+};
+
+export const ValidateNpmPackageName = {
+  validate: $newZigFunction("validate_npm_package_name.zig", "TestingAPIs.jsValidate", 1),
+};

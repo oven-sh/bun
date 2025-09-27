@@ -401,6 +401,12 @@ pub fn indexOfSigned(self: string, str: string) i32 {
     return @as(i32, @intCast(i));
 }
 
+/// Returns last index of `char` before a character `before`.
+pub fn lastIndexBeforeChar(in: []const u8, char: u8, before: u8) ?usize {
+    const before_pos = indexOfChar(in, before) orelse in.len;
+    return lastIndexOfChar(in[0..before_pos], char);
+}
+
 pub fn lastIndexOfChar(self: []const u8, char: u8) callconv(bun.callconv_inline) ?usize {
     if (comptime Environment.isLinux) {
         if (@inComptime()) {
@@ -1119,6 +1125,12 @@ pub fn index(self: string, str: string) i32 {
     }
 }
 
+/// Returns a substring starting at `start` up to the end of the string.
+/// If `start` is greater than the string's length, returns an empty string.
+pub fn drop(self: anytype, start: usize) @TypeOf(self) {
+    return self[@min(start, self.len)..];
+}
+
 pub const ascii_vector_size = if (Environment.isWasm) 8 else 16;
 pub const ascii_u16_vector_size = if (Environment.isWasm) 4 else 8;
 pub const AsciiVectorInt = std.meta.Int(.unsigned, ascii_vector_size);
@@ -1746,10 +1758,22 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     return slice[begin..end];
 }
 
+pub fn trimSpaces(slice: anytype) @TypeOf(slice) {
+    return trim(slice, &whitespace_chars);
+}
+
 pub fn isAllWhitespace(slice: []const u8) bool {
     var begin: usize = 0;
     while (begin < slice.len and std.mem.indexOfScalar(u8, &whitespace_chars, slice[begin]) != null) : (begin += 1) {}
     return begin == slice.len;
+}
+
+// TODO(markovejnovic): Could be SIMD
+pub fn isAllLowercaseASCII(slice: []const u8) bool {
+    for (slice) |c| {
+        if (c >= 'A' and c <= 'Z') return false;
+    }
+    return true;
 }
 
 pub const whitespace_chars = [_]u8{ ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff };
@@ -2007,7 +2031,7 @@ pub fn concatWithLength(
     allocator: std.mem.Allocator,
     args: []const string,
     length: usize,
-) ![]u8 {
+) bun.OOM![]u8 {
     const out = try allocator.alloc(u8, length);
     var remain = out;
     for (args) |arg| {
@@ -2021,7 +2045,7 @@ pub fn concatWithLength(
 pub fn concat(
     allocator: std.mem.Allocator,
     args: []const string,
-) ![]u8 {
+) bun.OOM![]u8 {
     var length: usize = 0;
     for (args) |arg| {
         length += arg.len;

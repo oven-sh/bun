@@ -1,4 +1,8 @@
-// This is close to WHATWG URL, but we don't want the validation errors
+/// Unsafe parser. Assumes the given string is already a valid URL.
+///
+/// Use bun.jsc.URL for a safe, compliant URL parser.
+///
+/// This is close to WHATWG URL, but we don't want the validation errors.
 pub const URL = struct {
     const log = Output.scoped(.URL, .visible);
 

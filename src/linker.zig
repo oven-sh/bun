@@ -169,7 +169,6 @@ pub const Linker = struct {
                                 "vitest",
                             )) {
                                 import_record.path.namespace = "bun";
-                                import_record.tag = .bun_test;
                                 import_record.path.text = "test";
                                 continue;
                             }
@@ -178,10 +177,6 @@ pub const Linker = struct {
                         if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";
-
-                            if (strings.eqlComptime(import_record.path.text, "test")) {
-                                import_record.tag = .bun_test;
-                            }
 
                             // don't link bun
                             continue;

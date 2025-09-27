@@ -178,7 +178,7 @@ pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     return js.toJSUnchecked(globalObject, this);
 }
 
-extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) jsc.JSValue;
+extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) callconv(jsc.conv) jsc.JSValue;
 pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     return bun.jsc.fromJSHostCall(
         globalObject,

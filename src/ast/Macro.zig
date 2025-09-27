@@ -524,8 +524,6 @@ pub const Runner = struct {
         if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
         exception_holder = jsc.ZigException.Holder.init();
-        defer exception_holder.deinit(macro.vm);
-
         var js_args: []jsc.JSValue = &.{};
         var js_processed_args_len: usize = 0;
         defer {

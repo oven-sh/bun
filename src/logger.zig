@@ -403,7 +403,6 @@ pub const Msg = struct {
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.jsc.JSGlobalObject, file: string, err: bun.jsc.JSValue) bun.JSError!Msg {
         var zig_exception_holder: bun.jsc.ZigException.Holder = bun.jsc.ZigException.Holder.init();
-        defer zig_exception_holder.deinit(globalObject.bunVM());
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
         } else {

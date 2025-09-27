@@ -22,6 +22,8 @@ pub fn Parse(
         pub const parseImportClause = @import("./parseImportExport.zig").ParseImportExport(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseImportClause;
         pub const parseExportClause = @import("./parseImportExport.zig").ParseImportExport(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseExportClause;
         pub const parseTypeScriptDecorators = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptDecorators;
+        pub const parseDecorators = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseDecorators;
+        pub const parseDecoratorExpression = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseDecoratorExpression;
         pub const parseTypeScriptNamespaceStmt = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptNamespaceStmt;
         pub const parseTypeScriptImportEqualsStmt = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = @import("./parseTypescript.zig").ParseTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).parseTypescriptEnumStmt;
@@ -201,10 +203,12 @@ pub fn Parse(
                 .extends = extends,
                 .close_brace_loc = close_brace_loc,
                 .ts_decorators = ExprNodeList.fromOwnedSlice(class_opts.ts_decorators),
+                .decorators = class_opts.decorators,
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
                 .properties = properties.items,
-                .has_decorators = has_decorators or class_opts.ts_decorators.len > 0,
+                .has_decorators = has_decorators or class_opts.ts_decorators.len > 0 or class_opts.decorators.len > 0,
+                .should_lower_standard_decorators = class_opts.decorators.len > 0,
             };
         }
 
@@ -556,6 +560,9 @@ pub fn Parse(
             };
             if (opts.ts_decorators) |dec| {
                 class_opts.ts_decorators = dec.values;
+            }
+            if (opts.decorators) |dec| {
+                class_opts.decorators = dec;
             }
 
             const scope_index = p.pushScopeForParsePass(.class_name, loc) catch unreachable;

@@ -5,6 +5,12 @@ pub const Decl = struct {
     pub const List = BabyList(Decl);
 };
 
+pub const Decorator = struct {
+    value: ExprNodeIndex,
+    at_loc: logger.Loc,
+    omit_newline_after: bool = false,
+};
+
 pub const NamespaceAlias = struct {
     namespace_ref: Ref,
     alias: string,
@@ -26,12 +32,14 @@ pub const ExportStarAlias = struct {
 pub const Class = struct {
     class_keyword: logger.Range = logger.Range.None,
     ts_decorators: ExprNodeList = ExprNodeList{},
+    decorators: []Decorator = &([_]Decorator{}),
     class_name: ?LocRef = null,
     extends: ?ExprNodeIndex = null,
     body_loc: logger.Loc = logger.Loc.Empty,
     close_brace_loc: logger.Loc = logger.Loc.Empty,
     properties: []Property = &([_]Property{}),
     has_decorators: bool = false,
+    should_lower_standard_decorators: bool = false,
 
     pub fn canBeMoved(this: *const Class) bool {
         if (this.extends != null)
@@ -96,6 +104,7 @@ pub const Property = struct {
 
     class_static_block: ?*ClassStaticBlock = null,
     ts_decorators: ExprNodeList = .{},
+    decorators: []Decorator = &([_]Decorator{}),
     // Key is optional for spread
     key: ?ExprNodeIndex = null,
 
@@ -120,6 +129,7 @@ pub const Property = struct {
             .flags = this.flags,
             .class_static_block = class_static_block,
             .ts_decorators = try this.ts_decorators.deepClone(allocator),
+            .decorators = try allocator.dupe(Decorator, this.decorators),
             .key = if (this.key) |key| try key.deepClone(allocator) else null,
             .value = if (this.value) |value| try value.deepClone(allocator) else null,
             .ts_metadata = this.ts_metadata,
@@ -189,6 +199,7 @@ pub const Fn = struct {
 };
 pub const Arg = struct {
     ts_decorators: ExprNodeList = ExprNodeList{},
+    decorators: []Decorator = &([_]Decorator{}),
     binding: BindingNodeIndex,
     default: ?ExprNodeIndex = null,
 
@@ -200,6 +211,7 @@ pub const Arg = struct {
     pub fn deepClone(this: *const Arg, allocator: std.mem.Allocator) !Arg {
         return .{
             .ts_decorators = try this.ts_decorators.deepClone(allocator),
+            .decorators = try allocator.dupe(Decorator, this.decorators),
             .binding = this.binding,
             .default = if (this.default) |d| try d.deepClone(allocator) else null,
             .is_typescript_ctor_field = this.is_typescript_ctor_field,

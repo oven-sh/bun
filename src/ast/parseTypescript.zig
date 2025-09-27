@@ -32,6 +32,113 @@ pub fn ParseTypescript(
             return decorators.items;
         }
 
+        pub fn parseDecorators(p: *P, use_experimental: bool) ![]G.Decorator {
+            var decorators = ListManaged(G.Decorator).init(p.allocator);
+
+            while (p.lexer.token == T.t_at) {
+                const at_loc = p.lexer.loc();
+                try p.lexer.next();
+
+                var value: Expr = undefined;
+
+                if (use_experimental and is_typescript_enabled) {
+                    // TypeScript's experimental decorator syntax is more permissive
+                    // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
+                    // EIndex expressions, since they may be part of a computed property
+                    try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator, &value);
+                } else {
+                    // JavaScript's decorator syntax is more restrictive
+                    // Parse using special decorator parser
+                    value = try p.parseDecoratorExpression();
+                }
+
+                decorators.append(G.Decorator{
+                    .value = value,
+                    .at_loc = at_loc,
+                    .omit_newline_after = !p.lexer.has_newline_before,
+                }) catch unreachable;
+            }
+
+            return decorators.items;
+        }
+
+        pub fn parseDecoratorExpression(p: *P) !Expr {
+            // Handle parenthesized expression
+            if (p.lexer.token == .t_open_paren) {
+                try p.lexer.next();
+                const value = try p.parseExpr(.lowest);
+                try p.lexer.expect(.t_close_paren);
+                return value;
+            }
+
+            // Parse member expression starting with identifier
+            const name_range = p.lexer.range();
+            const name = p.lexer.identifier;
+            try p.lexer.expect(.t_identifier);
+
+            // Check for invalid identifiers
+            if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name, "await")) or
+                (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and strings.eqlComptime(name, "yield"))) {
+                try p.log.addRangeError(p.source, name_range, try std.fmt.allocPrint(p.allocator, "Cannot use \"{s}\" as an identifier here", .{name}));
+            }
+
+            var member_expr = p.newExpr(E.Identifier{ .ref = try p.storeNameInRef(name) }, name_range.loc);
+
+            while (true) {
+                switch (p.lexer.token) {
+                    .t_exclamation => {
+                        // Skip over TypeScript non-null assertions
+                        if (p.lexer.has_newline_before) break;
+                        if (!is_typescript_enabled) try p.lexer.unexpected();
+                        try p.lexer.next();
+                    },
+                    .t_dot, .t_question_dot => {
+                        const is_optional = p.lexer.token == .t_question_dot;
+                        try p.lexer.next();
+
+                        if (p.lexer.token == .t_private_identifier) {
+                            const private_name = p.lexer.identifier;
+                            const private_loc = p.lexer.loc();
+                            try p.lexer.next();
+                            member_expr = p.newExpr(E.Index{
+                                .target = member_expr,
+                                .index = p.newExpr(E.PrivateIdentifier{
+                                    .ref = try p.storeNameInRef(private_name),
+                                }, private_loc),
+                                .optional_chain = if (is_optional) .start else .non_optional,
+                            }, member_expr.loc);
+                        } else {
+                            const name_loc = p.lexer.loc();
+                            const field_name = p.lexer.identifier;
+                            try p.lexer.expect(.t_identifier);
+                            member_expr = p.newExpr(E.Dot{
+                                .target = member_expr,
+                                .name = field_name,
+                                .name_loc = name_loc,
+                                .optional_chain = if (is_optional) .start else .non_optional,
+                            }, member_expr.loc);
+                        }
+                    },
+                    .t_open_paren => {
+                        const args = try p.parseCallArgs();
+                        member_expr = p.newExpr(E.Call{
+                            .target = member_expr,
+                            .args = args.args,
+                            .close_paren_loc = args.close_paren_loc,
+                            .is_multi_line = args.is_multi_line,
+                            .optional_chain = .non_optional,
+                            .kind = .target_was_originally_property_access,
+                        }, member_expr.loc);
+                        // Grammar forbids anything after call expression in decorators
+                        break;
+                    },
+                    else => break,
+                }
+            }
+
+            return member_expr;
+        }
+
         pub fn parseTypeScriptNamespaceStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) anyerror!Stmt {
             // "namespace foo {}";
             const name_loc = p.lexer.loc();

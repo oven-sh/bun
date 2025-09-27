@@ -13,6 +13,7 @@ pub const Parser = struct {
         ignore_dce_annotations: bool = false,
         preserve_unused_imports_ts: bool = false,
         use_define_for_class_fields: bool = false,
+        experimental_decorators: bool = false,
         suppress_warnings_about_weird_code: bool = true,
         filepath_hash_for_hmr: u32 = 0,
         features: RuntimeFeatures = .{},

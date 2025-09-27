@@ -806,12 +806,14 @@ const LexicalDecl = enum(u8) { forbid, allow_all, allow_fn_inside_if, allow_fn_i
 
 pub const ParseClassOptions = struct {
     ts_decorators: []Expr = &[_]Expr{},
+    decorators: []G.Decorator = &[_]G.Decorator{},
     allow_ts_decorators: bool = false,
     is_type_script_declare: bool = false,
 };
 
 pub const ParseStatementOptions = struct {
     ts_decorators: ?DeferredTsDecorators = null,
+    decorators: ?[]G.Decorator = null,
     lexical_decl: LexicalDecl = .forbid,
     is_module_scope: bool = false,
     is_namespace_scope: bool = false,
@@ -822,8 +824,11 @@ pub const ParseStatementOptions = struct {
     is_for_loop_init: bool = false,
 
     pub fn hasDecorators(self: *ParseStatementOptions) bool {
-        const decs = self.ts_decorators orelse return false;
-        return decs.values.len > 0;
+        if (self.decorators) |decs| {
+            if (decs.len > 0) return true;
+        }
+        const ts_decs = self.ts_decorators orelse return false;
+        return ts_decs.values.len > 0;
     }
 };
 

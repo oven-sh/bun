@@ -445,8 +445,13 @@ pub fn ParseStmt(
         }
         fn t_at(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
             // Parse decorators before class statements, which are potentially exported
-            if (is_typescript_enabled) {
-                const scope_index = p.scopes_in_order.items.len;
+            const scope_index = p.scopes_in_order.items.len;
+
+            // Determine whether to use experimental TypeScript decorators or standard ECMAScript decorators
+            const use_experimental = is_typescript_enabled and p.options.experimental_decorators;
+
+            if (use_experimental) {
+                // Use TypeScript experimental decorators
                 const ts_decorators = try p.parseTypeScriptDecorators();
 
                 // If this turns out to be a "declare class" statement, we need to undo the
@@ -462,27 +467,27 @@ pub fn ParseStmt(
                     .values = ts_decorators,
                     .scope_index = scope_index,
                 };
-
-                // "@decorator class Foo {}"
-                // "@decorator abstract class Foo {}"
-                // "@decorator declare class Foo {}"
-                // "@decorator declare abstract class Foo {}"
-                // "@decorator export class Foo {}"
-                // "@decorator export abstract class Foo {}"
-                // "@decorator export declare class Foo {}"
-                // "@decorator export declare abstract class Foo {}"
-                // "@decorator export default class Foo {}"
-                // "@decorator export default abstract class Foo {}"
-                if (p.lexer.token != .t_class and p.lexer.token != .t_export and !p.lexer.isContextualKeyword("abstract") and !p.lexer.isContextualKeyword("declare")) {
-                    try p.lexer.expected(.t_class);
-                }
-
-                return p.parseStmt(opts);
+            } else {
+                // Use standard ECMAScript decorators
+                const decorators = try p.parseDecorators(false);
+                opts.decorators = decorators;
             }
-            // notimpl();
 
-            try p.lexer.unexpected();
-            return error.SyntaxError;
+            // "@decorator class Foo {}"
+            // "@decorator abstract class Foo {}"
+            // "@decorator declare class Foo {}"
+            // "@decorator declare abstract class Foo {}"
+            // "@decorator export class Foo {}"
+            // "@decorator export abstract class Foo {}"
+            // "@decorator export declare class Foo {}"
+            // "@decorator export declare abstract class Foo {}"
+            // "@decorator export default class Foo {}"
+            // "@decorator export default abstract class Foo {}"
+            if (p.lexer.token != .t_class and p.lexer.token != .t_export and !p.lexer.isContextualKeyword("abstract") and !p.lexer.isContextualKeyword("declare")) {
+                try p.lexer.expected(.t_class);
+            }
+
+            return p.parseStmt(opts);
         }
         fn t_class(p: *P, opts: *ParseStatementOptions, loc: logger.Loc) anyerror!Stmt {
             if (opts.lexical_decl != .allow_all) {

@@ -42,6 +42,8 @@ pub const TSConfigJSON = struct {
 
     emit_decorator_metadata: bool = false,
 
+    experimental_decorators: ?bool = null,
+
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }
@@ -230,6 +232,13 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("useDefineForClassFields")) |use_define_value_prop| {
                 if (use_define_value_prop.expr.asBool()) |val| {
                     result.use_define_for_class_fields = val;
+                }
+            }
+
+            // Parse "experimentalDecorators"
+            if (compiler_opts.expr.asProperty("experimentalDecorators")) |experimental_decorators_prop| {
+                if (experimental_decorators_prop.expr.asBool()) |val| {
+                    result.experimental_decorators = val;
                 }
             }
 

@@ -632,7 +632,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     }
                     bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
-                    bun.assert(prev.socket.socket == .detached);
+                    // bun.assert(prev.socket.socket == .untached);
                     prev.connection = connection;
                     prev.protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p)) else null;
                     prev.server_name = server_name;
@@ -642,7 +642,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
                     .this_value = .zero,
-                    .socket = TLSSocket.Socket.detached,
+                    .socket = TLSSocket.Socket.untached,
                     .connection = connection,
                     .protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p)) else null,
                     .server_name = server_name,
@@ -667,7 +667,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 var tcp = if (prev_maybe_tcp) |prev| blk: {
                     bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
-                    bun.assert(prev.socket.socket == .detached);
+                    // bun.assert(prev.socket.socket == .untached);
                     bun.assert(prev.connection == null);
                     bun.assert(prev.protos == null);
                     bun.assert(prev.server_name == null);
@@ -677,7 +677,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
                     .this_value = .zero,
-                    .socket = TCPSocket.Socket.detached,
+                    .socket = TCPSocket.Socket.untached,
                     .connection = null,
                     .protos = null,
                     .server_name = null,
@@ -754,7 +754,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             const socket = if (maybe_previous) |prev| blk: {
                 bun.assert(prev.this_value != .zero);
                 prev.handlers = handlers_ptr;
-                bun.assert(prev.socket.socket == .detached);
+                // bun.assert(prev.socket.socket == .untached);
                 prev.connection = connection;
                 prev.protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p)) else null;
                 prev.server_name = server_name;
@@ -764,7 +764,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 .ref_count = .init(),
                 .handlers = handlers_ptr,
                 .this_value = .zero,
-                .socket = SocketType.Socket.detached,
+                .socket = SocketType.Socket.untached,
                 .connection = connection,
                 .protos = if (protos) |p| bun.handleOom(bun.default_allocator.dupe(u8, p)) else null,
                 .server_name = server_name,

@@ -350,10 +350,32 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                 },
                 .cjs => {
                     // For CommonJS format, we need to export values using exports object
-                    c.sortedCrossChunkExportItems(
-                        chunk_meta.exports,
-                        &stable_ref_list,
-                    );
+                    // If this chunk is dynamically imported, we need to export ALL its exports,
+                    // not just the ones imported by other chunks
+                    const is_dynamic_entry = c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index] == .dynamic_import;
+
+                    if (is_dynamic_entry) {
+                        // For dynamic imports, export all named exports from this chunk
+                        const named_exports = c.graph.ast.items(.named_exports)[chunk.entry_point.source_index];
+                        stable_ref_list.clearRetainingCapacity();
+
+                        var iter = named_exports.iterator();
+                        while (iter.next()) |entry| {
+                            const ref = entry.value_ptr.ref;
+                            // Skip unbound symbols
+                            if (c.graph.symbols.get(ref)) |symbol| {
+                                if (symbol.kind != .unbound) {
+                                    stable_ref_list.append(.{ .ref = ref, .stable_source_index = chunk.entry_point.source_index }) catch unreachable;
+                                }
+                            }
+                        }
+                    } else {
+                        // For regular chunks, only export what's imported by other chunks
+                        c.sortedCrossChunkExportItems(
+                            chunk_meta.exports,
+                            &stable_ref_list,
+                        );
+                    }
 
                     if (stable_ref_list.items.len == 0) continue;
 
@@ -380,13 +402,19 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             alias,
                         );
 
+                        // Check if this is the default export (usually has "_default" suffix in the internal name)
+                        const export_name = if (std.mem.endsWith(u8, symbol.original_name, "_default") and is_dynamic_entry)
+                            "default"
+                        else
+                            alias;
+
                         // Create exports.aliasName = localName;
                         const member = Expr.allocate(
                             c.allocator(),
                             E.Dot,
                             .{
                                 .target = Expr.initIdentifier(exports_ref, Logger.Loc.Empty),
-                                .name = alias,
+                                .name = export_name,
                                 .name_loc = Logger.Loc.Empty,
                             },
                             Logger.Loc.Empty,

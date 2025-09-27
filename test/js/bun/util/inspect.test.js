@@ -348,9 +348,9 @@ it("inspect", () => {
   expect(Bun.inspect(new Map([["foo", "bar"]]))).toBe('Map(1) {\n  "foo": "bar",\n}');
   expect(Bun.inspect(new Set(["bar"]))).toBe('Set(1) {\n  "bar",\n}');
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
-  expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
-  expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");
-  expect(Bun.inspect(<div hello={123}>hi</div>)).toBe("<div hello=123>hi</div>");
+  expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello={true}>foo</div>");
+  expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello={1}>foo</div>");
+  expect(Bun.inspect(<div hello={123}>hi</div>)).toBe("<div hello={123}>hi</div>");
   expect(Bun.inspect(<div hello="quoted">quoted</div>)).toBe('<div hello="quoted">quoted</div>');
   expect(
     Bun.inspect(

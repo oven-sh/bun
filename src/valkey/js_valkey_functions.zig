@@ -745,9 +745,6 @@ pub fn subscribe(
         return globalObject.throwInvalidArgumentType("subscribe", "listener", "function");
     }
 
-    // We now need to register the callback with our subscription context, which may or may not exist.
-    var subscription_ctx = try this.getOrCreateSubscriptionCtxEnteringSubscriptionMode();
-
     // The first argument given is the channel or may be an array of channels.
     if (channel_or_many.isArray()) {
         if ((try channel_or_many.getLength(globalObject)) == 0) {
@@ -762,7 +759,13 @@ pub fn subscribe(
             };
             redis_channels.appendAssumeCapacity(channel);
 
-            try subscription_ctx.upsertReceiveHandler(globalObject, channel_arg, handler_callback);
+            // What we do here is add our receive handler. Notice that this doesn't really do anything until the
+            // "SUBSCRIBE" command is sent to redis and we get a response.
+            //
+            // TODO(markovejnovic): This is less-than-ideal, still, because this assumes a happy path. What happens if
+            //                      the SUBSCRIBE command fails? We have no way to roll back the addition of the
+            //                      handler.
+            try this._subscription_ctx.upsertReceiveHandler(globalObject, channel_arg, handler_callback);
         }
     } else if (channel_or_many.isString()) {
         // It is a single string channel
@@ -771,7 +774,7 @@ pub fn subscribe(
         };
         redis_channels.appendAssumeCapacity(channel);
 
-        try subscription_ctx.upsertReceiveHandler(globalObject, channel_or_many, handler_callback);
+        try this._subscription_ctx.upsertReceiveHandler(globalObject, channel_or_many, handler_callback);
     } else {
         return globalObject.throwInvalidArgumentType("subscribe", "channel", "string or array");
     }
@@ -779,14 +782,17 @@ pub fn subscribe(
     const command: valkey.Command = .{
         .command = "SUBSCRIBE",
         .args = .{ .args = redis_channels.items },
+        .meta = .{
+            .subscription_request = true,
+        },
     };
     const promise = this.send(
         globalObject,
         callframe.this(),
         &command,
     ) catch |err| {
-        // If we find an error, we need to clean up the subscription context.
-        this.deleteSubscriptionCtx();
+        // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
+        try this._subscription_ctx.clearAllReceiveHandlers(globalObject);
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SUBSCRIBE command", err);
     };
 
@@ -815,9 +821,6 @@ fn sendUnsubscribeRequestAndCleanup(
         return protocol.valkeyErrorToJS(globalObject, "Failed to send UNSUBSCRIBE command", err);
     };
 
-    // We do not delete the subscription context here, but rather when the
-    // onValkeyUnsubscribe callback is invoked.
-
     return promise.toJS();
 }
 
@@ -842,6 +845,7 @@ pub fn unsubscribe(
 
     // If no arguments, unsubscribe from all channels
     if (args_view.len == 0) {
+        try this._subscription_ctx.clearAllReceiveHandlers(globalObject);
         return try sendUnsubscribeRequestAndCleanup(this, callframe.this(), globalObject, redis_channels.items);
     }
 
@@ -849,9 +853,9 @@ pub fn unsubscribe(
     const channel_or_many = callframe.argument(0);
 
     // Get the subscription context
-    var subscription_ctx = this._subscription_ctx orelse {
+    if (!this._subscription_ctx.is_subscriber) {
         return jsc.JSPromise.resolvedPromiseValue(globalObject, .js_undefined);
-    };
+    }
 
     // Two arguments means .unsubscribe(channel, listener) is invoked.
     if (callframe.arguments().len == 2) {
@@ -884,7 +888,7 @@ pub fn unsubscribe(
             return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string");
         });
 
-        const remaining_listeners = subscription_ctx.removeReceiveHandler(
+        const remaining_listeners = this._subscription_ctx.removeReceiveHandler(
             globalObject,
             channel,
             listener_cb,
@@ -926,7 +930,7 @@ pub fn unsubscribe(
             };
             redis_channels.appendAssumeCapacity(channel);
             // Clear the handlers for this channel
-            try subscription_ctx.clearReceiveHandlers(globalObject, channel_arg);
+            try this._subscription_ctx.clearReceiveHandlers(globalObject, channel_arg);
         }
     } else if (channel_or_many.isString()) {
         // It is a single string channel
@@ -935,7 +939,7 @@ pub fn unsubscribe(
         };
         redis_channels.appendAssumeCapacity(channel);
         // Clear the handlers for this channel
-        try subscription_ctx.clearReceiveHandlers(globalObject, channel_or_many);
+        try this._subscription_ctx.clearReceiveHandlers(globalObject, channel_or_many);
     } else {
         return globalObject.throwInvalidArgumentType("unsubscribe", "channel", "string or array");
     }
@@ -954,12 +958,8 @@ pub fn duplicate(
     var new_client: *JSValkeyClient = try this.cloneWithoutConnecting(globalObject);
 
     const new_client_js = new_client.toJS(globalObject);
-    new_client.this_value =
-        if (this.client.status == .connected and !this.client.flags.is_manually_closed)
-            jsc.JSRef.initStrong(new_client_js, globalObject)
-        else
-            jsc.JSRef.initWeak(new_client_js);
-
+    new_client.this_value = jsc.JSRef.initWeak(new_client_js);
+    new_client._subscription_ctx = try SubscriptionCtx.init(new_client);
     // If the original client is already connected and not manually closed, start connecting the new client.
     if (this.client.status == .connected and !this.client.flags.is_manually_closed) {
         // Use strong reference during connection to prevent premature GC
@@ -1216,7 +1216,9 @@ fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) !?JSArgument {
 
 const bun = @import("bun");
 const std = @import("std");
+
 const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
+const SubscriptionCtx = @import("./js_valkey.zig").SubscriptionCtx;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

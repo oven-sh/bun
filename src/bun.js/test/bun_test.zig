@@ -152,12 +152,12 @@ pub const BunTest = struct {
     arena_allocator: std.heap.ArenaAllocator,
     arena: std.mem.Allocator,
     file_id: jsc.Jest.TestRunner.File.ID,
-    /// null if the runner has moved on to the next file
+    /// null if the runner has moved on to the next file but a strong reference to BunTest is stll keeping it alive
     reporter: ?*test_command.CommandLineReporter,
     timer: bun.api.Timer.EventLoopTimer = .{ .next = .epoch, .tag = .BunTest },
     result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
-    default_concurrent: bool = false,
+    default_concurrent: bool,
 
     phase: enum {
         collection,

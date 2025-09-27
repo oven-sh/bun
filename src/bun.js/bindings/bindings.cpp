@@ -4621,6 +4621,15 @@ public:
             openingParentheses = WTF::notFound;
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+            // Special case: "unknown" frames don't have parentheses but are valid
+            // These appear in stack traces from certain error paths
+            if (line == "unknown"_s) {
+                frame.sourceURL = line;
+                frame.functionName = StringView();
+                return true;
+            }
+
+            // For any other frame without parentheses, terminate parsing as before
             offset = stack.length();
             return false;
         }
@@ -6504,6 +6513,11 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] bool JSC__JSMap__remove(JSC::JSMap* map, JSC
 {
     const JSC::JSValue value = JSC::JSValue::decode(JSValue2);
     return map->remove(arg1, value);
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__clear(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+{
+    map->clear(arg1);
 }
 
 CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3)

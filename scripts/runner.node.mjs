@@ -490,7 +490,7 @@ async function runTests() {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const style = flaky ? "warning" : "error";
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
@@ -639,7 +639,7 @@ async function runTests() {
   }
 
   if (vendorTests?.length) {
-    for (const { cwd: vendorPath, packageManager, testRunner, testPaths } of vendorTests) {
+    for (const { cwd: vendorPath, packageManager, testRunner, testPaths, build } of vendorTests) {
       if (!testPaths.length) {
         continue;
       }
@@ -654,13 +654,12 @@ async function runTests() {
         throw new Error(`Unsupported package manager: ${packageManager}`);
       }
 
-      // build
       const buildResult = await spawnBun(execPath, {
         cwd: vendorPath,
         args: ["run", "build"],
         timeout: 60_000,
       });
-      if (!buildResult.ok) {
+      if (build && !buildResult.ok) {
         throw new Error(`Failed to build vendor: ${buildResult.error}`);
       }
 
@@ -1651,6 +1650,7 @@ function getTests(cwd) {
  * @property {string} [testRunner]
  * @property {string[]} [testExtensions]
  * @property {boolean | Record<string, boolean | string>} [skipTests]
+ * @property {boolean} [build]
  */
 
 /**
@@ -1659,6 +1659,7 @@ function getTests(cwd) {
  * @property {string} packageManager
  * @property {string} testRunner
  * @property {string[]} testPaths
+ * @property {boolean} build
  */
 
 /**
@@ -1693,7 +1694,17 @@ async function getVendorTests(cwd) {
 
   return Promise.all(
     relevantVendors.map(
-      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+      async ({
+        package: name,
+        repository,
+        tag,
+        testPath,
+        testExtensions,
+        testRunner,
+        packageManager,
+        skipTests,
+        build,
+      }) => {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
@@ -1770,6 +1781,7 @@ async function getVendorTests(cwd) {
           packageManager: packageManager || "bun",
           testRunner: testRunner || "bun",
           testPaths,
+          build: build ?? true,
         };
       },
     ),

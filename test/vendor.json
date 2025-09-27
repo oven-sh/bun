@@ -3,5 +3,11 @@
     "package": "elysia",
     "repository": "https://github.com/elysiajs/elysia",
     "tag": "1.4.6"
+  },
+  {
+    "package": "piscina",
+    "repository": "https://github.com/piscinajs/piscina",
+    "tag": "v5.1.3",
+    "build": false
   }
 ]

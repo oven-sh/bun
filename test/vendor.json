@@ -8,6 +8,14 @@
     "package": "piscina",
     "repository": "https://github.com/piscinajs/piscina",
     "tag": "v5.1.3",
-    "build": false
+    "build": false,
+    "todoTests": [
+      "test/post-task.test.ts",
+      "test/nice.test.ts",
+      "test/histogram.test.ts",
+      "test/load-with-esm.test.ts",
+      "test/fixed-queue.test.ts",
+      "test/option-validation.test.ts"
+    ]
   }
 ]

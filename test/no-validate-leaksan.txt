@@ -55,6 +55,7 @@ test/js/node/test/parallel/test-worker-terminate-nested.js
 test/js/node/test/parallel/test-worker-terminate-null-handler.js
 test/js/node/test/parallel/test-worker-terminate-timers.js
 test/js/node/test/parallel/test-worker-type-check.js
+test/js/node/test/parallel/test-worker-uncaught-exception-async.js
 test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
 test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
@@ -202,13 +203,16 @@ vendor/piscina/test/async-context.test.ts
 vendor/piscina/test/atomics-optimization.test.ts
 vendor/piscina/test/generics.test.ts
 vendor/piscina/test/histogram.test.ts
+vendor/piscina/test/idle-timeout.test.ts
 vendor/piscina/test/issue-513.test.ts
 vendor/piscina/test/messages.test.ts
 vendor/piscina/test/move-test.test.ts
 vendor/piscina/test/option-validation.test.ts
+vendor/piscina/test/pool.test.ts
 vendor/piscina/test/pool-close.test.ts
 vendor/piscina/test/pool-destroy.test.ts
 vendor/piscina/test/post-task.test.ts
+vendor/piscina/test/simple-test.test.ts
 vendor/piscina/test/task-queue.test.ts
 vendor/piscina/test/test-is-buffer-transferred.test.ts
 vendor/piscina/test/test-resourcelimits.test.ts

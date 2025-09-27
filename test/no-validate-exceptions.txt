@@ -112,6 +112,7 @@ test/napi/node-napi-tests/test/node-api/test_make_callback_recurse/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
+vendor/piscina/test/nice.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js
@@ -150,8 +151,3 @@ test/cli/install/bun-repl.test.ts
 test/bundler/esbuild/default.test.ts
 test/integration/vite-build/vite-build.test.ts
 test/cli/inspect/HTTPServerAgent.test.ts
-
-vendor/piscina/test/idle-timeout.test.ts
-vendor/piscina/test/nice.test.ts
-vendor/piscina/test/simple-test.test.ts
-vendor/piscina/test/test-uncaught-exception-from-handler.test.ts

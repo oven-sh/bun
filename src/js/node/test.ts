@@ -240,51 +240,51 @@ function bunTest() {
 let ctx: TestContext | undefined = undefined;
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
+  if (options.skip) return describe.skip(name, fn);
+  if (options.todo) return describe.todo(name, fn);
+  if (options.only) return describe.only(name, fn);
   describe(name, fn);
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest();
-  describe.skip(name, fn);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  describe(name, { ...options, skip: true }, fn);
 };
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest();
-  describe.todo(name, fn);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  describe(name, { ...options, todo: true }, fn);
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest();
-  describe.only(name, fn);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  describe(name, { ...options, only: true }, fn);
 };
 
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
   const { test } = bunTest();
-  test(name, fn, options);
+  if (options.skip) return test.skip(name, fn);
+  if (options.todo) return test.todo(name, fn);
+  if (options.only) return test.only(name, fn);
+  test(name, fn);
 }
 
 test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest();
-  test.skip(name, fn, options);
+  test(name, { ...options, skip: true }, fn);
 };
 
 test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest();
-  test.todo(name, fn, options);
+  test(name, { ...options, todo: true }, fn);
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest();
-  test.only(name, fn, options);
+  test(name, { ...options, only: true }, fn);
 };
 
 function before(arg0: unknown, arg1: unknown) {

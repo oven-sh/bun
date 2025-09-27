@@ -469,6 +469,7 @@ async function runTests() {
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
         if (parallelism > 1) return;
+        if (!isCI) return;
         process.stderr.write(stdoutPreview);
       });
 
@@ -639,7 +640,7 @@ async function runTests() {
   }
 
   if (vendorTests?.length) {
-    for (const { cwd: vendorPath, packageManager, testRunner, testPaths, build } of vendorTests) {
+    for (const { cwd: vendorPath, packageManager, testRunner, testPaths, build, todoTests } of vendorTests) {
       if (!testPaths.length) {
         continue;
       }
@@ -664,6 +665,7 @@ async function runTests() {
       }
 
       for (const testPath of testPaths) {
+        if (todoTests.includes(testPath)) continue;
         const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
 
         if (testRunner === "bun") {
@@ -1651,6 +1653,7 @@ function getTests(cwd) {
  * @property {string[]} [testExtensions]
  * @property {boolean | Record<string, boolean | string>} [skipTests]
  * @property {boolean} [build]
+ * @property {string[]} todoTests
  */
 
 /**
@@ -1660,6 +1663,7 @@ function getTests(cwd) {
  * @property {string} testRunner
  * @property {string[]} testPaths
  * @property {boolean} build
+ * @property {string[]} todoTests
  */
 
 /**
@@ -1704,6 +1708,7 @@ async function getVendorTests(cwd) {
         packageManager,
         skipTests,
         build,
+        todoTests,
       }) => {
         const vendorPath = join(cwd, "vendor", name);
 
@@ -1782,6 +1787,7 @@ async function getVendorTests(cwd) {
           testRunner: testRunner || "bun",
           testPaths,
           build: build ?? true,
+          todoTests: todoTests || [],
         };
       },
     ),

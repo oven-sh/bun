@@ -7,6 +7,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         const ThisSocket = @This();
 
         pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
+        pub const untached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .untached };
 
         pub fn setNoDelay(this: ThisSocket, enabled: bool) bool {
             return this.socket.setNoDelay(enabled);
@@ -38,6 +39,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn getVerifyError(this: ThisSocket) uws.us_bun_verify_error_t {
             switch (this.socket) {
+                .untached => return std.mem.zeroes(us_bun_verify_error_t),
                 .connected => |socket| return socket.getVerifyError(is_ssl),
                 .upgradedDuplex => |socket| return socket.sslError(),
                 .pipe => |pipe| if (Environment.isWindows) return pipe.sslError() else return std.mem.zeroes(us_bun_verify_error_t),
@@ -47,6 +49,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn isEstablished(this: ThisSocket) bool {
             switch (this.socket) {
+                .untached => return false,
                 .connected => |socket| return socket.isEstablished(comptime is_ssl),
                 .upgradedDuplex => |socket| return socket.isEstablished(),
                 .pipe => |pipe| if (Environment.isWindows) return pipe.isEstablished() else return false,
@@ -56,6 +59,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn timeout(this: ThisSocket, seconds: c_uint) void {
             switch (this.socket) {
+                .untached => {},
                 .upgradedDuplex => |socket| socket.setTimeout(seconds),
                 .pipe => |pipe| if (Environment.isWindows) pipe.setTimeout(seconds),
                 .connected => |socket| socket.setTimeout(is_ssl, seconds),
@@ -66,6 +70,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn setTimeout(this: ThisSocket, seconds: c_uint) void {
             switch (this.socket) {
+                .untached => {},
                 .connected => |socket| {
                     if (seconds > 240) {
                         socket.setTimeout(is_ssl, 0);
@@ -92,6 +97,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn setTimeoutMinutes(this: ThisSocket, minutes: c_uint) void {
             switch (this.socket) {
+                .untached => {},
                 .connected => |socket| {
                     socket.setTimeout(is_ssl, 0);
                     socket.setLongTimeout(is_ssl, minutes);
@@ -251,6 +257,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn getNativeHandle(this: ThisSocket) ?*NativeSocketHandleType(is_ssl) {
             return @ptrCast(switch (this.socket) {
+                .untached => null,
                 .connected => |socket| socket.getNativeHandle(is_ssl),
                 .connecting => |socket| socket.getNativeHandle(is_ssl),
                 .detached => null,
@@ -287,6 +294,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 std.meta.alignment(ContextType);
 
             const ptr = switch (this.socket) {
+                .untached => return null,
                 .connected => |sock| sock.ext(is_ssl),
                 .connecting => |sock| sock.ext(is_ssl),
                 .detached => return null,
@@ -300,6 +308,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         /// This can be null if the socket was closed.
         pub fn context(this: ThisSocket) ?*SocketContext {
             switch (this.socket) {
+                .untached => return null,
                 .connected => |socket| return socket.context(is_ssl),
                 .connecting => |socket| return socket.context(is_ssl),
                 .detached => return null,
@@ -313,7 +322,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .upgradedDuplex => |socket| socket.flush(),
                 .pipe => |pipe| if (comptime Environment.isWindows) pipe.flush(),
                 .connected => |socket| socket.flush(is_ssl),
-                .connecting, .detached => return,
+                .untached, .connecting, .detached => return,
             }
         }
 
@@ -322,7 +331,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .upgradedDuplex => |socket| socket.encodeAndWrite(data),
                 .pipe => |pipe| if (comptime Environment.isWindows) pipe.encodeAndWrite(data) else 0,
                 .connected => |socket| socket.write(is_ssl, data),
-                .connecting, .detached => 0,
+                .untached, .connecting, .detached => 0,
             };
         }
 
@@ -330,14 +339,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return switch (this.socket) {
                 .upgradedDuplex, .pipe => this.write(data),
                 .connected => |socket| socket.writeFd(data, file_descriptor),
-                .connecting, .detached => 0,
+                .untached, .connecting, .detached => 0,
             };
         }
 
         pub fn rawWrite(this: ThisSocket, data: []const u8) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.rawWrite(is_ssl, data),
-                .connecting, .detached => 0,
+                .untached, .connecting, .detached => 0,
                 .upgradedDuplex => |socket| socket.rawWrite(data),
                 .pipe => |pipe| if (comptime Environment.isWindows) pipe.rawWrite(data) else 0,
             };
@@ -345,6 +354,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn shutdown(this: ThisSocket) void {
             switch (this.socket) {
+                .untached => {},
                 .connected => |socket| socket.shutdown(is_ssl),
                 .connecting => |socket| {
                     debug("us_connecting_socket_shutdown({d})", .{@intFromPtr(socket)});
@@ -358,6 +368,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn shutdownRead(this: ThisSocket) void {
             switch (this.socket) {
+                .untached => {},
                 .connected => |socket| socket.shutdownRead(is_ssl),
                 .connecting => |socket| {
                     debug("us_connecting_socket_shutdown_read({d})", .{@intFromPtr(socket)});
@@ -371,6 +382,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn isShutdown(this: ThisSocket) bool {
             return switch (this.socket) {
+                .untached => true,
                 .connected => |socket| socket.isShutdown(is_ssl),
                 .connecting => |socket| blk: {
                     debug("us_connecting_socket_is_shut_down({d})", .{@intFromPtr(socket)});
@@ -392,6 +404,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn getError(this: ThisSocket) i32 {
             switch (this.socket) {
+                .untached => return 0,
                 .connected => |socket| {
                     debug("us_socket_get_error({d})", .{@intFromPtr(socket)});
                     return socket.getError(is_ssl);
@@ -421,14 +434,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn localPort(this: ThisSocket) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.localPort(is_ssl),
-                .pipe, .upgradedDuplex, .connecting, .detached => 0,
+                .untached, .pipe, .upgradedDuplex, .connecting, .detached => 0,
             };
         }
 
         pub fn remotePort(this: ThisSocket) i32 {
             return switch (this.socket) {
                 .connected => |socket| socket.remotePort(is_ssl),
-                .pipe, .upgradedDuplex, .connecting, .detached => 0,
+                .untached, .pipe, .upgradedDuplex, .connecting, .detached => 0,
             };
         }
 
@@ -438,7 +451,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .connected => |sock| sock.remoteAddress(is_ssl, buf) catch |e| {
                     bun.Output.panic("Failed to get socket's remote address: {s}", .{@errorName(e)});
                 },
-                .pipe, .upgradedDuplex, .connecting, .detached => null,
+                .untached, .pipe, .upgradedDuplex, .connecting, .detached => null,
             };
         }
 
@@ -454,7 +467,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .connected => |sock| sock.localAddress(is_ssl, buf) catch |e| {
                     bun.Output.panic("Failed to get socket's local address: {s}", .{@errorName(e)});
                 },
-                .pipe, .upgradedDuplex, .connecting, .detached => null,
+                .untached, .pipe, .upgradedDuplex, .connecting, .detached => null,
             };
         }
 
@@ -963,6 +976,7 @@ pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
 pub const InternalSocket = union(enum) {
+    untached: void,
     connected: *us_socket_t,
     connecting: *ConnectingSocket,
     detached: void,
@@ -971,6 +985,7 @@ pub const InternalSocket = union(enum) {
 
     pub fn pauseResume(this: InternalSocket, ssl: bool, pause: bool) bool {
         switch (this) {
+            .untached => return true,
             .detached => return true,
             .connected => |socket| {
                 if (pause) socket.pause(ssl) else socket.@"resume"(ssl);
@@ -1006,7 +1021,7 @@ pub const InternalSocket = union(enum) {
     }
     pub fn setNoDelay(this: InternalSocket, enabled: bool) bool {
         switch (this) {
-            .pipe, .upgradedDuplex, .connecting, .detached => return false,
+            .pipe, .upgradedDuplex, .connecting, .detached, .untached => return false,
             .connected => |socket| {
                 // only supported by connected sockets
                 socket.setNodelay(enabled);
@@ -1016,7 +1031,7 @@ pub const InternalSocket = union(enum) {
     }
     pub fn setKeepAlive(this: InternalSocket, enabled: bool, delay: u32) bool {
         switch (this) {
-            .pipe, .upgradedDuplex, .connecting, .detached => return false,
+            .pipe, .upgradedDuplex, .connecting, .detached, .untached => return false,
             .connected => |socket| {
                 // only supported by connected sockets and can fail
                 return socket.setKeepalive(enabled, delay) == 0;
@@ -1025,6 +1040,7 @@ pub const InternalSocket = union(enum) {
     }
     pub fn close(this: InternalSocket, comptime is_ssl: bool, code: us_socket_t.CloseCode) void {
         switch (this) {
+            .untached => {},
             .detached => {},
             .connected => |socket| {
                 socket.close(is_ssl, code);
@@ -1043,6 +1059,7 @@ pub const InternalSocket = union(enum) {
 
     pub fn isClosed(this: InternalSocket, comptime is_ssl: bool) bool {
         return switch (this) {
+            .untached => true,
             .connected => |socket| socket.isClosed(is_ssl),
             .connecting => |socket| socket.isClosed(is_ssl),
             .detached => true,
@@ -1053,6 +1070,7 @@ pub const InternalSocket = union(enum) {
 
     pub fn get(this: @This()) ?*us_socket_t {
         return switch (this) {
+            .untached => null,
             .connected => this.connected,
             .connecting => null,
             .detached => null,
@@ -1063,25 +1081,29 @@ pub const InternalSocket = union(enum) {
 
     pub fn eq(this: @This(), other: @This()) bool {
         return switch (this) {
+            .untached => switch (other) {
+                .untached => true,
+                .upgradedDuplex, .connected, .connecting, .pipe, .detached => false,
+            },
             .connected => switch (other) {
                 .connected => this.connected == other.connected,
-                .upgradedDuplex, .connecting, .detached, .pipe => false,
+                .untached, .upgradedDuplex, .connecting, .detached, .pipe => false,
             },
             .connecting => switch (other) {
-                .upgradedDuplex, .connected, .detached, .pipe => false,
+                .untached, .upgradedDuplex, .connected, .detached, .pipe => false,
                 .connecting => this.connecting == other.connecting,
             },
             .detached => switch (other) {
                 .detached => true,
-                .upgradedDuplex, .connected, .connecting, .pipe => false,
+                .untached, .upgradedDuplex, .connected, .connecting, .pipe => false,
             },
             .upgradedDuplex => switch (other) {
                 .upgradedDuplex => this.upgradedDuplex == other.upgradedDuplex,
-                .connected, .connecting, .detached, .pipe => false,
+                .untached, .connected, .connecting, .detached, .pipe => false,
             },
             .pipe => switch (other) {
                 .pipe => if (Environment.isWindows) other.pipe == other.pipe else false,
-                .connected, .connecting, .detached, .upgradedDuplex => false,
+                .untached, .connected, .connecting, .detached, .upgradedDuplex => false,
             },
         };
     }

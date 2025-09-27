@@ -10,6 +10,7 @@
     "tag": "v5.1.3",
     "build": false,
     "todoTests": [
+      "test/simple-test.test.ts",
       "test/post-task.test.ts",
       "test/nice.test.ts",
       "test/histogram.test.ts",

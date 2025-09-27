@@ -665,7 +665,7 @@ async function runTests() {
       }
 
       for (const testPath of testPaths) {
-        if (todoTests.includes(testPath)) continue;
+        if (todoTests.includes(testPath.replaceAll(sep, "/"))) continue;
         const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
 
         if (testRunner === "bun") {

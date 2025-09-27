@@ -2464,6 +2464,16 @@ pub const Arguments = struct {
                         if (current.isString()) {
                             args.encoding = try Encoding.assert(current, ctx, args.encoding);
                             arguments.eat();
+
+                            const len = buffer.slice().len;
+                            if (args.encoding == .hex and len % 2 != 0) {
+                                return ctx.ERR(.INVALID_ARG_VALUE, "The argument '{s}' is invalid for data of length {d}. Received '{s}'", .{ "encoding", len, @tagName(args.encoding) }).throw();
+                            }
+
+                            args.buffer.deinit();
+                            args.buffer = try StringOrBuffer.fromJSWithEncoding(ctx, bun.default_allocator, buffer_value.?, args.encoding) orelse {
+                                return ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
+                            };
                         }
                     },
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)

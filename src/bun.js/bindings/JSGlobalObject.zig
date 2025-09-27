@@ -230,12 +230,10 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createNotEnoughArguments(name_, expected, got));
     }
 
-    extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
-    pub fn reload(this: *jsc.JSGlobalObject) void {
+    pub fn reload(this: *jsc.JSGlobalObject) !void {
         this.vm().drainMicrotasks();
         this.vm().collectAsync();
-
-        JSC__JSGlobalObject__reload(this);
+        try bun.cpp.JSC__JSGlobalObject__reload(this);
     }
 
     pub const BunPluginTarget = enum(u8) {

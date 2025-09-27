@@ -1110,12 +1110,10 @@ pub const JSValue = enum(i64) {
         return bun.String.fromJS(this, globalObject);
     }
 
-    extern fn JSC__JSValue__toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool;
-
     /// this: RegExp value
     /// other: string value
-    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
-        return JSC__JSValue__toMatch(this, global, other);
+    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) !bool {
+        return bun.cpp.JSC__JSValue__toMatch(this, global, other);
     }
 
     extern fn JSC__JSValue__asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;

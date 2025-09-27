@@ -124,7 +124,7 @@ pub const auto_or_run_params = [_]ParamType{
 
 pub const auto_only_params = [_]ParamType{
     // clap.parseParam("--all") catch unreachable,
-    clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+    clap.parseParam("-s, --silent                      Don't print the script command") catch unreachable,
     clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
     clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
     clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
@@ -132,7 +132,7 @@ pub const auto_only_params = [_]ParamType{
 pub const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
 pub const run_only_params = [_]ParamType{
-    clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+    clap.parseParam("-s, --silent                      Don't print the script command") catch unreachable,
     clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
 } ++ auto_or_run_params;
 pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;

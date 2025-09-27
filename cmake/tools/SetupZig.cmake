@@ -1,3 +1,19 @@
+# Setup Zig, allowing the user to override the path to zig.
+
+set(DEFAULT_ZIG_PATH ${VENDOR_PATH}/zig)
+optionx(ZIG_PATH STRING "The path to the zig root directory." DEFAULT ${DEFAULT_ZIG_PATH})
+
+if (WIN32)
+  set(DEFAULT_ZIG_BINARY_NAME zig.exe)
+else()
+  set(DEFAULT_ZIG_BINARY_NAME zig)
+endif()
+set(DEFAULT_ZIG_EXECUTABLE ${DEFAULT_ZIG_PATH}/${DEFAULT_ZIG_BINARY_NAME})
+optionx(ZIG_EXECUTABLE FILEPATH "The path to the zig executable." DEFAULT "${DEFAULT_ZIG_EXECUTABLE}")
+
+set(DEFAULT_ZIG_LIB_DIR "${DEFAULT_ZIG_PATH}/lib")
+optionx(ZIG_LIB_DIR FILEPATH "The path to the zig lib directory." DEFAULT "${DEFAULT_ZIG_LIB_DIR}")
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   set(DEFAULT_ZIG_ARCH "aarch64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
@@ -66,35 +82,34 @@ optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler
 setenv(ZIG_LOCAL_CACHE_DIR ${ZIG_LOCAL_CACHE_DIR})
 setenv(ZIG_GLOBAL_CACHE_DIR ${ZIG_GLOBAL_CACHE_DIR})
 
-setx(ZIG_PATH ${VENDOR_PATH}/zig)
-
-if(WIN32)
-  setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig.exe)
+if (ZIG_EXECUTABLE STREQUAL "${DEFAULT_ZIG_EXECUTABLE}")
+  register_command(
+    TARGET
+      clone-zig
+    COMMENT
+      "Downloading zig..."
+    COMMAND
+      ${CMAKE_COMMAND}
+        -DZIG_PATH=${ZIG_PATH}
+        -DZIG_COMMIT=${ZIG_COMMIT}
+        -DENABLE_ASAN=${ENABLE_ASAN}
+        -DENABLE_VALGRIND=${ENABLE_VALGRIND}
+        -DZIG_COMPILER_SAFE=${ZIG_COMPILER_SAFE}
+        -P ${CWD}/cmake/scripts/DownloadZig.cmake
+    SOURCES
+      ${CWD}/cmake/scripts/DownloadZig.cmake
+    OUTPUTS
+      ${ZIG_EXECUTABLE}
+  )
 else()
-  setx(ZIG_EXECUTABLE ${ZIG_PATH}/zig)
+  # Create dummy target when using external zig
+  add_custom_target(clone-zig
+    COMMENT "Using external zig at ${ZIG_EXECUTABLE}"
+  )
 endif()
 
 set(CMAKE_ZIG_FLAGS
   --cache-dir ${ZIG_LOCAL_CACHE_DIR}
   --global-cache-dir ${ZIG_GLOBAL_CACHE_DIR}
-  --zig-lib-dir ${ZIG_PATH}/lib
-)
-
-register_command(
-  TARGET
-    clone-zig
-  COMMENT
-    "Downloading zig"
-  COMMAND
-    ${CMAKE_COMMAND}
-      -DZIG_PATH=${ZIG_PATH}
-      -DZIG_COMMIT=${ZIG_COMMIT}
-      -DENABLE_ASAN=${ENABLE_ASAN}
-      -DENABLE_VALGRIND=${ENABLE_VALGRIND}
-      -DZIG_COMPILER_SAFE=${ZIG_COMPILER_SAFE}
-      -P ${CWD}/cmake/scripts/DownloadZig.cmake
-  SOURCES
-    ${CWD}/cmake/scripts/DownloadZig.cmake
-  OUTPUTS
-    ${ZIG_EXECUTABLE}
+  --zig-lib-dir ${ZIG_LIB_DIR}
 )

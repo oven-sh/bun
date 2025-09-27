@@ -122,6 +122,23 @@ $ build/debug/bun-debug --version
 x.y.z_debug
 ```
 
+<details>
+<summary>Custom Zig Toolchain</summary>
+If you require a custom Zig toolchain you can set the `ZIG_EXECUTABLE`,
+`ZIG_LIB_DIR` CMake options to point to your custom Zig installation:
+
+**Note: Bun uses a [custom version of the Zig
+toolchain](https://github.com/oven-sh/zig/tree/014-dev)**. _If you need to to
+use a custom toolchain, it is recommended to fork our Zig fork and make your
+changes there. The commit we are based off is available in `SetupZig.cmake`._
+
+```bash
+bun run build \
+  -DZIG_EXECUTABLE=/path/to/zig/zig \
+  -DZIG_LIB_DIR=/path/to/zig/lib
+```
+</details>
+
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.

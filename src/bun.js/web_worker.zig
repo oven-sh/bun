@@ -548,9 +548,9 @@ pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
 
 pub fn setRefInternal(this: *WebWorker, value: bool) void {
     if (value) {
-        this.parent_poll_ref.ref(this.parent);
+        this.parent_poll_ref.refConcurrently(this.parent);
     } else {
-        this.parent_poll_ref.unref(this.parent);
+        this.parent_poll_ref.unrefConcurrently(this.parent);
     }
 }
 

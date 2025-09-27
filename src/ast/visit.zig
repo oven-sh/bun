@@ -190,6 +190,27 @@ pub fn Visit(
                         .is_immediately_assigned_to_decl = true,
                     });
 
+                    // Track if this binding comes from a dynamic import for tree-shaking
+                    // e.g., const foo = await import("./bar")
+                    if (decl.value) |value| {
+                        if (value.data == .e_await) {
+                            if (value.data.e_await.value.data == .e_import) {
+                                // This is `await import(...)`, mark the binding symbol
+                                if (decl.binding.data == .b_identifier) {
+                                    const symbol_ref = decl.binding.data.b_identifier.ref;
+                                    const import_expr = value.data.e_await.value.data.e_import;
+                                    // Store the import record index in the symbol
+                                    // We'll use a special ref to indicate this is from a dynamic import
+                                    p.symbols.items[symbol_ref.innerIndex()].dynamic_import_ref = Ref.init(
+                                        @as(u31, @truncate(import_expr.import_record_index)),
+                                        0,
+                                        true,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     if (p.options.features.react_fast_refresh) {
                         // When hooks are immediately assigned to something, we need to hash the binding.
                         if (p.react_refresh.last_hook_seen) |last_hook| {

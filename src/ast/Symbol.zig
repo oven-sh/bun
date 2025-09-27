@@ -138,8 +138,14 @@ remove_overwritten_function_declaration: bool = false,
 /// Used in HMR to decide when live binding code is needed.
 has_been_assigned_to: bool = false,
 
+/// Tracks if this symbol is a binding from a dynamic import.
+/// Used for tree-shaking: when accessing properties on this symbol,
+/// they should be converted to ImportIdentifier for better tree-shaking.
+/// e.g., `const foo = await import("bar"); foo.baz` -> ImportIdentifier for baz
+dynamic_import_ref: Ref = Ref.None,
+
 comptime {
-    bun.assert_eql(@sizeOf(Symbol), 88);
+    bun.assert_eql(@sizeOf(Symbol), 96);
     bun.assert_eql(@alignOf(Symbol), @alignOf([]const u8));
 }
 

@@ -876,6 +876,64 @@ pub fn VisitExpr(
                     .property_access_for_method_call_maybe_should_replace_with_undefined = in.property_access_for_method_call_maybe_should_replace_with_undefined,
                 });
 
+                // Check if the target is a binding from a dynamic import
+                // If so, convert property access to ImportIdentifier for tree-shaking
+                if (e_.target.data == .e_identifier) {
+                    const target_ref = e_.target.data.e_identifier.ref;
+                    const symbol = &p.symbols.items[target_ref.innerIndex()];
+
+                    // Check if this symbol comes from a dynamic import
+                    if (symbol.dynamic_import_ref.tag != .invalid) {
+                        // The dynamic_import_ref we stored is actually the import record index encoded as a Ref
+                        // We use the target_ref itself as the namespace ref since it represents the imported module
+                        const namespace_ref = target_ref;
+
+                        // Get or create the import items map for this namespace
+                        const items_map = p.import_items_for_namespace.getPtr(namespace_ref) orelse brk: {
+                            p.import_items_for_namespace.put(
+                                p.allocator,
+                                namespace_ref,
+                                ImportItemForNamespaceMap.init(p.allocator)
+                            ) catch unreachable;
+                            break :brk p.import_items_for_namespace.getPtr(namespace_ref).?;
+                        };
+
+                        // Check if we already have a ref for this property
+                        const existing_ref = items_map.get(e_.name);
+                        if (existing_ref) |ref| {
+                            // Use the existing ref
+                            return p.newExpr(E.ImportIdentifier{
+                                .ref = ref.ref.?,
+                                .was_originally_identifier = false,
+                            }, expr.loc);
+                        }
+
+                        // Create a new ref for the imported member
+                        const member_ref = p.newSymbol(.import, e_.name) catch unreachable;
+
+                        // Track the import item in the map
+                        items_map.put(e_.name, LocRef{
+                            .loc = expr.loc,
+                            .ref = member_ref,
+                        }) catch unreachable;
+
+                        // Mark the member as an import item
+                        p.symbols.items[member_ref.innerIndex()].namespace_alias = G.NamespaceAlias{
+                            .namespace_ref = namespace_ref,
+                            .alias = e_.name,
+                            .was_originally_property_access = true,
+                            .import_record_index = symbol.dynamic_import_ref.innerIndex(),
+                        };
+                        p.symbols.items[member_ref.innerIndex()].import_item_status = .generated;
+
+                        // Return an ImportIdentifier instead of a Dot expression
+                        return p.newExpr(E.ImportIdentifier{
+                            .ref = member_ref,
+                            .was_originally_identifier = false,
+                        }, expr.loc);
+                    }
+                }
+
                 // 'require.resolve' -> .e_require_resolve_call_target
                 if (e_.target.data == .e_require_call_target and
                     strings.eqlComptime(e_.name, "resolve"))
@@ -1652,8 +1710,10 @@ const js_parser = bun.js_parser;
 const ExprIn = js_parser.ExprIn;
 const FnOrArrowDataVisit = js_parser.FnOrArrowDataVisit;
 const IdentifierOpts = js_parser.IdentifierOpts;
+const ImportItemForNamespaceMap = js_parser.ImportItemForNamespaceMap;
 const JSXTransformType = js_parser.JSXTransformType;
 const KnownGlobal = js_parser.KnownGlobal;
+const LocRef = js_ast.LocRef;
 const Prefill = js_parser.Prefill;
 const PrependTempRefsOpts = js_parser.PrependTempRefsOpts;
 const ReactRefresh = js_parser.ReactRefresh;

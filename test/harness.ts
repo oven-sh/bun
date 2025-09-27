@@ -938,7 +938,8 @@ export async function describeWithContainer(
       "mysql_plain": 3306,
       "mysql_tls": 3306,
       "mysql:8": 3306, // Map mysql:8 to mysql_plain
-      "mysql:9": 3306, // Map mysql:9 to mysql_native_password
+      "mysql:9": 3306, // Map mysql:9 to mysql_plain_9
+      "mysql_native_password": 3306, // mysql_native_password
       "redis_plain": 6379,
       "redis_unified": 6379,
       "minio": 9000,
@@ -952,8 +953,10 @@ export async function describeWithContainer(
       if (image === "mysql:8" || image === "mysql:9") {
         if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
           actualService = "mysql_plain_empty_password"; // No password
+        } else if (image === "mysql:9") {
+          actualService = "mysql_plain_9";
         } else {
-          actualService = "mysql_plain"; // Default to no password
+          actualService = "mysql_plain";
         }
       }
 

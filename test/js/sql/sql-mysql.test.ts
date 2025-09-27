@@ -24,9 +24,6 @@ if (isDockerEnabled()) {
     process.arch === "x64" && {
       name: "MySQL 9",
       image: "mysql:9",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun123456@#$%^&*()",
-      },
     },
   ].filter(Boolean);
 

@@ -95,6 +95,24 @@ services:
       retries: 30
       start_period: 10s
 
+  mysql_plain_9:
+    image: mysql:9
+    environment:
+      MYSQL_ROOT_PASSWORD: "bun123456@#$%^&*()"
+      MYSQL_DATABASE: bun_sql_test
+    ports:
+      - target: 3306
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
   mysql_plain_empty_password:
     image: mysql:8.4
     environment:

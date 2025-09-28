@@ -423,10 +423,24 @@ pub const Bunfig = struct {
                     }
 
                     if (install_obj.get("cafile")) |cafile| {
-                        install.cafile = try cafile.asStringCloned(allocator) orelse {
+                        const cafile_path = try cafile.asStringCloned(allocator) orelse {
                             try this.addError(cafile.loc, "Invalid cafile. Expected a string.");
                             return;
                         };
+
+                        // If cafile is a relative path, resolve it relative to the bunfig.toml location
+                        if (cafile_path.len > 0 and !std.fs.path.isAbsolute(cafile_path)) {
+                            var path_buf: bun.PathBuffer = undefined;
+                            const bunfig_dir = std.fs.path.dirname(this.source.path.text) orelse ".";
+                            install.cafile = try allocator.dupe(u8, bun.path.joinAbsStringBuf(
+                                bunfig_dir,
+                                &path_buf,
+                                &.{cafile_path},
+                                .auto,
+                            ));
+                        } else {
+                            install.cafile = cafile_path;
+                        }
                     }
 
                     if (install_obj.get("ca")) |ca| {

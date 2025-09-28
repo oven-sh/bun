@@ -1,8 +1,8 @@
-import { file, spawn, write } from "bun";
+import { spawn, write } from "bun";
 import { describe, expect, test } from "bun:test";
-import { exists, mkdir } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync, stderrForInstall } from "harness";
-import { join, dirname } from "path";
+import { mkdir } from "fs/promises";
+import { bunExe, bunEnv as env, stderrForInstall, tmpdirSync } from "harness";
+import { join } from "path";
 
 describe("bunfig cafile", () => {
   test("relative cafile path in bunfig.toml is resolved relative to bunfig location", async () => {

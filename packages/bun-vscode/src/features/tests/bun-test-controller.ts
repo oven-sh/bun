@@ -636,7 +636,6 @@ export class BunTestController implements vscode.Disposable {
 
     if (isDebug) {
       await this.debugTests(queue, request, run);
-      run.end();
       return;
     }
 
@@ -1350,8 +1349,24 @@ export class BunTestController implements vscode.Disposable {
     };
 
     try {
-      const res = await vscode.debug.startDebugging(this.workspaceFolder, debugConfiguration);
+      const res = await vscode.debug.startDebugging(
+        this.workspaceFolder,
+        debugConfiguration,
+        {
+          testRun: run
+        }
+      );
       if (!res) throw new Error("Failed to start debugging session");
+
+      const activeDebugSession = vscode.debug.activeDebugSession?.id;
+      const dispose = vscode.debug.onDidTerminateDebugSession((session) => {
+        if (
+          activeDebugSession !== undefined &&
+          session.id === activeDebugSession
+        )
+          run.end();
+      })
+      this.disposables.push(dispose);
     } catch (error) {
       for (const test of tests) {
         const msg = new vscode.TestMessage(`Error starting debugger: ${error}`);
@@ -1360,7 +1375,6 @@ export class BunTestController implements vscode.Disposable {
       }
     }
     run.appendOutput("\n\x1b[33mDebug session started. Please open the debug console to see its output.\x1b[0m\r\n");
-    run.end();
   }
 
   private closeAllActiveProcesses(): void {

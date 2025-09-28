@@ -9,7 +9,7 @@
   "main": "dist/extension.js",
   "devDependencies": {
     "@types/bun": "^1.1.10",
-    "@types/vscode": "^1.60.0",
+    "@types/vscode": "^1.91.0",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
     "@vscode/test-cli": "^0.0.10",
@@ -360,7 +360,7 @@
   "description": "The Visual Studio Code extension for Bun.",
   "displayName": "Bun for Visual Studio Code",
   "engines": {
-    "vscode": "^1.60.0"
+    "vscode": "^1.91.0"
   },
   "extensionKind": [
     "workspace"

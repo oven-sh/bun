@@ -425,7 +425,7 @@ export class BunTestController implements vscode.Disposable {
 
       // Run tests if in continuous mode
       if (this.watchingTests.has('ALL')) {
-        this.runHandler(new vscode.TestRunRequest(undefined, undefined, this.watchingTests.get('ALL'), true));
+        this.runHandler(new vscode.TestRunRequest(undefined, undefined, this.watchingTests.get('ALL')));
       } else {
         const include: vscode.TestItem[] = [];
         let profile: vscode.TestRunProfile | undefined;
@@ -438,7 +438,7 @@ export class BunTestController implements vscode.Disposable {
         }
 
         if (include.length) {
-          this.runHandler(new vscode.TestRunRequest(include, undefined, profile, true));
+          this.runHandler(new vscode.TestRunRequest(include, undefined, profile));
         }
       }
     };

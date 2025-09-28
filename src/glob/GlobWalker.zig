@@ -587,6 +587,13 @@ pub fn GlobWalker_(
                 var had_dot_dot = false;
                 const component_idx = this.walker.skipSpecialComponents(work_item.idx, &dir_path, &this.iter_state.directory.path, &had_dot_dot);
 
+                // If we've exhausted all pattern components (e.g., pattern was only dots like "../."),
+                // we're done with this work item
+                if (component_idx >= this.walker.patternComponents.items.len) {
+                    this.iter_state = .get_next;
+                    return .success;
+                }
+
                 const fd: Accessor.Handle = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
@@ -705,6 +712,13 @@ pub fn GlobWalker_(
 
                                     var has_dot_dot = false;
                                     const component_idx = this.walker.skipSpecialComponents(work_item.idx, &symlink_full_path_z, scratch_path_buf, &has_dot_dot);
+
+                                    // If we've exhausted all pattern components, continue to next item
+                                    if (component_idx >= this.walker.patternComponents.items.len) {
+                                        this.iter_state = .get_next;
+                                        continue;
+                                    }
+
                                     var pattern = this.walker.patternComponents.items[component_idx];
                                     const next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
@@ -1173,28 +1187,32 @@ pub fn GlobWalker_(
         ) u32 {
             var component_idx = work_item_idx;
 
-            // Skip `.` and `..` while also appending them to `dir_path`
-            component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
-                .Dot => this.collapseDots(
-                    component_idx,
-                    dir_path,
-                    scratch_path_buf,
-                    encountered_dot_dot,
-                ),
-                .DotBack => this.collapseDots(
-                    component_idx,
-                    dir_path,
-                    scratch_path_buf,
-                    encountered_dot_dot,
-                ),
-                else => component_idx,
-            };
+            if (component_idx < this.patternComponents.items.len) {
+                // Skip `.` and `..` while also appending them to `dir_path`
+                component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
+                    .Dot => this.collapseDots(
+                        component_idx,
+                        dir_path,
+                        scratch_path_buf,
+                        encountered_dot_dot,
+                    ),
+                    .DotBack => this.collapseDots(
+                        component_idx,
+                        dir_path,
+                        scratch_path_buf,
+                        encountered_dot_dot,
+                    ),
+                    else => component_idx,
+                };
+            }
 
-            // Skip to the last `**` if there is a chain of them
-            component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
-                .Double => this.collapseSuccessiveDoubleWildcards(component_idx),
-                else => component_idx,
-            };
+            if (component_idx < this.patternComponents.items.len) {
+                // Skip to the last `**` if there is a chain of them
+                component_idx = switch (this.patternComponents.items[component_idx].syntax_hint) {
+                    .Double => this.collapseSuccessiveDoubleWildcards(component_idx),
+                    else => component_idx,
+                };
+            }
 
             return component_idx;
         }

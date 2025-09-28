@@ -20,20 +20,28 @@
 
 const GarbageCollectionController = @This();
 
-gc_timer: *uws.Timer = undefined,
+gc_timer: bun.api.Timer.EventLoopTimer = .{
+    .tag = .GCTimer,
+    .next = .epoch,
+    .state = .PENDING,
+    .heap = .{},
+},
 gc_last_heap_size: usize = 0,
 gc_last_heap_size_on_repeating_timer: usize = 0,
 heap_size_didnt_change_for_repeating_timer_ticks_count: u8 = 0,
 gc_timer_state: GCTimerState = GCTimerState.pending,
-gc_repeating_timer: *uws.Timer = undefined,
+gc_repeating_timer: bun.api.Timer.EventLoopTimer = .{
+    .tag = .GCRepeatingTimer,
+    .next = .epoch,
+    .state = .PENDING,
+    .heap = .{},
+},
 gc_timer_interval: i32 = 0,
 gc_repeating_timer_fast: bool = true,
 disabled: bool = false,
 
 pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     const actual = uws.Loop.get();
-    this.gc_timer = uws.Timer.createFallthrough(actual, this);
-    this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
     actual.internal_loop_data.jsc_vm = vm.jsc_vm;
 
     if (comptime Environment.isDebug) {
@@ -54,28 +62,47 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
 
     this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
 
-    if (!this.disabled)
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
+    if (!this.disabled) {
+        const now = bun.timespec.now();
+        this.gc_repeating_timer.next = now.addMs(@intCast(gc_timer_interval));
+        vm.timer.insert(&this.gc_repeating_timer);
+    }
 }
 
 pub fn deinit(this: *GarbageCollectionController) void {
-    this.gc_timer.deinit(true);
-    this.gc_repeating_timer.deinit(true);
+    const vm = this.bunVM();
+    if (this.gc_timer.state == .ACTIVE) {
+        vm.timer.remove(&this.gc_timer);
+    }
+    if (this.gc_repeating_timer.state == .ACTIVE) {
+        vm.timer.remove(&this.gc_repeating_timer);
+    }
 }
 
 pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
     this.gc_timer_state = .scheduled;
-    this.gc_timer.set(this, onGCTimer, 16, 0);
+    const vm = this.bunVM();
+    const now = bun.timespec.now();
+    const next_time = now.addMs(16);
+    this.gc_timer.next = next_time;
+    if (this.gc_timer.state == .ACTIVE) {
+        vm.timer.update(&this.gc_timer, &next_time);
+    } else {
+        vm.timer.insert(&this.gc_timer);
+    }
 }
 
 pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
     return @alignCast(@fieldParentPtr("gc_controller", this));
 }
 
-pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
-    var this = timer.as(*GarbageCollectionController);
-    if (this.disabled) return;
+pub fn onGCTimer(this: *GarbageCollectionController, now: *const bun.timespec, vm: *VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+    _ = now;
+    _ = vm;
+    this.gc_timer.state = .FIRED;
+    if (this.disabled) return .disarm;
     this.gc_timer_state = .run_on_next_tick;
+    return .disarm;
 }
 
 // We want to always run GC once in awhile
@@ -90,32 +117,49 @@ pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
 // When the heap size is increasing, we always switch to fast mode
 // When the heap size has been the same or less for 30 seconds, we switch to slow mode
 pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
+    const vm = this.bunVM();
     if (setting == .fast and !this.gc_repeating_timer_fast) {
         this.gc_repeating_timer_fast = true;
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
+        const now = bun.timespec.now();
+        const next_time = now.addMs(@intCast(this.gc_timer_interval));
+        if (this.gc_repeating_timer.state == .ACTIVE) {
+            vm.timer.update(&this.gc_repeating_timer, &next_time);
+        }
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
     } else if (setting == .slow and this.gc_repeating_timer_fast) {
         this.gc_repeating_timer_fast = false;
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
+        const now = bun.timespec.now();
+        const next_time = now.addMs(30_000);
+        if (this.gc_repeating_timer.state == .ACTIVE) {
+            vm.timer.update(&this.gc_repeating_timer, &next_time);
+        }
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
     }
 }
 
-pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
-    var this = timer.as(*GarbageCollectionController);
+pub fn onGCRepeatingTimer(this: *GarbageCollectionController, now: *const bun.timespec, vm: *VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+    _ = vm;
+    this.gc_repeating_timer.state = .FIRED;
+    if (this.disabled) return .disarm;
+
     const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.performGC();
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
+
     if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
         if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
             // make the timer interval longer
             this.updateGCRepeatTimer(.slow);
+            return .{ .rearm = now.addMs(30_000) };
         }
     } else {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         this.updateGCRepeatTimer(.fast);
     }
+
+    const interval: i32 = if (this.gc_repeating_timer_fast) this.gc_timer_interval else 30_000;
+    return .{ .rearm = now.addMs(@intCast(interval)) };
 }
 
 pub fn processGCTimer(this: *GarbageCollectionController) void {

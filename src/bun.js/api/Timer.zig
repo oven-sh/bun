@@ -299,7 +299,10 @@ pub const All = struct {
         while (this.next(&has_set_now, &now)) |t| {
             switch (t.fire(&now, vm)) {
                 .disarm => {},
-                .rearm => {},
+                .rearm => |next_time| {
+                    t.next = next_time;
+                    this.insert(t);
+                },
             }
         }
     }

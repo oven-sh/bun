@@ -69,6 +69,8 @@ pub const Tag = if (Environment.isWindows) enum {
     DateHeaderTimer,
     BunTest,
     EventLoopDelayMonitor,
+    GCTimer,
+    GCRepeatingTimer,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -94,6 +96,7 @@ pub const Tag = if (Environment.isWindows) enum {
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
             .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
+            .GCTimer, .GCRepeatingTimer => bun.jsc.GarbageCollectionController,
         };
     }
 } else enum {
@@ -117,6 +120,8 @@ pub const Tag = if (Environment.isWindows) enum {
     DateHeaderTimer,
     BunTest,
     EventLoopDelayMonitor,
+    GCTimer,
+    GCRepeatingTimer,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
@@ -141,6 +146,7 @@ pub const Tag = if (Environment.isWindows) enum {
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
             .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
+            .GCTimer, .GCRepeatingTimer => bun.jsc.GarbageCollectionController,
         };
     }
 };
@@ -226,6 +232,14 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
             const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
             monitor.onFire(vm, now);
             return .disarm;
+        },
+        .GCTimer => {
+            const gc = @as(*bun.jsc.GarbageCollectionController, @fieldParentPtr("gc_timer", self));
+            return gc.onGCTimer(now, vm);
+        },
+        .GCRepeatingTimer => {
+            const gc = @as(*bun.jsc.GarbageCollectionController, @fieldParentPtr("gc_repeating_timer", self));
+            return gc.onGCRepeatingTimer(now, vm);
         },
         inline else => |t| {
             if (@FieldType(t.Type(), "event_loop_timer") != Self) {

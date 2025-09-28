@@ -44,10 +44,6 @@ export class BunTestController implements vscode.Disposable {
   private lastStartedTestId: number | null = null;
   private currentRun: vscode.TestRun | null = null;
 
-  private testResultHistory = new Map<
-    string,
-    { status: "passed" | "failed" | "skipped"; message?: vscode.TestMessage; duration?: number }
-  >();
   private currentRunType: "file" | "individual" = "file";
   private requestedTestIds: Set<string> = new Set();
   private discoveredTestIds: Set<string> = new Set();
@@ -851,20 +847,9 @@ export class BunTestController implements vscode.Disposable {
         run.appendOutput(`\n\x1b[31m\x1b[1mError:\x1b[0m\x1b[31m ${errorMsg}\x1b[0m\n`);
 
         for (const test of tests) {
-          if (!this.testResultHistory.has(test.id)) {
-            const msg = new vscode.TestMessage(errorMsg + "\n\n----------\n" + stdout + "\n----------\n");
-            msg.location = new vscode.Location(test.uri!, test.range || new vscode.Range(0, 0, 0, 0));
-            run.errored(test, msg);
-          }
-        }
-      }
-
-      if (this.discoveredTestIds.size > 0 && this.executedTestCount > 0) {
-        if (isIndividualTestRun) {
-          this.applyPreviousResults(tests, run);
-          this.cleanupUndiscoveredTests(tests);
-        } else {
-          this.cleanupStaleTests(tests);
+          const msg = new vscode.TestMessage(errorMsg + "\n\n----------\n" + stdout + "\n----------\n");
+          msg.location = new vscode.Location(test.uri!, test.range || new vscode.Range(0, 0, 0, 0));
+          run.errored(test, msg);
         }
       }
 
@@ -877,38 +862,6 @@ export class BunTestController implements vscode.Disposable {
       this.currentRun = null;
       debug.appendLine(`Test run completed in ${performance.now() - time}ms`);
     });
-  }
-
-  private applyPreviousResults(requestedTests: vscode.TestItem[], run: vscode.TestRun): void {
-    for (const file of new Set(requestedTests.map(t => t.uri?.toString()).filter(Boolean))) {
-      const fileItem = this.testController.items.get(file!);
-      if (fileItem) {
-        this.applyPreviousResultsToItem(fileItem, run, this.requestedTestIds);
-      }
-    }
-  }
-
-  private applyPreviousResultsToItem(item: vscode.TestItem, run: vscode.TestRun, requestedTestIds: Set<string>): void {
-    if (!requestedTestIds.has(item.id)) {
-      const previousResult = this.testResultHistory.get(item.id);
-      if (previousResult) {
-        switch (previousResult.status) {
-          case "passed":
-            run.passed(item, previousResult.duration);
-            break;
-          case "failed":
-            run.failed(item, [], previousResult.duration);
-            break;
-          case "skipped":
-            run.skipped(item);
-            break;
-        }
-      }
-    }
-
-    for (const [, child] of item.children) {
-      this.applyPreviousResultsToItem(child, run, requestedTestIds);
-    }
   }
 
   private async handleSocketConnection(socket: net.Socket, run: vscode.TestRun): Promise<void> {
@@ -1108,31 +1061,26 @@ export class BunTestController implements vscode.Disposable {
     switch (status) {
       case "pass":
         run.passed(testItem, duration);
-        this.testResultHistory.set(testItem.id, { status: "passed", duration });
         break;
       case "fail":
         const errorInfo = this.testErrors.get(id);
         if (errorInfo) {
           const errorMessage = this.createErrorMessage(errorInfo, testItem);
           run.failed(testItem, errorMessage, duration);
-          this.testResultHistory.set(testItem.id, { status: "failed", message: errorMessage, duration });
         } else {
           const message = new vscode.TestMessage(`Test "${testItem.label}" failed - check output for details`);
           run.failed(testItem, message, duration);
-          this.testResultHistory.set(testItem.id, { status: "failed", message, duration });
         }
         break;
       case "skip":
       case "todo":
         run.skipped(testItem);
-        this.testResultHistory.set(testItem.id, { status: "skipped" });
         break;
       case "timeout":
         const timeoutMsg = new vscode.TestMessage(
           duration > 0 ? `Test timed out after ${duration.toFixed(0)}ms` : "Test timed out",
         );
         run.failed(testItem, timeoutMsg, duration);
-        this.testResultHistory.set(testItem.id, { status: "failed", message: timeoutMsg, duration });
         break;
       case "skipped_because_label":
         break;
@@ -1159,67 +1107,6 @@ export class BunTestController implements vscode.Disposable {
 
     if (this.lastStartedTestId !== null) {
       this.testErrors.set(this.lastStartedTestId, errorInfo);
-    }
-  }
-
-  private cleanupUndiscoveredTests(requestedTests: vscode.TestItem[]): void {
-    if (this.currentRunType !== "individual" || this.discoveredTestIds.size === 0) {
-      return;
-    }
-
-    const filesToCheck = new Set<string>();
-    for (const test of requestedTests) {
-      if (test.uri) {
-        filesToCheck.add(test.uri.toString());
-      }
-    }
-
-    for (const fileUri of filesToCheck) {
-      const fileItem = this.testController.items.get(fileUri);
-      if (fileItem) {
-        this.cleanupTestItem(fileItem);
-      }
-    }
-  }
-
-  private cleanupTestItem(item: vscode.TestItem): void {
-    const childrenToRemove: vscode.TestItem[] = [];
-
-    for (const [, child] of item.children) {
-      if (!this.discoveredTestIds.has(child.id)) {
-        childrenToRemove.push(child);
-      } else {
-        this.cleanupTestItem(child);
-      }
-    }
-
-    for (const child of childrenToRemove) {
-      item.children.delete(child.id);
-    }
-  }
-
-  private cleanupStaleTests(requestedTests: vscode.TestItem[]): void {
-    if (this.discoveredTestIds.size === 0) {
-      return;
-    }
-
-    const filesToCheck = new Set<string>();
-    for (const test of requestedTests) {
-      if (test.uri) {
-        filesToCheck.add(test.uri.toString());
-      }
-    }
-
-    for (const fileUri of filesToCheck) {
-      const fileItem = this.testController.items.get(fileUri);
-      if (fileItem) {
-        const hasTestsInThisFile = Array.from(this.discoveredTestIds).some(id =>
-          id.startsWith(fileItem.uri?.fsPath || ""),
-        );
-        if (hasTestsInThisFile) {
-          this.cleanupTestItem(fileItem);
-        }
-      }
     }
   }
 
@@ -1522,7 +1409,6 @@ export class BunTestController implements vscode.Disposable {
       createTestItem: this.createTestItem.bind(this),
 
       createErrorMessage: this.createErrorMessage.bind(this),
-      cleanupTestItem: this.cleanupTestItem.bind(this),
     };
   }
 }

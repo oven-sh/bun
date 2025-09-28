@@ -892,101 +892,6 @@ Difference:
       expect(result.message).toContain("Cannot read property 'foo'");
     });
   });
-
-  describe("cleanupTestItem", () => {
-    test("should clean up test item and its children", () => {
-      const mockChild = {
-        id: "child",
-        tags: [],
-        children: new Map(),
-      };
-
-      const mockParent = {
-        id: "parent",
-        tags: [],
-        children: new Map([["child", mockChild]]),
-      };
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, mockParent as any);
-      }).not.toThrow();
-    });
-
-    test("should handle item without children", () => {
-      const mockItem = {
-        id: "simple-item",
-        tags: [],
-        children: new Map(),
-      };
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, mockItem as any);
-      }).not.toThrow();
-    });
-
-    test("should handle deeply nested cleanup", () => {
-      const createNestedItem = (depth: number): any => {
-        if (depth === 0) {
-          return {
-            id: `item-0`,
-            tags: [],
-            children: new Map(),
-          };
-        }
-
-        const child = createNestedItem(depth - 1);
-        return {
-          id: `item-${depth}`,
-          tags: [],
-          children: new Map([[`child-${depth}`, child]]),
-        };
-      };
-
-      const deeplyNested = createNestedItem(10);
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, deeplyNested);
-      }).not.toThrow();
-    });
-
-    test("should handle items with multiple children", () => {
-      const children = Array.from({ length: 20 }, (_, i) => ({
-        id: `child-${i}`,
-        tags: [],
-        children: new Map(),
-      }));
-
-      const parent = {
-        id: "parent-with-many-children",
-        tags: [],
-        children: new Map(children.map(child => [child.id, child])),
-      };
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, parent as any);
-      }).not.toThrow();
-    });
-
-    test("should handle circular references gracefully", () => {
-      const item1: any = {
-        id: "item1",
-        tags: [],
-        children: new Map(),
-      };
-
-      const item2: any = {
-        id: "item2",
-        tags: [],
-        children: new Map([["item1", item1]]),
-      };
-
-      item1.children.set("item2", item2);
-
-      expect(() => {
-        internal.cleanupTestItem.call(controller, item1);
-      }).not.toThrow();
-    });
-  });
 });
 
 describe("BunTestController - Integration and Coverage", () => {
@@ -1031,7 +936,6 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.findTestByName).toBe("function");
       expect(typeof internal.createTestItem).toBe("function");
       expect(typeof internal.createErrorMessage).toBe("function");
-      expect(typeof internal.cleanupTestItem).toBe("function");
     });
 
     test("should provide consistent API", () => {
@@ -1062,7 +966,6 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.findTestByName).toBe("function");
       expect(typeof internal.createTestItem).toBe("function");
       expect(typeof internal.createErrorMessage).toBe("function");
-      expect(typeof internal.cleanupTestItem).toBe("function");
 
       expect(controller).toBeDefined();
       expect(controller._internal).toBeDefined();

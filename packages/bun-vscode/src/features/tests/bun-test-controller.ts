@@ -54,6 +54,8 @@ export class BunTestController implements vscode.Disposable {
   private executedTestCount: number = 0;
   private totalTestsStarted: number = 0;
 
+	private watchingTests = new Map<vscode.TestItem | 'ALL', vscode.TestRunProfile | undefined>();
+
   constructor(
     private readonly testController: vscode.TestController,
     private readonly workspaceFolder: vscode.WorkspaceFolder,
@@ -107,6 +109,8 @@ export class BunTestController implements vscode.Disposable {
       vscode.TestRunProfileKind.Run,
       (request, token) => this.runHandler(request, token, false),
       true,
+      undefined,
+      true,
     );
 
     this.testController.createRunProfile(
@@ -114,6 +118,8 @@ export class BunTestController implements vscode.Disposable {
       vscode.TestRunProfileKind.Debug,
       (request, token) => this.runHandler(request, token, true),
       true,
+      undefined,
+      false, // TODO: Support debug in continuous as well
     );
   }
 
@@ -252,6 +258,25 @@ export class BunTestController implements vscode.Disposable {
         this.discoverTests(existing);
       } else {
         this.discoverTests(false, uri.fsPath);
+      }
+
+      // Run tests if in continuous mode
+      if (this.watchingTests.has('ALL')) {
+        this.runHandler(new vscode.TestRunRequest(undefined, undefined, this.watchingTests.get('ALL'), true));
+      } else {
+        const include: vscode.TestItem[] = [];
+        let profile: vscode.TestRunProfile | undefined;
+        for (const [item, thisProfile] of this.watchingTests) {
+          const cast = item as vscode.TestItem;
+          if (cast.uri?.toString() == uri.toString()) {
+            include.push(cast);
+            profile = thisProfile;
+          }
+        }
+
+        if (include.length) {
+          this.runHandler(new vscode.TestRunRequest(include, undefined, profile, true));
+        }
       }
     };
 
@@ -555,9 +580,19 @@ export class BunTestController implements vscode.Disposable {
 
   private async runHandler(
     request: vscode.TestRunRequest,
-    token: vscode.CancellationToken,
-    isDebug: boolean,
+    token?: vscode.CancellationToken,
+    isDebug: boolean = false,
   ): Promise<void> {
+    if (request.continuous) {
+      if (request.include === undefined) {
+        this.watchingTests.set('ALL', request.profile);
+        token?.onCancellationRequested(() => this.watchingTests.delete('ALL'));
+      } else {
+        request.include.forEach(item => this.watchingTests.set(item, request.profile));
+        token?.onCancellationRequested(() => request.include!.forEach(item => this.watchingTests.delete(item)));
+      }
+    }
+
     if (this.currentRun) {
       this.closeAllActiveProcesses();
       this.disconnectInspector();
@@ -577,7 +612,7 @@ export class BunTestController implements vscode.Disposable {
 
     const run = this.testController.createTestRun(request);
 
-    token.onCancellationRequested(() => {
+    token?.onCancellationRequested(() => {
       run.end();
       this.closeAllActiveProcesses();
       this.disconnectInspector();
@@ -625,10 +660,10 @@ export class BunTestController implements vscode.Disposable {
   private async runTestsWithInspector(
     tests: vscode.TestItem[],
     run: vscode.TestRun,
-    token: vscode.CancellationToken,
+    token?: vscode.CancellationToken,
   ): Promise<void> {
     const time = performance.now();
-    if (token.isCancellationRequested) return;
+    if (token?.isCancellationRequested) return;
 
     this.disconnectInspector();
 
@@ -651,7 +686,7 @@ export class BunTestController implements vscode.Disposable {
     }
 
     for (const test of tests) {
-      if (token.isCancellationRequested) return;
+      if (token?.isCancellationRequested) return;
       if (test.uri && test.canResolveChildren) {
         await this.discoverTests(test, undefined, token);
       }
@@ -691,7 +726,7 @@ export class BunTestController implements vscode.Disposable {
         this.signal!.off("Signal.Socket.connect", handleConnect);
         reject(new Error("Test run cancelled"));
       };
-      token.onCancellationRequested(handleCancel);
+      token?.onCancellationRequested(handleCancel);
 
       this.signal!.once("Signal.Socket.connect", handleConnect);
     });
@@ -808,7 +843,7 @@ export class BunTestController implements vscode.Disposable {
       proc.on("close", handleClose);
       proc.on("error", handleError);
 
-      token.onCancellationRequested(handleCancel);
+      token?.onCancellationRequested(handleCancel);
     }).finally(() => {
       if (this.discoveredTestIds.size === 0) {
         const errorMsg =

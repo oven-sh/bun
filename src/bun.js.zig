@@ -263,6 +263,9 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
+        // Enable capturing entry point result if --json is set (and not using --eval with script)
+        vm.capture_entry_point_result = this.ctx.runtime_options.json and this.ctx.runtime_options.eval.script.len == 0;
+
         this.addConditionalGlobals();
         do_redis_preconnect: {
             // This must happen within the API lock, which is why it's not in the "doPreconnect" function

@@ -18,6 +18,8 @@ comptime {
     @export(&setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
     @export(&setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
     @export(&specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
+    @export(&shouldCaptureEntryPointResult, .{ .name = "Bun__VM__shouldCaptureEntryPointResult" });
+    @export(&isMainModule, .{ .name = "Bun__VM__isMainModule" });
     @export(&string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
     @export(&allowAddons, .{ .name = "Bun__VM__allowAddons" });
     @export(&allowRejectionHandledWarning, .{ .name = "Bun__VM__allowRejectionHandledWarning" });
@@ -136,6 +138,8 @@ entry_point_result: struct {
     value: jsc.Strong.Optional = .empty,
     cjs_set_value: bool = false,
 } = .{},
+capture_entry_point_result: bool = false,
+main_module_key: jsc.Strong.Optional = .empty,
 
 auto_install_dependencies: bool = false,
 
@@ -794,6 +798,26 @@ pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) call
         var specifier_str = specifier.toBunString(this.global) catch @panic("unexpected exception");
         defer specifier_str.deref();
         return specifier_str.eqlUTF8(eval_source.path.text);
+    }
+
+    return false;
+}
+
+pub fn shouldCaptureEntryPointResult(this: *VirtualMachine) callconv(.C) bool {
+    return this.capture_entry_point_result;
+}
+
+pub fn isMainModule(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
+    // If we're capturing for --json and no main module has been set yet
+    if (this.capture_entry_point_result and !this.main_module_key.has()) {
+        this.main_module_key.set(this.global, specifier);
+        return true;
+    }
+
+    // Check if this matches the stored main module
+    if (this.main_module_key.has()) {
+        const main_key = this.main_module_key.get() orelse return false;
+        return specifier.isSameValue(main_key, this.global) catch return false;
     }
 
     return false;

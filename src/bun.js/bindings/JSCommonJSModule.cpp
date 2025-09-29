@@ -108,6 +108,7 @@ static bool canPerformFastEnumeration(Structure* s)
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
+extern "C" bool Bun__VM__isMainModule(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
@@ -145,7 +146,10 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         moduleObject->hasEvaluated = true;
     };
 
-    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+    bool isEvalOrMainModule = Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)) ||
+                              Bun__VM__isMainModule(globalObject->bunVM(), JSValue::encode(filename));
+
+    if (isEvalOrMainModule) [[unlikely]] {
         initializeModuleObject();
         scope.assertNoExceptionExceptTermination();
 
@@ -163,7 +167,14 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RETURN_IF_EXCEPTION(scope, false);
         ASSERT(result);
 
-        Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
+        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) {
+            Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
+        } else if (Bun__VM__isMainModule(globalObject->bunVM(), JSValue::encode(filename))) {
+            // For --json main modules, capture the module.exports
+            auto exports_final = moduleObject->exportsObject();
+            RETURN_IF_EXCEPTION(scope, false);
+            Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(exports_final));
+        }
 
         RELEASE_AND_RETURN(scope, true);
     }

@@ -38,7 +38,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟢 Fully implemented. 92% of Node.js's test suite passes.
 
-`fs.glob()`, `fs.globSync()`, and `fs.promises.glob()` accept array of patterns and support `exclude`/`ignore` options to filter results.
+`fs.glob()`, `fs.globSync()`, and `fs.promises.glob()` accept array of patterns and support `exclude` option to filter results.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 

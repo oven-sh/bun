@@ -175,4 +175,4 @@ const filtered = await promises.glob("**/*", {
 All three functions (`fs.glob()`, `fs.globSync()`, `fs.promises.glob()`) support:
 
 - Array of patterns as the first argument
-- `exclude`/`ignore` options to filter results
+- `exclude` option to filter results

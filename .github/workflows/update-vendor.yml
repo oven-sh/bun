@@ -16,6 +16,7 @@ jobs:
       matrix:
         package:
           - elysia
+          - piscina
 
     steps:
       - uses: actions/checkout@v4

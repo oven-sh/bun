@@ -23,7 +23,7 @@ test/js/node/test/parallel/test-require-dot.js
 test/js/node/test/parallel/test-util-promisify-custom-names.mjs
 test/js/node/test/parallel/test-whatwg-readablestream.mjs
 test/js/node/test/parallel/test-worker.mjs
-test/js/node/test/system-ca/test-native-root-certs.test.mjs 
+test/js/node/test/system-ca/test-native-root-certs.test.mjs
 test/js/node/events/event-emitter.test.ts
 test/js/node/module/node-module-module.test.js
 test/js/node/process/call-constructor.test.js
@@ -112,6 +112,7 @@ test/napi/node-napi-tests/test/node-api/test_make_callback_recurse/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
+vendor/piscina/test/nice.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/node/test/parallel/test-webcrypto-derivekey.js

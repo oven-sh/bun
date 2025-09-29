@@ -469,6 +469,7 @@ async function runTests() {
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
         if (parallelism > 1) return;
+        if (!isCI) return;
         process.stderr.write(stdoutPreview);
       });
 
@@ -490,7 +491,7 @@ async function runTests() {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const style = flaky ? "warning" : "error";
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
@@ -639,7 +640,7 @@ async function runTests() {
   }
 
   if (vendorTests?.length) {
-    for (const { cwd: vendorPath, packageManager, testRunner, testPaths } of vendorTests) {
+    for (const { cwd: vendorPath, packageManager, testRunner, testPaths, build, todoTests } of vendorTests) {
       if (!testPaths.length) {
         continue;
       }
@@ -654,17 +655,17 @@ async function runTests() {
         throw new Error(`Unsupported package manager: ${packageManager}`);
       }
 
-      // build
       const buildResult = await spawnBun(execPath, {
         cwd: vendorPath,
         args: ["run", "build"],
         timeout: 60_000,
       });
-      if (!buildResult.ok) {
+      if (build && !buildResult.ok) {
         throw new Error(`Failed to build vendor: ${buildResult.error}`);
       }
 
       for (const testPath of testPaths) {
+        if (todoTests.includes(testPath.replaceAll(sep, "/"))) continue;
         const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
 
         if (testRunner === "bun") {
@@ -1651,6 +1652,8 @@ function getTests(cwd) {
  * @property {string} [testRunner]
  * @property {string[]} [testExtensions]
  * @property {boolean | Record<string, boolean | string>} [skipTests]
+ * @property {boolean} [build]
+ * @property {string[]} todoTests
  */
 
 /**
@@ -1659,6 +1662,8 @@ function getTests(cwd) {
  * @property {string} packageManager
  * @property {string} testRunner
  * @property {string[]} testPaths
+ * @property {boolean} build
+ * @property {string[]} todoTests
  */
 
 /**
@@ -1693,7 +1698,18 @@ async function getVendorTests(cwd) {
 
   return Promise.all(
     relevantVendors.map(
-      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+      async ({
+        package: name,
+        repository,
+        tag,
+        testPath,
+        testExtensions,
+        testRunner,
+        packageManager,
+        skipTests,
+        build,
+        todoTests,
+      }) => {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
@@ -1770,6 +1786,8 @@ async function getVendorTests(cwd) {
           packageManager: packageManager || "bun",
           testRunner: testRunner || "bun",
           testPaths,
+          build: build ?? true,
+          todoTests: todoTests || [],
         };
       },
     ),

@@ -293,6 +293,22 @@ declare module "bun" {
     hget(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Set the value of a hash field
+     * @param key The hash key
+     * @param field The field to set
+     * @param value The value to set
+     * @param args Additional field-value pairs (optional)
+     * @returns Promise that resolves with the number of fields that were added (not updated)
+     * @example
+     * // Set a single field
+     * await redis.hset("user:1", "name", "John");
+     *
+     * // Set multiple fields (Redis 4.0.0+)
+     * await redis.hset("user:1", "name", "John", "age", "30", "email", "john@example.com");
+     */
+    hset(key: RedisClient.KeyLike, field: RedisClient.KeyLike, value: RedisClient.KeyLike, ...args: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
      * Get the values of all the given hash fields
      * @param key The hash key
      * @param fields The fields to get

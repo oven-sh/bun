@@ -267,19 +267,21 @@ $ bun install
 The migration process handles:
 
 ### Lockfile Migration
+
 - Converts `pnpm-lock.yaml` to `bun.lock` format
 - Preserves package versions and resolution information
 - Maintains dependency relationships and peer dependencies
 - Handles patched dependencies with integrity hashes
 
 ### Workspace Configuration
+
 When a `pnpm-workspace.yaml` file exists, Bun migrates workspace settings to your root `package.json`:
 
 ```yaml
 # pnpm-workspace.yaml
 packages:
-  - 'apps/*'
-  - 'packages/*'
+  - "apps/*"
+  - "packages/*"
 
 catalog:
   react: ^18.0.0
@@ -312,6 +314,7 @@ The workspace packages list and catalogs are moved to the `workspaces` field in 
 ```
 
 ### Catalog Dependencies
+
 Dependencies using pnpm's `catalog:` protocol are preserved:
 
 ```json
@@ -324,6 +327,7 @@ Dependencies using pnpm's `catalog:` protocol are preserved:
 ```
 
 ### Configuration Migration
+
 The following pnpm configuration is migrated from both `pnpm-lock.yaml` and `pnpm-workspace.yaml`:
 
 - **Overrides**: Moved from `pnpm.overrides` to root-level `overrides` in `package.json`
@@ -331,6 +335,7 @@ The following pnpm configuration is migrated from both `pnpm-lock.yaml` and `pnp
 - **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
 
 ### Requirements
+
 - Requires pnpm lockfile version 7 or higher
 - Workspace packages must have a `name` field in their `package.json`
 - All catalog entries referenced by dependencies must exist in the catalogs definition

@@ -101,7 +101,7 @@ pub const BuildMessage = struct {
         var object = jsc.JSValue.createEmptyObject(globalThis, 4);
         object.put(globalThis, ZigString.static("name"), bun.String.static("BuildMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
-        object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
+        object.put(globalThis, ZigString.static("message"), bun.String.createUTF8ForJS(globalThis, this.msg.data.text));
         object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));
         return object;
     }

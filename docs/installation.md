@@ -53,7 +53,7 @@ To install, paste this into a terminal:
 {% /codetabs %}
 
 {% callout %}
-Bun requires a minimum of Windows 10 version 1809
+Bun requires a minimum of Windows 10 version 1809. Long paths (> 260 characters) are supported via application manifest.
 {% /callout %}
 
 For support and discussion, please join the [#windows channel on our Discord](http://bun.com/discord).

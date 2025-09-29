@@ -21,6 +21,17 @@ $ bun update -i
 
 This launches an interactive terminal interface that shows all outdated packages with their current and target versions. You can then select which packages to update.
 
+### Recursive Updates
+
+Use the `--recursive` flag with `--interactive` to update dependencies across all workspaces in a monorepo:
+
+```sh
+$ bun update --interactive --recursive
+$ bun update -i --recursive
+```
+
+This displays an additional "Workspace" column showing which workspace each dependency belongs to.
+
 ### Interactive Interface
 
 The interface displays packages grouped by dependency type:

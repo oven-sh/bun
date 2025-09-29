@@ -44,4 +44,18 @@ You can also pass glob patterns to filter by workspace names:
 
 {% bunOutdatedTerminal  glob="{e,t}*" displayGlob="--filter='@monorepo/{types,cli}'" /%}
 
+### Catalog Dependencies
+
+`bun outdated` supports checking catalog dependencies defined in `bunfig.toml`:
+
+```bash
+$ bun outdated
+┌──────────────────┬──────────┬─────────┬─────────┐
+│ Package          │ Current  │ Update  │ Latest  │
+├──────────────────┼──────────┼─────────┼─────────┤
+│ react (catalog)  │ 18.2.0   │ 18.3.1  │ 18.3.1  │
+│ lodash (catalog) │ 4.17.19  │ 4.17.21 │ 4.17.21 │
+└──────────────────┴──────────┴─────────┴─────────┘
+```
+
 {% bunCLIUsage command="outdated" /%}

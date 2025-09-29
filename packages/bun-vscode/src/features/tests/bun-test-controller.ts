@@ -841,12 +841,25 @@ export class BunTestController implements vscode.Disposable {
     const { bunCommand, testArgs } = getBunExecutionConfig();
     let args = [...testArgs, ...testFiles];
 
+    let printedArgs = `\x1b[34;1m>\x1b[0m \x1b[34;1m${bunCommand} ${testArgs.join(" ")}\x1b[2m`;
+
+    for (const file of testFiles) {
+      const f = path.relative(this.workspaceFolder.uri.fsPath, file) || file;
+      if (f.includes(" ")) {
+        printedArgs += ` ".${path.sep}${f}"`;
+      } else {
+        printedArgs += ` .${path.sep}${f}`;
+      }
+    }
+
     if (isIndividualTestRun) {
       const pattern = this.buildTestNamePattern(tests);
       if (pattern) {
         args.push("--test-name-pattern", pattern);
+        printedArgs += `\x1b[0m\x1b[2m --test-name-pattern "${pattern}"\x1b[0m`;
       }
     }
+    run.appendOutput(printedArgs + "\x1b[0m\r\n\r\n");
 
     for (const test of tests) {
       run.enqueued(test);
@@ -873,7 +886,6 @@ export class BunTestController implements vscode.Disposable {
       disposables: this.disposables
     }
     const runFunction = isDebug ? runTestInDebugger : runTestInProcess
-    run.appendOutput(runParamsToPrintedHeader(runParams))
 
     const testRunPromise = runFunction(runParams)
 
@@ -898,17 +910,8 @@ export class BunTestController implements vscode.Disposable {
     }
   }
 
-  private async handleSocketConnection(socket: net.Socket, run: vscode.TestRun, initialize = true) {
+  private async handleSocketConnection(socket: net.Socket, run: vscode.TestRun, initializeDebugAdapter = true) {
     const debugAdapter = new NodeSocketDebugAdapter(socket);
-
-    const log = (eventName: string) => (a: any) => debug.appendLine(`\t[TestController:${eventName}] ${JSON.stringify(a)}`)
-    debugAdapter.on("Adapter.event", log("Adapter.event"))
-    debugAdapter.on("Adapter.initialized", log("Adapter.initialized"))
-    debugAdapter.on("Adapter.request", log("Adapter.request"))
-    debugAdapter.on("Adapter.response", log("Adapter.response"))
-    debugAdapter.on("Inspector.connected", () => debug.appendLine("[TestController:Connected]"))
-    debugAdapter.on("Inspector.request", log("Inspector.request"))
-    debugAdapter.on("Inspector.response", log("Inspector.response"))
 
     debugAdapter.on("TestReporter.found", event => {
       this.handleTestFound(event, run);
@@ -939,8 +942,8 @@ export class BunTestController implements vscode.Disposable {
       throw new Error("Failed to start debug adapter");
     }
 
-    // When debugging, the adapter is initialized by the debugger
-    if (initialize)
+    // When debugging, the adapter is initialized by the debugger so we don't initialize it
+    if (initializeDebugAdapter)
       debugAdapter.initialize({
         adapterID: "bun-vsc-test-runner",
         pathFormat: "path",
@@ -1308,10 +1311,6 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private disconnectInspector(): void {
-    // if (this.debugAdapter) {
-    //   this.debugAdapter.close();
-    //   this.debugAdapter = null;
-    // }
     this.inspectorToVSCode.clear();
     this.vscodeToInspector.clear();
     this.requestedTestIds.clear();
@@ -1326,7 +1325,7 @@ export class BunTestController implements vscode.Disposable {
 
   public dispose(): void {
     this.closeAllActiveProcesses();
-    // TODO: cleaup through saving the cancellation tokens
+    // TODO: cleanup through saving the cancellation tokens
 
     // if (this.signal) {
     //   this.signal.close();

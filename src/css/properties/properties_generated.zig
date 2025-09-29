@@ -1,14 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
-
-const properties_impl = @import("./properties_impl.zig");
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
@@ -215,7 +209,6 @@ const Composes = css_modules.Composes;
 // const ShapeRendering = svg.ShapeRendering;
 // const TextRendering = svg.TextRendering;
 // const ImageRendering = svg.ImageRendering;
-const ClipPath = masking.ClipPath;
 const MaskMode = masking.MaskMode;
 const MaskClip = masking.MaskClip;
 const GeometryBox = masking.GeometryBox;
@@ -240,8 +233,6 @@ const Position = position.Position;
 const Result = css.Result;
 
 const SmallList = css.SmallList;
-const BabyList = bun.BabyList;
-const ArrayList = std.ArrayListUnmanaged;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
     @"background-image": SmallList(Image, 1),
@@ -10731,3 +10722,10 @@ pub const PropertyIdTag = enum(u16) {
         };
     }
 };
+
+const properties_impl = @import("./properties_impl.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;

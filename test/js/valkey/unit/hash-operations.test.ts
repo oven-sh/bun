@@ -198,6 +198,38 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       expect(thrown).toBeDefined();
       expect(thrown.message).toContain("hset requires field-value pairs");
 
+      // Test with many arguments but missing the last value (100 total = key + 99 args)
+      thrown = undefined;
+      try {
+        const args = [key];
+        for (let i = 0; i < 49; i++) {
+          args.push(`field${i}`, `value${i}`);
+        }
+        args.push("field49"); // Missing value for this field
+        // @ts-expect-error
+        await ctx.redis.hset(...args);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeDefined();
+      expect(thrown.message).toContain("hset requires field-value pairs");
+
+      // Test with 1001 arguments (key + 1000 args = 500 pairs missing last value)
+      thrown = undefined;
+      try {
+        const args = [key];
+        for (let i = 0; i < 500; i++) {
+          args.push(`f${i}`, `v${i}`);
+        }
+        args.push("f500"); // Missing value for this field
+        // @ts-expect-error
+        await ctx.redis.hset(...args);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeDefined();
+      expect(thrown.message).toContain("hset requires field-value pairs");
+
       // Numbers are coerced to strings by Redis, which is valid behavior
 
       thrown = undefined;

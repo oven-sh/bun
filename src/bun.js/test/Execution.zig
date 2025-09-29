@@ -408,7 +408,7 @@ pub fn activeGroup(this: *Execution) ?*ConcurrentGroup {
     if (this.group_index >= this.groups.len) return null;
     return &this.groups[this.group_index];
 }
-fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunTest.RefDataValue) ?struct { *ExecutionSequence, *ConcurrentGroup } {
+pub fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunTest.RefDataValue) ?struct { *ExecutionSequence, *ConcurrentGroup } {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -438,7 +438,7 @@ fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunTest.
         groupLog.log("runOneCompleted: the data is for a previous repeat count (outdated)", .{});
         return null;
     }
-    if (sequence.active_entry != data.execution.entry_data.?.entry) {
+    if (@as(?*anyopaque, sequence.active_entry) != data.execution.entry_data.?.entry) {
         groupLog.log("runOneCompleted: the data is for a different sequence index (outdated)", .{});
         return null;
     }

@@ -1259,7 +1259,7 @@ fn enqueueLocalTarball(
                     ) catch unreachable,
                     .resolution = resolution,
                     .cache_dir = this.getCacheDirectory(),
-                    .temp_dir = this.getTemporaryDirectory(),
+                    .temp_dir = this.getTemporaryDirectory().handle,
                     .dependency_id = dependency_id,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         path,
@@ -1359,7 +1359,6 @@ fn getOrPutResolvedPackageWithFindResult(
         manifest,
         find_result.version,
         find_result.package,
-        manifest.string_buf,
         Features.npm,
     ));
 

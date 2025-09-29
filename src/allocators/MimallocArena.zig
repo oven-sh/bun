@@ -94,6 +94,8 @@ const BorrowedHeap = if (safety_checks) *DebugHeap else *mimalloc.Heap;
 const DebugHeap = struct {
     inner: *mimalloc.Heap,
     thread_lock: bun.safety.ThreadLock,
+
+    pub const deinit = void;
 };
 
 threadlocal var thread_heap: if (safety_checks) ?DebugHeap else void = if (safety_checks) null;
@@ -124,6 +126,7 @@ pub fn borrow(self: Self) Borrowed {
 /// It uses pthread_getspecific to do that.
 /// We can save those extra calls if we just do it once in here
 pub fn getThreadLocalDefault() std.mem.Allocator {
+    if (bun.Environment.enable_asan) return bun.default_allocator;
     return Borrowed.getDefault().allocator();
 }
 

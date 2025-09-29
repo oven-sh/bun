@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
-import { describe, expect, mock, test } from "bun:test";
-import { describeWithContainer, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { beforeAll, describe, expect, mock, test } from "bun:test";
+import { describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import net from "net";
 import path from "path";
 const dir = tempDirWithFiles("sql-test", {
@@ -10,31 +10,25 @@ const dir = tempDirWithFiles("sql-test", {
 function rel(filename: string) {
   return path.join(dir, filename);
 }
-const docker = isDockerEnabled() ? dockerExe() : null;
-if (docker) {
-  const dockerfilePath = path.join(import.meta.dir, "mysql-tls", ".");
-  console.log("Building Docker image...");
-  const dockerProcess = Bun.spawn([docker, "build", "-t", "mysql-tls", dockerfilePath], {
-    cwd: path.join(import.meta.dir, "mysql-tls"),
-  });
-  expect(await dockerProcess.exited).toBe(0);
-  console.log("Docker image built");
+if (isDockerEnabled()) {
   const images = [
     {
       name: "MySQL with TLS",
-      image: "mysql-tls",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
+      image: "mysql_tls",
     },
     {
       name: "MySQL",
-      image: "mysql:8",
+      image: "mysql_plain",
+    },
+    // This image only works on x64.
+    process.arch === "x64" && {
+      name: "MySQL 9",
+      image: "mysql:9",
       env: {
         MYSQL_ROOT_PASSWORD: "bun",
       },
     },
-  ];
+  ].filter(Boolean);
 
   for (const image of images) {
     describeWithContainer(
@@ -42,19 +36,27 @@ if (docker) {
       {
         image: image.image,
         env: image.env,
+        concurrent: true,
       },
-      (port: number) => {
-        const options: Bun.SQL.Options = {
-          url: `mysql://root:bun@localhost:${port}`,
+      container => {
+        let sql: SQL;
+        const password = image.image === "mysql_plain" ? "" : "bun";
+        const getOptions = (): Bun.SQL.Options => ({
+          url: `mysql://root:${password}@${container.host}:${container.port}/bun_sql_test`,
           max: 1,
           tls:
             image.name === "MySQL with TLS"
               ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))
               : undefined,
-        };
-        const sql = new SQL(options);
+        });
+
+        beforeAll(async () => {
+          await container.ready;
+          sql = new SQL(getOptions());
+        });
+
         test("should return lastInsertRowid and affectedRows", async () => {
-          await using db = new SQL({ ...options, max: 1, idleTimeout: 5 });
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
           const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
 
@@ -70,13 +72,14 @@ if (docker) {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {
               test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
-                await using sql = new SQL(options);
                 const longQuery = `select ${Array.from({ length: size }, (_, i) => {
                   if (duplicated) {
                     return i % 2 === 0 ? `${i + 1} as f${i}, ${i} as f${i}` : `${i} as f${i}`;
                   }
                   return `${i} as f${i}`;
                 }).join(",\n")}`;
+                await using sql = new SQL({ ...getOptions(), max: 1 });
+
                 const result = await sql.unsafe(longQuery);
                 let value = 0;
                 for (const column of Object.values(result[0])) {
@@ -92,7 +95,7 @@ if (docker) {
           const onclose = mock();
           const onconnect = mock();
           await using sql = new SQL({
-            ...options,
+            ...getOptions(),
             hostname: "example.com",
             connection_timeout: 4,
             onconnect,
@@ -118,7 +121,7 @@ if (docker) {
           });
           const onconnect = mock();
           await using sql = new SQL({
-            ...options,
+            ...getOptions(),
             idle_timeout: 1,
             onconnect,
             onclose,
@@ -140,7 +143,7 @@ if (docker) {
           });
           const onconnect = mock();
           await using sql = new SQL({
-            ...options,
+            ...getOptions(),
             idle_timeout: 1,
             connection_timeout: 5,
             onconnect,
@@ -163,16 +166,17 @@ if (docker) {
           });
           const onconnect = mock();
           await using sql = new SQL({
-            ...options,
+            ...getOptions(),
             max_lifetime: 1,
             onconnect,
             onclose,
             max: 1,
           });
           let error: unknown;
-          expect<[{ x: number }]>(await sql`select 1 as x`).toEqual([{ x: 1 }]);
-          expect(onconnect).toHaveBeenCalledTimes(1);
+
           try {
+            expect<[{ x: number }]>(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+
             while (true) {
               for (let i = 0; i < 100; i++) {
                 await sql`select SLEEP(1)`;
@@ -183,6 +187,7 @@ if (docker) {
           }
 
           expect(onclose).toHaveBeenCalledTimes(1);
+          expect(onconnect).toHaveBeenCalledTimes(1);
 
           expect(error).toBeInstanceOf(SQL.SQLError);
           expect(error).toBeInstanceOf(SQL.MySQLError);
@@ -196,7 +201,7 @@ if (docker) {
         });
 
         test("should not timeout in long results", async () => {
-          await using db = new SQL({ ...options, max: 1, idleTimeout: 5 });
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
           const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
 
@@ -282,15 +287,17 @@ if (docker) {
         });
 
         test("Create table", async () => {
-          await sql`create table test(id int)`;
-          await sql`drop table test`;
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await sql`create table test_my_table(id int)`;
+          await sql`drop table test_my_table`;
         });
 
         test("Drop table", async () => {
-          await sql`create table test(id int)`;
-          await sql`drop table test`;
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await sql`create table drop_table_test(id int)`;
+          await sql`drop table drop_table_test`;
           // Verify that table is dropped
-          const result = await sql`select * from information_schema.tables where table_name = 'test'`;
+          const result = await sql`select * from information_schema.tables where table_name = 'drop_table_test'`;
           expect(result).toBeArrayOfSize(0);
         });
 
@@ -316,6 +323,7 @@ if (docker) {
         });
 
         test("MediumInt/Int24", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           let random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a mediumint unsigned)`;
           await sql`INSERT INTO ${sql(random_name)} VALUES (${1})`;
@@ -326,6 +334,7 @@ if (docker) {
         });
 
         test("Boolean/TinyInt/BIT", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           // Protocol will always return 0 or 1 for TRUE and FALSE when not using a table.
           expect((await sql`select ${false} as x`)[0].x).toBe(0);
           expect((await sql`select ${true} as x`)[0].x).toBe(1);
@@ -380,6 +389,7 @@ if (docker) {
         });
 
         test("Date", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const now = new Date();
           const then = (await sql`select ${now}  as x`)[0].x;
           expect(then).toEqual(now);
@@ -405,6 +415,7 @@ if (docker) {
         });
 
         test("JSON", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const x = (await sql`select CAST(${{ a: "hello", b: 42 }} AS JSON) as x`)[0].x;
           expect(x).toEqual({ a: "hello", b: 42 });
 
@@ -421,20 +432,21 @@ if (docker) {
         });
 
         test("bulk insert nested sql()", async () => {
-          await sql`create table users (name text, age int)`;
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await sql`create temporary table test_users (name text, age int)`;
           const users = [
             { name: "Alice", age: 25 },
             { name: "Bob", age: 30 },
           ];
           try {
-            await sql`insert into users ${sql(users)}`;
-            const result = await sql`select * from users`;
+            await sql`insert into test_users ${sql(users)}`;
+            const result = await sql`select * from test_users`;
             expect(result).toEqual([
               { name: "Alice", age: 25 },
               { name: "Bob", age: 30 },
             ]);
           } finally {
-            await sql`drop table users`;
+            await sql`drop table test_users`;
           }
         });
 
@@ -443,19 +455,20 @@ if (docker) {
         });
 
         test("null for int", async () => {
-          const result = await sql`create table test (x int)`;
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          const result = await sql`create temporary table test_null_for_int (x int)`;
           expect(result.count).toBe(0);
           try {
-            await sql`insert into test values(${null})`;
-            const result2 = await sql`select * from test`;
+            await sql`insert into test_null_for_int values(${null})`;
+            const result2 = await sql`select * from test_null_for_int`;
             expect(result2).toEqual([{ x: null }]);
           } finally {
-            await sql`drop table test`;
+            await sql`drop table test_null_for_int`;
           }
         });
 
         test("should be able to execute different queries in the same connection #16774", async () => {
-          const sql = new SQL({ ...options, max: 1 });
+          const sql = new SQL({ ...getOptions(), max: 1 });
           const random_table_name = `test_user_${Math.random().toString(36).substring(2, 15)}`;
           await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_table_name)}  (id int, name text)`;
 
@@ -487,22 +500,22 @@ if (docker) {
         });
 
         test("Prepared transaction", async () => {
-          await using sql = new SQL(options);
-          await sql`create table test (a int)`;
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await sql`create table test_prepared_transaction (a int)`;
 
           try {
             await sql.beginDistributed("tx1", async sql => {
-              await sql`insert into test values(1)`;
+              await sql`insert into test_prepared_transaction values(1)`;
             });
             await sql.commitDistributed("tx1");
-            expect((await sql`select count(*) from test`).count).toBe(1);
+            expect((await sql`select count(*) from test_prepared_transaction`).count).toBe(1);
           } finally {
-            await sql`drop table test`;
+            await sql`drop table test_prepared_transaction`;
           }
         });
 
         test("Idle timeout retry works", async () => {
-          await using sql = new SQL({ ...options, idleTimeout: 1 });
+          await using sql = new SQL({ ...getOptions(), idleTimeout: 1 });
           await sql`select 1`;
           await Bun.sleep(1100); // 1.1 seconds so it should retry
           await sql`select 1`;
@@ -510,7 +523,7 @@ if (docker) {
         });
 
         test("Fragments in transactions", async () => {
-          const sql = new SQL({ ...options, debug: true, idle_timeout: 1, fetch_types: false });
+          const sql = new SQL({ ...getOptions(), debug: true, idle_timeout: 1, fetch_types: false });
           expect((await sql.begin(sql => sql`select 1 as x where ${sql`1=1`}`))[0].x).toBe(1);
         });
 
@@ -524,17 +537,19 @@ if (docker) {
           expect(result[0].x).toBeNull();
         });
 
-        test("Null sets to null", async () => expect((await sql`select ${null} as x`)[0].x).toBeNull());
+        test("Null sets to null", async () => {
+          expect((await sql`select ${null} as x`)[0].x).toBeNull();
+        });
 
         // Add code property.
         test("Throw syntax error", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const err = await sql`wat 1`.catch(x => x);
           expect(err.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
         });
 
         test("should work with fragments", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
           await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
           await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
@@ -556,7 +571,7 @@ if (docker) {
           }
         });
         test("should handle nested fragments", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
 
           await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
@@ -584,14 +599,14 @@ if (docker) {
         });
 
         test("Support dynamic password function", async () => {
-          await using sql = new SQL({ ...options, password: () => "bun", max: 1 });
+          await using sql = new SQL({ ...getOptions(), password: () => password, max: 1 });
           return expect((await sql`select 1 as x`)[0].x).toBe(1);
         });
 
         test("Support dynamic async resolved password function", async () => {
           await using sql = new SQL({
-            ...options,
-            password: () => Promise.resolve("bun"),
+            ...getOptions(),
+            password: () => Promise.resolve(password),
             max: 1,
           });
           return expect((await sql`select 1 as x`)[0].x).toBe(1);
@@ -599,18 +614,18 @@ if (docker) {
 
         test("Support dynamic async password function", async () => {
           await using sql = new SQL({
-            ...options,
+            ...getOptions(),
             max: 1,
             password: async () => {
               await Bun.sleep(10);
-              return "bun";
+              return password;
             },
           });
           return expect((await sql`select 1 as x`)[0].x).toBe(1);
         });
         test("Support dynamic async rejected password function", async () => {
           await using sql = new SQL({
-            ...options,
+            ...getOptions(),
             password: () => Promise.reject(new Error("password error")),
             max: 1,
           });
@@ -624,7 +639,7 @@ if (docker) {
 
         test("Support dynamic async password function that throws", async () => {
           await using sql = new SQL({
-            ...options,
+            ...getOptions(),
             max: 1,
             password: async () => {
               await Bun.sleep(10);
@@ -641,22 +656,19 @@ if (docker) {
         });
 
         test("sql file", async () => {
-          await using sql = new SQL(options);
           expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
         });
 
         test("sql file throws", async () => {
-          await using sql = new SQL(options);
           expect(await sql.file(rel("selectomondo.sql")).catch(x => x.code)).toBe("ENOENT");
         });
         test("Parameters in file", async () => {
-          await using sql = new SQL(options);
           const result = await sql.file(rel("select-param.sql"), ["hello"]);
           return expect(result[0].x).toBe("hello");
         });
 
         test("Connection ended promise", async () => {
-          const sql = new SQL(options);
+          const sql = new SQL(getOptions());
 
           await sql.end();
 
@@ -664,7 +676,7 @@ if (docker) {
         });
 
         test("Connection ended timeout", async () => {
-          const sql = new SQL(options);
+          const sql = new SQL(getOptions());
 
           await sql.end({ timeout: 10 });
 
@@ -672,13 +684,13 @@ if (docker) {
         });
 
         test("Connection ended error", async () => {
-          const sql = new SQL(options);
+          const sql = new SQL(getOptions());
           await sql.end();
           return expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
         });
 
         test("Connection end does not cancel query", async () => {
-          const sql = new SQL(options);
+          const sql = new SQL(getOptions());
 
           const promise = sql`select SLEEP(1) as x`.execute();
           await sql.end();
@@ -686,13 +698,13 @@ if (docker) {
         });
 
         test("Connection destroyed", async () => {
-          const sql = new SQL(options);
+          const sql = new SQL(getOptions());
           process.nextTick(() => sql.end({ timeout: 0 }));
           expect(await sql``.catch(x => x.code)).toBe("ERR_MYSQL_CONNECTION_CLOSED");
         });
 
         test("Connection destroyed with query before", async () => {
-          const sql = new SQL(options);
+          const sql = new SQL(getOptions());
           const error = sql`select SLEEP(0.2)`.catch(err => err.code);
 
           sql.end({ timeout: 0 });
@@ -700,23 +712,24 @@ if (docker) {
         });
 
         test("unsafe", async () => {
-          await sql`create table test (x int)`;
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await sql`create temporary table test_unsafe (x int)`;
           try {
-            await sql.unsafe("insert into test values (?)", [1]);
-            const [{ x }] = await sql`select * from test`;
+            await sql.unsafe("insert into test_unsafe values (?)", [1]);
+            const [{ x }] = await sql`select * from test_unsafe`;
             expect(x).toBe(1);
           } finally {
-            await sql`drop table test`;
+            await sql`drop table test_unsafe`;
           }
         });
 
         test("unsafe simple", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
         });
 
         test("simple query with multiple statements", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const result = await sql`select 1 as x;select 2 as x`.simple();
           expect(result).toBeDefined();
           expect(result.length).toEqual(2);
@@ -725,7 +738,7 @@ if (docker) {
         });
 
         test("simple query using unsafe with multiple statements", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const result = await sql.unsafe("select 1 as x;select 2 as x");
           expect(result).toBeDefined();
           expect(result.length).toEqual(2);
@@ -782,7 +795,7 @@ if (docker) {
         });
 
         test("little bobby tables", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const name = "Robert'); DROP TABLE students;--";
 
           try {
@@ -801,7 +814,7 @@ if (docker) {
             const sql = new SQL({ host: "localhost", port: 1, adapter: "mysql" });
 
             await sql.begin(async sql => {
-              await sql`insert into test (label, value) values (${1}, ${2})`;
+              await sql`insert into test_connection_errors (label, value) values (${1}, ${2})`;
             });
           } catch (err) {
             error = err;
@@ -810,68 +823,65 @@ if (docker) {
         });
 
         test("dynamic table name", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
-          await sql`create table test(a int)`;
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await sql`create table test_dynamic_table_name(a int)`;
           try {
-            return expect((await sql`select * from ${sql("test")}`).length).toBe(0);
+            return expect((await sql`select * from ${sql("test_dynamic_table_name")}`).length).toBe(0);
           } finally {
-            await sql`drop table test`;
+            await sql`drop table test_dynamic_table_name`;
           }
         });
 
         test("dynamic column name", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           const result = await sql`select 1 as ${sql("!not_valid")}`;
           expect(Object.keys(result[0])[0]).toBe("!not_valid");
         });
 
         test("dynamic insert", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
-          await sql`create table test (a int, b text)`;
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          await sql`create table test_dynamic_insert (a int, b text)`;
           try {
             const x = { a: 42, b: "the answer" };
-            await sql`insert into test ${sql(x)}`;
-            const [{ b }] = await sql`select * from test`;
+            await sql`insert into test_dynamic_insert ${sql(x)}`;
+            const [{ b }] = await sql`select * from test_dynamic_insert`;
             expect(b).toBe("the answer");
           } finally {
-            await sql`drop table test`;
+            await sql`drop table test_dynamic_insert`;
           }
         });
 
         test("dynamic insert pluck", async () => {
-          await using sql = new SQL({ ...options, max: 1 });
+          await using sql = new SQL({ ...getOptions(), max: 1 });
           try {
-            await sql`create table test2 (a int, b text)`;
+            await sql`create table test_dynamic_insert_pluck (a int, b text)`;
             const x = { a: 42, b: "the answer" };
-            await sql`insert into test2 ${sql(x, "a")}`;
-            const [{ b, a }] = await sql`select * from test2`;
+            await sql`insert into test_dynamic_insert_pluck ${sql(x, "a")}`;
+            const [{ b, a }] = await sql`select * from test_dynamic_insert_pluck`;
             expect(b).toBeNull();
             expect(a).toBe(42);
           } finally {
-            await sql`drop table test2`;
+            await sql`drop table test_dynamic_insert_pluck`;
           }
         });
 
         test("bigint is returned as String", async () => {
-          await using sql = new SQL(options);
           expect(typeof (await sql`select 9223372036854777 as x`)[0].x).toBe("string");
         });
 
         test("bigint is returned as BigInt", async () => {
           await using sql = new SQL({
-            ...options,
+            ...getOptions(),
             bigint: true,
           });
           expect((await sql`select 9223372036854777 as x`)[0].x).toBe(9223372036854777n);
         });
 
         test("int is returned as Number", async () => {
-          await using sql = new SQL(options);
           expect((await sql`select CAST(123 AS SIGNED) as x`)[0].x).toBe(123);
         });
 
         test("flush should work", async () => {
-          await using sql = new SQL(options);
           await sql`select 1`;
           sql.flush();
         });
@@ -891,8 +901,8 @@ if (docker) {
                 throw new Error("should not reach");
               } catch (e) {
                 expect(e).toBeInstanceOf(Error);
-                expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT");
-                expect(e.message).toMatch(/Connection timeout after 200ms/);
+                expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT" as any);
+                expect(e.message).toMatch(/Connection time(d out|out) after 200ms/);
               } finally {
                 sql.close();
                 server.close();
@@ -904,7 +914,6 @@ if (docker) {
           );
         });
         test("Array returns rows as arrays of columns", async () => {
-          await using sql = new SQL(options);
           return [(await sql`select CAST(1 AS SIGNED) as x`.values())[0][0], 1];
         });
       },

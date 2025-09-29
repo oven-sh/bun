@@ -111,7 +111,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             this.ref();
-            errdefer this.deref();
+            defer this.deref();
 
             switch (connection) {
                 .host => |c| {
@@ -830,7 +830,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn getRemoteAddress(this: *This, globalThis: *jsc.JSGlobalObject) JSValue {
+        pub fn getRemoteAddress(this: *This, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 return .js_undefined;
             }
@@ -846,7 +846,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-            return ZigString.init(text).toJS(globalThis);
+            return bun.String.createUTF8ForJS(globalThis, text);
         }
 
         pub fn getRemotePort(this: *This, _: *jsc.JSGlobalObject) JSValue {

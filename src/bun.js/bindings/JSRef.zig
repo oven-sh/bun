@@ -1,3 +1,7 @@
+/// Holds a reference to a JSValue.
+///
+/// This reference can be either weak (a JSValue) or may be strong, in which
+/// case it prevents the garbage collector from collecting the value.
 pub const JSRef = union(enum) {
     weak: jsc.JSValue,
     strong: jsc.Strong.Optional,
@@ -89,6 +93,11 @@ pub const JSRef = union(enum) {
             .strong => this.strong.has(),
             .finalized => false,
         };
+    }
+
+    /// Test whether this reference is a strong reference.
+    pub fn isStrong(this: *const @This()) bool {
+        return this.* == .strong;
     }
 
     pub fn deinit(this: *@This()) void {

@@ -13596,7 +13596,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "package_id": null,
     },
   ],
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "@alloc/quick-lru": 1,

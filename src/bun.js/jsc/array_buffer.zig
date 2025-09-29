@@ -435,7 +435,9 @@ pub const ArrayBuffer = extern struct {
 
         pub fn fromJSValue(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?BinaryType {
             if (input.isString()) {
-                return Map.getWithEql(try input.toBunString(globalThis), bun.String.eqlComptime);
+                const str = try input.toBunString(globalThis);
+                defer str.deref();
+                return Map.getWithEql(str, bun.String.eqlComptime);
             }
 
             return null;
@@ -590,7 +592,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: *jsc.JSGlobalObject) jsc.JSValue {
-        return jsc.JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
+        return jsc.JSValue.createBuffer(ctx, this.buffer.byteSlice());
     }
 
     pub fn toJS(this: *const MarkedArrayBuffer, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {

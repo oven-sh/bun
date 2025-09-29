@@ -77,6 +77,80 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       expect(retrievedBuffer).toBe("binary data");
     });
 
+    test("HSET error handling", async () => {
+      const key = ctx.generateKey("hset-error-test");
+
+      // Test with too few arguments - should throw
+      try {
+        // @ts-expect-error - Testing invalid arguments
+        await ctx.redis.hset(key);
+        expect.unreachable("Should have thrown for missing field and value");
+      } catch (error) {
+        expect(error).toBeDefined();
+        expect(error.message).toContain("hset requires at least 3 arguments");
+      }
+
+      // Test with only key and field (missing value) - should throw
+      try {
+        // @ts-expect-error - Testing invalid arguments
+        await ctx.redis.hset(key, "field1");
+        expect.unreachable("Should have thrown for missing value");
+      } catch (error) {
+        expect(error).toBeDefined();
+        expect(error.message).toContain("hset requires field-value pairs");
+      }
+
+      // Test with uneven number of field-value pairs - should throw
+      try {
+        // @ts-expect-error - Testing invalid arguments
+        await ctx.redis.hset(key, "field1", "value1", "field2");
+        expect.unreachable("Should have thrown for uneven field-value pairs");
+      } catch (error) {
+        expect(error).toBeDefined();
+        expect(error.message).toContain("hset requires field-value pairs");
+      }
+
+      // Test with invalid key type - should throw
+      try {
+        // @ts-expect-error - Testing invalid arguments
+        await ctx.redis.hset(123, "field", "value");
+        expect.unreachable("Should have thrown for invalid key type");
+      } catch (error) {
+        expect(error).toBeDefined();
+        expect(error.message).toMatch(/key.*string or buffer/i);
+      }
+
+      // Test with invalid field type - should throw
+      try {
+        // @ts-expect-error - Testing invalid arguments
+        await ctx.redis.hset(key, 123, "value");
+        expect.unreachable("Should have thrown for invalid field type");
+      } catch (error) {
+        expect(error).toBeDefined();
+        expect(error.message).toMatch(/field.*string or buffer/i);
+      }
+
+      // Test with null/undefined values - should throw
+      try {
+        // @ts-expect-error - Testing invalid arguments
+        await ctx.redis.hset(key, "field", null);
+        expect.unreachable("Should have thrown for null value");
+      } catch (error) {
+        expect(error).toBeDefined();
+        expect(error.message).toMatch(/value.*string or buffer/i);
+      }
+
+      // Test with undefined field in middle of multiple pairs
+      try {
+        // @ts-expect-error - Testing invalid arguments
+        await ctx.redis.hset(key, "field1", "value1", undefined, "value2");
+        expect.unreachable("Should have thrown for undefined field");
+      } catch (error) {
+        expect(error).toBeDefined();
+        expect(error.message).toMatch(/field.*string or buffer/i);
+      }
+    });
+
     test("HGET native method", async () => {
       const key = ctx.generateKey("hget-native-test");
 

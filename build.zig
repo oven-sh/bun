@@ -675,7 +675,7 @@ pub fn addInstallObjectFile(
     return &b.addInstallFile(switch (out_mode) {
         .obj => bin,
         .bc => compile.getEmittedLlvmBc(),
-    }, b.fmt("{s}.o", .{name})).step;
+    }, b.fmt("{s}", .{name})).step;
 }
 
 var checked_file_exists: std.AutoHashMap(u64, void) = undefined;

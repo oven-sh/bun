@@ -4,12 +4,14 @@ groups: std.ArrayList(ConcurrentGroup),
 sequences: std.ArrayList(ExecutionSequence),
 entries: std.ArrayList(*ExecutionEntry),
 previous_group_was_concurrent: bool = false,
+cfg: Config,
 
-pub fn init(gpa: std.mem.Allocator) Order {
+pub fn init(gpa: std.mem.Allocator, cfg: Config) Order {
     return .{
         .groups = std.ArrayList(ConcurrentGroup).init(gpa),
         .sequences = std.ArrayList(ExecutionSequence).init(gpa),
         .entries = std.ArrayList(*ExecutionEntry).init(gpa),
+        .cfg = cfg,
     };
 }
 pub fn deinit(this: *Order) void {
@@ -18,10 +20,10 @@ pub fn deinit(this: *Order) void {
     this.entries.deinit();
 }
 
-pub fn generateOrderSub(this: *Order, current: TestScheduleEntry, cfg: Config) bun.JSError!void {
+pub fn generateOrderSub(this: *Order, current: TestScheduleEntry) bun.JSError!void {
     switch (current) {
-        .describe => |describe| try generateOrderDescribe(this, describe, cfg),
-        .test_callback => |test_callback| try generateOrderTest(this, test_callback, cfg),
+        .describe => |describe| try generateOrderDescribe(this, describe),
+        .test_callback => |test_callback| try generateOrderTest(this, test_callback),
     }
 }
 pub const AllOrderResult = struct {
@@ -40,7 +42,7 @@ pub const Config = struct {
     always_use_hooks: bool,
     randomize: ?std.Random,
 };
-pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, _: Config) bun.JSError!AllOrderResult {
+pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSError!AllOrderResult {
     const start = this.groups.items.len;
     for (entries) |entry| {
         const entries_start = this.entries.items.len;
@@ -55,34 +57,34 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, _: Confi
     const end = this.groups.items.len;
     return .{ .start = start, .end = end };
 }
-pub fn generateOrderDescribe(this: *Order, current: *DescribeScope, cfg: Config) bun.JSError!void {
+pub fn generateOrderDescribe(this: *Order, current: *DescribeScope) bun.JSError!void {
     if (current.failed) return; // do not schedule any tests in a failed describe scope
-    const use_hooks = cfg.always_use_hooks or current.base.has_callback;
+    const use_hooks = this.cfg.always_use_hooks or current.base.has_callback;
 
     // gather beforeAll
-    const beforeall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.beforeAll.items, cfg) else .empty;
+    const beforeall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.beforeAll.items) else .empty;
 
     // shuffle entries if randomize flag is set
-    if (cfg.randomize) |random| {
+    if (this.cfg.randomize) |random| {
         random.shuffle(TestScheduleEntry, current.entries.items);
     }
 
     // gather children
     for (current.entries.items) |entry| {
         if (current.base.only == .contains and entry.base().only == .no) continue;
-        try generateOrderSub(this, entry, cfg);
+        try generateOrderSub(this, entry);
     }
 
     // update skip_to values for beforeAll to skip to the first afterAll
     beforeall_order.setFailureSkipTo(this);
 
     // gather afterAll
-    const afterall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.afterAll.items, cfg) else .empty;
+    const afterall_order: AllOrderResult = if (use_hooks) try generateAllOrder(this, current.afterAll.items) else .empty;
 
     // update skip_to values for afterAll to skip the remaining afterAll items
     afterall_order.setFailureSkipTo(this);
 }
-pub fn generateOrderTest(this: *Order, current: *ExecutionEntry, _: Config) bun.JSError!void {
+pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!void {
     const entries_start = this.entries.items.len;
     bun.assert(current.base.has_callback == (current.callback != null));
     const use_each_hooks = current.base.has_callback;

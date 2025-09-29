@@ -3551,6 +3551,19 @@ it("does not crash with 9 comments and typescript type skipping", () => {
   expect(exitCode).toBe(0);
 });
 
+it("does not crash with --minify-syntax and revisiting dot expressions", () => {
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-p", "[(()=>{})()][''+'c']"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("undefined\n");
+  expect(exitCode).toBe(0);
+});
+
 it("runtime transpiler stack overflows", async () => {
   expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });

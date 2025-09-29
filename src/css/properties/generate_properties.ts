@@ -112,7 +112,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
 
   return `
   // Copy manually implemented functions.
-  pub const toCss = properties_impl.property_mixin.toCss
+  pub const toCss = properties_impl.property_mixin.toCss;
 
   // Sanity check to make sure all types have the following functions:
   // - deepClone()
@@ -361,8 +361,8 @@ ${Object.entries(property_defs)
 
   // Copy manually implemented functions.
   pub const toCss = properties_impl.property_id_mixin.toCss;
-  pub const parse = properties_impl.property_id_mixin.toCss;
-  pub const fromString = properties_impl.property_id_mixin.toCss;
+  pub const parse = properties_impl.property_id_mixin.parse;
+  pub const fromString = properties_impl.property_id_mixin.fromString;
   pub const fromStr = fromString;
 
 ${generatePropertyIdImpl(property_defs)}
@@ -1796,6 +1796,7 @@ const VendorPrefix = css.VendorPrefix;
 
 const properties_impl = @import("./properties_impl.zig");
 
+
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 const CustomProperty = css.css_properties.custom.CustomProperty;
@@ -1817,30 +1818,16 @@ const css_values = css.css_values;
 const CssColor = css.css_values.color.CssColor;
 const Image = css.css_values.image.Image;
 const Length = css.css_values.length.Length;
-const LengthValue = css.css_values.length.LengthValue;
 const LengthPercentage = css_values.length.LengthPercentage;
 const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
-const PropertyCategory = css.PropertyCategory;
-const LogicalGroup = css.LogicalGroup;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const CSSInteger = css.css_values.number.CSSInteger;
 const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const Percentage = css.css_values.percentage.Percentage;
-const Angle = css.css_values.angle.Angle;
-const DashedIdentReference = css.css_values.ident.DashedIdentReference;
 const Time = css.css_values.time.Time;
 const EasingFunction = css.css_values.easing.EasingFunction;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Url = css.css_values.url.Url;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Location = css.Location;
 const HorizontalPosition = css.css_values.position.HorizontalPosition;
 const VerticalPosition = css.css_values.position.VerticalPosition;
-const ContainerName = css.css_rules.container.ContainerName;
 
 pub const font = css.css_properties.font;
 const border = css.css_properties.border;
@@ -2039,9 +2026,9 @@ const Position = position.Position;
 
 const Result = css.Result;
 
+const SmallList = css.SmallList;
 const BabyList = bun.BabyList;
 const ArrayList = std.ArrayListUnmanaged;
-const SmallList = css.SmallList;
 
 `;
 }

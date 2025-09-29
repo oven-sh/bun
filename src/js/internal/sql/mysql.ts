@@ -134,7 +134,7 @@ const enum SQLCommand {
   update = 1,
   updateSet = 2,
   where = 3,
-  inAnyOrAll = 4,
+  in = 4,
   none = -1,
 }
 export type { SQLCommand };
@@ -146,7 +146,7 @@ function commandToString(command: SQLCommand): string {
     case SQLCommand.updateSet:
     case SQLCommand.update:
       return "UPDATE";
-    case SQLCommand.inAnyOrAll:
+    case SQLCommand.in:
     case SQLCommand.where:
       return "WHERE";
     default:
@@ -192,10 +192,8 @@ function detectCommand(query: string): SQLCommand {
             token = "";
             return command;
           }
-          case "any":
-          case "all":
           case "in": {
-            return SQLCommand.inAnyOrAll;
+            return SQLCommand.in;
           }
           default: {
             token = "";
@@ -228,7 +226,7 @@ function detectCommand(query: string): SQLCommand {
       case "in":
       case "any":
       case "all":
-        return SQLCommand.inAnyOrAll;
+        return SQLCommand.in;
       default:
         return SQLCommand.none;
     }
@@ -1019,7 +1017,7 @@ class MySQLAdapter
             }
             const { columns, value: items } = value as SQLHelper;
             const columnCount = columns.length;
-            if (columnCount === 0 && command !== SQLCommand.inAnyOrAll) {
+            if (columnCount === 0 && command !== SQLCommand.in) {
               throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
             }
             const lastColumnIndex = columns.length - 1;
@@ -1074,7 +1072,7 @@ class MySQLAdapter
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }
-            } else if (command === SQLCommand.inAnyOrAll) {
+            } else if (command === SQLCommand.in) {
               // SELECT * FROM users WHERE id IN (${sql([1, 2, 3])})
               if (!$isArray(items)) {
                 throw new SyntaxError("An array of values is required for WHERE IN helper");

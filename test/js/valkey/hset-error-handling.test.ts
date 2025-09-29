@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { RedisClient } from "bun";
+import { describe, expect, test } from "bun:test";
 
 describe("HSET error handling without server", () => {
   test("hset validates arguments at runtime", async () => {

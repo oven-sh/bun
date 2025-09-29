@@ -2556,7 +2556,7 @@ describe("expect()", () => {
     }).toThrow(isBun ? "Expected value must be an object\nReceived: undefined" : "undefined is not an object");
   });
 
-  test.only("toContainAllKeys", () => {
+  test("toContainAllKeys", () => {
     expect({ a: "hello", b: "world" }).toContainAllKeys(["a", "b"]);
     expect({ a: "hello", b: "world" }).toContainAllKeys(["b", "a"]);
     expect({ 1: "hello", b: "world" }).toContainAllKeys(["1", "b"]);
@@ -2568,7 +2568,7 @@ describe("expect()", () => {
     expect([1, 2, 3]).not.toContainAllKeys(["0", "1", "2", "3"]);
   });
 
-  test.only("toContainAnyKeys", () => {
+  test("toContainAnyKeys", () => {
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["a"]);
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["a", "c"]);
     expect({ 1: "test", 2: "test2" }).toContainAnyKeys([1]);
@@ -2603,7 +2603,7 @@ describe("expect()", () => {
     expect(objWithoutProto).not.toContainAnyKeys(["b", "c"]);
   });
 
-  test.only("toContainKeys", () => {
+  test("toContainKeys", () => {
     expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b"]);
     expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b", "c"]);
     expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);

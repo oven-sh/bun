@@ -200,6 +200,12 @@ Bun implements the following globals.
 
 ---
 
+- `Math.sumPrecise`
+- Bun
+- High-precision summation for floating-point numbers
+
+---
+
 - [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
 - Web
 - &nbsp;
@@ -385,3 +391,13 @@ Bun implements the following globals.
 - &nbsp;
 
 {% /table %}
+
+## `Math.sumPrecise`
+
+Bun adds `Math.sumPrecise()` for high-precision summation of floating-point numbers using Kahan summation algorithm:
+
+```ts
+Math.sumPrecise([0.1, 0.2, 0.3, -0.5, 0.1]); // => 0.2
+// Regular addition would lose precision
+(0.1 + 0.2 + 0.3 - 0.5 + 0.1); // => 0.20000000000000007
+```

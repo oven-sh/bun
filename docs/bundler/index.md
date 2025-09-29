@@ -313,6 +313,14 @@ $ bun build --entrypoints ./index.ts --outdir ./out --target browser
 
 Depending on the target, Bun will apply different module resolution rules and optimizations.
 
+### Module resolution
+
+Bun supports the `NODE_PATH` environment variable for additional module resolution paths:
+
+```bash
+NODE_PATH=./src bun build ./entry.js --outdir ./dist
+```
+
 <!-- - Module resolution. For example, when bundling for the browser, Bun will prioritize the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`. -->
 
 {% table %}

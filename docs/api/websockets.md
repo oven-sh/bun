@@ -293,6 +293,17 @@ const socket = new WebSocket("ws://localhost:3000", {
 });
 ```
 
+### Client compression
+
+WebSocket clients support permessage-deflate compression. The `extensions` property shows negotiated compression:
+
+```ts
+const socket = new WebSocket("wss://echo.websocket.org");
+socket.addEventListener("open", () => {
+  console.log(socket.extensions); // => "permessage-deflate"
+});
+```
+
 To add event listeners to the socket:
 
 ```ts

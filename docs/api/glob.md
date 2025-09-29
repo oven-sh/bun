@@ -15,6 +15,8 @@ for await (const file of glob.scan(".")) {
 }
 ```
 
+By default, glob matches both files and directories. Use `onlyFiles: true` to match files only.
+
 **Match a string against a glob pattern**:
 
 ```ts

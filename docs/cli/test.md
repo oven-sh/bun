@@ -47,6 +47,8 @@ To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
 $ bun test --test-name-pattern addition
 ```
 
+When no tests match the filter, `bun test` exits with code 1.
+
 To run a specific file in the test runner, make sure the path starts with `./` or `/` to distinguish it from a filter name.
 
 ```bash

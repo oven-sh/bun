@@ -2,7 +2,7 @@ Every day, Bun gets closer to 100% Node.js API compatibility. Today, popular fra
 
 **If a package works in Node.js but doesn't work in Bun, we consider it a bug in Bun.** Please [open an issue](https://bun.com/issues) and we'll fix it.
 
-This page is updated regularly to reflect compatibility status of the latest version of Bun. The information below reflects Bun's compatibility with _Node.js v23_. Bun reports as Node.js v24.3.0 for compatibility.
+This page is updated regularly to reflect compatibility status of the latest version of Bun. The information below reflects Bun's compatibility with _Node.js v24_. Bun reports as Node.js v24.3.0 for compatibility.
 
 ## Built-in Node.js modules
 

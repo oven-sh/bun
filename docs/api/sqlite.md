@@ -1,4 +1,4 @@
-Bun natively implements a high-performance [SQLite3](https://www.sqlite.org/) driver using SQLite 3.50.2. To use it import from the built-in `bun:sqlite` module.
+Bun natively implements a high-performance [SQLite3](https://www.sqlite.org/) driver. To use it import from the built-in `bun:sqlite` module.
 
 ```ts
 import { Database } from "bun:sqlite";

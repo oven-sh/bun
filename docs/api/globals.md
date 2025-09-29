@@ -201,8 +201,8 @@ Bun implements the following globals.
 ---
 
 - `Math.sumPrecise`
-- Bun
-- High-precision summation for floating-point numbers
+- Web
+- TC39 Stage 4 proposal for high-precision summation
 
 ---
 
@@ -394,7 +394,7 @@ Bun implements the following globals.
 
 ## `Math.sumPrecise`
 
-Bun adds `Math.sumPrecise()` for high-precision summation of floating-point numbers using Kahan summation algorithm:
+TC39 Stage 4 proposal for high-precision floating-point summation:
 
 ```ts
 Math.sumPrecise([0.1, 0.2, 0.3, -0.5, 0.1]); // => 0.2

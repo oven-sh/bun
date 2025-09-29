@@ -445,3 +445,260 @@ ${Object.keys(opts)
     },
   );
 });
+
+describe("HOME directory .npmrc", () => {
+  // Use the existing registry instance
+  beforeAll(async () => {
+    if (!registry.listening) {
+      await registry.start();
+    }
+  });
+
+  test("reads .npmrc from HOME when HOME env is modified", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const customHome = join(packageDir, "custom_home");
+
+    await Bun.$`mkdir -p ${customHome}`;
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    // Create .npmrc in custom HOME
+    const homeNpmrc = `
+registry=http://localhost:${registry.port}/
+cache=${customHome}/.npm-cache
+`;
+    await write(join(customHome, ".npmrc"), homeNpmrc);
+
+    // Create package.json
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "test-home-npmrc",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    // Run install with modified HOME
+    const { stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: {
+        ...env,
+        HOME: customHome,
+        BUN_INSTALL_CACHE_DIR: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const err = stderrForInstall(await stderr.text());
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(await exited).toBe(0);
+
+    // Verify package was installed
+    const nodeModules = join(packageDir, "node_modules");
+    expect(await Bun.file(join(nodeModules, "no-deps", "package.json")).exists()).toBeTrue();
+  });
+
+  test("reads .npmrc from XDG_CONFIG_HOME when set", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const xdgConfigHome = join(packageDir, "xdg_config");
+
+    await Bun.$`mkdir -p ${xdgConfigHome}`;
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    // Create .npmrc in XDG_CONFIG_HOME
+    const xdgNpmrc = `
+registry=http://localhost:${registry.port}/
+`;
+    await write(join(xdgConfigHome, ".npmrc"), xdgNpmrc);
+
+    // Create package.json
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "test-xdg-npmrc",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    // Run install with XDG_CONFIG_HOME set
+    const { stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: {
+        ...env,
+        XDG_CONFIG_HOME: xdgConfigHome,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const err = stderrForInstall(await stderr.text());
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(await exited).toBe(0);
+
+    // Verify package was installed
+    const nodeModules = join(packageDir, "node_modules");
+    expect(await Bun.file(join(nodeModules, "no-deps", "package.json")).exists()).toBeTrue();
+  });
+
+  test("project .npmrc overrides HOME .npmrc", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const customHome = join(packageDir, "custom_home");
+
+    await Bun.$`mkdir -p ${customHome}`;
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    // Create .npmrc in custom HOME with wrong registry
+    const homeNpmrc = `
+registry=http://wrong-registry.example.com/
+`;
+    await write(join(customHome, ".npmrc"), homeNpmrc);
+
+    // Create project .npmrc with correct registry
+    const projectNpmrc = `
+registry=http://localhost:${registry.port}/
+`;
+    await write(join(packageDir, ".npmrc"), projectNpmrc);
+
+    // Create package.json
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "test-npmrc-override",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    // Run install with modified HOME
+    const { stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: {
+        ...env,
+        HOME: customHome,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const err = stderrForInstall(await stderr.text());
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(await exited).toBe(0);
+
+    // Verify package was installed from correct registry
+    const nodeModules = join(packageDir, "node_modules");
+    expect(await Bun.file(join(nodeModules, "no-deps", "package.json")).exists()).toBeTrue();
+  });
+
+  test("expands environment variables from HOME .npmrc", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const customHome = join(packageDir, "custom_home");
+    const token = await registry.generateUser("home_user", "secure123");
+
+    await Bun.$`mkdir -p ${customHome}`;
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    // Create .npmrc in custom HOME with env var
+    const homeNpmrc = `
+registry=http://localhost:${registry.port}/
+//localhost:${registry.port}/:_authToken=\${NPM_TOKEN}
+`;
+    await write(join(customHome, ".npmrc"), homeNpmrc);
+
+    // Create package.json
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "test-env-expansion",
+        version: "1.0.0",
+        dependencies: {
+          "@needs-auth/test-pkg": "1.0.0",
+        },
+      }),
+    );
+
+    // Run install with env vars
+    const { stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: {
+        ...env,
+        HOME: customHome,
+        NPM_TOKEN: token,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const err = stderrForInstall(await stderr.text());
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(await exited).toBe(0);
+
+    // Verify authenticated package was installed
+    const nodeModules = join(packageDir, "node_modules");
+    expect(await Bun.file(join(nodeModules, "@needs-auth", "test-pkg", "package.json")).exists()).toBeTrue();
+  });
+
+  test("handles missing HOME .npmrc gracefully", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const customHome = join(packageDir, "empty_home");
+
+    await Bun.$`mkdir -p ${customHome}`;
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    // No .npmrc in HOME
+
+    // Create project .npmrc
+    const projectNpmrc = `
+registry=http://localhost:${registry.port}/
+`;
+    await write(join(packageDir, ".npmrc"), projectNpmrc);
+
+    // Create package.json
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "test-missing-home-npmrc",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    // Run install with modified HOME (no .npmrc there)
+    const { stdout, stderr, exited } = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: {
+        ...env,
+        HOME: customHome,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const err = stderrForInstall(await stderr.text());
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(await exited).toBe(0);
+
+    // Verify package was installed
+    const nodeModules = join(packageDir, "node_modules");
+    expect(await Bun.file(join(nodeModules, "no-deps", "package.json")).exists()).toBeTrue();
+  });
+});

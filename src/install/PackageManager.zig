@@ -791,7 +791,7 @@ pub fn init(
     if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
-            "./.npmrc",
+            ".npmrc",
         };
 
         bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {

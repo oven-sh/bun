@@ -1,8 +1,14 @@
+const std = @import("std");
+const bun = @import("bun");
+const Allocator = std.mem.Allocator;
+
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
+
+const properties_impl = @import("./properties_impl.zig");
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
@@ -209,6 +215,7 @@ const Composes = css_modules.Composes;
 // const ShapeRendering = svg.ShapeRendering;
 // const TextRendering = svg.TextRendering;
 // const ImageRendering = svg.ImageRendering;
+const ClipPath = masking.ClipPath;
 const MaskMode = masking.MaskMode;
 const MaskClip = masking.MaskClip;
 const GeometryBox = masking.GeometryBox;
@@ -233,6 +240,8 @@ const Position = position.Position;
 const Result = css.Result;
 
 const SmallList = css.SmallList;
+const BabyList = bun.BabyList;
+const ArrayList = std.ArrayListUnmanaged;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
     @"background-image": SmallList(Image, 1),
@@ -8184,10 +8193,13 @@ pub const PropertyId = union(PropertyIdTag) {
             });
         };
 
+        // Normalize empty prefix to .none to avoid matching everything
+        const normalized_pre: VendorPrefix = if (pre.isEmpty()) VendorPrefix{ .none = true } else pre;
+
         const Map = comptime bun.ComptimeEnumMap(Enum);
         if (Map.getASCIIICaseInsensitive(name1)) |prop| {
             const allowed_prefixes = PrefixMap.get(prop) orelse return null;
-            if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) {
+            if (bun.bits.contains(VendorPrefix, allowed_prefixes, normalized_pre)) {
                 return switch (prop) {
                     .@"background-color" => .@"background-color",
                     .@"background-image" => .@"background-image",
@@ -8197,10 +8209,10 @@ pub const PropertyId = union(PropertyIdTag) {
                     .@"background-size" => .@"background-size",
                     .@"background-repeat" => .@"background-repeat",
                     .@"background-attachment" => .@"background-attachment",
-                    .@"background-clip" => .{ .@"background-clip" = pre },
+                    .@"background-clip" => .{ .@"background-clip" = normalized_pre },
                     .@"background-origin" => .@"background-origin",
                     .background => .background,
-                    .@"box-shadow" => .{ .@"box-shadow" = pre },
+                    .@"box-shadow" => .{ .@"box-shadow" = normalized_pre },
                     .opacity => .opacity,
                     .color => .color,
                     .display => .display,
@@ -8217,12 +8229,12 @@ pub const PropertyId = union(PropertyIdTag) {
                     .@"min-inline-size" => .@"min-inline-size",
                     .@"max-block-size" => .@"max-block-size",
                     .@"max-inline-size" => .@"max-inline-size",
-                    .@"box-sizing" => .{ .@"box-sizing" = pre },
+                    .@"box-sizing" => .{ .@"box-sizing" = normalized_pre },
                     .@"aspect-ratio" => .@"aspect-ratio",
                     .overflow => .overflow,
                     .@"overflow-x" => .@"overflow-x",
                     .@"overflow-y" => .@"overflow-y",
-                    .@"text-overflow" => .{ .@"text-overflow" = pre },
+                    .@"text-overflow" => .{ .@"text-overflow" = normalized_pre },
                     .position => .position,
                     .top => .top,
                     .bottom => .bottom,
@@ -8260,21 +8272,21 @@ pub const PropertyId = union(PropertyIdTag) {
                     .@"border-block-end-width" => .@"border-block-end-width",
                     .@"border-inline-start-width" => .@"border-inline-start-width",
                     .@"border-inline-end-width" => .@"border-inline-end-width",
-                    .@"border-top-left-radius" => .{ .@"border-top-left-radius" = pre },
-                    .@"border-top-right-radius" => .{ .@"border-top-right-radius" = pre },
-                    .@"border-bottom-left-radius" => .{ .@"border-bottom-left-radius" = pre },
-                    .@"border-bottom-right-radius" => .{ .@"border-bottom-right-radius" = pre },
+                    .@"border-top-left-radius" => .{ .@"border-top-left-radius" = normalized_pre },
+                    .@"border-top-right-radius" => .{ .@"border-top-right-radius" = normalized_pre },
+                    .@"border-bottom-left-radius" => .{ .@"border-bottom-left-radius" = normalized_pre },
+                    .@"border-bottom-right-radius" => .{ .@"border-bottom-right-radius" = normalized_pre },
                     .@"border-start-start-radius" => .@"border-start-start-radius",
                     .@"border-start-end-radius" => .@"border-start-end-radius",
                     .@"border-end-start-radius" => .@"border-end-start-radius",
                     .@"border-end-end-radius" => .@"border-end-end-radius",
-                    .@"border-radius" => .{ .@"border-radius" = pre },
+                    .@"border-radius" => .{ .@"border-radius" = normalized_pre },
                     .@"border-image-source" => .@"border-image-source",
                     .@"border-image-outset" => .@"border-image-outset",
                     .@"border-image-repeat" => .@"border-image-repeat",
                     .@"border-image-width" => .@"border-image-width",
                     .@"border-image-slice" => .@"border-image-slice",
-                    .@"border-image" => .{ .@"border-image" = pre },
+                    .@"border-image" => .{ .@"border-image" = normalized_pre },
                     .@"border-color" => .@"border-color",
                     .@"border-style" => .@"border-style",
                     .@"border-width" => .@"border-width",
@@ -8299,42 +8311,42 @@ pub const PropertyId = union(PropertyIdTag) {
                     .@"outline-color" => .@"outline-color",
                     .@"outline-style" => .@"outline-style",
                     .@"outline-width" => .@"outline-width",
-                    .@"flex-direction" => .{ .@"flex-direction" = pre },
-                    .@"flex-wrap" => .{ .@"flex-wrap" = pre },
-                    .@"flex-flow" => .{ .@"flex-flow" = pre },
-                    .@"flex-grow" => .{ .@"flex-grow" = pre },
-                    .@"flex-shrink" => .{ .@"flex-shrink" = pre },
-                    .@"flex-basis" => .{ .@"flex-basis" = pre },
-                    .flex => .{ .flex = pre },
-                    .order => .{ .order = pre },
-                    .@"align-content" => .{ .@"align-content" = pre },
-                    .@"justify-content" => .{ .@"justify-content" = pre },
+                    .@"flex-direction" => .{ .@"flex-direction" = normalized_pre },
+                    .@"flex-wrap" => .{ .@"flex-wrap" = normalized_pre },
+                    .@"flex-flow" => .{ .@"flex-flow" = normalized_pre },
+                    .@"flex-grow" => .{ .@"flex-grow" = normalized_pre },
+                    .@"flex-shrink" => .{ .@"flex-shrink" = normalized_pre },
+                    .@"flex-basis" => .{ .@"flex-basis" = normalized_pre },
+                    .flex => .{ .flex = normalized_pre },
+                    .order => .{ .order = normalized_pre },
+                    .@"align-content" => .{ .@"align-content" = normalized_pre },
+                    .@"justify-content" => .{ .@"justify-content" = normalized_pre },
                     .@"place-content" => .@"place-content",
-                    .@"align-self" => .{ .@"align-self" = pre },
+                    .@"align-self" => .{ .@"align-self" = normalized_pre },
                     .@"justify-self" => .@"justify-self",
                     .@"place-self" => .@"place-self",
-                    .@"align-items" => .{ .@"align-items" = pre },
+                    .@"align-items" => .{ .@"align-items" = normalized_pre },
                     .@"justify-items" => .@"justify-items",
                     .@"place-items" => .@"place-items",
                     .@"row-gap" => .@"row-gap",
                     .@"column-gap" => .@"column-gap",
                     .gap => .gap,
-                    .@"box-orient" => .{ .@"box-orient" = pre },
-                    .@"box-direction" => .{ .@"box-direction" = pre },
-                    .@"box-ordinal-group" => .{ .@"box-ordinal-group" = pre },
-                    .@"box-align" => .{ .@"box-align" = pre },
-                    .@"box-flex" => .{ .@"box-flex" = pre },
-                    .@"box-flex-group" => .{ .@"box-flex-group" = pre },
-                    .@"box-pack" => .{ .@"box-pack" = pre },
-                    .@"box-lines" => .{ .@"box-lines" = pre },
-                    .@"flex-pack" => .{ .@"flex-pack" = pre },
-                    .@"flex-order" => .{ .@"flex-order" = pre },
-                    .@"flex-align" => .{ .@"flex-align" = pre },
-                    .@"flex-item-align" => .{ .@"flex-item-align" = pre },
-                    .@"flex-line-pack" => .{ .@"flex-line-pack" = pre },
-                    .@"flex-positive" => .{ .@"flex-positive" = pre },
-                    .@"flex-negative" => .{ .@"flex-negative" = pre },
-                    .@"flex-preferred-size" => .{ .@"flex-preferred-size" = pre },
+                    .@"box-orient" => .{ .@"box-orient" = normalized_pre },
+                    .@"box-direction" => .{ .@"box-direction" = normalized_pre },
+                    .@"box-ordinal-group" => .{ .@"box-ordinal-group" = normalized_pre },
+                    .@"box-align" => .{ .@"box-align" = normalized_pre },
+                    .@"box-flex" => .{ .@"box-flex" = normalized_pre },
+                    .@"box-flex-group" => .{ .@"box-flex-group" = normalized_pre },
+                    .@"box-pack" => .{ .@"box-pack" = normalized_pre },
+                    .@"box-lines" => .{ .@"box-lines" = normalized_pre },
+                    .@"flex-pack" => .{ .@"flex-pack" = normalized_pre },
+                    .@"flex-order" => .{ .@"flex-order" = normalized_pre },
+                    .@"flex-align" => .{ .@"flex-align" = normalized_pre },
+                    .@"flex-item-align" => .{ .@"flex-item-align" = normalized_pre },
+                    .@"flex-line-pack" => .{ .@"flex-line-pack" = normalized_pre },
+                    .@"flex-positive" => .{ .@"flex-positive" = normalized_pre },
+                    .@"flex-negative" => .{ .@"flex-negative" = normalized_pre },
+                    .@"flex-preferred-size" => .{ .@"flex-preferred-size" = normalized_pre },
                     .@"margin-top" => .@"margin-top",
                     .@"margin-bottom" => .@"margin-bottom",
                     .@"margin-left" => .@"margin-left",
@@ -8387,38 +8399,38 @@ pub const PropertyId = union(PropertyIdTag) {
                     .@"font-variant-caps" => .@"font-variant-caps",
                     .@"line-height" => .@"line-height",
                     .font => .font,
-                    .@"transition-property" => .{ .@"transition-property" = pre },
-                    .@"transition-duration" => .{ .@"transition-duration" = pre },
-                    .@"transition-delay" => .{ .@"transition-delay" = pre },
-                    .@"transition-timing-function" => .{ .@"transition-timing-function" = pre },
-                    .transition => .{ .transition = pre },
-                    .transform => .{ .transform = pre },
-                    .@"transform-origin" => .{ .@"transform-origin" = pre },
-                    .@"transform-style" => .{ .@"transform-style" = pre },
+                    .@"transition-property" => .{ .@"transition-property" = normalized_pre },
+                    .@"transition-duration" => .{ .@"transition-duration" = normalized_pre },
+                    .@"transition-delay" => .{ .@"transition-delay" = normalized_pre },
+                    .@"transition-timing-function" => .{ .@"transition-timing-function" = normalized_pre },
+                    .transition => .{ .transition = normalized_pre },
+                    .transform => .{ .transform = normalized_pre },
+                    .@"transform-origin" => .{ .@"transform-origin" = normalized_pre },
+                    .@"transform-style" => .{ .@"transform-style" = normalized_pre },
                     .@"transform-box" => .@"transform-box",
-                    .@"backface-visibility" => .{ .@"backface-visibility" = pre },
-                    .perspective => .{ .perspective = pre },
-                    .@"perspective-origin" => .{ .@"perspective-origin" = pre },
+                    .@"backface-visibility" => .{ .@"backface-visibility" = normalized_pre },
+                    .perspective => .{ .perspective = normalized_pre },
+                    .@"perspective-origin" => .{ .@"perspective-origin" = normalized_pre },
                     .translate => .translate,
                     .rotate => .rotate,
                     .scale => .scale,
-                    .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
-                    .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
+                    .@"text-decoration-color" => .{ .@"text-decoration-color" = normalized_pre },
+                    .@"text-emphasis-color" => .{ .@"text-emphasis-color" = normalized_pre },
                     .@"text-shadow" => .@"text-shadow",
                     .direction => .direction,
                     .composes => .composes,
-                    .@"mask-image" => .{ .@"mask-image" = pre },
+                    .@"mask-image" => .{ .@"mask-image" = normalized_pre },
                     .@"mask-mode" => .@"mask-mode",
-                    .@"mask-repeat" => .{ .@"mask-repeat" = pre },
+                    .@"mask-repeat" => .{ .@"mask-repeat" = normalized_pre },
                     .@"mask-position-x" => .@"mask-position-x",
                     .@"mask-position-y" => .@"mask-position-y",
-                    .@"mask-position" => .{ .@"mask-position" = pre },
-                    .@"mask-clip" => .{ .@"mask-clip" = pre },
-                    .@"mask-origin" => .{ .@"mask-origin" = pre },
-                    .@"mask-size" => .{ .@"mask-size" = pre },
+                    .@"mask-position" => .{ .@"mask-position" = normalized_pre },
+                    .@"mask-clip" => .{ .@"mask-clip" = normalized_pre },
+                    .@"mask-origin" => .{ .@"mask-origin" = normalized_pre },
+                    .@"mask-size" => .{ .@"mask-size" = normalized_pre },
                     .@"mask-composite" => .@"mask-composite",
                     .@"mask-type" => .@"mask-type",
-                    .mask => .{ .mask = pre },
+                    .mask => .{ .mask = normalized_pre },
                     .@"mask-border-source" => .@"mask-border-source",
                     .@"mask-border-mode" => .@"mask-border-mode",
                     .@"mask-border-slice" => .@"mask-border-slice",
@@ -8427,13 +8439,13 @@ pub const PropertyId = union(PropertyIdTag) {
                     .@"mask-border-repeat" => .@"mask-border-repeat",
                     .@"mask-border" => .@"mask-border",
                     .@"-webkit-mask-composite" => .@"-webkit-mask-composite",
-                    .@"mask-source-type" => .{ .@"mask-source-type" = pre },
-                    .@"mask-box-image" => .{ .@"mask-box-image" = pre },
-                    .@"mask-box-image-source" => .{ .@"mask-box-image-source" = pre },
-                    .@"mask-box-image-slice" => .{ .@"mask-box-image-slice" = pre },
-                    .@"mask-box-image-width" => .{ .@"mask-box-image-width" = pre },
-                    .@"mask-box-image-outset" => .{ .@"mask-box-image-outset" = pre },
-                    .@"mask-box-image-repeat" => .{ .@"mask-box-image-repeat" = pre },
+                    .@"mask-source-type" => .{ .@"mask-source-type" = normalized_pre },
+                    .@"mask-box-image" => .{ .@"mask-box-image" = normalized_pre },
+                    .@"mask-box-image-source" => .{ .@"mask-box-image-source" = normalized_pre },
+                    .@"mask-box-image-slice" => .{ .@"mask-box-image-slice" = normalized_pre },
+                    .@"mask-box-image-width" => .{ .@"mask-box-image-width" = normalized_pre },
+                    .@"mask-box-image-outset" => .{ .@"mask-box-image-outset" = normalized_pre },
+                    .@"mask-box-image-repeat" => .{ .@"mask-box-image-repeat" = normalized_pre },
                     .@"color-scheme" => .@"color-scheme",
                 };
             }
@@ -10059,10 +10071,3 @@ pub const PropertyIdTag = enum(u16) {
         };
     }
 };
-
-const properties_impl = @import("./properties_impl.zig");
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-const bun = @import("bun");
-const BabyList = bun.BabyList;

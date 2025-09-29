@@ -408,17 +408,20 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
       });
     };
 
+    // Normalize empty prefix to .none to avoid matching everything
+    const normalized_pre: VendorPrefix = if (pre.isEmpty()) VendorPrefix{ .none = true } else pre;
+
     const Map = comptime bun.ComptimeEnumMap(Enum);
     if (Map.getASCIIICaseInsensitive(name1)) |prop| {
       const allowed_prefixes = PrefixMap.get(prop) orelse return null;
-      if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) {
+      if (bun.bits.contains(VendorPrefix, allowed_prefixes, normalized_pre)) {
         return switch (prop) {
           ${Object.entries(property_defs)
             .map(([name, meta]) => {
               if (meta.valid_prefixes === undefined) {
                 return `.${escapeIdent(name)} => .${escapeIdent(name)},`;
               }
-              return `.${escapeIdent(name)} => .{ .${escapeIdent(name)} = pre },`;
+              return `.${escapeIdent(name)} => .{ .${escapeIdent(name)} = normalized_pre },`;
             })
             .join("\n          ")}
         };

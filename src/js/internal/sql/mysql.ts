@@ -161,7 +161,8 @@ function detectCommand(query: string): SQLCommand {
   let token = "";
   let command = SQLCommand.none;
   let quoted = false;
-  for (let i = 0; i < text_len; i++) {
+  // we need to reverse search so we find the closest command to the parameter
+  for (let i = text_len - 1; i >= 0; i--) {
     const char = text[i];
     switch (char) {
       case " ": // Space
@@ -172,30 +173,23 @@ function detectCommand(query: string): SQLCommand {
       case "\v": {
         switch (token) {
           case "insert": {
-            if (command === SQLCommand.none) {
-              return SQLCommand.insert;
-            }
+            command = SQLCommand.insert;
+            token = "";
             return command;
           }
           case "update": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.update;
-              token = "";
-              continue; // try to find SET
-            }
+            command = SQLCommand.update;
+            token = "";
             return command;
           }
           case "where": {
             command = SQLCommand.where;
             token = "";
-            continue; // try to find IN
+            return command;
           }
           case "set": {
-            if (command === SQLCommand.update) {
-              command = SQLCommand.updateSet;
-              token = "";
-              continue; // try to find WHERE
-            }
+            command = SQLCommand.updateSet;
+            token = "";
             return command;
           }
           case "any":
@@ -216,49 +210,31 @@ function detectCommand(query: string): SQLCommand {
           continue;
         }
         if (!quoted) {
-          token += char;
+          token = char + token;
         }
       }
     }
   }
   if (token) {
-    switch (command) {
-      case SQLCommand.none: {
-        switch (token) {
-          case "insert":
-            return SQLCommand.insert;
-          case "update":
-            return SQLCommand.update;
-          case "where":
-            return SQLCommand.where;
-          default:
-            return SQLCommand.none;
-        }
-      }
-      case SQLCommand.update: {
-        if (token === "set") {
-          return SQLCommand.updateSet;
-        }
+    switch (token) {
+      case "insert":
+        return SQLCommand.insert;
+      case "update":
         return SQLCommand.update;
-      }
-      case SQLCommand.where: {
-        if (token === "in" || token === "any" || token === "all") {
-          return SQLCommand.inAnyOrAll;
-        }
+      case "where":
         return SQLCommand.where;
-      }
-      default: {
-        // we can have fragments using IN ANY ALL
-        if (token === "in" || token === "any" || token === "all") {
-          return SQLCommand.inAnyOrAll;
-        }
-      }
+      case "set":
+        return SQLCommand.updateSet;
+      case "in":
+      case "any":
+      case "all":
+        return SQLCommand.inAnyOrAll;
+      default:
+        return SQLCommand.none;
     }
   }
-
   return command;
 }
-
 const enum PooledConnectionState {
   pending = 0,
   connected = 1,
@@ -1155,12 +1131,12 @@ class MySQLAdapter
               for (let i = 0; i < columnCount; i++) {
                 const column = columns[i];
                 const columnValue = item[column];
-                query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
                 if (typeof columnValue === "undefined") {
-                  binding_values.push(null);
-                } else {
-                  binding_values.push(columnValue);
+                  // skip undefined values this is the expected behavior
+                  continue;
                 }
+                query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
+                binding_values.push(columnValue);
               }
               query += " "; // the user can add where clause after this
             }

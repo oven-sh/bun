@@ -36,6 +36,47 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       expect(nonExistentField).toBeNull();
     });
 
+    test("HSET native method", async () => {
+      const key = ctx.generateKey("hset-native-test");
+
+      // Test native hset method - single field-value pair
+      const setResult = await ctx.redis.hset(key, "username", "johndoe");
+      expectType<number>(setResult, "number");
+      expect(setResult).toBe(1); // 1 new field was set
+
+      // Update the same field should return 0
+      const updateResult = await ctx.redis.hset(key, "username", "janedoe");
+      expectType<number>(updateResult, "number");
+      expect(updateResult).toBe(0); // 0 means field was updated, not added
+
+      // Verify the update
+      const getValue = await ctx.redis.hget(key, "username");
+      expect(getValue).toBe("janedoe");
+
+      // Test setting multiple field-value pairs (Redis 4.0.0+)
+      const multiSetResult = await ctx.redis.hset(key, "email", "jane@example.com", "age", "25");
+      expectType<number>(multiSetResult, "number");
+      expect(multiSetResult).toBe(2); // 2 new fields were added
+
+      // Verify all fields are set correctly
+      const allFields = await ctx.redis.hgetall(key);
+      expect(allFields).toEqual({
+        username: "janedoe",
+        email: "jane@example.com",
+        age: "25",
+      });
+
+      // Test with buffer values
+      const bufferKey = ctx.generateKey("hset-buffer-test");
+      const bufferValue = Buffer.from("binary data");
+      const bufferSetResult = await ctx.redis.hset(bufferKey, "data", bufferValue);
+      expect(bufferSetResult).toBe(1);
+
+      // Verify buffer was stored correctly
+      const retrievedBuffer = await ctx.redis.hget(bufferKey, "data");
+      expect(retrievedBuffer).toBe("binary data");
+    });
+
     test("HGET native method", async () => {
       const key = ctx.generateKey("hget-native-test");
 

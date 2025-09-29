@@ -598,6 +598,69 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
     return promise.toJS();
 }
 
+// Implement hset (set one or more hash fields)
+// HSET accepts: HSET key field value [field value ...]
+pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    try requireNotSubscriber(this, @src().fn_name);
+
+    const args_view = callframe.arguments();
+    if (args_view.len < 3) {
+        return globalObject.throwInvalidArguments("hset requires at least 3 arguments: key, field, value", .{});
+    }
+
+    // Check if we have an odd number of arguments after the key (field-value pairs)
+    if ((args_view.len - 1) % 2 != 0) {
+        return globalObject.throwInvalidArguments("hset requires field-value pairs after the key", .{});
+    }
+
+    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    defer {
+        for (args.items) |*item| {
+            item.deinit();
+        }
+        args.deinit();
+    }
+
+    // Add the key
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("hset", "key", "string or buffer");
+    };
+    args.appendAssumeCapacity(key);
+
+    // Add all field-value pairs
+    var i: usize = 1;
+    while (i < args_view.len) : (i += 2) {
+        // Add field
+        const field = (try fromJS(globalObject, args_view[i])) orelse {
+            return globalObject.throwInvalidArgumentType("hset", "field", "string or buffer");
+        };
+        args.appendAssumeCapacity(field);
+
+        // Add value
+        if (i + 1 < args_view.len) {
+            const value = (try fromJS(globalObject, args_view[i + 1])) orelse {
+                return globalObject.throwInvalidArgumentType("hset", "value", "string or buffer");
+            };
+            args.appendAssumeCapacity(value);
+        }
+    }
+
+    // Send HSET command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "HSET",
+            .args = .{ .args = args.items },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send HSET command", err);
+    };
+
+    return promise.toJS();
+}
+
 // Implement ping (send a PING command with an optional message)
 pub fn ping(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     var message_buf: [1]JSArgument = undefined;

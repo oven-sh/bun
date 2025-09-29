@@ -579,58 +579,7 @@ pub fn VisitExpr(
                         e_.index = .{ .data = .{ .e_private_identifier = private }, .loc = e_.index.loc };
                     },
                     else => {
-                        const index = p.visitExpr(e_.index);
-                        e_.index = index;
-
-                        const unwrapped = e_.index.unwrapInlined();
-                        if (unwrapped.data == .e_string and
-                            unwrapped.data.e_string.isUTF8())
-                        {
-                            // "a['b' + '']" => "a.b"
-                            // "enum A { B = 'b' }; a[A.B]" => "a.b"
-                            if (p.options.features.minify_syntax and
-                                unwrapped.data.e_string.isIdentifier(p.allocator))
-                            {
-                                const dot = p.newExpr(
-                                    E.Dot{
-                                        .name = unwrapped.data.e_string.slice(p.allocator),
-                                        .name_loc = unwrapped.loc,
-                                        .target = e_.target,
-                                        .optional_chain = e_.optional_chain,
-                                    },
-                                    expr.loc,
-                                );
-
-                                if (is_call_target) {
-                                    p.call_target = dot.data;
-                                }
-
-                                if (is_delete_target) {
-                                    p.delete_target = dot.data;
-                                }
-
-                                return p.visitExprInOut(dot, in);
-                            }
-
-                            // Handle property rewrites to ensure things
-                            // like .e_import_identifier tracking works
-                            // Reminder that this can only be done after
-                            // `target` is visited.
-                            if (p.maybeRewritePropertyAccess(
-                                expr.loc,
-                                e_.target,
-                                unwrapped.data.e_string.data,
-                                unwrapped.loc,
-                                .{
-                                    .is_call_target = is_call_target,
-                                    // .is_template_tag = is_template_tag,
-                                    .is_delete_target = is_delete_target,
-                                    .assign_target = in.assign_target,
-                                },
-                            )) |rewrite| {
-                                return rewrite;
-                            }
-                        }
+                        e_.index = p.visitExprInOut(e_.index, .{});
                     },
                 }
 

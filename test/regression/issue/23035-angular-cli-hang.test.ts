@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // TODO: Remove skip once the issue is fixed
@@ -239,11 +239,7 @@ test.skip("TypeScript __exportStar helper should not hang with complex module st
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("SUCCESS: No hang occurred");
   expect(stdout).not.toContain("HANG: Script timed out");

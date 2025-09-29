@@ -128,6 +128,10 @@ await redis.hmset("user:123", [
   "true",
 ]);
 
+// Get a single field from a hash
+const name = await redis.hget("user:123", "name");
+console.log(name); // "Alice"
+
 // Get multiple fields from a hash
 const userFields = await redis.hmget("user:123", ["name", "email"]);
 console.log(userFields); // ["Alice", "alice@example.com"]
@@ -424,8 +428,9 @@ new RedisClient("redis://localhost:6379");
 // With authentication
 new RedisClient("redis://username:password@localhost:6379");
 
-// With database number
-new RedisClient("redis://localhost:6379/0");
+// With database number - connects to a specific database (0-15)
+new RedisClient("redis://localhost:6379/0");  // Database 0 (default)
+new RedisClient("redis://localhost:6379/2");  // Database 2
 
 // TLS connections
 new RedisClient("rediss://localhost:6379");

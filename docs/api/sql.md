@@ -1247,6 +1247,10 @@ While the API is unified, there are some behavioral differences:
 
 We haven't implemented `LOAD DATA INFILE` support yet
 
+### PostgreSQL Type Handling
+
+PostgreSQL `TIME` and `TIMETZ` columns are correctly decoded when using the binary protocol. `TIME` columns return the time as microseconds since midnight, while `TIMETZ` columns include timezone information.
+
 ### PostgreSQL-Specific Features
 
 We haven't implemented these yet:

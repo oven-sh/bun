@@ -166,6 +166,16 @@ will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
 Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
 
+### Running scripts in all workspaces
+
+The `--workspaces` flag runs the specified script in each workspace package:
+
+```bash
+bun run --workspaces <script>
+```
+
+This executes the script in all workspace packages defined in your root `package.json`'s `workspaces` field.
+
 ## `bun run -` to pipe code from stdin
 
 `bun run -` lets you read JavaScript, TypeScript, TSX, or JSX from stdin and execute it without writing to a temporary file first.

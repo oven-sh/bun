@@ -42,6 +42,8 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
 
+`server.closeIdleConnections()` is implemented. This method immediately closes all sockets not currently handling a request.
+
 ### [`node:https`](https://nodejs.org/api/https.html)
 
 🟢 APIs are implemented, but `Agent` is not always used yet.
@@ -124,7 +126,9 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Missing `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+🟡 Missing `createHistogram`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+
+`monitorEventLoopDelay()` is implemented. This function creates an `IntervalHistogram` object that samples event loop delay in nanoseconds.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 

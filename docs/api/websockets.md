@@ -293,6 +293,30 @@ const socket = new WebSocket("ws://localhost:3000", {
 });
 ```
 
+You can override special WebSocket headers like `Host`, `Sec-WebSocket-Key`, and `Sec-WebSocket-Protocol`:
+
+```ts
+const socket = new WebSocket("ws://localhost:8080", {
+  headers: {
+    "Host": "custom-host.example.com",
+    "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", // Must be valid base64-encoded 16-byte key
+    "Sec-WebSocket-Protocol": "chat, superchat",
+  },
+});
+```
+
+### Subprotocol Negotiation
+
+Bun's WebSocket client implements RFC 6455 compliant subprotocol negotiation. When you pass an array of desired subprotocols, Bun sends them in the `Sec-WebSocket-Protocol` header. The server can select one of these protocols, and the selected protocol is available on the `ws.protocol` property:
+
+```ts
+const ws = new WebSocket("ws://localhost:3000", ["chat", "superchat"]);
+
+ws.onopen = () => {
+  console.log(`Connected with protocol: ${ws.protocol}`); // e.g., "chat"
+};
+```
+
 To add event listeners to the socket:
 
 ```ts

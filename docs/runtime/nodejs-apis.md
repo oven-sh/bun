@@ -80,7 +80,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:tty`](https://nodejs.org/api/tty.html)
 
-🟢 Fully implemented. `fs.createReadStream("/dev/tty")` provides TTY access after stdin closes.
+🟢 Fully implemented.
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 
@@ -124,7 +124,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Missing `createHistogram`. `monitorEventLoopDelay` is implemented. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+🟡 Missing `createHistogram`. `monitorEventLoopDelay` implemented. It's recommended to use `performance` global instead of `perf_hooks.performance`.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 

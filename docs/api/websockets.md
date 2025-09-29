@@ -281,7 +281,7 @@ Bun implements the `WebSocket` class. To create a WebSocket client that connects
 const socket = new WebSocket("ws://localhost:3000");
 
 // With subprotocol negotiation
-const socket = new WebSocket("ws://localhost:3000", ["soap", "wamp"]);
+const socket2 = new WebSocket("ws://localhost:3000", ["soap", "wamp"]);
 ```
 
 In browsers, the cookies that are currently set on the page will be sent with the WebSocket upgrade request. This is a standard feature of the `WebSocket` API.

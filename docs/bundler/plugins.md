@@ -9,7 +9,7 @@ Plugins can register callbacks to be run at various points in the lifecycle of a
 - [`onStart()`](#onstart): Run once the bundler has started a bundle
 - [`onResolve()`](#onresolve): Run before a module is resolved
 - [`onLoad()`](#onload): Run before a module is loaded.
-- [`onEnd()`](#onend): Run after the bundle has completed (implemented)
+- [`onEnd()`](#onend): Run after the bundle has completed
 - [`onBeforeParse()`](#onbeforeparse): Run zero-copy native addons in the parser thread before a file is parsed.
 
 ### Reference

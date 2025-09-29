@@ -306,7 +306,12 @@ declare module "bun" {
      * // Set multiple fields (Redis 4.0.0+)
      * await redis.hset("user:1", "name", "John", "age", "30", "email", "john@example.com");
      */
-    hset(key: RedisClient.KeyLike, field: RedisClient.KeyLike, value: RedisClient.KeyLike, ...args: RedisClient.KeyLike[]): Promise<number>;
+    hset(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      value: RedisClient.KeyLike,
+      ...args: RedisClient.KeyLike[]
+    ): Promise<number>;
 
     /**
      * Get the values of all the given hash fields

@@ -267,6 +267,23 @@ Whether to install optional dependencies. Default `true`.
 optional = true
 ```
 
+### `install.targetCpu` and `install.targetOs`
+
+Configure which platform-specific `optionalDependencies` to install. Useful for cross-platform builds.
+
+```toml
+[install]
+# Install dependencies for Linux ARM64
+targetOs = ["linux"]
+targetCpu = ["arm64"]
+
+# Install for multiple platforms
+targetOs = ["darwin", "linux"]
+targetCpu = ["x64", "arm64"]
+```
+
+These correspond to the `--os` and `--cpu` CLI flags.
+
 ### `install.dev`
 
 Whether to install development dependencies. Default `true`.

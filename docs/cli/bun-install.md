@@ -264,4 +264,75 @@ Bun automatically migrates projects from pnpm to bun. When a `pnpm-lock.yaml` fi
 $ bun install
 ```
 
-This migration preserves package versions and resolution information from the pnpm lockfile.
+The migration process handles:
+
+### Lockfile Migration
+- Converts `pnpm-lock.yaml` to `bun.lock` format
+- Preserves package versions and resolution information
+- Maintains dependency relationships and peer dependencies
+- Handles patched dependencies with integrity hashes
+
+### Workspace Configuration
+When a `pnpm-workspace.yaml` file exists, Bun migrates workspace settings to your root `package.json`:
+
+```yaml
+# pnpm-workspace.yaml
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+catalog:
+  react: ^18.0.0
+  typescript: ^5.0.0
+
+catalogs:
+  build:
+    webpack: ^5.0.0
+    babel: ^7.0.0
+```
+
+The workspace packages list and catalogs are moved to the `workspaces` field in `package.json`:
+
+```json
+{
+  "workspaces": {
+    "packages": ["apps/*", "packages/*"],
+    "catalog": {
+      "react": "^18.0.0",
+      "typescript": "^5.0.0"
+    },
+    "catalogs": {
+      "build": {
+        "webpack": "^5.0.0",
+        "babel": "^7.0.0"
+      }
+    }
+  }
+}
+```
+
+### Catalog Dependencies
+Dependencies using pnpm's `catalog:` protocol are preserved:
+
+```json
+{
+  "dependencies": {
+    "react": "catalog:",
+    "webpack": "catalog:build"
+  }
+}
+```
+
+### Configuration Migration
+The following pnpm configuration is migrated from both `pnpm-lock.yaml` and `pnpm-workspace.yaml`:
+
+- **Overrides**: Moved from `pnpm.overrides` to root-level `overrides` in `package.json`
+- **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
+- **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
+
+### Requirements
+- Requires pnpm lockfile version 7 or higher
+- Workspace packages must have a `name` field in their `package.json`
+- All catalog entries referenced by dependencies must exist in the catalogs definition
+
+After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.

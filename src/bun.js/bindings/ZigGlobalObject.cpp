@@ -2941,14 +2941,14 @@ void GlobalObject::finishCreation(VM& vm)
                     init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
         });
 
-    m_resolveMessageStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(Bun::createResolveMessageStructure(init.vm, init.owner));
+    m_JSBuildMessageClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSBuildMessageClassStructure(init);
         });
 
-    m_buildMessageStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(Bun::createBuildMessageStructure(init.vm, init.owner));
+    m_JSResolveMessageClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupJSResolveMessageClassStructure(init);
         });
 
     m_errorConstructorPrepareStackTraceInternalValue.initLater(

@@ -507,14 +507,14 @@ public:
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
-    V(public, LazyPropertyOfGlobalObject<Structure>, m_resolveMessageStructure)                              \
-    V(public, LazyPropertyOfGlobalObject<Structure>, m_buildMessageStructure)                                \
                                                                                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsClassStructure)                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsBigIntClassStructure)                                        \
     V(public, JSC::LazyClassStructure, m_JSStatFSClassStructure)                                             \
     V(public, JSC::LazyClassStructure, m_JSStatFSBigIntClassStructure)                                       \
     V(public, JSC::LazyClassStructure, m_JSDirentClassStructure)                                             \
+    V(public, JSC::LazyClassStructure, m_JSBuildMessageClassStructure)                                       \
+    V(public, JSC::LazyClassStructure, m_JSResolveMessageClassStructure)                                     \
                                                                                                              \
     V(private, WebCore::JSBuiltinInternalFunctions, m_builtinInternalFunctions)                              \
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \

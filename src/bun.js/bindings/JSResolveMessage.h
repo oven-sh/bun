@@ -3,10 +3,11 @@
 #include "root.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/LazyClassStructure.h>
 
 namespace Bun {
 
-JSC::Structure* createResolveMessageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+void setupJSResolveMessageClassStructure(JSC::LazyClassStructure::Initializer& init);
 
 } // namespace Bun
 

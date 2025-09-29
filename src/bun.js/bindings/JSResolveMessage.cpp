@@ -4,7 +4,9 @@
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include "JSResolveMessage.h"
+#include "JSResolveMessageConstructor.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 #include "WebCoreJSBuiltins.h"
@@ -208,15 +210,19 @@ const ClassInfo ResolveMessagePrototype::s_info = {
     CREATE_METHOD_TABLE(ResolveMessagePrototype)
 };
 
-// Create the ErrorInstance structure with our custom prototype
-JSC::Structure* createResolveMessageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+void setupJSResolveMessageClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    ResolveMessagePrototype* prototype = ResolveMessagePrototype::create(
-        vm,
-        globalObject,
-        ResolveMessagePrototype::createStructure(vm, globalObject));
+    auto* prototypeStructure = ResolveMessagePrototype::createStructure(init.vm, init.global);
+    auto* prototype = ResolveMessagePrototype::create(init.vm, init.global, prototypeStructure);
 
-    return JSC::ErrorInstance::createStructure(vm, globalObject, prototype);
+    JSC::FunctionPrototype* functionPrototype = init.global->functionPrototype();
+    auto* constructorStructure = JSResolveMessageConstructor::createStructure(init.vm, init.global, functionPrototype);
+    auto* constructor = JSResolveMessageConstructor::create(init.vm, constructorStructure, prototype);
+
+    auto* structure = JSC::ErrorInstance::createStructure(init.vm, init.global, prototype);
+    init.setPrototype(prototype);
+    init.setStructure(structure);
+    init.setConstructor(constructor);
 }
 
 // Note: Bun__errorInstance__finalize is implemented in ZigGlobalObject.cpp
@@ -232,8 +238,8 @@ extern "C" JSC::EncodedJSValue ResolveMessage__toJS(void* resolveMessage, JSC::J
     BunString messageString = ResolveMessage__getMessageString(resolveMessage);
     WTF::String message = messageString.transferToWTFString();
 
-    // Get or create the structure using the lazy property
-    JSC::Structure* structure = zigGlobalObject->m_resolveMessageStructure.getInitializedOnMainThread(zigGlobalObject);
+    // Get or create the structure using the lazy class structure
+    JSC::Structure* structure = zigGlobalObject->m_JSResolveMessageClassStructure.get(zigGlobalObject);
 
     // Create the ErrorInstance with our custom structure
     JSC::ErrorInstance* errorInstance = JSC::ErrorInstance::create(vm, structure, message, {});

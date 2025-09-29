@@ -4,7 +4,9 @@
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include "JSBuildMessage.h"
+#include "JSBuildMessageConstructor.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 #include "WebCoreJSBuiltins.h"
@@ -176,15 +178,19 @@ const ClassInfo BuildMessagePrototype::s_info = {
     CREATE_METHOD_TABLE(BuildMessagePrototype)
 };
 
-// Create the ErrorInstance structure with our custom prototype
-JSC::Structure* createBuildMessageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+void setupJSBuildMessageClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    BuildMessagePrototype* prototype = BuildMessagePrototype::create(
-        vm,
-        globalObject,
-        BuildMessagePrototype::createStructure(vm, globalObject));
+    auto* prototypeStructure = BuildMessagePrototype::createStructure(init.vm, init.global);
+    auto* prototype = BuildMessagePrototype::create(init.vm, init.global, prototypeStructure);
 
-    return JSC::ErrorInstance::createStructure(vm, globalObject, prototype);
+    JSC::FunctionPrototype* functionPrototype = init.global->functionPrototype();
+    auto* constructorStructure = JSBuildMessageConstructor::createStructure(init.vm, init.global, functionPrototype);
+    auto* constructor = JSBuildMessageConstructor::create(init.vm, constructorStructure, prototype);
+
+    auto* structure = JSC::ErrorInstance::createStructure(init.vm, init.global, prototype);
+    init.setPrototype(prototype);
+    init.setStructure(structure);
+    init.setConstructor(constructor);
 }
 
 // Main toJS function called from Zig
@@ -197,8 +203,8 @@ extern "C" JSC::EncodedJSValue BuildMessage__toJS(void* buildMessage, JSC::JSGlo
     BunString messageString = BuildMessage__getMessageString(buildMessage);
     WTF::String message = messageString.transferToWTFString();
 
-    // Get or create the structure using the lazy property
-    JSC::Structure* structure = zigGlobalObject->m_buildMessageStructure.getInitializedOnMainThread(zigGlobalObject);
+    // Get or create the structure using the lazy class structure
+    JSC::Structure* structure = zigGlobalObject->m_JSBuildMessageClassStructure.get(zigGlobalObject);
 
     // Create the ErrorInstance with our custom structure
     JSC::ErrorInstance* errorInstance = JSC::ErrorInstance::create(vm, structure, message, {});

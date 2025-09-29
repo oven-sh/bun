@@ -42,6 +42,8 @@
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback
   AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback
   BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback
+  BuildError                      GlobalObject::m_JSBuildMessageClassStructure         ClassStructure
+  BuildMessage                    GlobalObject::m_JSBuildMessageClassStructure         ClassStructure
   ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         PropertyCallback
   CloseEvent                      CloseEventConstructorCallback                        PropertyCallback
   CountQueuingStrategy            CountQueuingStrategyConstructorCallback              PropertyCallback
@@ -71,6 +73,8 @@
   ReadableStreamBYOBRequest       ReadableStreamBYOBRequestConstructorCallback         PropertyCallback
   ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   PropertyCallback
   ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       PropertyCallback
+  ResolveError                    GlobalObject::m_JSResolveMessageClassStructure       ClassStructure
+  ResolveMessage                  GlobalObject::m_JSResolveMessageClassStructure       ClassStructure
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
   TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback

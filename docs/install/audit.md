@@ -24,6 +24,26 @@ To update all dependencies to the latest versions (including breaking changes):
   bun update --latest
 ```
 
+### Filtering options
+
+**`--audit-level=<low|moderate|high|critical>`** - Only show vulnerabilities at this severity level or higher:
+
+```bash
+$ bun audit --audit-level=high
+```
+
+**`--prod`** - Audit only production dependencies (excludes devDependencies):
+
+```bash
+$ bun audit --prod
+```
+
+**`--ignore <CVE>`** - Ignore specific CVEs (can be used multiple times):
+
+```bash
+$ bun audit --ignore CVE-2022-25883 --ignore CVE-2023-26136
+```
+
 ### `--json`
 
 Use the `--json` flag to print the raw JSON response from the registry instead of the formatted report:

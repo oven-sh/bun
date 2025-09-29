@@ -612,7 +612,6 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
             obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
     }
 
-    if (@hasField(std.meta.Child(@TypeOf(obj)), "no_link_obj"))
         obj.no_link_obj = true;
 
     if (opts.enable_asan and !enableFastBuild(b)) {

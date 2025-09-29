@@ -4750,7 +4750,8 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
     uint8_t frame_i = 0;
     size_t stack_frame_i = 0;
     const size_t total_frame_count = frames.size();
-    const uint8_t frame_count = total_frame_count < trace.frames_cap ? total_frame_count : trace.frames_cap;
+    ASSERT(trace.frames_len <= trace.frames_cap);
+    const uint8_t frame_count = std::min(static_cast<uint8_t>(total_frame_count), trace.frames_len > 0 ? trace.frames_len : trace.frames_cap);
 
     while (frame_i < frame_count && stack_frame_i < total_frame_count) {
         // Skip native frames

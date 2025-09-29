@@ -2689,8 +2689,6 @@ pub fn remapZigException(
                 frames[j] = frame;
                 j += 1;
             }
-
-            @memset(frames[j..], jsc.ZigStackFrame.Zero);
             exception.stack.frames_len = @as(u8, @truncate(j));
             frames.len = j;
         }

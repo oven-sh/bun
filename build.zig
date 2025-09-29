@@ -68,6 +68,7 @@ const BunBuildOptions = struct {
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
+    llvm_codegen_threads: ?u32 = null,
 
     pub fn isBaseline(this: *const BunBuildOptions) bool {
         return this.arch.isX86() and
@@ -269,6 +270,7 @@ pub fn build(b: *Build) !void {
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
         .enable_valgrind = b.option(bool, "enable_valgrind", "Enable valgrind") orelse false,
+        .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
     };
 
     // zig build obj
@@ -604,6 +606,15 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     // Object options
     obj.use_llvm = !opts.no_llvm;
     obj.use_lld = if (opts.os == .mac) false else !opts.no_llvm;
+
+    if (opts.optimize == .Debug) {
+        if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
+            obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
+    }
+
+    if (@hasField(std.meta.Child(@TypeOf(obj)), "no_link_obj"))
+        obj.no_link_obj = true;
+
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;

@@ -83,17 +83,53 @@ describe.todo("patched packages", () => {
   });
 });
 
-describe.todo("folder dependencies", () => {
-  test("basic", async () => {
+describe"folder dependencies", () => {
+  test.todo("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/folder-dependencies-basic"),
     });
   });
-  test("links are resolved correctly", async () => {
-    // link:
+  test("links to the root package are resolved correctly", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
-      files: join(import.meta.dir, "pnpm/folder-dependencies-links"),
+      files: join(import.meta.dir, "pnpm/root-package-link-resolution"),
     });
+
+    let proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(err).toContain("Saved lockfile");
+
+    expect(
+      await Promise.all([
+        file(join(packageDir, "node_modules", "two-range-deps", "package.json")).json(),
+        file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+      ]),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "dependencies": {
+            "@types/is-number": ">=1.0.0",
+            "no-deps": "^1.0.0",
+          },
+          "name": "two-range-deps",
+          "version": "1.0.0",
+        },
+        {
+          "dependencies": {
+            "two-range-deps": "1.0.0",
+          },
+          "name": "transitive-root-link-pkg",
+        },
+      ]
+    `);
   });
 });
 

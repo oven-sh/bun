@@ -2,12 +2,14 @@
 
 groups: std.ArrayList(ConcurrentGroup),
 sequences: std.ArrayList(ExecutionSequence),
+arena: std.mem.Allocator,
 previous_group_was_concurrent: bool = false,
 
-pub fn init(gpa: std.mem.Allocator) Order {
+pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator) Order {
     return .{
         .groups = std.ArrayList(ConcurrentGroup).init(gpa),
         .sequences = std.ArrayList(ExecutionSequence).init(gpa),
+        .arena = arena,
     };
 }
 pub fn deinit(this: *Order) void {
@@ -40,6 +42,7 @@ pub const Config = struct {
 pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, _: Config) bun.JSError!AllOrderResult {
     const start = this.groups.items.len;
     for (entries) |entry| {
+        if (bun.Environment.ci_assert and entry.added_in_phase != .preload) bun.assert(entry.next == null);
         entry.next = null;
         entry.skip_to = null;
         const sequences_start = this.sequences.items.len;
@@ -83,7 +86,10 @@ const EntryList = struct {
     first: ?*ExecutionEntry = null,
     last: ?*ExecutionEntry = null,
     pub fn append(this: *EntryList, current: *ExecutionEntry) void {
+        if (bun.Environment.ci_assert and current.added_in_phase != .preload) bun.assert(current.next == null);
+        current.next = null;
         if (this.last) |last| {
+            if (bun.Environment.ci_assert and last.added_in_phase != .preload) bun.assert(last.next == null);
             last.next = current;
             this.last = current;
         } else {
@@ -103,7 +109,7 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry, _: Config) bun.
         var parent: ?*DescribeScope = current.base.parent;
         while (parent) |p| : (parent = p.base.parent) {
             for (p.beforeEach.items) |entry| {
-                list.append(entry);
+                list.append(bun.create(this.arena, ExecutionEntry, entry.*));
             }
         }
     }
@@ -116,7 +122,7 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry, _: Config) bun.
         var parent: ?*DescribeScope = current.base.parent;
         while (parent) |p| : (parent = p.base.parent) {
             for (p.afterEach.items) |entry| {
-                list.append(entry);
+                list.append(bun.create(this.arena, ExecutionEntry, entry.*));
             }
         }
     }

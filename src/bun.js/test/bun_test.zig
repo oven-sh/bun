@@ -516,7 +516,7 @@ pub const BunTest = struct {
             .collection => {
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
-                var order = Order.init(this.gpa);
+                var order = Order.init(this.gpa, this.arena);
                 defer order.deinit();
 
                 const has_filter = if (this.reporter) |reporter| if (reporter.jest.filter_regex) |_| true else false else false;

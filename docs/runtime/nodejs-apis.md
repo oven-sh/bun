@@ -38,8 +38,6 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟢 Fully implemented. 92% of Node.js's test suite passes.
 
-`fs.glob()`, `fs.globSync()`, and `fs.promises.glob()` accept array of patterns and support `exclude` option to filter results.
-
 ### [`node:http`](https://nodejs.org/api/http.html)
 
 🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
@@ -51,8 +49,6 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ### [`node:os`](https://nodejs.org/api/os.html)
 
 🟢 Fully implemented. 100% of Node.js's test suite passes.
-
-`os.networkInterfaces()` returns a `scopeid` property for IPv6 interfaces (not `scope_id`).
 
 ### [`node:path`](https://nodejs.org/api/path.html)
 
@@ -122,8 +118,6 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟡 Missing `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](https://bun.com/docs/runtime/plugins) in the meantime.
 
-`SourceMap` class and `findSourceMap()` function are implemented for parsing and inspecting sourcemaps.
-
 ### [`node:net`](https://nodejs.org/api/net.html)
 
 🟢 Fully implemented.
@@ -155,8 +149,6 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
 🟡 Core functionality and ES modules are implemented, including `vm.Script`, `vm.createContext`, `vm.runInContext`, `vm.runInNewContext`, `vm.runInThisContext`, `vm.compileFunction`, `vm.isContext`, `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`, and `importModuleDynamically` support. Options like `timeout` and `breakOnSigint` are fully supported. Missing `vm.measureMemory` and some `cachedData` functionality.
-
-`vm.constants.DONT_CONTEXTIFY` is supported for passing to vm functions to make `globalThis` behave like typical `globalThis`.
 
 ### [`node:wasi`](https://nodejs.org/api/wasi.html)
 
@@ -357,12 +349,6 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 ### [`process`](https://nodejs.org/api/process.html)
 
 🟡 Mostly implemented. `process.binding` (internal Node.js bindings some packages rely on) is partially implemented. `process.title` is currently a no-op on macOS & Linux. `getActiveResourcesInfo` `setActiveResourcesInfo`, `getActiveResources` and `setSourceMapsEnabled` are stubs. Newer APIs like `process.loadEnvFile` and `process.getBuiltinModule` are not implemented yet.
-
-`process.features` properties:
-
-- `process.features.typescript` returns `"transform"`
-- `process.features.require_module` returns `true`
-- `process.features.openssl_is_boringssl` returns `true`
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 

@@ -298,9 +298,13 @@ pub const All = struct {
 
         while (this.next(&has_set_now, &now)) |t| {
             switch (t.fire(&now, vm)) {
-                .disarm => {},
+                .disarm => {
+                    // Timer is done, state should already be set to FIRED
+                },
                 .rearm => |next_time| {
+                    // Reinsert the timer with the new time
                     t.next = next_time;
+                    t.state = .PENDING; // Reset state before inserting
                     this.insert(t);
                 },
             }

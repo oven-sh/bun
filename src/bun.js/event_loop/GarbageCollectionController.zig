@@ -158,6 +158,7 @@ pub fn onGCRepeatingTimer(this: *GarbageCollectionController, now: *const bun.ti
         this.updateGCRepeatTimer(.fast);
     }
 
+    // Reschedule for the next interval
     const interval: i32 = if (this.gc_repeating_timer_fast) this.gc_timer_interval else 30_000;
     return .{ .rearm = now.addMs(@intCast(interval)) };
 }

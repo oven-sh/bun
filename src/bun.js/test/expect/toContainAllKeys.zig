@@ -24,27 +24,22 @@ pub fn toContainAllKeys(
 
     const not = this.flags.not;
     var pass = false;
-    var keys: JSValue = .js_undefined;
 
     const count = try expected.getLength(globalObject);
 
-    if (value.isObject()) {
-        keys = try value.keys(globalObject);
-        if (try keys.getLength(globalObject) == count) {
-            var itr = try keys.arrayIterator(globalObject);
-            outer: {
-                while (try itr.next()) |item| {
-                    var i: u32 = 0;
-                    while (i < count) : (i += 1) {
-                        const key = try expected.getIndex(globalObject, i);
-                        if (try item.jestDeepEquals(key, globalObject)) break;
-                    } else break :outer;
-                }
-                pass = true;
+    var keys = try value.keys(globalObject);
+    if (try keys.getLength(globalObject) == count) {
+        var itr = try keys.arrayIterator(globalObject);
+        outer: {
+            while (try itr.next()) |item| {
+                var i: u32 = 0;
+                while (i < count) : (i += 1) {
+                    const key = try expected.getIndex(globalObject, i);
+                    if (try item.jestDeepEquals(key, globalObject)) break;
+                } else break :outer;
             }
+            pass = true;
         }
-    } else {
-        pass = count == 0;
     }
 
     if (not) pass = !pass;
@@ -53,10 +48,10 @@ pub fn toContainAllKeys(
     // handle failure
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
     defer formatter.deinit();
-    const value_fmt = if (keys.isUndefined()) value.toFmt(&formatter) else keys.toFmt(&formatter);
+    const value_fmt = keys.toFmt(&formatter);
     const expected_fmt = expected.toFmt(&formatter);
     if (not) {
-        const received_fmt = if (keys.isUndefined()) value.toFmt(&formatter) else keys.toFmt(&formatter);
+        const received_fmt = keys.toFmt(&formatter);
         const expected_line = "Expected to not contain all keys: <green>{any}<r>\nReceived: <red>{any}<r>\n";
         const fmt = "\n\n" ++ expected_line;
         return this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });

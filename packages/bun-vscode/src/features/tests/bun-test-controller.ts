@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -164,7 +164,6 @@ async function runTestInDebugger({
   args,
   inspectorUrl,
   workspaceFolder,
-  token,
   disposables
 }: RunParams) {
   const debugConfiguration: vscode.DebugConfiguration = {
@@ -198,7 +197,7 @@ async function runTestInDebugger({
 
   run.appendOutput("\n\x1b[33mDebug session started. Please open the debug console to see its output.\x1b[0m\r\n");
 
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<void>((resolve, _reject) => {
     const dispose = vscode.debug.onDidTerminateDebugSession((session) => {
       if (
         activeDebugSession !== undefined &&
@@ -212,28 +211,17 @@ async function runTestInDebugger({
   })
 }
 
-function runParamsToPrintedHeader({
-  command,
-  args
-}: RunParams): string {
-  const printedArgs = `\x1b[34;1m>\x1b[0m \x1b[34;1m${command} ${args.join(" ")}\x1b[2m`;
-  return `${printedArgs}\r\n`
-}
-
 export class BunTestController implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
-  private activeProcesses: Set<ChildProcess> = new Set();
 
   private inspectorToVSCode = new Map<number, vscode.TestItem>();
   private vscodeToInspector = new Map<string, number>();
 
   private testErrors = new Map<number, TestError>();
   private lastStartedTestId: number | null = null;
-  private currentRun: vscode.TestRun | null = null;
 
   private requestedTestIds: Set<string> = new Set();
   private discoveredTestIds: Set<string> = new Set();
-  private executedTestCount: number = 0;
 
 	private watchingTests = new Map<vscode.TestItem | 'ALL', vscode.TestRunProfile | undefined>();
 
@@ -283,7 +271,8 @@ export class BunTestController implements vscode.Disposable {
       (request, token) => this.runHandler(request, token, true),
       true,
       undefined,
-      false, // TODO: Support debug in continuous as well
+      // TODO: Support continuous run for debug profile as well
+      false,
     );
   }
 
@@ -434,7 +423,7 @@ export class BunTestController implements vscode.Disposable {
           const cast = item as vscode.TestItem;
           if (cast.uri?.toString() == uri.toString()) {
             include.push(cast);
-            // TODO: potentially run multiple profiles (run and debug) once watch is enabled for debug
+            // TODO: This is only correct until the debug profile doesn't do continuous run
             profile = thisProfile;
           }
         }
@@ -486,9 +475,6 @@ export class BunTestController implements vscode.Disposable {
           fileUri,
         );
         this.testController.items.add(fileTestItem);
-      }
-      if (!this.currentRun) {
-        fileTestItem.children.replace([]);
       }
       fileTestItem.canResolveChildren = false;
 
@@ -733,7 +719,6 @@ export class BunTestController implements vscode.Disposable {
 
     const cancelRun = () => {
       run.end();
-      this.closeAllActiveProcesses();
       this.disconnectInspector();
     }
     token?.onCancellationRequested(cancelRun)
@@ -807,7 +792,6 @@ export class BunTestController implements vscode.Disposable {
 
     this.requestedTestIds.clear();
     this.discoveredTestIds.clear();
-    this.executedTestCount = 0;
     for (const test of tests) {
       this.requestedTestIds.add(test.id);
     }
@@ -1090,7 +1074,6 @@ export class BunTestController implements vscode.Disposable {
     if (!testItem) return;
 
     const duration = elapsed / 1000000;
-    this.executedTestCount++;
 
     switch (status) {
       case "pass":
@@ -1316,26 +1299,7 @@ export class BunTestController implements vscode.Disposable {
     this.requestedTestIds.clear();
   }
 
-  private closeAllActiveProcesses(): void {
-    for (const p of this.activeProcesses) {
-      p.kill();
-    }
-    this.activeProcesses.clear();
-  }
-
   public dispose(): void {
-    this.closeAllActiveProcesses();
-    // TODO: cleanup through saving the cancellation tokens
-
-    // if (this.signal) {
-    //   this.signal.close();
-    //   this.signal.removeAllListeners();
-    //   this.signal = null;
-    // }
-    // if (this.debugAdapter) {
-    //   this.debugAdapter.close();
-    //   this.debugAdapter = null;
-    // }
     for (const disposable of this.disposables) {
       disposable.dispose();
     }
@@ -1353,7 +1317,7 @@ export class BunTestController implements vscode.Disposable {
       stripAnsi: this.stripAnsi.bind(this),
       processErrorData: this.processErrorData.bind(this),
       escapeTestName: this.escapeTestName.bind(this),
-      shouldUseTestNamePattern: this.shouldFilterByTestName.bind(this),
+      shouldFilterByTestName: this.shouldFilterByTestName.bind(this),
 
       isTestFile: this.isTestFile.bind(this),
       customFilePattern: this.customFilePattern.bind(this),

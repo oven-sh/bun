@@ -590,6 +590,9 @@ pub fn GlobWalker_(
                 // If we've exhausted all pattern components (e.g., pattern was only dots like "../."),
                 // we're done with this work item
                 if (component_idx >= this.walker.patternComponents.items.len) {
+                    if (work_item.fd) |fd| {
+                        this.closeDisallowingCwd(fd);
+                    }
                     this.iter_state = .get_next;
                     return .success;
                 }

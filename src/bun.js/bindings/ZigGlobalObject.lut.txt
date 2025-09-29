@@ -33,13 +33,9 @@
 
   Blob                            GlobalObject::m_JSBlob                               ClassStructure
   Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
-  BuildError                      GlobalObject::m_JSBuildMessage                       ClassStructure
-  BuildMessage                    GlobalObject::m_JSBuildMessage                       ClassStructure
   Crypto                          GlobalObject::m_JSCrypto                             ClassStructure
   HTMLRewriter                    GlobalObject::m_JSHTMLRewriter                       ClassStructure
   Request                         GlobalObject::m_JSRequest                            ClassStructure
-  ResolveError                    GlobalObject::m_JSResolveMessage                     ClassStructure
-  ResolveMessage                  GlobalObject::m_JSResolveMessage                     ClassStructure
   Response                        GlobalObject::m_JSResponse                           ClassStructure
   TextDecoder                     GlobalObject::m_JSTextDecoder                        ClassStructure
 

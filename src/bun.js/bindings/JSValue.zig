@@ -53,6 +53,7 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__getDirectIndex(JSValue, *JSGlobalObject, u32) JSValue;
+
     pub fn getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
     }

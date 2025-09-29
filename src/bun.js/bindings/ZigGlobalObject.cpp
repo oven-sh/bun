@@ -73,6 +73,8 @@
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
 #include "JS2Native.h"
+#include "JSBuildMessage.h"
+#include "JSResolveMessage.h"
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
@@ -824,7 +826,7 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance);
 }
 
-static String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL)
+static String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
 {
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
@@ -844,7 +846,7 @@ static String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& s
     return result;
 }
 
-static JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
+static JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
@@ -2937,6 +2939,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(
                 createMemoryFootprintStructure(
                     init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_resolveMessageStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::createResolveMessageStructure(init.vm, init.owner));
+        });
+
+    m_buildMessageStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::createBuildMessageStructure(init.vm, init.owner));
         });
 
     m_errorConstructorPrepareStackTraceInternalValue.initLater(

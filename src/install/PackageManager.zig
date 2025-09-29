@@ -788,31 +788,30 @@ pub fn init(
     try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
     initializeStore();
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
-        var buf: bun.PathBuffer = undefined;
-        var parts = [_]string{
-            ".npmrc",
-        };
 
-        bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
-            const install_ = bun.handleOom(ctx.allocator.create(Api.BunInstall));
-            install_.* = std.mem.zeroes(Api.BunInstall);
-            ctx.install = install_;
-            break :brk install_;
-        }, env, true, &[_][:0]const u8{ Path.joinAbsStringBufZ(
-            data_dir,
-            &buf,
-            &parts,
-            .auto,
-        ), ".npmrc" });
-    } else {
-        bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
-            const install_ = bun.handleOom(ctx.allocator.create(Api.BunInstall));
-            install_.* = std.mem.zeroes(Api.BunInstall);
-            ctx.install = install_;
-            break :brk install_;
-        }, env, true, &[_][:0]const u8{".npmrc"});
+    // Load .npmrc files: first from HOME (if set), then from current working directory
+    // The CWD .npmrc takes precedence and overrides settings from HOME .npmrc
+    var npmrc_paths_buf: [2][:0]const u8 = undefined;
+    var npmrc_path_count: usize = 0;
+
+    // First, try to load HOME/.npmrc (or XDG_CONFIG_HOME/.npmrc)
+    var home_npmrc_buf: bun.PathBuffer = undefined;
+    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
+        var parts = [_]string{".npmrc"};
+        npmrc_paths_buf[npmrc_path_count] = Path.joinAbsStringBufZ(data_dir, &home_npmrc_buf, &parts, .auto);
+        npmrc_path_count += 1;
     }
+
+    // Always load CWD/.npmrc (current working directory)
+    npmrc_paths_buf[npmrc_path_count] = ".npmrc";
+    npmrc_path_count += 1;
+
+    bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
+        const install_ = bun.handleOom(ctx.allocator.create(Api.BunInstall));
+        install_.* = std.mem.zeroes(Api.BunInstall);
+        ctx.install = install_;
+        break :brk install_;
+    }, env, true, npmrc_paths_buf[0..npmrc_path_count]);
     const cpu_count = bun.getThreadCount();
 
     const options = Options{

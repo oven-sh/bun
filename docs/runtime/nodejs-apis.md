@@ -359,6 +359,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 🟡 Mostly implemented. `process.binding` (internal Node.js bindings some packages rely on) is partially implemented. `process.title` is currently a no-op on macOS & Linux. `getActiveResourcesInfo` `setActiveResourcesInfo`, `getActiveResources` and `setSourceMapsEnabled` are stubs. Newer APIs like `process.loadEnvFile` and `process.getBuiltinModule` are not implemented yet.
 
 `process.features` properties:
+
 - `process.features.typescript` returns `"transform"`
 - `process.features.require_module` returns `true`
 - `process.features.openssl_is_boringssl` returns `true`

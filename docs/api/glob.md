@@ -168,10 +168,11 @@ const files = await promises.glob(["**/*.ts", "**/*.js"]);
 
 // Exclude patterns
 const filtered = await promises.glob("**/*", {
-  exclude: ["node_modules/**", "*.test.*"]
+  exclude: ["node_modules/**", "*.test.*"],
 });
 ```
 
 All three functions (`fs.glob()`, `fs.globSync()`, `fs.promises.glob()`) support:
+
 - Array of patterns as the first argument
 - `exclude`/`ignore` options to filter results

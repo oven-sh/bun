@@ -77,7 +77,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       const result = await ctx.redis.hset(key, {
         name: "Alice",
         age: "25",
-        email: "alice@example.com"
+        email: "alice@example.com",
       });
       expectType<number>(result, "number");
       expect(result).toBe(3);
@@ -92,8 +92,8 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       // Test updating with object (some new, some existing)
       const updateResult = await ctx.redis.hset(key, {
         name: "Alice Smith", // Update existing
-        city: "New York",    // Add new
-        country: "USA"       // Add new
+        city: "New York", // Add new
+        country: "USA", // Add new
       });
       expect(updateResult).toBe(2); // Only 2 new fields added
 
@@ -104,7 +104,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         age: "25",
         email: "alice@example.com",
         city: "New York",
-        country: "USA"
+        country: "USA",
       });
 
       // Test with large object
@@ -125,7 +125,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       const bufferResult = await ctx.redis.hset(bufferKey, {
         text: "plain text",
         binary: Buffer.from("binary data"),
-        number: 42 // Numbers should be coerced to strings
+        number: 42, // Numbers should be coerced to strings
       });
       expect(bufferResult).toBe(3);
 

@@ -177,6 +177,7 @@ async function runTestInDebugger({
     request: "launch",
     runtime: command,
     type: "bun",
+    debugServer: inspectorUrl,
     env: {
       BUN_DEBUG_QUIET_LOGS: "1",
       FORCE_COLOR: "1",
@@ -192,8 +193,8 @@ async function runTestInDebugger({
       testRun: run
     }
   );
-  if (!res) throw new Error("Failed to start debugging session");
-  const activeDebugSession = vscode.debug.activeDebugSession?.id;
+  const activeDebugSession = vscode.debug.activeDebugSession;
+  if (!res || !activeDebugSession) throw new Error("Failed to start debugging session");
 
   run.appendOutput("\n\x1b[33mDebug session started. Please open the debug console to see its output.\x1b[0m\r\n");
 
@@ -201,7 +202,7 @@ async function runTestInDebugger({
     const dispose = vscode.debug.onDidTerminateDebugSession((session) => {
       if (
         activeDebugSession !== undefined &&
-        session.id === activeDebugSession
+        session.id === activeDebugSession.id
       ) {
         run.end();
         resolve()
@@ -433,6 +434,7 @@ export class BunTestController implements vscode.Disposable {
           const cast = item as vscode.TestItem;
           if (cast.uri?.toString() == uri.toString()) {
             include.push(cast);
+            // TODO: potentially run multiple profiles (run and debug) once watch is enabled for debug
             profile = thisProfile;
           }
         }
@@ -811,7 +813,8 @@ export class BunTestController implements vscode.Disposable {
     }
 
     const signal = await createSignal((socket: net.Socket) => {
-      this.handleSocketConnection(socket, run);
+      // We create the signal and the adapter, but in debug mode the debugger initializes it
+      this.handleSocketConnection(socket, run, !isDebug);
     })
 
     const socketPromise = new Promise<void>((resolve, reject) => {
@@ -895,8 +898,17 @@ export class BunTestController implements vscode.Disposable {
     }
   }
 
-  private async handleSocketConnection(socket: net.Socket, run: vscode.TestRun) {
+  private async handleSocketConnection(socket: net.Socket, run: vscode.TestRun, initialize = true) {
     const debugAdapter = new NodeSocketDebugAdapter(socket);
+
+    const log = (eventName: string) => (a: any) => debug.appendLine(`\t[TestController:${eventName}] ${JSON.stringify(a)}`)
+    debugAdapter.on("Adapter.event", log("Adapter.event"))
+    debugAdapter.on("Adapter.initialized", log("Adapter.initialized"))
+    debugAdapter.on("Adapter.request", log("Adapter.request"))
+    debugAdapter.on("Adapter.response", log("Adapter.response"))
+    debugAdapter.on("Inspector.connected", () => debug.appendLine("[TestController:Connected]"))
+    debugAdapter.on("Inspector.request", log("Inspector.request"))
+    debugAdapter.on("Inspector.response", log("Inspector.response"))
 
     debugAdapter.on("TestReporter.found", event => {
       this.handleTestFound(event, run);
@@ -927,18 +939,20 @@ export class BunTestController implements vscode.Disposable {
       throw new Error("Failed to start debug adapter");
     }
 
-    debugAdapter.initialize({
-      adapterID: "bun-vsc-test-runner",
-      pathFormat: "path",
-      linesStartAt1: true,
-      columnsStartAt1: true,
-      supportsConfigurationDoneRequest: false,
-      enableDebugger: false,
-      enableLifecycleAgentReporter: true,
-      enableTestReporter: true,
-      enableConsole: false,
-      sendImmediatePreventExit: false,
-    });
+    // When debugging, the adapter is initialized by the debugger
+    if (initialize)
+      debugAdapter.initialize({
+        adapterID: "bun-vsc-test-runner",
+        pathFormat: "path",
+        linesStartAt1: true,
+        columnsStartAt1: true,
+        supportsConfigurationDoneRequest: false,
+        enableDebugger: false,
+        enableLifecycleAgentReporter: true,
+        enableTestReporter: true,
+        enableConsole: false,
+        sendImmediatePreventExit: false,
+      });
   }
 
   private handleTestFound(params: JSC.TestReporter.FoundEvent, _run: vscode.TestRun): void {

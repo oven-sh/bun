@@ -13,6 +13,8 @@ import {
 } from "../../../bun-debug-adapter-protocol";
 import { getConfig } from "../extension";
 
+export const log = vscode.window.createOutputChannel("Bun - Debugger");
+
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
   internalConsoleOptions: "neverOpen",
@@ -235,7 +237,7 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
       localRoot,
       remoteRoot,
     });
-    await adapter.initialize();
+    await adapter.initialize(session.configuration.debugServer);
     return new vscode.DebugAdapterInlineImplementation(adapter);
   }
 }
@@ -346,9 +348,9 @@ class FileDebugSession extends DebugSession {
     return p;
   }
 
-  async initialize() {
+  async initialize(url?: string) {
     const uniqueId = this.sessionId ?? Math.random().toString(36).slice(2);
-    const url =
+    url = url ||
       process.platform === "win32"
         ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`
         : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
@@ -414,6 +416,20 @@ class FileDebugSession extends DebugSession {
       this.sendRequest(command, args, 5000, () => {}),
     );
 
+    const log2 = (eventName: string) => (a: any) => log.appendLine(`\t[MG:${eventName}] ${JSON.stringify(a)}`)
+    this.adapter.on("Adapter.event", log2("Adapter.event"))
+    this.adapter.on("Adapter.initialized", log2("Adapter.initialized"))
+    this.adapter.on("Adapter.request", log2("Adapter.request"))
+    this.adapter.on("Adapter.response", log2("Adapter.response"))
+    this.adapter.on("Inspector.connected", () => log.appendLine("[MG:Connected]"))
+    this.adapter.on("Inspector.request", log2("Inspector.request"))
+    this.adapter.on("Inspector.response", log2("Inspector.response"))
+    this.adapter.on("TestReporter.found", log2("TestReporter.found"))
+    this.adapter.on("TestReporter.start", log2("TestReporter.start"))
+    this.adapter.on("TestReporter.end", log2("TestReporter.end"))
+    this.adapter.on("LifecycleReporter.error", log2("LifecycleReporter.error"))
+    this.adapter.on("Inspector.error", log2("Inspector.error"))
+
     adapters.set(url, this);
   }
 
@@ -432,6 +448,9 @@ class FileDebugSession extends DebugSession {
         }
       } else if (command === "source" && message.arguments?.source?.path) {
         message.arguments.source.path = this.mapLocalToRemote(message.arguments.source.path);
+      } else if (command === "initialize") {
+        // TODO: Only enable if we are running through the test explorer
+        message.arguments.enableTestReporter = true
       }
 
       this.adapter.emit("Adapter.request", message);

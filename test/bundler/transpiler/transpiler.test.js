@@ -1357,12 +1357,6 @@ console.log(<div {...obj} key="after" />);`),
     expect(transpiler.transformSync("const element3 = <T extends></T>")).toContain("jsxDEV");
   });
 
-  it("distinguishes TSX arrow functions with extends from JSX elements", () => {
-    var transpiler = new Bun.Transpiler({
-      loader: "tsx",
-    });
-  });
-
   it.todo("JSX", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

@@ -246,6 +246,113 @@ While the server is running:
 - `c + Enter` - Clear console
 - `q + Enter` (or Ctrl+C) - Quit server
 
+## Environment Variables
+
+Bun can inline environment variables into your bundled JavaScript code when using HTML entrypoints. This is useful for passing configuration like API endpoints or feature flags to your frontend code.
+
+### Using Environment Variables
+
+In your JavaScript/TypeScript code, reference environment variables using `process.env`:
+
+```ts#app.ts
+console.log(process.env.API_URL);
+console.log(process.env.FEATURE_FLAG);
+```
+
+By default, **no environment variables are inlined**. You must configure which variables to include.
+
+### Configuration
+
+{% codetabs %}
+
+```bash#Dev Server (CLI)
+# Inline all environment variables starting with "PUBLIC_"
+$ bun ./index.html --env="PUBLIC_*"
+
+# Inline all environment variables
+$ bun ./index.html --env="*"
+
+# Disable environment variable inlining (default)
+$ bun ./index.html --env=disable
+```
+
+```toml#bunfig.toml
+[serve.static]
+# Inline all environment variables starting with "BUN_PUBLIC_"
+env = "BUN_PUBLIC_*"
+
+# Or inline all environment variables
+# env = "*"
+
+# Or inline all without a prefix
+# env = "inline"
+
+# Or disable (default)
+# env = "disable"
+```
+
+```bash#bun build (CLI)
+# Inline all environment variables starting with "PUBLIC_"
+$ bun build ./index.html --outdir=dist --env="PUBLIC_*"
+
+# Inline all environment variables
+$ bun build ./index.html --outdir=dist --env="*"
+
+# Load all but don't inline (keeps process.env references)
+$ bun build ./index.html --outdir=dist --env=disable
+```
+
+{% /codetabs %}
+
+### Prefix Matching
+
+When you specify a prefix like `"PUBLIC_*"`, only variables starting with that prefix are inlined:
+
+```bash
+# These will be inlined when using --env="PUBLIC_*"
+export PUBLIC_API_URL="https://api.example.com"
+export PUBLIC_FEATURE_FLAG="true"
+
+# These will NOT be inlined
+export DATABASE_URL="postgres://..."
+export SECRET_KEY="..."
+```
+
+In your code:
+
+```ts
+// Will be replaced with: console.log("https://api.example.com")
+console.log(process.env.PUBLIC_API_URL);
+
+// Will remain as: console.log(process.env.DATABASE_URL)
+console.log(process.env.DATABASE_URL);
+```
+
+### Security Best Practices
+
+- **Never use `--env="*"` in production** unless you're certain no secrets are in your environment
+- **Use a prefix** like `PUBLIC_*` or `BUN_PUBLIC_*` to explicitly mark which variables are safe for the frontend
+- **Secrets should never be inlined** into client-side code where users can inspect them
+- Keep sensitive values like API keys, database URLs, and secrets out of your frontend bundle
+
+### How It Works
+
+When environment variables are inlined, Bun replaces `process.env.VARIABLE_NAME` references with the actual string values during bundling:
+
+```js
+// Before bundling
+console.log(process.env.PUBLIC_API_URL);
+
+// After bundling (with PUBLIC_API_URL="https://api.example.com")
+console.log("https://api.example.com");
+```
+
+This means:
+- ✅ Variables are available at runtime without additional configuration
+- ✅ Dead code elimination can remove unused branches
+- ✅ No runtime overhead reading from `process.env`
+- ❌ Values are baked in at build time and can't change without rebuilding
+
 ## Build for Production
 
 When you're ready to deploy, use `bun build` to create optimized production bundles:

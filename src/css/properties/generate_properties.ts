@@ -273,7 +273,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined) {
             return `.${escapeIdent(name)} => |*v| {
-              if (!v[1].eq(property_id.prefix())) return null;
+              if (v[1] != property_id.prefix()) return null;
               return v[0].longhand(property_id);
             },`;
           }
@@ -292,7 +292,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined)
-            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &rhs.${escapeIdent(name)}[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
+            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &rhs.${escapeIdent(name)}[0]) and v[1] == rhs.${escapeIdent(name)}[1],`;
           return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, v, &rhs.${escapeIdent(name)}),`;
         })
         .join("\n")}
@@ -404,7 +404,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
         ${Object.entries(property_defs).map(([name, meta]) => {
           return `.${escapeIdent(name)} => {
             const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
-            if (allowed_prefixes.contains(pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
+            if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
           }`;
         })}
       }
@@ -430,7 +430,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
       ${Object.entries(property_defs)
         .map(([prop_name, def]) => {
           if (def.valid_prefixes === undefined) return `.${escapeIdent(prop_name)} => {},`;
-          return `.${escapeIdent(prop_name)} => |*p| { p.insert(pre); },`;
+          return `.${escapeIdent(prop_name)} => |*p| { bun.bits.insert(VendorPrefix, p, pre); },`;
         })
         .join("\n")}
       else => {},
@@ -446,7 +446,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
     inline for (bun.meta.EnumFields(PropertyId), std.meta.fields(PropertyId)) |enum_field, union_field| {
       if (enum_field.value == @intFromEnum(lhs.*)) {
         if (comptime union_field.type == css.VendorPrefix) {
-          return @field(lhs, union_field.name).eql(@field(rhs, union_field.name));
+          return @field(lhs, union_field.name) == @field(rhs, union_field.name);
         } else {
           return true;
         }
@@ -493,7 +493,7 @@ function generatePropertyIdImplFromNameAndPrefix(property_defs: Record<string, P
       if (name === "unparsed") return "";
       return `if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "${name}")) {
   const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
-  if (allowed_prefixes.contains(pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
+  if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
 } else `;
     })
     .join("\n");

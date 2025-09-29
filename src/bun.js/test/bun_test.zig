@@ -57,7 +57,7 @@ pub const js_fns = struct {
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, args.callback, .{
                         .has_done_parameter = has_done_parameter,
                         .timeout = args.options.timeout,
-                    }, .{});
+                    }, .{}, .preload);
                     return .js_undefined;
                 };
 
@@ -66,7 +66,7 @@ pub const js_fns = struct {
                         _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, args.callback, .{
                             .has_done_parameter = has_done_parameter,
                             .timeout = args.options.timeout,
-                        }, .{});
+                        }, .{}, .collection);
 
                         return .js_undefined;
                     },
@@ -217,7 +217,7 @@ pub const BunTest = struct {
             group_index: usize,
             entry_data: ?struct {
                 sequence_index: usize,
-                entry_index: usize,
+                entry: *ExecutionEntry,
                 remaining_repeat_count: i64,
             },
         },
@@ -233,11 +233,10 @@ pub const BunTest = struct {
             const entry_data = this.execution.entry_data orelse return null;
             return &group_item.sequences(&buntest.execution)[entry_data.sequence_index];
         }
-        pub fn entry(this: *const RefDataValue, buntest: *BunTest) ?*ExecutionEntry {
+        pub fn entry(this: *const RefDataValue, _: *BunTest) ?*ExecutionEntry {
             if (this.* != .execution) return null;
-            const sequence_item = this.sequence(buntest) orelse return null;
             const entry_data = this.execution.entry_data orelse return null;
-            return sequence_item.entries(&buntest.execution)[entry_data.entry_index];
+            return entry_data.entry;
         }
 
         pub fn format(this: *const RefDataValue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -245,7 +244,7 @@ pub const BunTest = struct {
                 .start => try writer.print("start", .{}),
                 .collection => try writer.print("collection: active_scope={?s}", .{this.collection.active_scope.base.name}),
                 .execution => if (this.execution.entry_data) |entry_data| {
-                    try writer.print("execution: group_index={d},sequence_index={d},entry_index={d},remaining_repeat_count={d}", .{ this.execution.group_index, entry_data.sequence_index, entry_data.entry_index, entry_data.remaining_repeat_count });
+                    try writer.print("execution: group_index={d},sequence_index={d},entry_index={x},remaining_repeat_count={d}", .{ this.execution.group_index, entry_data.sequence_index, @intFromPtr(entry_data.entry), entry_data.remaining_repeat_count });
                 } else try writer.print("execution: group_index={d}", .{this.execution.group_index}),
                 .done => try writer.print("done", .{}),
             }
@@ -299,11 +298,18 @@ pub const BunTest = struct {
                 const active_sequence_index = 0;
                 const sequence = &sequences[active_sequence_index];
 
+                const active_entry = sequence.active_entry orelse break :blk .{
+                    .execution = .{
+                        .group_index = this.execution.group_index,
+                        .entry_data = null, // the sequence is completed.
+                    },
+                };
+
                 break :blk .{ .execution = .{
                     .group_index = this.execution.group_index,
                     .entry_data = .{
                         .sequence_index = active_sequence_index,
-                        .entry_index = sequence.active_index,
+                        .entry = active_entry,
                         .remaining_repeat_count = sequence.remaining_repeat_count,
                     },
                 } };
@@ -817,8 +823,8 @@ pub const DescribeScope = struct {
         try this.entries.append(.{ .describe = child });
         return child;
     }
-    pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base);
+    pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg, phase: ExecutionEntry.AddedInPhase) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base, phase);
         entry.base.propagate(entry.callback != null);
         try this.entries.append(.{ .test_callback = entry });
         return entry;
@@ -832,8 +838,8 @@ pub const DescribeScope = struct {
             .afterAll => return &this.afterAll,
         }
     }
-    pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(gpa, null, callback, cfg, this, base);
+    pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg, phase: ExecutionEntry.AddedInPhase) bun.JSError!*ExecutionEntry {
+        const entry = try ExecutionEntry.create(gpa, null, callback, cfg, this, base, phase);
         try this.getHookEntries(tag).append(entry);
         return entry;
     }
@@ -852,13 +858,20 @@ pub const ExecutionEntry = struct {
     /// '.epoch' = not set
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     timespec: bun.timespec = .epoch,
+    added_in_phase: AddedInPhase,
 
-    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+    next: ?*ExecutionEntry = null,
+    skip_to: ?*ExecutionEntry = null,
+
+    const AddedInPhase = enum { preload, collection, execution };
+
+    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg, phase: AddedInPhase) bun.JSError!*ExecutionEntry {
         const entry = bun.create(gpa, ExecutionEntry, .{
             .base = .init(base, gpa, name_not_owned, parent, cb != null),
             .callback = null,
             .timeout = cfg.timeout,
             .has_done_parameter = cfg.has_done_parameter,
+            .added_in_phase = phase,
         });
 
         if (cb) |c| {

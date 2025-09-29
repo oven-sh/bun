@@ -38,7 +38,6 @@
 groups: []ConcurrentGroup,
 #sequences: []ExecutionSequence,
 /// the entries themselves are owned by BunTest, which owns Execution.
-#entries: []const *ExecutionEntry,
 group_index: usize,
 
 pub const ConcurrentGroup = struct {
@@ -73,8 +72,9 @@ pub const ConcurrentGroup = struct {
     }
 };
 pub const ExecutionSequence = struct {
+    first_entry: ?*ExecutionEntry,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
-    active_index: usize,
+    active_entry: ?*ExecutionEntry,
     test_entry: ?*ExecutionEntry,
     remaining_repeat_count: i64 = 1,
     result: Result = .pending,
@@ -90,16 +90,10 @@ pub const ExecutionSequence = struct {
     } = .not_set,
     maybe_skip: bool = false,
 
-    /// Start index into `Execution.#entries` (inclusive) for this sequence.
-    #entries_start: usize,
-    /// End index into `Execution.#entries` (exclusive) for this sequence.
-    #entries_end: usize,
-
-    pub fn init(start: usize, end: usize, test_entry: ?*ExecutionEntry) ExecutionSequence {
+    pub fn init(first_entry: ?*ExecutionEntry, test_entry: ?*ExecutionEntry) ExecutionSequence {
         return .{
-            .#entries_start = start,
-            .#entries_end = end,
-            .active_index = 0,
+            .first_entry = first_entry,
+            .active_entry = first_entry,
             .test_entry = test_entry,
         };
     }
@@ -107,15 +101,6 @@ pub const ExecutionSequence = struct {
     fn entryMode(this: ExecutionSequence) bun_test.ScopeMode {
         if (this.test_entry) |entry| return entry.base.mode;
         return .normal;
-    }
-
-    pub fn entries(this: ExecutionSequence, execution: *Execution) []const *ExecutionEntry {
-        return execution.#entries[this.#entries_start..this.#entries_end];
-    }
-    pub fn activeEntry(this: ExecutionSequence, execution: *Execution) ?*ExecutionEntry {
-        const entries_value = this.entries(execution);
-        if (this.active_index >= entries_value.len) return null;
-        return entries_value[this.active_index];
     }
 };
 pub const Result = enum {
@@ -166,26 +151,21 @@ pub fn init(_: std.mem.Allocator) Execution {
     return .{
         .groups = &.{},
         .#sequences = &.{},
-        .#entries = &.{},
         .group_index = 0,
     };
 }
 pub fn deinit(this: *Execution) void {
     this.bunTest().gpa.free(this.groups);
     this.bunTest().gpa.free(this.#sequences);
-    this.bunTest().gpa.free(this.#entries);
 }
 pub fn loadFromOrder(this: *Execution, order: *Order) bun.JSError!void {
     bun.assert(this.groups.len == 0);
     bun.assert(this.#sequences.len == 0);
-    bun.assert(this.#entries.len == 0);
     var alloc_safety = bun.safety.CheckedAllocator.init(this.bunTest().gpa);
     alloc_safety.assertEq(order.groups.allocator);
     alloc_safety.assertEq(order.sequences.allocator);
-    alloc_safety.assertEq(order.entries.allocator);
     this.groups = try order.groups.toOwnedSlice();
     this.#sequences = try order.sequences.toOwnedSlice();
-    this.#entries = try order.entries.toOwnedSlice();
 }
 
 fn bunTest(this: *Execution) *BunTest {
@@ -203,7 +183,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
         const sequences = current_group.sequences(this);
         if (sequences.len == 1) {
             const sequence = sequences[0];
-            if (sequence.activeEntry(this)) |entry| {
+            if (sequence.active_entry) |entry| {
                 const now = bun.timespec.now();
                 if (entry.timespec.order(&now) == .lt) {
                     globalThis.requestTermination();
@@ -243,7 +223,7 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
             };
             const sequence_index = data.execution.entry_data.?.sequence_index;
 
-            bun.assert(sequence.active_index < sequence.entries(this).len);
+            if (bun.Environment.ci_assert) bun.assert(sequence.active_entry != null);
             this.advanceSequence(sequence, group);
 
             const sequence_result = try stepSequence(buntest_strong, globalThis, group, sequence_index, &now);
@@ -357,7 +337,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
 
     const sequence = &group.sequences(this)[sequence_index];
     if (sequence.executing) {
-        const active_entry = sequence.activeEntry(this) orelse {
+        const active_entry = sequence.active_entry orelse {
             bun.debugAssert(false); // sequence is executing with no active entry
             return .{ .execute = .{} };
         };
@@ -369,13 +349,13 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
         return .{ .execute = .{ .timeout = active_entry.timespec } };
     }
 
-    const next_item = sequence.activeEntry(this) orelse {
+    const next_item = sequence.active_entry orelse {
         bun.debugAssert(sequence.remaining_repeat_count == 0); // repeat count is decremented when the sequence is advanced, this should only happen if the sequence were empty. which should be impossible.
         groupLog.log("runOne: no repeats left; wait for group completion.", .{});
         return .done;
     };
     sequence.executing = true;
-    if (sequence.active_index == 0) {
+    if (next_item == sequence.first_entry) {
         this.onSequenceStarted(sequence);
     }
     this.onEntryStarted(next_item);
@@ -388,7 +368,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
                 .group_index = this.group_index,
                 .entry_data = .{
                     .sequence_index = sequence_index,
-                    .entry_index = sequence.active_index,
+                    .entry = next_item,
                     .remaining_repeat_count = sequence.remaining_repeat_count,
                 },
             },
@@ -416,7 +396,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
                 sequence.result = .skipped_because_label;
             },
             else => {
-                groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {d})", .{ sequence_index, sequence.active_index });
+                groupLog.log("runSequence: no callback for sequence_index {d} (entry_index {x})", .{ sequence_index, @intFromPtr(sequence.active_entry) });
                 bun.debugAssert(false);
             },
         }
@@ -458,7 +438,7 @@ fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunTest.
         groupLog.log("runOneCompleted: the data is for a previous repeat count (outdated)", .{});
         return null;
     }
-    if (sequence.active_index != data.execution.entry_data.?.entry_index) {
+    if (sequence.active_entry != data.execution.entry_data.?.entry) {
         groupLog.log("runOneCompleted: the data is for a different sequence index (outdated)", .{});
         return null;
     }
@@ -470,27 +450,21 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
     defer groupLog.end();
 
     bun.assert(sequence.executing);
-    if (sequence.activeEntry(this)) |entry| {
+    if (sequence.active_entry) |entry| {
         this.onEntryCompleted(entry);
-    } else {
-        bun.debugAssert(false); // sequence is executing with no active entry?
-    }
-    sequence.executing = false;
-    if (sequence.maybe_skip) {
-        sequence.maybe_skip = false;
-        const first_aftereach_index = for (sequence.entries(this), 0..) |entry, index| {
-            if (entry == sequence.test_entry) break index + 1;
-        } else sequence.entries(this).len;
-        if (sequence.active_index < first_aftereach_index) {
-            sequence.active_index = first_aftereach_index;
+
+        sequence.executing = false;
+        if (sequence.maybe_skip) {
+            sequence.maybe_skip = false;
+            sequence.active_entry = entry.skip_to;
         } else {
-            sequence.active_index = sequence.entries(this).len;
+            sequence.active_entry = entry.next;
         }
     } else {
-        sequence.active_index += 1;
+        if (bun.Environment.ci_assert) bun.assert(false); // can't call advanceSequence on a completed sequence
     }
 
-    if (sequence.activeEntry(this) == null) {
+    if (sequence.active_entry == null) {
         // just completed the sequence
         this.onSequenceCompleted(sequence);
         sequence.remaining_repeat_count -= 1;
@@ -561,10 +535,9 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
             else => .pass,
         };
     }
-    const entries = sequence.entries(this);
-    if (entries.len > 0 and (sequence.test_entry != null or sequence.result != .pass)) {
-        test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse entries[0], elapsed_ns);
-    }
+    if (sequence.first_entry) |first_entry| if (sequence.test_entry != null or sequence.result != .pass) {
+        test_command.CommandLineReporter.handleTestCompleted(this.bunTest(), sequence, sequence.test_entry orelse first_entry, elapsed_ns);
+    };
 
     if (sequence.test_entry) |entry| {
         if (entry.base.test_id_for_debugger != 0) {
@@ -593,13 +566,27 @@ fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
 }
 pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     bun.assert(!sequence.executing);
+    {
+        // reset the entries
+        var current_entry = sequence.first_entry;
+        while (current_entry) |entry| : (current_entry = entry.next) {
+            // remove entries that were added in the execution phase
+            while (entry.next != null and entry.next.?.added_in_phase == .execution) {
+                entry.next = entry.next.?.next;
+                // can't deinit the removed entry because it may still be referenced in a RefDataValue
+            }
+            entry.timespec = .epoch;
+        }
+    }
+
     if (sequence.result.isPass(.pending_is_pass)) {
         // passed or pending; run again
-        sequence.* = .init(sequence.#entries_start, sequence.#entries_end, sequence.test_entry);
+        sequence.* = .init(sequence.first_entry, sequence.test_entry);
     } else {
         // already failed or skipped; don't run again
-        sequence.active_index = sequence.entries(this).len;
+        sequence.active_entry = null;
     }
+    _ = this;
 }
 
 pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.RefDataValue) bun_test.HandleUncaughtExceptionResult {
@@ -612,7 +599,7 @@ pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.Ref
     _ = group;
 
     sequence.maybe_skip = true;
-    if (sequence.activeEntry(this) != sequence.test_entry) {
+    if (sequence.active_entry != sequence.test_entry) {
         // executing hook
         if (sequence.result == .pending) sequence.result = .fail;
         return .show_handled_error;

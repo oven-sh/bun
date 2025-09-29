@@ -3537,6 +3537,16 @@ describe("malformed function definition does not crash due to invalid scope init
       }
     }
   });
+
+  it("handles invalid async generator functions", async () => {
+    const tests = ["async function* =,(){}"];
+    for (const code of tests) {
+      for (const loader of ["js", "ts"]) {
+        const transpiler = new Bun.Transpiler({ loader });
+        expect(() => transpiler.transformSync(code)).toThrow('Expected identifier but found "="');
+      }
+    }
+  });
 });
 
 it("does not crash with 9 comments and typescript type skipping", () => {

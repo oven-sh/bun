@@ -32,6 +32,7 @@ It creates:
 - a `tsconfig.json` file or a `jsconfig.json` file, depending if the entry point is a TypeScript file or not
 - an entry point which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
 - a `README.md` file
+- a `CLAUDE.md` file when Claude CLI is detected (disable with `BUN_AGENT_RULE_DISABLED` or `CLAUDE_CODE_AGENT_RULE_DISABLED` env vars)
 
 If you pass `-y` or `--yes`, it will assume you want to continue without asking questions.
 

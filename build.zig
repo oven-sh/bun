@@ -600,6 +600,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     obj.root_module.strip = false; // stripped at the end
     // https://github.com/ziglang/zig/issues/17430
     obj.root_module.pic = true;
+    obj.no_link_obj = true;
 
     // Object options
     obj.use_llvm = !opts.no_llvm;

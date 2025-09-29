@@ -20,6 +20,10 @@
 
 const GarbageCollectionController = @This();
 
+// Timer interval constants
+pub const GC_SINGLE_SHOT_DELAY_MS: i32 = 16;
+pub const GC_SLOW_INTERVAL_MS: i32 = 30_000;
+
 gc_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .GCTimer,
     .next = .epoch,
@@ -74,19 +78,25 @@ pub fn deinit(this: *GarbageCollectionController) void {
     if (this.gc_timer.state == .ACTIVE) {
         vm.timer.remove(&this.gc_timer);
     }
+    // Clear local state to avoid stale reads post-teardown
+    this.gc_timer.state = .PENDING;
+    this.gc_timer.next = .epoch;
+
     if (this.gc_repeating_timer.state == .ACTIVE) {
         vm.timer.remove(&this.gc_repeating_timer);
     }
+    // Clear local state to avoid stale reads post-teardown
+    this.gc_repeating_timer.state = .PENDING;
+    this.gc_repeating_timer.next = .epoch;
 }
 
 pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
     this.gc_timer_state = .scheduled;
     const vm = this.bunVM();
     const now = bun.timespec.now();
-    const next_time = now.addMs(16);
-    this.gc_timer.next = next_time;
+    this.gc_timer.next = now.addMs(GC_SINGLE_SHOT_DELAY_MS);
     if (this.gc_timer.state == .ACTIVE) {
-        vm.timer.update(&this.gc_timer, &next_time);
+        vm.timer.update(&this.gc_timer, &this.gc_timer.next);
     } else {
         vm.timer.insert(&this.gc_timer);
     }
@@ -121,17 +131,17 @@ pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting:
     if (setting == .fast and !this.gc_repeating_timer_fast) {
         this.gc_repeating_timer_fast = true;
         const now = bun.timespec.now();
-        const next_time = now.addMs(@intCast(this.gc_timer_interval));
+        this.gc_repeating_timer.next = now.addMs(@intCast(this.gc_timer_interval));
         if (this.gc_repeating_timer.state == .ACTIVE) {
-            vm.timer.update(&this.gc_repeating_timer, &next_time);
+            vm.timer.update(&this.gc_repeating_timer, &this.gc_repeating_timer.next);
         }
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
     } else if (setting == .slow and this.gc_repeating_timer_fast) {
         this.gc_repeating_timer_fast = false;
         const now = bun.timespec.now();
-        const next_time = now.addMs(30_000);
+        this.gc_repeating_timer.next = now.addMs(GC_SLOW_INTERVAL_MS);
         if (this.gc_repeating_timer.state == .ACTIVE) {
-            vm.timer.update(&this.gc_repeating_timer, &next_time);
+            vm.timer.update(&this.gc_repeating_timer, &this.gc_repeating_timer.next);
         }
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
     }
@@ -151,7 +161,7 @@ pub fn onGCRepeatingTimer(this: *GarbageCollectionController, now: *const bun.ti
         if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
             // make the timer interval longer
             this.updateGCRepeatTimer(.slow);
-            return .{ .rearm = now.addMs(30_000) };
+            return .{ .rearm = now.addMs(GC_SLOW_INTERVAL_MS) };
         }
     } else {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
@@ -159,7 +169,7 @@ pub fn onGCRepeatingTimer(this: *GarbageCollectionController, now: *const bun.ti
     }
 
     // Reschedule for the next interval
-    const interval: i32 = if (this.gc_repeating_timer_fast) this.gc_timer_interval else 30_000;
+    const interval: i32 = if (this.gc_repeating_timer_fast) this.gc_timer_interval else GC_SLOW_INTERVAL_MS;
     return .{ .rearm = now.addMs(@intCast(interval)) };
 }
 

@@ -573,6 +573,31 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
             }
         },
         .jsonb, .json => {
+            // TODO: write a proper PostgresJSON parser to handle this
+            // JSON and JSONB can contain arrays so we need to parse it as a json array first to check if it's a valid json array
+            if (bytes.len >= 4) {
+                if (!bun.strings.startsWith(bytes, "\"{") or !bun.strings.endsWith(bytes, "}\"")) {
+                    // if dont starts with "{" or ends with "}" we dont try to parse it as a json array
+                    return SQLDataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                }
+
+                // we need to remove quotes from the start and end if they exist
+                const array_slice = bytes[1 .. bytes.len - 1];
+                var stack_buffer = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+                const allocator = stack_buffer.get();
+
+                const unescaped_buffer = allocator.alloc(u8, array_slice.len) catch return error.OutOfMemory;
+                defer allocator.free(unescaped_buffer);
+                const unescaped = unescapePostgresString(array_slice, unescaped_buffer) catch {
+                    // if dont need to unescape, return the json string, arrays are always escaped
+                    return SQLDataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                };
+                return parseArray(unescaped, bigint, .json_array, globalObject, null, false) catch {
+                    // if it's not a valid json array, we can return the json string, if is not valid json will return as a string
+                    return SQLDataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                };
+            }
+            // 3 bytes or less is safely a json not a json array
             return SQLDataCell{ .tag = .json, .value = .{ .json = if (bytes.len > 0) String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
         },
         .bool => {

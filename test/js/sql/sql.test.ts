@@ -196,9 +196,7 @@ if (isDockerEnabled()) {
         const [{ id, json }] = await sql`select * from ${sql(random_name)}`;
 
         expect(id).toBe(1);
-        // TODO: we should properly parse the jsonb values here but we are returning the string as is
-        // internally we are probably trying to JSON.parse the string but it fails because of the array format is different
-        expect(json).toEqual('{"\\"a\\"","\\"b\\""}');
+        expect(json).toEqual(["a", "b"]);
       });
       test("should be able to insert array in fields", async () => {
         await using sql = postgres(options);
@@ -211,9 +209,7 @@ if (isDockerEnabled()) {
         await sql`insert into ${sql(random_name)} (json) values (${["a", "b"]})`;
         const [{ id, json }] = await sql`select * from ${sql(random_name)}`;
         expect(id).toBe(1);
-        // TODO: we should properly parse the jsonb values here
-        // internally we are probably trying to JSON.parse the string but it fails because of the array format is different
-        expect(json).toEqual('{"\\"a\\"","\\"b\\""}');
+        expect(json).toEqual(["a", "b"]);
       });
 
       test("sql.array should support TEXT arrays", async () => {
@@ -1027,10 +1023,10 @@ if (isDockerEnabled()) {
     //   expect(result[0].x[2].getTime()).toBe(now.getTime());
     // });
 
-    test.todo("Array of Box", async () => {
+    test("Array of Box", async () => {
       const result = await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`;
-      console.log(result);
-      expect(result[0].x.join(";")).toBe("(1,2);(3,4);(4,5);(6,7)");
+      // box type will reorder the values and this is corrects
+      expect(result[0].x).toEqual(["(3,4),(1,2)", "(6,7),(4,5)"]);
     });
 
     // t('Nested array n2', async() =>

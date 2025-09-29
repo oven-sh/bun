@@ -348,6 +348,7 @@ console.log("https://api.example.com");
 ```
 
 This means:
+
 - ✅ Variables are available at runtime without additional configuration
 - ✅ Dead code elimination can remove unused branches
 - ✅ No runtime overhead reading from `process.env`

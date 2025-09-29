@@ -166,6 +166,14 @@ will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
 Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
 
+### `--workspaces`
+
+Run scripts across all workspaces in the monorepo:
+
+```bash
+bun run --workspaces test
+```
+
 ## `bun run -` to pipe code from stdin
 
 `bun run -` lets you read JavaScript, TypeScript, TSX, or JSX from stdin and execute it without writing to a temporary file first.

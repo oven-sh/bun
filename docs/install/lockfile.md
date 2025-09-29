@@ -47,6 +47,11 @@ Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. Exist
 
 More information about the new lockfile format can be found on [our blogpost](https://bun.com/blog/bun-lock-text-lockfile).
 
-#### Automatic yarn.lock migration
+#### Automatic lockfile migration
 
-When running `bun install` in a project with a `yarn.lock` (v1) file but no `bun.lock`, Bun automatically migrates the lockfile to `bun.lock`. The original `yarn.lock` is preserved and can be removed manually after verification.
+When running `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:
+- `yarn.lock` (v1)
+- `package-lock.json` (npm)
+- `pnpm-lock.yaml` (pnpm)
+
+The original lockfile is preserved and can be removed manually after verification.

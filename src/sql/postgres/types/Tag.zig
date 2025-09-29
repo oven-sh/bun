@@ -342,8 +342,9 @@ pub const Tag = enum(short) {
                 return .int8;
             }
 
-            if (tag.isArrayLike() and try value.getLength(globalObject) > 0) {
-                return Tag.fromJS(globalObject, try value.getIndex(globalObject, 0));
+            if (tag.isArrayLike()) {
+                // We will JSON.stringify anything else.
+                return .json;
             }
 
             // Ban these types:

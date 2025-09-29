@@ -38,16 +38,15 @@ pub export fn Bun__errorInstance__finalize(ptr: ?*anyopaque) void {
     }
 }
 
-const BuildMessage = @import("./BuildMessage.zig").BuildMessage;
-const ResolveMessage = @import("./ResolveMessage.zig").ResolveMessage;
-
-const bun = @import("bun");
-const TaggedPointerUnion = bun.TaggedPointerUnion;
-
-const jsc = bun.jsc;
-
 pub fn fromJS(value: jsc.JSValue) ?BunErrorData {
     const ptr = JSC__JSErrorInstance__bunErrorData(value);
     if (ptr == null) return null;
     return BunErrorData.from(ptr);
 }
+
+const BuildMessage = @import("./BuildMessage.zig").BuildMessage;
+const ResolveMessage = @import("./ResolveMessage.zig").ResolveMessage;
+
+const bun = @import("bun");
+const TaggedPointerUnion = bun.TaggedPointerUnion;
+const jsc = bun.jsc;

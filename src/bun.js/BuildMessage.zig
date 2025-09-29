@@ -247,6 +247,7 @@ pub const BuildMessage = struct {
 
 const string = []const u8;
 
+const BunErrorData = @import("./BunErrorData.zig");
 const std = @import("std");
 const Resolver = @import("../resolver//resolver.zig").Resolver;
 
@@ -258,5 +259,3 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
-
-const BunErrorData = @import("./BunErrorData.zig");

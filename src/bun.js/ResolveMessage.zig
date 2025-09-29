@@ -312,6 +312,7 @@ pub const ResolveMessage = struct {
 
 const string = []const u8;
 
+const BunErrorData = @import("./BunErrorData.zig");
 const Resolver = @import("../resolver//resolver.zig");
 const std = @import("std");
 
@@ -324,4 +325,3 @@ const strings = bun.strings;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const ZigString = jsc.ZigString;
-const BunErrorData = @import("./BunErrorData.zig");

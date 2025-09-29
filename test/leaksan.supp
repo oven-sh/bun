@@ -1,3 +1,4 @@
+leak:bun.js.api.server.ServerAllConnectionsClosedTask.schedule
 leak:bunfig.Bunfig.parse__anon
 leak:resolver.resolver.Resolver.parsePackageJSON
 leak:resolver.package_json.PackageJSON.parse__anon

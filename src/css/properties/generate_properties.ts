@@ -396,15 +396,28 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
         ([prop_name, def], i) => `${escapeIdent(prop_name)}${i === Object.keys(property_defs).length - 1 ? "" : ", "}`,
       )
       .join("")} };
+
+    const PrefixMap = comptime blk: {
+      @setEvalBranchQuota(${Object.keys(property_defs).length * 10});
+      break :blk std.enums.EnumMap(Enum, VendorPrefix).init(.{
+        ${Object.entries(property_defs).map(([name, meta]) => {
+          return `.${escapeIdent(name)} = ${constructVendorPrefix(meta.valid_prefixes)},`;
+        }).join("\n        ")}
+      });
+    };
+
     const Map = comptime bun.ComptimeEnumMap(Enum);
     if (Map.getASCIIICaseInsensitive(name1)) |prop| {
-      switch (prop) {
-        ${Object.entries(property_defs).map(([name, meta]) => {
-          return `.${escapeIdent(name)} => {
-            const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
-            if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
-          }`;
-        })}
+      const allowed_prefixes = PrefixMap.get(prop) orelse return null;
+      if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) {
+        return switch (prop) {
+          ${Object.entries(property_defs).map(([name, meta]) => {
+            if (meta.valid_prefixes === undefined) {
+              return `.${escapeIdent(name)} => .${escapeIdent(name)},`;
+            }
+            return `.${escapeIdent(name)} => .{ .${escapeIdent(name)} = pre },`;
+          }).join("\n          ")}
+        };
       }
     }
 
@@ -426,12 +439,13 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
     return switch (this.*) {
       ${Object.entries(property_defs)
-        .map(([prop_name, def]) => {
-          if (def.valid_prefixes === undefined) return `.${escapeIdent(prop_name)} => {},`;
-          return `.${escapeIdent(prop_name)} => |*p| { bun.bits.insert(VendorPrefix, p, pre); },`;
-        })
+        .filter(([_, def]) => def.valid_prefixes !== undefined)
+        .map(([prop_name]) => `.${escapeIdent(prop_name)} => |*p| { bun.bits.insert(VendorPrefix, p, pre); },`)
         .join("\n")}
-      else => {},
+      ${Object.entries(property_defs)
+        .filter(([_, def]) => def.valid_prefixes === undefined)
+        .map(([prop_name]) => `.${escapeIdent(prop_name)}`)
+        .join(", ")}, .all, .unparsed, .custom => {},
     };
   }
 

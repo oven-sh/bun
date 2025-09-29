@@ -7931,993 +7931,511 @@ pub const PropertyId = union(PropertyIdTag) {
 
     pub fn fromNameAndPrefix(name1: []const u8, pre: VendorPrefix) ?PropertyId {
         const Enum = enum { @"background-color", @"background-image", @"background-position-x", @"background-position-y", @"background-position", @"background-size", @"background-repeat", @"background-attachment", @"background-clip", @"background-origin", background, @"box-shadow", opacity, color, display, visibility, width, height, @"min-width", @"min-height", @"max-width", @"max-height", @"block-size", @"inline-size", @"min-block-size", @"min-inline-size", @"max-block-size", @"max-inline-size", @"box-sizing", @"aspect-ratio", overflow, @"overflow-x", @"overflow-y", @"text-overflow", position, top, bottom, left, right, @"inset-block-start", @"inset-block-end", @"inset-inline-start", @"inset-inline-end", @"inset-block", @"inset-inline", inset, @"border-spacing", @"border-top-color", @"border-bottom-color", @"border-left-color", @"border-right-color", @"border-block-start-color", @"border-block-end-color", @"border-inline-start-color", @"border-inline-end-color", @"border-top-style", @"border-bottom-style", @"border-left-style", @"border-right-style", @"border-block-start-style", @"border-block-end-style", @"border-inline-start-style", @"border-inline-end-style", @"border-top-width", @"border-bottom-width", @"border-left-width", @"border-right-width", @"border-block-start-width", @"border-block-end-width", @"border-inline-start-width", @"border-inline-end-width", @"border-top-left-radius", @"border-top-right-radius", @"border-bottom-left-radius", @"border-bottom-right-radius", @"border-start-start-radius", @"border-start-end-radius", @"border-end-start-radius", @"border-end-end-radius", @"border-radius", @"border-image-source", @"border-image-outset", @"border-image-repeat", @"border-image-width", @"border-image-slice", @"border-image", @"border-color", @"border-style", @"border-width", @"border-block-color", @"border-block-style", @"border-block-width", @"border-inline-color", @"border-inline-style", @"border-inline-width", border, @"border-top", @"border-bottom", @"border-left", @"border-right", @"border-block", @"border-block-start", @"border-block-end", @"border-inline", @"border-inline-start", @"border-inline-end", outline, @"outline-color", @"outline-style", @"outline-width", @"flex-direction", @"flex-wrap", @"flex-flow", @"flex-grow", @"flex-shrink", @"flex-basis", flex, order, @"align-content", @"justify-content", @"place-content", @"align-self", @"justify-self", @"place-self", @"align-items", @"justify-items", @"place-items", @"row-gap", @"column-gap", gap, @"box-orient", @"box-direction", @"box-ordinal-group", @"box-align", @"box-flex", @"box-flex-group", @"box-pack", @"box-lines", @"flex-pack", @"flex-order", @"flex-align", @"flex-item-align", @"flex-line-pack", @"flex-positive", @"flex-negative", @"flex-preferred-size", @"margin-top", @"margin-bottom", @"margin-left", @"margin-right", @"margin-block-start", @"margin-block-end", @"margin-inline-start", @"margin-inline-end", @"margin-block", @"margin-inline", margin, @"padding-top", @"padding-bottom", @"padding-left", @"padding-right", @"padding-block-start", @"padding-block-end", @"padding-inline-start", @"padding-inline-end", @"padding-block", @"padding-inline", padding, @"scroll-margin-top", @"scroll-margin-bottom", @"scroll-margin-left", @"scroll-margin-right", @"scroll-margin-block-start", @"scroll-margin-block-end", @"scroll-margin-inline-start", @"scroll-margin-inline-end", @"scroll-margin-block", @"scroll-margin-inline", @"scroll-margin", @"scroll-padding-top", @"scroll-padding-bottom", @"scroll-padding-left", @"scroll-padding-right", @"scroll-padding-block-start", @"scroll-padding-block-end", @"scroll-padding-inline-start", @"scroll-padding-inline-end", @"scroll-padding-block", @"scroll-padding-inline", @"scroll-padding", @"font-weight", @"font-size", @"font-stretch", @"font-family", @"font-style", @"font-variant-caps", @"line-height", font, @"transition-property", @"transition-duration", @"transition-delay", @"transition-timing-function", transition, transform, @"transform-origin", @"transform-style", @"transform-box", @"backface-visibility", perspective, @"perspective-origin", translate, rotate, scale, @"text-decoration-color", @"text-emphasis-color", @"text-shadow", direction, composes, @"mask-image", @"mask-mode", @"mask-repeat", @"mask-position-x", @"mask-position-y", @"mask-position", @"mask-clip", @"mask-origin", @"mask-size", @"mask-composite", @"mask-type", mask, @"mask-border-source", @"mask-border-mode", @"mask-border-slice", @"mask-border-width", @"mask-border-outset", @"mask-border-repeat", @"mask-border", @"-webkit-mask-composite", @"mask-source-type", @"mask-box-image", @"mask-box-image-source", @"mask-box-image-slice", @"mask-box-image-width", @"mask-box-image-outset", @"mask-box-image-repeat", @"color-scheme" };
+
+        const PrefixMap = comptime blk: {
+            @setEvalBranchQuota(2460);
+            break :blk std.enums.EnumMap(Enum, VendorPrefix).init(.{
+                .@"background-color" = VendorPrefix{ .none = true },
+                .@"background-image" = VendorPrefix{ .none = true },
+                .@"background-position-x" = VendorPrefix{ .none = true },
+                .@"background-position-y" = VendorPrefix{ .none = true },
+                .@"background-position" = VendorPrefix{ .none = true },
+                .@"background-size" = VendorPrefix{ .none = true },
+                .@"background-repeat" = VendorPrefix{ .none = true },
+                .@"background-attachment" = VendorPrefix{ .none = true },
+                .@"background-clip" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"background-origin" = VendorPrefix{ .none = true },
+                .background = VendorPrefix{ .none = true },
+                .@"box-shadow" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .opacity = VendorPrefix{ .none = true },
+                .color = VendorPrefix{ .none = true },
+                .display = VendorPrefix{ .none = true },
+                .visibility = VendorPrefix{ .none = true },
+                .width = VendorPrefix{ .none = true },
+                .height = VendorPrefix{ .none = true },
+                .@"min-width" = VendorPrefix{ .none = true },
+                .@"min-height" = VendorPrefix{ .none = true },
+                .@"max-width" = VendorPrefix{ .none = true },
+                .@"max-height" = VendorPrefix{ .none = true },
+                .@"block-size" = VendorPrefix{ .none = true },
+                .@"inline-size" = VendorPrefix{ .none = true },
+                .@"min-block-size" = VendorPrefix{ .none = true },
+                .@"min-inline-size" = VendorPrefix{ .none = true },
+                .@"max-block-size" = VendorPrefix{ .none = true },
+                .@"max-inline-size" = VendorPrefix{ .none = true },
+                .@"box-sizing" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"aspect-ratio" = VendorPrefix{ .none = true },
+                .overflow = VendorPrefix{ .none = true },
+                .@"overflow-x" = VendorPrefix{ .none = true },
+                .@"overflow-y" = VendorPrefix{ .none = true },
+                .@"text-overflow" = VendorPrefix{ .none = true, .o = true },
+                .position = VendorPrefix{ .none = true },
+                .top = VendorPrefix{ .none = true },
+                .bottom = VendorPrefix{ .none = true },
+                .left = VendorPrefix{ .none = true },
+                .right = VendorPrefix{ .none = true },
+                .@"inset-block-start" = VendorPrefix{ .none = true },
+                .@"inset-block-end" = VendorPrefix{ .none = true },
+                .@"inset-inline-start" = VendorPrefix{ .none = true },
+                .@"inset-inline-end" = VendorPrefix{ .none = true },
+                .@"inset-block" = VendorPrefix{ .none = true },
+                .@"inset-inline" = VendorPrefix{ .none = true },
+                .inset = VendorPrefix{ .none = true },
+                .@"border-spacing" = VendorPrefix{ .none = true },
+                .@"border-top-color" = VendorPrefix{ .none = true },
+                .@"border-bottom-color" = VendorPrefix{ .none = true },
+                .@"border-left-color" = VendorPrefix{ .none = true },
+                .@"border-right-color" = VendorPrefix{ .none = true },
+                .@"border-block-start-color" = VendorPrefix{ .none = true },
+                .@"border-block-end-color" = VendorPrefix{ .none = true },
+                .@"border-inline-start-color" = VendorPrefix{ .none = true },
+                .@"border-inline-end-color" = VendorPrefix{ .none = true },
+                .@"border-top-style" = VendorPrefix{ .none = true },
+                .@"border-bottom-style" = VendorPrefix{ .none = true },
+                .@"border-left-style" = VendorPrefix{ .none = true },
+                .@"border-right-style" = VendorPrefix{ .none = true },
+                .@"border-block-start-style" = VendorPrefix{ .none = true },
+                .@"border-block-end-style" = VendorPrefix{ .none = true },
+                .@"border-inline-start-style" = VendorPrefix{ .none = true },
+                .@"border-inline-end-style" = VendorPrefix{ .none = true },
+                .@"border-top-width" = VendorPrefix{ .none = true },
+                .@"border-bottom-width" = VendorPrefix{ .none = true },
+                .@"border-left-width" = VendorPrefix{ .none = true },
+                .@"border-right-width" = VendorPrefix{ .none = true },
+                .@"border-block-start-width" = VendorPrefix{ .none = true },
+                .@"border-block-end-width" = VendorPrefix{ .none = true },
+                .@"border-inline-start-width" = VendorPrefix{ .none = true },
+                .@"border-inline-end-width" = VendorPrefix{ .none = true },
+                .@"border-top-left-radius" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"border-top-right-radius" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"border-bottom-left-radius" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"border-bottom-right-radius" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"border-start-start-radius" = VendorPrefix{ .none = true },
+                .@"border-start-end-radius" = VendorPrefix{ .none = true },
+                .@"border-end-start-radius" = VendorPrefix{ .none = true },
+                .@"border-end-end-radius" = VendorPrefix{ .none = true },
+                .@"border-radius" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"border-image-source" = VendorPrefix{ .none = true },
+                .@"border-image-outset" = VendorPrefix{ .none = true },
+                .@"border-image-repeat" = VendorPrefix{ .none = true },
+                .@"border-image-width" = VendorPrefix{ .none = true },
+                .@"border-image-slice" = VendorPrefix{ .none = true },
+                .@"border-image" = VendorPrefix{ .none = true, .webkit = true, .moz = true, .o = true },
+                .@"border-color" = VendorPrefix{ .none = true },
+                .@"border-style" = VendorPrefix{ .none = true },
+                .@"border-width" = VendorPrefix{ .none = true },
+                .@"border-block-color" = VendorPrefix{ .none = true },
+                .@"border-block-style" = VendorPrefix{ .none = true },
+                .@"border-block-width" = VendorPrefix{ .none = true },
+                .@"border-inline-color" = VendorPrefix{ .none = true },
+                .@"border-inline-style" = VendorPrefix{ .none = true },
+                .@"border-inline-width" = VendorPrefix{ .none = true },
+                .border = VendorPrefix{ .none = true },
+                .@"border-top" = VendorPrefix{ .none = true },
+                .@"border-bottom" = VendorPrefix{ .none = true },
+                .@"border-left" = VendorPrefix{ .none = true },
+                .@"border-right" = VendorPrefix{ .none = true },
+                .@"border-block" = VendorPrefix{ .none = true },
+                .@"border-block-start" = VendorPrefix{ .none = true },
+                .@"border-block-end" = VendorPrefix{ .none = true },
+                .@"border-inline" = VendorPrefix{ .none = true },
+                .@"border-inline-start" = VendorPrefix{ .none = true },
+                .@"border-inline-end" = VendorPrefix{ .none = true },
+                .outline = VendorPrefix{ .none = true },
+                .@"outline-color" = VendorPrefix{ .none = true },
+                .@"outline-style" = VendorPrefix{ .none = true },
+                .@"outline-width" = VendorPrefix{ .none = true },
+                .@"flex-direction" = VendorPrefix{ .none = true, .webkit = true, .ms = true },
+                .@"flex-wrap" = VendorPrefix{ .none = true, .webkit = true, .ms = true },
+                .@"flex-flow" = VendorPrefix{ .none = true, .webkit = true, .ms = true },
+                .@"flex-grow" = VendorPrefix{ .none = true, .webkit = true },
+                .@"flex-shrink" = VendorPrefix{ .none = true, .webkit = true },
+                .@"flex-basis" = VendorPrefix{ .none = true, .webkit = true },
+                .flex = VendorPrefix{ .none = true, .webkit = true, .ms = true },
+                .order = VendorPrefix{ .none = true, .webkit = true },
+                .@"align-content" = VendorPrefix{ .none = true, .webkit = true },
+                .@"justify-content" = VendorPrefix{ .none = true, .webkit = true },
+                .@"place-content" = VendorPrefix{ .none = true },
+                .@"align-self" = VendorPrefix{ .none = true, .webkit = true },
+                .@"justify-self" = VendorPrefix{ .none = true },
+                .@"place-self" = VendorPrefix{ .none = true },
+                .@"align-items" = VendorPrefix{ .none = true, .webkit = true },
+                .@"justify-items" = VendorPrefix{ .none = true },
+                .@"place-items" = VendorPrefix{ .none = true },
+                .@"row-gap" = VendorPrefix{ .none = true },
+                .@"column-gap" = VendorPrefix{ .none = true },
+                .gap = VendorPrefix{ .none = true },
+                .@"box-orient" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"box-direction" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"box-ordinal-group" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"box-align" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"box-flex" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"box-flex-group" = VendorPrefix{ .none = true, .webkit = true },
+                .@"box-pack" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"box-lines" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"flex-pack" = VendorPrefix{ .none = true, .ms = true },
+                .@"flex-order" = VendorPrefix{ .none = true, .ms = true },
+                .@"flex-align" = VendorPrefix{ .none = true, .ms = true },
+                .@"flex-item-align" = VendorPrefix{ .none = true, .ms = true },
+                .@"flex-line-pack" = VendorPrefix{ .none = true, .ms = true },
+                .@"flex-positive" = VendorPrefix{ .none = true, .ms = true },
+                .@"flex-negative" = VendorPrefix{ .none = true, .ms = true },
+                .@"flex-preferred-size" = VendorPrefix{ .none = true, .ms = true },
+                .@"margin-top" = VendorPrefix{ .none = true },
+                .@"margin-bottom" = VendorPrefix{ .none = true },
+                .@"margin-left" = VendorPrefix{ .none = true },
+                .@"margin-right" = VendorPrefix{ .none = true },
+                .@"margin-block-start" = VendorPrefix{ .none = true },
+                .@"margin-block-end" = VendorPrefix{ .none = true },
+                .@"margin-inline-start" = VendorPrefix{ .none = true },
+                .@"margin-inline-end" = VendorPrefix{ .none = true },
+                .@"margin-block" = VendorPrefix{ .none = true },
+                .@"margin-inline" = VendorPrefix{ .none = true },
+                .margin = VendorPrefix{ .none = true },
+                .@"padding-top" = VendorPrefix{ .none = true },
+                .@"padding-bottom" = VendorPrefix{ .none = true },
+                .@"padding-left" = VendorPrefix{ .none = true },
+                .@"padding-right" = VendorPrefix{ .none = true },
+                .@"padding-block-start" = VendorPrefix{ .none = true },
+                .@"padding-block-end" = VendorPrefix{ .none = true },
+                .@"padding-inline-start" = VendorPrefix{ .none = true },
+                .@"padding-inline-end" = VendorPrefix{ .none = true },
+                .@"padding-block" = VendorPrefix{ .none = true },
+                .@"padding-inline" = VendorPrefix{ .none = true },
+                .padding = VendorPrefix{ .none = true },
+                .@"scroll-margin-top" = VendorPrefix{ .none = true },
+                .@"scroll-margin-bottom" = VendorPrefix{ .none = true },
+                .@"scroll-margin-left" = VendorPrefix{ .none = true },
+                .@"scroll-margin-right" = VendorPrefix{ .none = true },
+                .@"scroll-margin-block-start" = VendorPrefix{ .none = true },
+                .@"scroll-margin-block-end" = VendorPrefix{ .none = true },
+                .@"scroll-margin-inline-start" = VendorPrefix{ .none = true },
+                .@"scroll-margin-inline-end" = VendorPrefix{ .none = true },
+                .@"scroll-margin-block" = VendorPrefix{ .none = true },
+                .@"scroll-margin-inline" = VendorPrefix{ .none = true },
+                .@"scroll-margin" = VendorPrefix{ .none = true },
+                .@"scroll-padding-top" = VendorPrefix{ .none = true },
+                .@"scroll-padding-bottom" = VendorPrefix{ .none = true },
+                .@"scroll-padding-left" = VendorPrefix{ .none = true },
+                .@"scroll-padding-right" = VendorPrefix{ .none = true },
+                .@"scroll-padding-block-start" = VendorPrefix{ .none = true },
+                .@"scroll-padding-block-end" = VendorPrefix{ .none = true },
+                .@"scroll-padding-inline-start" = VendorPrefix{ .none = true },
+                .@"scroll-padding-inline-end" = VendorPrefix{ .none = true },
+                .@"scroll-padding-block" = VendorPrefix{ .none = true },
+                .@"scroll-padding-inline" = VendorPrefix{ .none = true },
+                .@"scroll-padding" = VendorPrefix{ .none = true },
+                .@"font-weight" = VendorPrefix{ .none = true },
+                .@"font-size" = VendorPrefix{ .none = true },
+                .@"font-stretch" = VendorPrefix{ .none = true },
+                .@"font-family" = VendorPrefix{ .none = true },
+                .@"font-style" = VendorPrefix{ .none = true },
+                .@"font-variant-caps" = VendorPrefix{ .none = true },
+                .@"line-height" = VendorPrefix{ .none = true },
+                .font = VendorPrefix{ .none = true },
+                .@"transition-property" = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true },
+                .@"transition-duration" = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true },
+                .@"transition-delay" = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true },
+                .@"transition-timing-function" = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true },
+                .transition = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true },
+                .transform = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true, .o = true },
+                .@"transform-origin" = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true, .o = true },
+                .@"transform-style" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"transform-box" = VendorPrefix{ .none = true },
+                .@"backface-visibility" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .perspective = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"perspective-origin" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .translate = VendorPrefix{ .none = true },
+                .rotate = VendorPrefix{ .none = true },
+                .scale = VendorPrefix{ .none = true },
+                .@"text-decoration-color" = VendorPrefix{ .none = true, .webkit = true, .moz = true },
+                .@"text-emphasis-color" = VendorPrefix{ .none = true, .webkit = true },
+                .@"text-shadow" = VendorPrefix{ .none = true },
+                .direction = VendorPrefix{ .none = true },
+                .composes = VendorPrefix{ .none = true },
+                .@"mask-image" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-mode" = VendorPrefix{ .none = true },
+                .@"mask-repeat" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-position-x" = VendorPrefix{ .none = true },
+                .@"mask-position-y" = VendorPrefix{ .none = true },
+                .@"mask-position" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-clip" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-origin" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-size" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-composite" = VendorPrefix{ .none = true },
+                .@"mask-type" = VendorPrefix{ .none = true },
+                .mask = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-border-source" = VendorPrefix{ .none = true },
+                .@"mask-border-mode" = VendorPrefix{ .none = true },
+                .@"mask-border-slice" = VendorPrefix{ .none = true },
+                .@"mask-border-width" = VendorPrefix{ .none = true },
+                .@"mask-border-outset" = VendorPrefix{ .none = true },
+                .@"mask-border-repeat" = VendorPrefix{ .none = true },
+                .@"mask-border" = VendorPrefix{ .none = true },
+                .@"-webkit-mask-composite" = VendorPrefix{ .none = true },
+                .@"mask-source-type" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-box-image" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-box-image-source" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-box-image-slice" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-box-image-width" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-box-image-outset" = VendorPrefix{ .none = true, .webkit = true },
+                .@"mask-box-image-repeat" = VendorPrefix{ .none = true, .webkit = true },
+                .@"color-scheme" = VendorPrefix{ .none = true },
+            });
+        };
+
         const Map = comptime bun.ComptimeEnumMap(Enum);
         if (Map.getASCIIICaseInsensitive(name1)) |prop| {
-            switch (prop) {
-                .@"background-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-color";
-                },
-                .@"background-image" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-image";
-                },
-                .@"background-position-x" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-position-x";
-                },
-                .@"background-position-y" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-position-y";
-                },
-                .@"background-position" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-position";
-                },
-                .@"background-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-size";
-                },
-                .@"background-repeat" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-repeat";
-                },
-                .@"background-attachment" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-attachment";
-                },
-                .@"background-clip" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"background-clip" = pre };
-                },
-                .@"background-origin" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"background-origin";
-                },
-                .background => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .background;
-                },
-                .@"box-shadow" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-shadow" = pre };
-                },
-                .opacity => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .opacity;
-                },
-                .color => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .color;
-                },
-                .display => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .display;
-                },
-                .visibility => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .visibility;
-                },
-                .width => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .width;
-                },
-                .height => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .height;
-                },
-                .@"min-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"min-width";
-                },
-                .@"min-height" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"min-height";
-                },
-                .@"max-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"max-width";
-                },
-                .@"max-height" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"max-height";
-                },
-                .@"block-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"block-size";
-                },
-                .@"inline-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inline-size";
-                },
-                .@"min-block-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"min-block-size";
-                },
-                .@"min-inline-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"min-inline-size";
-                },
-                .@"max-block-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"max-block-size";
-                },
-                .@"max-inline-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"max-inline-size";
-                },
-                .@"box-sizing" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-sizing" = pre };
-                },
-                .@"aspect-ratio" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"aspect-ratio";
-                },
-                .overflow => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .overflow;
-                },
-                .@"overflow-x" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"overflow-x";
-                },
-                .@"overflow-y" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"overflow-y";
-                },
-                .@"text-overflow" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .o = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"text-overflow" = pre };
-                },
-                .position => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .position;
-                },
-                .top => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .top;
-                },
-                .bottom => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .bottom;
-                },
-                .left => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .left;
-                },
-                .right => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .right;
-                },
-                .@"inset-block-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-block-start";
-                },
-                .@"inset-block-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-block-end";
-                },
-                .@"inset-inline-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-inline-start";
-                },
-                .@"inset-inline-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-inline-end";
-                },
-                .@"inset-block" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-block";
-                },
-                .@"inset-inline" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"inset-inline";
-                },
-                .inset => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .inset;
-                },
-                .@"border-spacing" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-spacing";
-                },
-                .@"border-top-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-top-color";
-                },
-                .@"border-bottom-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-bottom-color";
-                },
-                .@"border-left-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-left-color";
-                },
-                .@"border-right-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-right-color";
-                },
-                .@"border-block-start-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-start-color";
-                },
-                .@"border-block-end-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-end-color";
-                },
-                .@"border-inline-start-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-start-color";
-                },
-                .@"border-inline-end-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-end-color";
-                },
-                .@"border-top-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-top-style";
-                },
-                .@"border-bottom-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-bottom-style";
-                },
-                .@"border-left-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-left-style";
-                },
-                .@"border-right-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-right-style";
-                },
-                .@"border-block-start-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-start-style";
-                },
-                .@"border-block-end-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-end-style";
-                },
-                .@"border-inline-start-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-start-style";
-                },
-                .@"border-inline-end-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-end-style";
-                },
-                .@"border-top-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-top-width";
-                },
-                .@"border-bottom-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-bottom-width";
-                },
-                .@"border-left-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-left-width";
-                },
-                .@"border-right-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-right-width";
-                },
-                .@"border-block-start-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-start-width";
-                },
-                .@"border-block-end-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-end-width";
-                },
-                .@"border-inline-start-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-start-width";
-                },
-                .@"border-inline-end-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-end-width";
-                },
-                .@"border-top-left-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-top-left-radius" = pre };
-                },
-                .@"border-top-right-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-top-right-radius" = pre };
-                },
-                .@"border-bottom-left-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-bottom-left-radius" = pre };
-                },
-                .@"border-bottom-right-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-bottom-right-radius" = pre };
-                },
-                .@"border-start-start-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-start-start-radius";
-                },
-                .@"border-start-end-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-start-end-radius";
-                },
-                .@"border-end-start-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-end-start-radius";
-                },
-                .@"border-end-end-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-end-end-radius";
-                },
-                .@"border-radius" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-radius" = pre };
-                },
-                .@"border-image-source" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-source";
-                },
-                .@"border-image-outset" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-outset";
-                },
-                .@"border-image-repeat" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-repeat";
-                },
-                .@"border-image-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-width";
-                },
-                .@"border-image-slice" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-image-slice";
-                },
-                .@"border-image" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .o = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"border-image" = pre };
-                },
-                .@"border-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-color";
-                },
-                .@"border-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-style";
-                },
-                .@"border-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-width";
-                },
-                .@"border-block-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-color";
-                },
-                .@"border-block-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-style";
-                },
-                .@"border-block-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-width";
-                },
-                .@"border-inline-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-color";
-                },
-                .@"border-inline-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-style";
-                },
-                .@"border-inline-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-width";
-                },
-                .border => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .border;
-                },
-                .@"border-top" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-top";
-                },
-                .@"border-bottom" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-bottom";
-                },
-                .@"border-left" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-left";
-                },
-                .@"border-right" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-right";
-                },
-                .@"border-block" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block";
-                },
-                .@"border-block-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-start";
-                },
-                .@"border-block-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-block-end";
-                },
-                .@"border-inline" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline";
-                },
-                .@"border-inline-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-start";
-                },
-                .@"border-inline-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"border-inline-end";
-                },
-                .outline => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .outline;
-                },
-                .@"outline-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"outline-color";
-                },
-                .@"outline-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"outline-style";
-                },
-                .@"outline-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"outline-width";
-                },
-                .@"flex-direction" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-direction" = pre };
-                },
-                .@"flex-wrap" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-wrap" = pre };
-                },
-                .@"flex-flow" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-flow" = pre };
-                },
-                .@"flex-grow" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-grow" = pre };
-                },
-                .@"flex-shrink" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-shrink" = pre };
-                },
-                .@"flex-basis" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-basis" = pre };
-                },
-                .flex => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .flex = pre };
-                },
-                .order => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .order = pre };
-                },
-                .@"align-content" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"align-content" = pre };
-                },
-                .@"justify-content" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"justify-content" = pre };
-                },
-                .@"place-content" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"place-content";
-                },
-                .@"align-self" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"align-self" = pre };
-                },
-                .@"justify-self" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"justify-self";
-                },
-                .@"place-self" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"place-self";
-                },
-                .@"align-items" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"align-items" = pre };
-                },
-                .@"justify-items" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"justify-items";
-                },
-                .@"place-items" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"place-items";
-                },
-                .@"row-gap" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"row-gap";
-                },
-                .@"column-gap" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"column-gap";
-                },
-                .gap => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .gap;
-                },
-                .@"box-orient" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-orient" = pre };
-                },
-                .@"box-direction" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-direction" = pre };
-                },
-                .@"box-ordinal-group" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-ordinal-group" = pre };
-                },
-                .@"box-align" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-align" = pre };
-                },
-                .@"box-flex" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-flex" = pre };
-                },
-                .@"box-flex-group" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-flex-group" = pre };
-                },
-                .@"box-pack" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-pack" = pre };
-                },
-                .@"box-lines" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"box-lines" = pre };
-                },
-                .@"flex-pack" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-pack" = pre };
-                },
-                .@"flex-order" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-order" = pre };
-                },
-                .@"flex-align" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-align" = pre };
-                },
-                .@"flex-item-align" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-item-align" = pre };
-                },
-                .@"flex-line-pack" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-line-pack" = pre };
-                },
-                .@"flex-positive" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-positive" = pre };
-                },
-                .@"flex-negative" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-negative" = pre };
-                },
-                .@"flex-preferred-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"flex-preferred-size" = pre };
-                },
-                .@"margin-top" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-top";
-                },
-                .@"margin-bottom" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-bottom";
-                },
-                .@"margin-left" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-left";
-                },
-                .@"margin-right" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-right";
-                },
-                .@"margin-block-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-block-start";
-                },
-                .@"margin-block-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-block-end";
-                },
-                .@"margin-inline-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-inline-start";
-                },
-                .@"margin-inline-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-inline-end";
-                },
-                .@"margin-block" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-block";
-                },
-                .@"margin-inline" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"margin-inline";
-                },
-                .margin => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .margin;
-                },
-                .@"padding-top" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-top";
-                },
-                .@"padding-bottom" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-bottom";
-                },
-                .@"padding-left" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-left";
-                },
-                .@"padding-right" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-right";
-                },
-                .@"padding-block-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-block-start";
-                },
-                .@"padding-block-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-block-end";
-                },
-                .@"padding-inline-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-inline-start";
-                },
-                .@"padding-inline-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-inline-end";
-                },
-                .@"padding-block" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-block";
-                },
-                .@"padding-inline" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"padding-inline";
-                },
-                .padding => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .padding;
-                },
-                .@"scroll-margin-top" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-top";
-                },
-                .@"scroll-margin-bottom" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-bottom";
-                },
-                .@"scroll-margin-left" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-left";
-                },
-                .@"scroll-margin-right" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-right";
-                },
-                .@"scroll-margin-block-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-block-start";
-                },
-                .@"scroll-margin-block-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-block-end";
-                },
-                .@"scroll-margin-inline-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-inline-start";
-                },
-                .@"scroll-margin-inline-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-inline-end";
-                },
-                .@"scroll-margin-block" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-block";
-                },
-                .@"scroll-margin-inline" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin-inline";
-                },
-                .@"scroll-margin" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-margin";
-                },
-                .@"scroll-padding-top" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-top";
-                },
-                .@"scroll-padding-bottom" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-bottom";
-                },
-                .@"scroll-padding-left" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-left";
-                },
-                .@"scroll-padding-right" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-right";
-                },
-                .@"scroll-padding-block-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-block-start";
-                },
-                .@"scroll-padding-block-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-block-end";
-                },
-                .@"scroll-padding-inline-start" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-inline-start";
-                },
-                .@"scroll-padding-inline-end" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-inline-end";
-                },
-                .@"scroll-padding-block" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-block";
-                },
-                .@"scroll-padding-inline" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding-inline";
-                },
-                .@"scroll-padding" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"scroll-padding";
-                },
-                .@"font-weight" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-weight";
-                },
-                .@"font-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-size";
-                },
-                .@"font-stretch" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-stretch";
-                },
-                .@"font-family" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-family";
-                },
-                .@"font-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-style";
-                },
-                .@"font-variant-caps" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"font-variant-caps";
-                },
-                .@"line-height" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"line-height";
-                },
-                .font => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .font;
-                },
-                .@"transition-property" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transition-property" = pre };
-                },
-                .@"transition-duration" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transition-duration" = pre };
-                },
-                .@"transition-delay" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transition-delay" = pre };
-                },
-                .@"transition-timing-function" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transition-timing-function" = pre };
-                },
-                .transition => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .transition = pre };
-                },
-                .transform => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true, .o = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .transform = pre };
-                },
-                .@"transform-origin" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .ms = true, .o = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transform-origin" = pre };
-                },
-                .@"transform-style" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"transform-style" = pre };
-                },
-                .@"transform-box" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"transform-box";
-                },
-                .@"backface-visibility" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"backface-visibility" = pre };
-                },
-                .perspective => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .perspective = pre };
-                },
-                .@"perspective-origin" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"perspective-origin" = pre };
-                },
-                .translate => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .translate;
-                },
-                .rotate => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .rotate;
-                },
-                .scale => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .scale;
-                },
-                .@"text-decoration-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"text-decoration-color" = pre };
-                },
-                .@"text-emphasis-color" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"text-emphasis-color" = pre };
-                },
-                .@"text-shadow" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"text-shadow";
-                },
-                .direction => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .direction;
-                },
-                .composes => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .composes;
-                },
-                .@"mask-image" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-image" = pre };
-                },
-                .@"mask-mode" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-mode";
-                },
-                .@"mask-repeat" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-repeat" = pre };
-                },
-                .@"mask-position-x" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-position-x";
-                },
-                .@"mask-position-y" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-position-y";
-                },
-                .@"mask-position" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-position" = pre };
-                },
-                .@"mask-clip" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-clip" = pre };
-                },
-                .@"mask-origin" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-origin" = pre };
-                },
-                .@"mask-size" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-size" = pre };
-                },
-                .@"mask-composite" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-composite";
-                },
-                .@"mask-type" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-type";
-                },
-                .mask => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .mask = pre };
-                },
-                .@"mask-border-source" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-source";
-                },
-                .@"mask-border-mode" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-mode";
-                },
-                .@"mask-border-slice" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-slice";
-                },
-                .@"mask-border-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-width";
-                },
-                .@"mask-border-outset" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-outset";
-                },
-                .@"mask-border-repeat" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border-repeat";
-                },
-                .@"mask-border" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"mask-border";
-                },
-                .@"-webkit-mask-composite" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"-webkit-mask-composite";
-                },
-                .@"mask-source-type" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-source-type" = pre };
-                },
-                .@"mask-box-image" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image" = pre };
-                },
-                .@"mask-box-image-source" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-source" = pre };
-                },
-                .@"mask-box-image-slice" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-slice" = pre };
-                },
-                .@"mask-box-image-width" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-width" = pre };
-                },
-                .@"mask-box-image-outset" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-outset" = pre };
-                },
-                .@"mask-box-image-repeat" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .{ .@"mask-box-image-repeat" = pre };
-                },
-                .@"color-scheme" => {
-                    const allowed_prefixes = VendorPrefix{ .none = true };
-                    if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return .@"color-scheme";
-                },
+            const allowed_prefixes = PrefixMap.get(prop) orelse return null;
+            if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) {
+                return switch (prop) {
+                    .@"background-color" => .@"background-color",
+                    .@"background-image" => .@"background-image",
+                    .@"background-position-x" => .@"background-position-x",
+                    .@"background-position-y" => .@"background-position-y",
+                    .@"background-position" => .@"background-position",
+                    .@"background-size" => .@"background-size",
+                    .@"background-repeat" => .@"background-repeat",
+                    .@"background-attachment" => .@"background-attachment",
+                    .@"background-clip" => .{ .@"background-clip" = pre },
+                    .@"background-origin" => .@"background-origin",
+                    .background => .background,
+                    .@"box-shadow" => .{ .@"box-shadow" = pre },
+                    .opacity => .opacity,
+                    .color => .color,
+                    .display => .display,
+                    .visibility => .visibility,
+                    .width => .width,
+                    .height => .height,
+                    .@"min-width" => .@"min-width",
+                    .@"min-height" => .@"min-height",
+                    .@"max-width" => .@"max-width",
+                    .@"max-height" => .@"max-height",
+                    .@"block-size" => .@"block-size",
+                    .@"inline-size" => .@"inline-size",
+                    .@"min-block-size" => .@"min-block-size",
+                    .@"min-inline-size" => .@"min-inline-size",
+                    .@"max-block-size" => .@"max-block-size",
+                    .@"max-inline-size" => .@"max-inline-size",
+                    .@"box-sizing" => .{ .@"box-sizing" = pre },
+                    .@"aspect-ratio" => .@"aspect-ratio",
+                    .overflow => .overflow,
+                    .@"overflow-x" => .@"overflow-x",
+                    .@"overflow-y" => .@"overflow-y",
+                    .@"text-overflow" => .{ .@"text-overflow" = pre },
+                    .position => .position,
+                    .top => .top,
+                    .bottom => .bottom,
+                    .left => .left,
+                    .right => .right,
+                    .@"inset-block-start" => .@"inset-block-start",
+                    .@"inset-block-end" => .@"inset-block-end",
+                    .@"inset-inline-start" => .@"inset-inline-start",
+                    .@"inset-inline-end" => .@"inset-inline-end",
+                    .@"inset-block" => .@"inset-block",
+                    .@"inset-inline" => .@"inset-inline",
+                    .inset => .inset,
+                    .@"border-spacing" => .@"border-spacing",
+                    .@"border-top-color" => .@"border-top-color",
+                    .@"border-bottom-color" => .@"border-bottom-color",
+                    .@"border-left-color" => .@"border-left-color",
+                    .@"border-right-color" => .@"border-right-color",
+                    .@"border-block-start-color" => .@"border-block-start-color",
+                    .@"border-block-end-color" => .@"border-block-end-color",
+                    .@"border-inline-start-color" => .@"border-inline-start-color",
+                    .@"border-inline-end-color" => .@"border-inline-end-color",
+                    .@"border-top-style" => .@"border-top-style",
+                    .@"border-bottom-style" => .@"border-bottom-style",
+                    .@"border-left-style" => .@"border-left-style",
+                    .@"border-right-style" => .@"border-right-style",
+                    .@"border-block-start-style" => .@"border-block-start-style",
+                    .@"border-block-end-style" => .@"border-block-end-style",
+                    .@"border-inline-start-style" => .@"border-inline-start-style",
+                    .@"border-inline-end-style" => .@"border-inline-end-style",
+                    .@"border-top-width" => .@"border-top-width",
+                    .@"border-bottom-width" => .@"border-bottom-width",
+                    .@"border-left-width" => .@"border-left-width",
+                    .@"border-right-width" => .@"border-right-width",
+                    .@"border-block-start-width" => .@"border-block-start-width",
+                    .@"border-block-end-width" => .@"border-block-end-width",
+                    .@"border-inline-start-width" => .@"border-inline-start-width",
+                    .@"border-inline-end-width" => .@"border-inline-end-width",
+                    .@"border-top-left-radius" => .{ .@"border-top-left-radius" = pre },
+                    .@"border-top-right-radius" => .{ .@"border-top-right-radius" = pre },
+                    .@"border-bottom-left-radius" => .{ .@"border-bottom-left-radius" = pre },
+                    .@"border-bottom-right-radius" => .{ .@"border-bottom-right-radius" = pre },
+                    .@"border-start-start-radius" => .@"border-start-start-radius",
+                    .@"border-start-end-radius" => .@"border-start-end-radius",
+                    .@"border-end-start-radius" => .@"border-end-start-radius",
+                    .@"border-end-end-radius" => .@"border-end-end-radius",
+                    .@"border-radius" => .{ .@"border-radius" = pre },
+                    .@"border-image-source" => .@"border-image-source",
+                    .@"border-image-outset" => .@"border-image-outset",
+                    .@"border-image-repeat" => .@"border-image-repeat",
+                    .@"border-image-width" => .@"border-image-width",
+                    .@"border-image-slice" => .@"border-image-slice",
+                    .@"border-image" => .{ .@"border-image" = pre },
+                    .@"border-color" => .@"border-color",
+                    .@"border-style" => .@"border-style",
+                    .@"border-width" => .@"border-width",
+                    .@"border-block-color" => .@"border-block-color",
+                    .@"border-block-style" => .@"border-block-style",
+                    .@"border-block-width" => .@"border-block-width",
+                    .@"border-inline-color" => .@"border-inline-color",
+                    .@"border-inline-style" => .@"border-inline-style",
+                    .@"border-inline-width" => .@"border-inline-width",
+                    .border => .border,
+                    .@"border-top" => .@"border-top",
+                    .@"border-bottom" => .@"border-bottom",
+                    .@"border-left" => .@"border-left",
+                    .@"border-right" => .@"border-right",
+                    .@"border-block" => .@"border-block",
+                    .@"border-block-start" => .@"border-block-start",
+                    .@"border-block-end" => .@"border-block-end",
+                    .@"border-inline" => .@"border-inline",
+                    .@"border-inline-start" => .@"border-inline-start",
+                    .@"border-inline-end" => .@"border-inline-end",
+                    .outline => .outline,
+                    .@"outline-color" => .@"outline-color",
+                    .@"outline-style" => .@"outline-style",
+                    .@"outline-width" => .@"outline-width",
+                    .@"flex-direction" => .{ .@"flex-direction" = pre },
+                    .@"flex-wrap" => .{ .@"flex-wrap" = pre },
+                    .@"flex-flow" => .{ .@"flex-flow" = pre },
+                    .@"flex-grow" => .{ .@"flex-grow" = pre },
+                    .@"flex-shrink" => .{ .@"flex-shrink" = pre },
+                    .@"flex-basis" => .{ .@"flex-basis" = pre },
+                    .flex => .{ .flex = pre },
+                    .order => .{ .order = pre },
+                    .@"align-content" => .{ .@"align-content" = pre },
+                    .@"justify-content" => .{ .@"justify-content" = pre },
+                    .@"place-content" => .@"place-content",
+                    .@"align-self" => .{ .@"align-self" = pre },
+                    .@"justify-self" => .@"justify-self",
+                    .@"place-self" => .@"place-self",
+                    .@"align-items" => .{ .@"align-items" = pre },
+                    .@"justify-items" => .@"justify-items",
+                    .@"place-items" => .@"place-items",
+                    .@"row-gap" => .@"row-gap",
+                    .@"column-gap" => .@"column-gap",
+                    .gap => .gap,
+                    .@"box-orient" => .{ .@"box-orient" = pre },
+                    .@"box-direction" => .{ .@"box-direction" = pre },
+                    .@"box-ordinal-group" => .{ .@"box-ordinal-group" = pre },
+                    .@"box-align" => .{ .@"box-align" = pre },
+                    .@"box-flex" => .{ .@"box-flex" = pre },
+                    .@"box-flex-group" => .{ .@"box-flex-group" = pre },
+                    .@"box-pack" => .{ .@"box-pack" = pre },
+                    .@"box-lines" => .{ .@"box-lines" = pre },
+                    .@"flex-pack" => .{ .@"flex-pack" = pre },
+                    .@"flex-order" => .{ .@"flex-order" = pre },
+                    .@"flex-align" => .{ .@"flex-align" = pre },
+                    .@"flex-item-align" => .{ .@"flex-item-align" = pre },
+                    .@"flex-line-pack" => .{ .@"flex-line-pack" = pre },
+                    .@"flex-positive" => .{ .@"flex-positive" = pre },
+                    .@"flex-negative" => .{ .@"flex-negative" = pre },
+                    .@"flex-preferred-size" => .{ .@"flex-preferred-size" = pre },
+                    .@"margin-top" => .@"margin-top",
+                    .@"margin-bottom" => .@"margin-bottom",
+                    .@"margin-left" => .@"margin-left",
+                    .@"margin-right" => .@"margin-right",
+                    .@"margin-block-start" => .@"margin-block-start",
+                    .@"margin-block-end" => .@"margin-block-end",
+                    .@"margin-inline-start" => .@"margin-inline-start",
+                    .@"margin-inline-end" => .@"margin-inline-end",
+                    .@"margin-block" => .@"margin-block",
+                    .@"margin-inline" => .@"margin-inline",
+                    .margin => .margin,
+                    .@"padding-top" => .@"padding-top",
+                    .@"padding-bottom" => .@"padding-bottom",
+                    .@"padding-left" => .@"padding-left",
+                    .@"padding-right" => .@"padding-right",
+                    .@"padding-block-start" => .@"padding-block-start",
+                    .@"padding-block-end" => .@"padding-block-end",
+                    .@"padding-inline-start" => .@"padding-inline-start",
+                    .@"padding-inline-end" => .@"padding-inline-end",
+                    .@"padding-block" => .@"padding-block",
+                    .@"padding-inline" => .@"padding-inline",
+                    .padding => .padding,
+                    .@"scroll-margin-top" => .@"scroll-margin-top",
+                    .@"scroll-margin-bottom" => .@"scroll-margin-bottom",
+                    .@"scroll-margin-left" => .@"scroll-margin-left",
+                    .@"scroll-margin-right" => .@"scroll-margin-right",
+                    .@"scroll-margin-block-start" => .@"scroll-margin-block-start",
+                    .@"scroll-margin-block-end" => .@"scroll-margin-block-end",
+                    .@"scroll-margin-inline-start" => .@"scroll-margin-inline-start",
+                    .@"scroll-margin-inline-end" => .@"scroll-margin-inline-end",
+                    .@"scroll-margin-block" => .@"scroll-margin-block",
+                    .@"scroll-margin-inline" => .@"scroll-margin-inline",
+                    .@"scroll-margin" => .@"scroll-margin",
+                    .@"scroll-padding-top" => .@"scroll-padding-top",
+                    .@"scroll-padding-bottom" => .@"scroll-padding-bottom",
+                    .@"scroll-padding-left" => .@"scroll-padding-left",
+                    .@"scroll-padding-right" => .@"scroll-padding-right",
+                    .@"scroll-padding-block-start" => .@"scroll-padding-block-start",
+                    .@"scroll-padding-block-end" => .@"scroll-padding-block-end",
+                    .@"scroll-padding-inline-start" => .@"scroll-padding-inline-start",
+                    .@"scroll-padding-inline-end" => .@"scroll-padding-inline-end",
+                    .@"scroll-padding-block" => .@"scroll-padding-block",
+                    .@"scroll-padding-inline" => .@"scroll-padding-inline",
+                    .@"scroll-padding" => .@"scroll-padding",
+                    .@"font-weight" => .@"font-weight",
+                    .@"font-size" => .@"font-size",
+                    .@"font-stretch" => .@"font-stretch",
+                    .@"font-family" => .@"font-family",
+                    .@"font-style" => .@"font-style",
+                    .@"font-variant-caps" => .@"font-variant-caps",
+                    .@"line-height" => .@"line-height",
+                    .font => .font,
+                    .@"transition-property" => .{ .@"transition-property" = pre },
+                    .@"transition-duration" => .{ .@"transition-duration" = pre },
+                    .@"transition-delay" => .{ .@"transition-delay" = pre },
+                    .@"transition-timing-function" => .{ .@"transition-timing-function" = pre },
+                    .transition => .{ .transition = pre },
+                    .transform => .{ .transform = pre },
+                    .@"transform-origin" => .{ .@"transform-origin" = pre },
+                    .@"transform-style" => .{ .@"transform-style" = pre },
+                    .@"transform-box" => .@"transform-box",
+                    .@"backface-visibility" => .{ .@"backface-visibility" = pre },
+                    .perspective => .{ .perspective = pre },
+                    .@"perspective-origin" => .{ .@"perspective-origin" = pre },
+                    .translate => .translate,
+                    .rotate => .rotate,
+                    .scale => .scale,
+                    .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
+                    .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
+                    .@"text-shadow" => .@"text-shadow",
+                    .direction => .direction,
+                    .composes => .composes,
+                    .@"mask-image" => .{ .@"mask-image" = pre },
+                    .@"mask-mode" => .@"mask-mode",
+                    .@"mask-repeat" => .{ .@"mask-repeat" = pre },
+                    .@"mask-position-x" => .@"mask-position-x",
+                    .@"mask-position-y" => .@"mask-position-y",
+                    .@"mask-position" => .{ .@"mask-position" = pre },
+                    .@"mask-clip" => .{ .@"mask-clip" = pre },
+                    .@"mask-origin" => .{ .@"mask-origin" = pre },
+                    .@"mask-size" => .{ .@"mask-size" = pre },
+                    .@"mask-composite" => .@"mask-composite",
+                    .@"mask-type" => .@"mask-type",
+                    .mask => .{ .mask = pre },
+                    .@"mask-border-source" => .@"mask-border-source",
+                    .@"mask-border-mode" => .@"mask-border-mode",
+                    .@"mask-border-slice" => .@"mask-border-slice",
+                    .@"mask-border-width" => .@"mask-border-width",
+                    .@"mask-border-outset" => .@"mask-border-outset",
+                    .@"mask-border-repeat" => .@"mask-border-repeat",
+                    .@"mask-border" => .@"mask-border",
+                    .@"-webkit-mask-composite" => .@"-webkit-mask-composite",
+                    .@"mask-source-type" => .{ .@"mask-source-type" = pre },
+                    .@"mask-box-image" => .{ .@"mask-box-image" = pre },
+                    .@"mask-box-image-source" => .{ .@"mask-box-image-source" = pre },
+                    .@"mask-box-image-slice" => .{ .@"mask-box-image-slice" = pre },
+                    .@"mask-box-image-width" => .{ .@"mask-box-image-width" = pre },
+                    .@"mask-box-image-outset" => .{ .@"mask-box-image-outset" = pre },
+                    .@"mask-box-image-repeat" => .{ .@"mask-box-image-repeat" = pre },
+                    .@"color-scheme" => .@"color-scheme",
+                };
             }
         }
 
@@ -9178,85 +8696,18 @@ pub const PropertyId = union(PropertyIdTag) {
 
     pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
         return switch (this.*) {
-            .@"background-color" => {},
-            .@"background-image" => {},
-            .@"background-position-x" => {},
-            .@"background-position-y" => {},
-            .@"background-position" => {},
-            .@"background-size" => {},
-            .@"background-repeat" => {},
-            .@"background-attachment" => {},
             .@"background-clip" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"background-origin" => {},
-            .background => {},
             .@"box-shadow" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .opacity => {},
-            .color => {},
-            .display => {},
-            .visibility => {},
-            .width => {},
-            .height => {},
-            .@"min-width" => {},
-            .@"min-height" => {},
-            .@"max-width" => {},
-            .@"max-height" => {},
-            .@"block-size" => {},
-            .@"inline-size" => {},
-            .@"min-block-size" => {},
-            .@"min-inline-size" => {},
-            .@"max-block-size" => {},
-            .@"max-inline-size" => {},
             .@"box-sizing" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"aspect-ratio" => {},
-            .overflow => {},
-            .@"overflow-x" => {},
-            .@"overflow-y" => {},
             .@"text-overflow" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .position => {},
-            .top => {},
-            .bottom => {},
-            .left => {},
-            .right => {},
-            .@"inset-block-start" => {},
-            .@"inset-block-end" => {},
-            .@"inset-inline-start" => {},
-            .@"inset-inline-end" => {},
-            .@"inset-block" => {},
-            .@"inset-inline" => {},
-            .inset => {},
-            .@"border-spacing" => {},
-            .@"border-top-color" => {},
-            .@"border-bottom-color" => {},
-            .@"border-left-color" => {},
-            .@"border-right-color" => {},
-            .@"border-block-start-color" => {},
-            .@"border-block-end-color" => {},
-            .@"border-inline-start-color" => {},
-            .@"border-inline-end-color" => {},
-            .@"border-top-style" => {},
-            .@"border-bottom-style" => {},
-            .@"border-left-style" => {},
-            .@"border-right-style" => {},
-            .@"border-block-start-style" => {},
-            .@"border-block-end-style" => {},
-            .@"border-inline-start-style" => {},
-            .@"border-inline-end-style" => {},
-            .@"border-top-width" => {},
-            .@"border-bottom-width" => {},
-            .@"border-left-width" => {},
-            .@"border-right-width" => {},
-            .@"border-block-start-width" => {},
-            .@"border-block-end-width" => {},
-            .@"border-inline-start-width" => {},
-            .@"border-inline-end-width" => {},
             .@"border-top-left-radius" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
@@ -9269,45 +8720,12 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-bottom-right-radius" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"border-start-start-radius" => {},
-            .@"border-start-end-radius" => {},
-            .@"border-end-start-radius" => {},
-            .@"border-end-end-radius" => {},
             .@"border-radius" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"border-image-source" => {},
-            .@"border-image-outset" => {},
-            .@"border-image-repeat" => {},
-            .@"border-image-width" => {},
-            .@"border-image-slice" => {},
             .@"border-image" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"border-color" => {},
-            .@"border-style" => {},
-            .@"border-width" => {},
-            .@"border-block-color" => {},
-            .@"border-block-style" => {},
-            .@"border-block-width" => {},
-            .@"border-inline-color" => {},
-            .@"border-inline-style" => {},
-            .@"border-inline-width" => {},
-            .border => {},
-            .@"border-top" => {},
-            .@"border-bottom" => {},
-            .@"border-left" => {},
-            .@"border-right" => {},
-            .@"border-block" => {},
-            .@"border-block-start" => {},
-            .@"border-block-end" => {},
-            .@"border-inline" => {},
-            .@"border-inline-start" => {},
-            .@"border-inline-end" => {},
-            .outline => {},
-            .@"outline-color" => {},
-            .@"outline-style" => {},
-            .@"outline-width" => {},
             .@"flex-direction" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
@@ -9338,20 +8756,12 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"justify-content" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"place-content" => {},
             .@"align-self" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"justify-self" => {},
-            .@"place-self" => {},
             .@"align-items" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"justify-items" => {},
-            .@"place-items" => {},
-            .@"row-gap" => {},
-            .@"column-gap" => {},
-            .gap => {},
             .@"box-orient" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
@@ -9400,58 +8810,6 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"flex-preferred-size" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"margin-top" => {},
-            .@"margin-bottom" => {},
-            .@"margin-left" => {},
-            .@"margin-right" => {},
-            .@"margin-block-start" => {},
-            .@"margin-block-end" => {},
-            .@"margin-inline-start" => {},
-            .@"margin-inline-end" => {},
-            .@"margin-block" => {},
-            .@"margin-inline" => {},
-            .margin => {},
-            .@"padding-top" => {},
-            .@"padding-bottom" => {},
-            .@"padding-left" => {},
-            .@"padding-right" => {},
-            .@"padding-block-start" => {},
-            .@"padding-block-end" => {},
-            .@"padding-inline-start" => {},
-            .@"padding-inline-end" => {},
-            .@"padding-block" => {},
-            .@"padding-inline" => {},
-            .padding => {},
-            .@"scroll-margin-top" => {},
-            .@"scroll-margin-bottom" => {},
-            .@"scroll-margin-left" => {},
-            .@"scroll-margin-right" => {},
-            .@"scroll-margin-block-start" => {},
-            .@"scroll-margin-block-end" => {},
-            .@"scroll-margin-inline-start" => {},
-            .@"scroll-margin-inline-end" => {},
-            .@"scroll-margin-block" => {},
-            .@"scroll-margin-inline" => {},
-            .@"scroll-margin" => {},
-            .@"scroll-padding-top" => {},
-            .@"scroll-padding-bottom" => {},
-            .@"scroll-padding-left" => {},
-            .@"scroll-padding-right" => {},
-            .@"scroll-padding-block-start" => {},
-            .@"scroll-padding-block-end" => {},
-            .@"scroll-padding-inline-start" => {},
-            .@"scroll-padding-inline-end" => {},
-            .@"scroll-padding-block" => {},
-            .@"scroll-padding-inline" => {},
-            .@"scroll-padding" => {},
-            .@"font-weight" => {},
-            .@"font-size" => {},
-            .@"font-stretch" => {},
-            .@"font-family" => {},
-            .@"font-style" => {},
-            .@"font-variant-caps" => {},
-            .@"line-height" => {},
-            .font => {},
             .@"transition-property" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
@@ -9476,7 +8834,6 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"transform-style" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"transform-box" => {},
             .@"backface-visibility" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
@@ -9486,27 +8843,18 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"perspective-origin" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .translate => {},
-            .rotate => {},
-            .scale => {},
             .@"text-decoration-color" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
             .@"text-emphasis-color" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"text-shadow" => {},
-            .direction => {},
-            .composes => {},
             .@"mask-image" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"mask-mode" => {},
             .@"mask-repeat" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"mask-position-x" => {},
-            .@"mask-position-y" => {},
             .@"mask-position" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
@@ -9519,19 +8867,9 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-size" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"mask-composite" => {},
-            .@"mask-type" => {},
             .mask => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"mask-border-source" => {},
-            .@"mask-border-mode" => {},
-            .@"mask-border-slice" => {},
-            .@"mask-border-width" => {},
-            .@"mask-border-outset" => {},
-            .@"mask-border-repeat" => {},
-            .@"mask-border" => {},
-            .@"-webkit-mask-composite" => {},
             .@"mask-source-type" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
@@ -9553,8 +8891,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-repeat" => |*p| {
                 bun.bits.insert(VendorPrefix, p, pre);
             },
-            .@"color-scheme" => {},
-            else => {},
+            .@"background-color", .@"background-image", .@"background-position-x", .@"background-position-y", .@"background-position", .@"background-size", .@"background-repeat", .@"background-attachment", .@"background-origin", .background, .opacity, .color, .display, .visibility, .width, .height, .@"min-width", .@"min-height", .@"max-width", .@"max-height", .@"block-size", .@"inline-size", .@"min-block-size", .@"min-inline-size", .@"max-block-size", .@"max-inline-size", .@"aspect-ratio", .overflow, .@"overflow-x", .@"overflow-y", .position, .top, .bottom, .left, .right, .@"inset-block-start", .@"inset-block-end", .@"inset-inline-start", .@"inset-inline-end", .@"inset-block", .@"inset-inline", .inset, .@"border-spacing", .@"border-top-color", .@"border-bottom-color", .@"border-left-color", .@"border-right-color", .@"border-block-start-color", .@"border-block-end-color", .@"border-inline-start-color", .@"border-inline-end-color", .@"border-top-style", .@"border-bottom-style", .@"border-left-style", .@"border-right-style", .@"border-block-start-style", .@"border-block-end-style", .@"border-inline-start-style", .@"border-inline-end-style", .@"border-top-width", .@"border-bottom-width", .@"border-left-width", .@"border-right-width", .@"border-block-start-width", .@"border-block-end-width", .@"border-inline-start-width", .@"border-inline-end-width", .@"border-start-start-radius", .@"border-start-end-radius", .@"border-end-start-radius", .@"border-end-end-radius", .@"border-image-source", .@"border-image-outset", .@"border-image-repeat", .@"border-image-width", .@"border-image-slice", .@"border-color", .@"border-style", .@"border-width", .@"border-block-color", .@"border-block-style", .@"border-block-width", .@"border-inline-color", .@"border-inline-style", .@"border-inline-width", .border, .@"border-top", .@"border-bottom", .@"border-left", .@"border-right", .@"border-block", .@"border-block-start", .@"border-block-end", .@"border-inline", .@"border-inline-start", .@"border-inline-end", .outline, .@"outline-color", .@"outline-style", .@"outline-width", .@"place-content", .@"justify-self", .@"place-self", .@"justify-items", .@"place-items", .@"row-gap", .@"column-gap", .gap, .@"margin-top", .@"margin-bottom", .@"margin-left", .@"margin-right", .@"margin-block-start", .@"margin-block-end", .@"margin-inline-start", .@"margin-inline-end", .@"margin-block", .@"margin-inline", .margin, .@"padding-top", .@"padding-bottom", .@"padding-left", .@"padding-right", .@"padding-block-start", .@"padding-block-end", .@"padding-inline-start", .@"padding-inline-end", .@"padding-block", .@"padding-inline", .padding, .@"scroll-margin-top", .@"scroll-margin-bottom", .@"scroll-margin-left", .@"scroll-margin-right", .@"scroll-margin-block-start", .@"scroll-margin-block-end", .@"scroll-margin-inline-start", .@"scroll-margin-inline-end", .@"scroll-margin-block", .@"scroll-margin-inline", .@"scroll-margin", .@"scroll-padding-top", .@"scroll-padding-bottom", .@"scroll-padding-left", .@"scroll-padding-right", .@"scroll-padding-block-start", .@"scroll-padding-block-end", .@"scroll-padding-inline-start", .@"scroll-padding-inline-end", .@"scroll-padding-block", .@"scroll-padding-inline", .@"scroll-padding", .@"font-weight", .@"font-size", .@"font-stretch", .@"font-family", .@"font-style", .@"font-variant-caps", .@"line-height", .font, .@"transform-box", .translate, .rotate, .scale, .@"text-shadow", .direction, .composes, .@"mask-mode", .@"mask-position-x", .@"mask-position-y", .@"mask-composite", .@"mask-type", .@"mask-border-source", .@"mask-border-mode", .@"mask-border-slice", .@"mask-border-width", .@"mask-border-outset", .@"mask-border-repeat", .@"mask-border", .@"-webkit-mask-composite", .@"color-scheme", .all, .unparsed, .custom => {},
         };
     }
 

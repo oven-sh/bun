@@ -392,6 +392,32 @@ $ bun build ./index.tsx --outdir ./out --format cjs
 
 TODO: document IIFE once we support globalNames.
 
+### `jsx`
+
+Configure JSX transform behavior. Allows fine-grained control over how JSX is compiled.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./app.tsx'],
+  outdir: './out',
+  jsx: {
+    factory: 'h',
+    fragment: 'Fragment',
+    importSource: 'preact',
+    runtime: 'automatic',
+  },
+})
+```
+
+```bash#CLI
+# JSX configuration is handled via bunfig.toml or tsconfig.json
+$ bun build ./app.tsx --outdir ./out
+```
+
+{% /codetabs %}
+
 ### `splitting`
 
 Whether to enable code splitting.
@@ -1519,6 +1545,15 @@ interface BuildConfig {
    * @default "esm"
    */
   format?: "esm" | "cjs" | "iife";
+  /**
+   * JSX configuration object for controlling JSX transform behavior
+   */
+  jsx?: {
+    factory?: string;
+    fragment?: string;
+    importSource?: string;
+    runtime?: "automatic" | "classic";
+  };
   naming?:
     | string
     | {

@@ -478,6 +478,24 @@ ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 cafile = "path/to/cafile"
 ```
 
+### SSL/TLS Configuration
+
+#### `--use-system-ca` flag
+
+Use the system's CA certificate store instead of Bun's bundled certificates:
+
+```bash
+$ bun install --use-system-ca
+```
+
+You can also set the `NODE_USE_SYSTEM_CA` environment variable:
+
+```bash
+$ NODE_USE_SYSTEM_CA=1 bun install
+```
+
+This is useful in enterprise environments or when using custom CA certificates that are installed system-wide.
+
 ### `install.cache`
 
 To configure the cache behavior:

@@ -176,7 +176,17 @@ When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads miss
 
 ## Platform-specific dependencies?
 
-bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won’t change between platforms/architectures even if the packages ultimately installed do change.
+bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won't change between platforms/architectures even if the packages ultimately installed do change.
+
+### `--cpu` and `--os` flags
+
+You can override the target platform for package selection:
+
+```bash
+$ bun install --cpu=x64 --os=linux
+```
+
+This installs packages for the specified platform instead of the current system. Useful for cross-platform builds or when preparing deployments for different environments.
 
 ## Peer dependencies?
 
@@ -245,3 +255,13 @@ bun uses a binary format for caching NPM registry responses. This loads much fas
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages.
 
 Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
+
+## pnpm migration
+
+Bun automatically migrates projects from pnpm to bun. When a `pnpm-lock.yaml` file is detected, Bun will automatically migrate the lockfile to `bun.lock` during installation.
+
+```bash
+$ bun install
+```
+
+This migration preserves package versions and resolution information from the pnpm lockfile.

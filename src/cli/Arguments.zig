@@ -91,6 +91,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
     clap.parseParam("-e, --eval <STR>                  Evaluate argument as a script") catch unreachable,
     clap.parseParam("-p, --print <STR>                 Evaluate argument as a script and print the result") catch unreachable,
+    clap.parseParam("--json                            Output result as JSON instead of using console formatter") catch unreachable,
     clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
     clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
     clap.parseParam("--port <STR>                      Set the default port for Bun.serve") catch unreachable,
@@ -645,7 +646,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (comptime cmd == .RunAsNodeCommand) {
                 // TODO: prevent `node --port <script>` from working
                 ctx.runtime_options.eval.script = port_str;
-                ctx.runtime_options.eval.eval_and_print = true;
+                ctx.runtime_options.eval.print = true;
             } else {
                 opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
                     Output.errFmt(
@@ -703,10 +704,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.option("--print")) |script| {
             ctx.runtime_options.eval.script = script;
-            ctx.runtime_options.eval.eval_and_print = true;
+            ctx.runtime_options.eval.print = true;
         } else if (args.option("--eval")) |script| {
             ctx.runtime_options.eval.script = script;
         }
+        ctx.runtime_options.json = args.flag("--json");
         ctx.runtime_options.if_present = args.flag("--if-present");
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");

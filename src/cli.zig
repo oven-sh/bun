@@ -371,8 +371,9 @@ pub const Command = struct {
         sql_preconnect: bool = false,
         eval: struct {
             script: []const u8 = "",
-            eval_and_print: bool = false,
+            print: bool = false,
         } = .{},
+        json: bool = false,
         preconnect: []const []const u8 = &[_][]const u8{},
         dns_result_order: []const u8 = "verbatim",
         /// `--expose-gc` makes `globalThis.gc()` available. Added for Node

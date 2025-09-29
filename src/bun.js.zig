@@ -155,7 +155,7 @@ pub const Run = struct {
             return;
         }
 
-        bun.jsc.initialize(ctx.runtime_options.eval.eval_and_print);
+        bun.jsc.initialize(ctx.runtime_options.eval.print or ctx.runtime_options.json);
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
@@ -169,7 +169,7 @@ pub const Run = struct {
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,
                     .smol = ctx.runtime_options.smol,
-                    .eval = ctx.runtime_options.eval.eval_and_print,
+                    .eval = ctx.runtime_options.eval.print or ctx.runtime_options.json,
                     .debugger = ctx.runtime_options.debugger,
                     .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
@@ -192,7 +192,7 @@ pub const Run = struct {
             script_source.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval.script);
             vm.module_loader.eval_source = script_source;
 
-            if (ctx.runtime_options.eval.eval_and_print) {
+            if (ctx.runtime_options.eval.print or ctx.runtime_options.json) {
                 b.options.dead_code_elimination = false;
             }
         }
@@ -412,7 +412,10 @@ pub const Run = struct {
                     vm.eventLoop().autoTickActive();
                 }
 
-                if (this.ctx.runtime_options.eval.eval_and_print) {
+                // Handle --print or --json flags (both for eval and regular entry points)
+                const should_print = this.ctx.runtime_options.eval.print or this.ctx.runtime_options.json;
+
+                if (should_print) {
                     const to_print = brk: {
                         const result: jsc.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
@@ -437,7 +440,22 @@ pub const Run = struct {
                         break :brk result;
                     };
 
-                    to_print.print(vm.global, .Log, .Log);
+                    if (this.ctx.runtime_options.json) {
+                        var str = bun.String.empty;
+                        defer str.deref();
+                        to_print.jsonStringify(vm.global, 0, &str) catch |err| {
+                            vm.global.reportActiveExceptionAsUnhandled(err);
+                            return;
+                        };
+                        // Print the JSON string to stdout
+                        const utf8 = str.toUTF8(bun.default_allocator);
+                        defer utf8.deinit();
+                        _ = Output.writer().write(utf8.slice()) catch {};
+                        _ = Output.writer().write("\n") catch {};
+                        Output.flush();
+                    } else {
+                        to_print.print(vm.global, .Log, .Log);
+                    }
                 }
 
                 vm.onBeforeExit();

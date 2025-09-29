@@ -613,6 +613,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     }
 
     obj.no_link_obj = true;
+    obj.use_lld = false;
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {

@@ -8,7 +8,12 @@ import * as React from "react";
 import type { RenderToPipeableStreamOptions } from "react-dom/server";
 import { renderToPipeableStream } from "react-dom/server.node";
 import type { MiniAbortSignal } from "./server.tsx";
-import { createFromNodeStream } from "./vendor/react-server-dom-bun/client.node.unbundled.js";
+import { createFromNodeStream, type Manifest } from "./vendor/react-server-dom-bun/client.node.unbundled.js";
+
+const createFromNodeStreamOptions: Manifest = {
+  moduleMap: ssrManifest,
+  moduleLoading: { prefix: "/" },
+};
 
 // The `renderToHtml` function not only implements converting the RSC payload
 // into HTML via react-dom, but also streaming the RSC payload via injected
@@ -37,11 +42,7 @@ export function renderToHtml(
     type: "direct",
     pull(controller) {
       // `createFromNodeStream` turns the RSC payload into a React component.
-      const promise: Promise<React.ReactNode> = createFromNodeStream(rscPayload, {
-        // React takes in a manifest mapping client-side assets
-        // to the imports needed for server-side rendering.
-        moduleMap: ssrManifest,
-      });
+      const promise: Promise<React.ReactNode> = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
 
       // The root is this "Root" component that unwraps the streamed promise
       // with `use`, and then returning the parsed React component for the UI.
@@ -99,9 +100,7 @@ export function renderToStaticHtml(
   bootstrapModules: NonNullable<RenderToPipeableStreamOptions["bootstrapModules"]>,
 ): Promise<Blob> {
   const stream = new StaticRscInjectionStream(rscPayload);
-  const promise = createFromNodeStream<React.ReactNode>(rscPayload, {
-    moduleMap: ssrManifest,
-  });
+  const promise = createFromNodeStream<React.ReactNode>(rscPayload, createFromNodeStreamOptions);
 
   const Root: React.JSXElementConstructor<{}> = () => React.use(promise);
 

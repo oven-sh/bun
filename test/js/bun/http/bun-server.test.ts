@@ -184,7 +184,6 @@ describe.concurrent("Server", () => {
   test("abort signal on server", async () => {
     {
       let abortPromise = Promise.withResolvers();
-      let responseAwaited = Promise.withResolvers();
       let fetchAborted = false;
       const abortController = new AbortController();
       using server = Bun.serve({
@@ -193,8 +192,7 @@ describe.concurrent("Server", () => {
             abortPromise.resolve();
           });
           abortController.abort();
-          await Bun.sleep(15);
-          responseAwaited.resolve();
+          await abortPromise.promise;
           return new Response("Hello");
         },
         port: 0,
@@ -210,7 +208,7 @@ describe.concurrent("Server", () => {
         fetchAborted = true;
       }
       // wait for the server to process the abort signal, fetch may throw before the server processes the signal
-      await Promise.all([abortPromise.promise, responseAwaited.promise]);
+      await abortPromise.promise;
       expect(fetchAborted).toBe(true);
     }
   });

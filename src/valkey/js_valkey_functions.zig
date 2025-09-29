@@ -606,8 +606,10 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         return globalObject.throwInvalidArguments("hset requires at least 2 arguments: key and field-value pairs", .{});
     }
 
+    // Pre-size based on expected argument count
+    const estimated_capacity: usize = if (args_view.len == 2) 64 else args_view.len;
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 64);
+    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), estimated_capacity);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -623,7 +625,8 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     // Check if second argument is an object (for object syntax)
     if (args_view.len == 2) {
         const obj_arg = callframe.argument(1);
-        if (!obj_arg.isObject() or obj_arg.isNull()) {
+        // Reject arrays and null values, only accept plain objects
+        if (!obj_arg.isObject() or obj_arg.isNull() or obj_arg.isArray()) {
             return globalObject.throwInvalidArgumentType("hset", "fields", "object or field-value pairs");
         }
 
@@ -672,12 +675,11 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
             };
             try args.append(field);
 
-            if (i + 1 < args_view.len) {
-                const value = (try fromJS(globalObject, args_view[i + 1])) orelse {
-                    return globalObject.throwInvalidArgumentType("hset", "value", "string or buffer");
-                };
-                try args.append(value);
-            }
+            // No bounds check needed - we verified parity above
+            const value = (try fromJS(globalObject, args_view[i + 1])) orelse {
+                return globalObject.throwInvalidArgumentType("hset", "value", "string or buffer");
+            };
+            try args.append(value);
         }
     }
 

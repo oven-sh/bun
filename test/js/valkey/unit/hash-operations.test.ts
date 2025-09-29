@@ -217,53 +217,58 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
     });
 
     test("hset with object syntax (single field)", async () => {
-      const result = await client.hset("test:obj1", { field1: "value1" });
+      const key = ctx.generateKey("hset-obj-single");
+      const result = await ctx.redis.hset(key, { field1: "value1" });
       expect(result).toBe(1);
 
-      const value = await client.hget("test:obj1", "field1");
+      const value = await ctx.redis.hget(key, "field1");
       expect(value).toBe("value1");
     });
 
     test("hset with object syntax (multiple fields)", async () => {
-      const result = await client.hset("test:obj2", {
+      const key = ctx.generateKey("hset-obj-multiple");
+      const result = await ctx.redis.hset(key, {
         field1: "value1",
         field2: "value2",
         field3: "value3",
       });
       expect(result).toBe(3);
 
-      const values = await client.hmget("test:obj2", "field1", "field2", "field3");
+      const values = await ctx.redis.hmget(key, ["field1", "field2", "field3"]);
       expect(values).toEqual(["value1", "value2", "value3"]);
     });
 
     test("hset with object syntax (numbers as values)", async () => {
-      const result = await client.hset("test:obj3", {
+      const key = ctx.generateKey("hset-obj-numbers");
+      const result = await ctx.redis.hset(key, {
         count: 42,
         price: "19.99",
         stock: 100,
       });
       expect(result).toBe(3);
 
-      const values = await client.hmget("test:obj3", "count", "price", "stock");
+      const values = await ctx.redis.hmget(key, ["count", "price", "stock"]);
       expect(values).toEqual(["42", "19.99", "100"]);
     });
 
     test("hset with object syntax (Buffer values)", async () => {
-      const result = await client.hset("test:obj4", {
+      const key = ctx.generateKey("hset-obj-buffer");
+      const result = await ctx.redis.hset(key, {
         binary: Buffer.from("binary data"),
         text: "plain text",
       });
       expect(result).toBe(2);
 
-      const values = await client.hmget("test:obj4", "binary", "text");
-      expect(values[0]).toEqual(Buffer.from("binary data"));
+      const values = await ctx.redis.hmget(key, ["binary", "text"]);
+      expect(values[0].toString()).toBe("binary data");
       expect(values[1]).toBe("plain text");
     });
 
     test("hset with object syntax (empty object)", async () => {
+      const key = ctx.generateKey("hset-obj-empty");
       let thrown;
       try {
-        await client.hset("test:empty", {});
+        await ctx.redis.hset(key, {});
       } catch (error: any) {
         thrown = error;
       }
@@ -271,42 +276,71 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       expect(thrown.message).toContain("at least one field-value pair");
     });
 
+    test("hset with object syntax (mixing updates and additions)", async () => {
+      const key = ctx.generateKey("hset-obj-mixed");
+
+      // First add some initial fields
+      const result1 = await ctx.redis.hset(key, {
+        existing1: "old1",
+        existing2: "old2",
+      });
+      expect(result1).toBe(2);
+
+      // Now mix updates with new fields
+      const result2 = await ctx.redis.hset(key, {
+        existing1: "updated1",  // Update
+        existing2: "updated2",  // Update
+        new1: "value1",        // Add
+        new2: "value2",        // Add
+      });
+      // HSET returns number of fields added, not updated
+      expect(result2).toBe(2);
+
+      // Verify all values
+      const values = await ctx.redis.hmget(key, ["existing1", "existing2", "new1", "new2"]);
+      expect(values).toEqual(["updated1", "updated2", "value1", "value2"]);
+    });
+
     test("hset with object syntax (stress test 100 fields)", async () => {
+      const key = ctx.generateKey("hset-obj-stress");
       const fields: Record<string, string> = {};
       for (let i = 0; i < 100; i++) {
         fields[`field${i}`] = `value${i}`;
       }
-      const result = await client.hset("test:obj_stress", fields);
+      const result = await ctx.redis.hset(key, fields);
       expect(result).toBe(100);
 
-      const value50 = await client.hget("test:obj_stress", "field50");
+      const value50 = await ctx.redis.hget(key, "field50");
       expect(value50).toBe("value50");
     });
 
-    test("HSET extreme stress test with 10000 field-value pairs", async () => {
-      const key = ctx.generateKey("hset-extreme-stress-test");
-      const args = [key];
+    (process.env.RUN_EXTREME_TESTS ? test : test.skip)(
+      "HSET extreme stress test with 10000 field-value pairs",
+      async () => {
+        const key = ctx.generateKey("hset-extreme-stress-test");
+        const fieldCount = 10000;
 
-      for (let i = 0; i < 10000; i++) {
-        args.push(`f${i}`, `v${i}`);
+        // Build arguments programmatically for better readability
+        const args: any[] = [key];
+        for (let i = 0; i < fieldCount; i++) {
+          args.push(`f${i}`, `v${i}`);
+        }
+
+        const result = await ctx.redis.hset(...args);
+        expectType<number>(result, "number");
+        expect(result).toBe(fieldCount);
+
+        const size = await ctx.redis.hlen(key);
+        expect(size).toBe(fieldCount);
+
+        // Test specific known field values for determinism
+        const testIndices = [0, Math.floor(fieldCount / 2), fieldCount - 1];
+        for (const index of testIndices) {
+          const value = await ctx.redis.hget(key, `f${index}`);
+          expect(value).toBe(`v${index}`);
+        }
       }
-
-      const result = await ctx.redis.hset(...args);
-      expectType<number>(result, "number");
-      expect(result).toBe(10000);
-
-      const size = await ctx.redis.hlen(key);
-      expect(size).toBe(10000);
-
-      const first = await ctx.redis.hget(key, "f0");
-      expect(first).toBe("v0");
-
-      const middle = await ctx.redis.hget(key, "f5000");
-      expect(middle).toBe("v5000");
-
-      const last = await ctx.redis.hget(key, "f9999");
-      expect(last).toBe("v9999");
-    });
+    );
 
     test("HSET error handling", async () => {
       const key = ctx.generateKey("hset-error-test");

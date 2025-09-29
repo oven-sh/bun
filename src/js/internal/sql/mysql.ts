@@ -247,6 +247,12 @@ function detectCommand(query: string): SQLCommand {
         }
         return SQLCommand.where;
       }
+      default: {
+        // we can have fragments using IN ANY ALL
+        if (token === "in" || token === "any" || token === "all") {
+          return SQLCommand.inAnyOrAll;
+        }
+      }
     }
   }
 
@@ -1033,7 +1039,7 @@ class MySQLAdapter
             const command = detectCommand(query);
             // only selectIn, insert, update, updateSet are allowed
             if (command === SQLCommand.none || command === SQLCommand.where) {
-              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
+              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and IN, ANY or ALL commands");
             }
             const { columns, value: items } = value as SQLHelper;
             const columnCount = columns.length;

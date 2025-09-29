@@ -39,26 +39,21 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
     test("HSET native method", async () => {
       const key = ctx.generateKey("hset-native-test");
 
-      // Test native hset method - single field-value pair
       const setResult = await ctx.redis.hset(key, "username", "johndoe");
       expectType<number>(setResult, "number");
-      expect(setResult).toBe(1); // 1 new field was set
+      expect(setResult).toBe(1);
 
-      // Update the same field should return 0
       const updateResult = await ctx.redis.hset(key, "username", "janedoe");
       expectType<number>(updateResult, "number");
-      expect(updateResult).toBe(0); // 0 means field was updated, not added
+      expect(updateResult).toBe(0);
 
-      // Verify the update
       const getValue = await ctx.redis.hget(key, "username");
       expect(getValue).toBe("janedoe");
 
-      // Test setting multiple field-value pairs (Redis 4.0.0+)
       const multiSetResult = await ctx.redis.hset(key, "email", "jane@example.com", "age", "25");
       expectType<number>(multiSetResult, "number");
-      expect(multiSetResult).toBe(2); // 2 new fields were added
+      expect(multiSetResult).toBe(2);
 
-      // Verify all fields are set correctly
       const allFields = await ctx.redis.hgetall(key);
       expect(allFields).toEqual({
         username: "janedoe",
@@ -66,13 +61,11 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         age: "25",
       });
 
-      // Test with buffer values
       const bufferKey = ctx.generateKey("hset-buffer-test");
       const bufferValue = Buffer.from("binary data");
       const bufferSetResult = await ctx.redis.hset(bufferKey, "data", bufferValue);
       expect(bufferSetResult).toBe(1);
 
-      // Verify buffer was stored correctly
       const retrievedBuffer = await ctx.redis.hget(bufferKey, "data");
       expect(retrievedBuffer).toBe("binary data");
     });
@@ -80,9 +73,8 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
     test("HSET error handling", async () => {
       const key = ctx.generateKey("hset-error-test");
 
-      // Test with too few arguments - should throw
       try {
-        // @ts-expect-error - Testing invalid arguments
+        // @ts-expect-error
         await ctx.redis.hset(key);
         expect.unreachable("Should have thrown for missing field and value");
       } catch (error) {
@@ -90,9 +82,8 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         expect(error.message).toContain("hset requires at least 3 arguments");
       }
 
-      // Test with only key and field (missing value) - should throw
       try {
-        // @ts-expect-error - Testing invalid arguments
+        // @ts-expect-error
         await ctx.redis.hset(key, "field1");
         expect.unreachable("Should have thrown for missing value");
       } catch (error) {
@@ -100,9 +91,8 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         expect(error.message).toContain("hset requires field-value pairs");
       }
 
-      // Test with uneven number of field-value pairs - should throw
       try {
-        // @ts-expect-error - Testing invalid arguments
+        // @ts-expect-error
         await ctx.redis.hset(key, "field1", "value1", "field2");
         expect.unreachable("Should have thrown for uneven field-value pairs");
       } catch (error) {
@@ -110,9 +100,8 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         expect(error.message).toContain("hset requires field-value pairs");
       }
 
-      // Test with invalid key type - should throw
       try {
-        // @ts-expect-error - Testing invalid arguments
+        // @ts-expect-error
         await ctx.redis.hset(123, "field", "value");
         expect.unreachable("Should have thrown for invalid key type");
       } catch (error) {
@@ -120,9 +109,8 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         expect(error.message).toMatch(/key.*string or buffer/i);
       }
 
-      // Test with invalid field type - should throw
       try {
-        // @ts-expect-error - Testing invalid arguments
+        // @ts-expect-error
         await ctx.redis.hset(key, 123, "value");
         expect.unreachable("Should have thrown for invalid field type");
       } catch (error) {
@@ -130,9 +118,8 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         expect(error.message).toMatch(/field.*string or buffer/i);
       }
 
-      // Test with null/undefined values - should throw
       try {
-        // @ts-expect-error - Testing invalid arguments
+        // @ts-expect-error
         await ctx.redis.hset(key, "field", null);
         expect.unreachable("Should have thrown for null value");
       } catch (error) {
@@ -140,9 +127,8 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         expect(error.message).toMatch(/value.*string or buffer/i);
       }
 
-      // Test with undefined field in middle of multiple pairs
       try {
-        // @ts-expect-error - Testing invalid arguments
+        // @ts-expect-error
         await ctx.redis.hset(key, "field1", "value1", undefined, "value2");
         expect.unreachable("Should have thrown for undefined field");
       } catch (error) {

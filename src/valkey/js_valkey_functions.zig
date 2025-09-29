@@ -598,8 +598,6 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
     return promise.toJS();
 }
 
-// Implement hset (set one or more hash fields)
-// HSET accepts: HSET key field value [field value ...]
 pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
 
@@ -608,7 +606,6 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         return globalObject.throwInvalidArguments("hset requires at least 3 arguments: key, field, value", .{});
     }
 
-    // Check if we have an odd number of arguments after the key (field-value pairs)
     if ((args_view.len - 1) % 2 != 0) {
         return globalObject.throwInvalidArguments("hset requires field-value pairs after the key", .{});
     }
@@ -622,22 +619,18 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         args.deinit();
     }
 
-    // Add the key
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("hset", "key", "string or buffer");
     };
     args.appendAssumeCapacity(key);
 
-    // Add all field-value pairs
     var i: usize = 1;
     while (i < args_view.len) : (i += 2) {
-        // Add field
         const field = (try fromJS(globalObject, args_view[i])) orelse {
             return globalObject.throwInvalidArgumentType("hset", "field", "string or buffer");
         };
         args.appendAssumeCapacity(field);
 
-        // Add value
         if (i + 1 < args_view.len) {
             const value = (try fromJS(globalObject, args_view[i + 1])) orelse {
                 return globalObject.throwInvalidArgumentType("hset", "value", "string or buffer");
@@ -646,7 +639,6 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         }
     }
 
-    // Send HSET command
     const promise = this.send(
         globalObject,
         callframe.this(),

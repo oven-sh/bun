@@ -288,10 +288,10 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
 
       // Now mix updates with new fields
       const result2 = await ctx.redis.hset(key, {
-        existing1: "updated1",  // Update
-        existing2: "updated2",  // Update
-        new1: "value1",        // Add
-        new2: "value2",        // Add
+        existing1: "updated1", // Update
+        existing2: "updated2", // Update
+        new1: "value1", // Add
+        new2: "value2", // Add
       });
       // HSET returns number of fields added, not updated
       expect(result2).toBe(2);
@@ -339,7 +339,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
           const value = await ctx.redis.hget(key, `f${index}`);
           expect(value).toBe(`v${index}`);
         }
-      }
+      },
     );
 
     test("HSET error handling", async () => {

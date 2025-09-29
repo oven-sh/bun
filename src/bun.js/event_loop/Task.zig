@@ -63,6 +63,7 @@ pub const Task = TaggedPointerUnion(.{
     RuntimeTranspilerStore,
     S3HttpDownloadStreamingTask,
     S3HttpSimpleTask,
+    ServerAllConnectionsClosedTask,
     ShellAsync,
     ShellAsyncSubprocessDone,
     ShellCondExprStatTask,
@@ -467,6 +468,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) u3
                 var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
                 any.runFromJSThread(this, global, virtual_machine);
             },
+            @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
+                var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
+                any.runFromJSThread(virtual_machine);
+            },
             @field(Task.Tag, @typeName(bun.bundle_v2.DeferredBatchTask)) => {
                 var any: *bun.bundle_v2.DeferredBatchTask = task.get(bun.bundle_v2.DeferredBatchTask).?;
                 any.runOnJSThread();
@@ -525,6 +530,7 @@ const Environment = bun.Environment;
 const TaggedPointerUnion = bun.TaggedPointerUnion;
 const shell = bun.shell;
 const FlushPendingFileSinkTask = bun.webcore.FileSink.FlushPendingTask;
+const ServerAllConnectionsClosedTask = bun.api.server.ServerAllConnectionsClosedTask;
 const CopyFilePromiseTask = bun.webcore.Blob.copy_file.CopyFilePromiseTask;
 const GetAddrInfoRequestTask = bun.api.dns.GetAddrInfoRequest.Task;
 const ReadFileTask = bun.webcore.Blob.read_file.ReadFileTask;

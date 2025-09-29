@@ -1457,20 +1457,21 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.all_closed_promise.strong.has())
             {
                 httplog("schedule other promise", .{});
+                const event_loop = vm.eventLoop();
 
                 // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
                 // again before the task has run.
                 this.flags.has_handled_all_closed_promise = true;
 
-                var task = ServerAllConnectionsClosedTask{
+                const task = ServerAllConnectionsClosedTask.new(.{
                     .globalObject = this.globalThis,
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
                     .promise = .{
                         .strong = .create(this.all_closed_promise.value(), this.globalThis),
                     },
                     .tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
-                };
-                task.schedule();
+                });
+                event_loop.enqueueTask(jsc.Task.init(task));
             }
             if (this.pending_requests == 0 and
                 this.listener == null and
@@ -2889,25 +2890,15 @@ pub const ServerAllConnectionsClosedTask = struct {
     promise: jsc.JSPromise.Strong,
     tracker: jsc.Debugger.AsyncTaskTracker,
 
-    const new = bun.TrivialNew(@This());
+    pub const new = bun.TrivialNew(@This());
 
-    pub fn schedule(self: ServerAllConnectionsClosedTask) void {
-        const ptr = new(self);
-        ptr.globalObject.bunVM().rareData().pushCleanupHook(ptr.globalObject, @ptrCast(ptr), execute);
-    }
-
-    pub fn execute(data: ?*anyopaque) callconv(.c) void {
-        var self: *ServerAllConnectionsClosedTask = @ptrCast(@alignCast(data.?));
-        self.runFromJSThread();
-    }
-
-    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask) void {
+    pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *jsc.VirtualMachine) void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});
+
         const globalObject = this.globalObject;
         const tracker = this.tracker;
         tracker.willDispatch(globalObject);
         defer tracker.didDispatch(globalObject);
-        const vm = globalObject.bunVM();
 
         var promise = this.promise;
         defer promise.deinit();

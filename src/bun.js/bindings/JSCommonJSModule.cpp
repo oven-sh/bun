@@ -146,8 +146,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         moduleObject->hasEvaluated = true;
     };
 
-    bool isEvalOrMainModule = Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)) ||
-                              Bun__VM__isMainModule(globalObject->bunVM(), JSValue::encode(filename));
+    bool isEvalOrMainModule = Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)) || Bun__VM__isMainModule(globalObject->bunVM(), JSValue::encode(filename));
 
     if (isEvalOrMainModule) [[unlikely]] {
         initializeModuleObject();

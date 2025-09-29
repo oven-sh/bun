@@ -243,10 +243,7 @@ describe("--json flag", () => {
         env: bunEnv,
         stderr: "pipe",
       });
-      const [stdout] = await Promise.all([
-        new Response(proc.stdout).text(),
-        proc.exited,
-      ]);
+      const [stdout] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
       // BigInt error is printed to stdout
       expect(stdout).toContain("JSON.stringify cannot serialize BigInt");
     });

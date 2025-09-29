@@ -612,7 +612,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
             obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
     }
 
-        obj.no_link_obj = true;
+    obj.no_link_obj = true;
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
@@ -674,7 +674,7 @@ pub fn addInstallObjectFile(
     return &b.addInstallFile(switch (out_mode) {
         .obj => bin,
         .bc => compile.getEmittedLlvmBc(),
-    }, b.fmt("{s}", .{name})).step;
+    }, b.fmt("{s}.o", .{name})).step;
 }
 
 var checked_file_exists: std.AutoHashMap(u64, void) = undefined;

@@ -363,7 +363,7 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
         thrown = error;
       }
       expect(thrown).toBeDefined();
-      expect(thrown.message).toContain("hset requires field-value pairs");
+      expect(thrown.message).toContain("object or field-value pairs");
 
       thrown = undefined;
       try {

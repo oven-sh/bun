@@ -229,7 +229,7 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
 
       // INCR should increment and return new value
       const incremented = await ctx.redis.incr(key);
-      expectType<number>(incremented, "number");
+      expectType(incremented, "number");
       expect(incremented).toBe(11);
 
       // DECR should decrement and return new value

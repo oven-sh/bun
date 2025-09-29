@@ -1,6 +1,6 @@
-import { RedisClient, type SpawnOptions } from "bun";
+import { RedisClient } from "bun";
 import { afterAll, beforeAll, expect } from "bun:test";
-import { bunEnv, dockerExe, isCI, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, dockerExe, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
 import * as dockerCompose from "../../docker/index.ts";
@@ -219,9 +219,6 @@ export async function setupDockerContainer() {
 export function testKey(name: string): string {
   return `${context.id}:${TEST_KEY_PREFIX}${name}`;
 }
-
-// Import needed functions from Bun
-import { tmpdir } from "os";
 
 /**
  * Create a new client with specific connection type
@@ -490,13 +487,28 @@ if (!isEnabled) {
   console.warn("Redis is not enabled, skipping tests");
 }
 
+type TypeofString<T> = T extends string
+  ? "string"
+  : T extends number
+    ? "number"
+    : T extends bigint
+      ? "bigint"
+      : T extends boolean
+        ? "boolean"
+        : T extends symbol
+          ? "symbol"
+          : T extends undefined
+            ? "undefined"
+            : T extends Function
+              ? "function"
+              : T extends {}
+                ? "object"
+                : never;
+
 /**
  * Verify that a value is of a specific type
  */
-export function expectType<T>(
-  value: any,
-  expectedType: "string" | "number" | "bigint" | "boolean" | "symbol" | "undefined" | "object" | "function",
-): asserts value is T {
+export function expectType<T>(value: T, expectedType: TypeofString<T>): asserts value is T {
   expect(value).toBeTypeOf(expectedType);
 }
 

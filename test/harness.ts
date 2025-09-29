@@ -5,6 +5,7 @@
  * without always needing to run `bun install` in development.
  */
 
+import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
@@ -13,7 +14,6 @@ import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import * as numeric from "_util/numeric.ts";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -31,9 +31,9 @@ export const libcFamily: "glibc" | "musl" =
   process.platform !== "linux"
     ? "glibc"
     : // process.report.getReport() has incorrect type definitions.
-      (process.report.getReport() as { header: { glibcVersionRuntime: boolean } }).header.glibcVersionRuntime
-      ? "glibc"
-      : "musl";
+    (process.report.getReport() as { header: { glibcVersionRuntime: boolean } }).header.glibcVersionRuntime
+    ? "glibc"
+    : "musl";
 
 export const isMusl = isLinux && libcFamily === "musl";
 export const isGlibc = isLinux && libcFamily === "glibc";

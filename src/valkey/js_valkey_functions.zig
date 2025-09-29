@@ -603,7 +603,7 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
     const args_view = callframe.arguments();
     if (args_view.len < 2) {
-        return globalObject.throwInvalidArguments("hset requires at least 2 arguments: key and field-value pairs", .{});
+        return globalObject.throwInvalidArguments("hset requires at least 3 arguments: key, field, value", .{});
     }
 
     // Pre-size based on expected argument count

@@ -602,6 +602,40 @@ dec.decode(decompressed);
 // => "hellohellohello..."
 ```
 
+## `Bun.zstdCompress()` / `Bun.zstdCompressSync()`
+
+Compresses a `Uint8Array` using the Zstandard algorithm.
+
+```ts
+const buf = Buffer.from("hello".repeat(100));
+
+// Synchronous
+const compressed = Bun.zstdCompressSync(buf);
+// Asynchronous
+const compressed = await Bun.zstdCompress(buf);
+
+// With compression level (1-22, default: 3)
+const compressed = Bun.zstdCompressSync(buf, { level: 6 });
+```
+
+## `Bun.zstdDecompress()` / `Bun.zstdDecompressSync()`
+
+Decompresses a `Uint8Array` using the Zstandard algorithm.
+
+```ts
+const buf = Buffer.from("hello".repeat(100));
+const compressed = Bun.zstdCompressSync(buf);
+
+// Synchronous
+const decompressed = Bun.zstdDecompressSync(compressed);
+// Asynchronous
+const decompressed = await Bun.zstdDecompress(compressed);
+
+const dec = new TextDecoder();
+dec.decode(decompressed);
+// => "hellohellohello..."
+```
+
 ## `Bun.inspect()`
 
 Serializes an object to a `string` exactly as it would be printed by `console.log`.

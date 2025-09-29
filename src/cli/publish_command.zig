@@ -549,7 +549,7 @@ pub const PublishCommand = struct {
             );
 
             if (package_exists) {
-                Output.prettyErrorln("<yellow>warning<r>: Registry already knows about version {s}; skipping.", .{version_without_build_tag});
+                Output.warn("Registry already knows about version {s}; skipping.", .{version_without_build_tag});
                 return;
             }
         }

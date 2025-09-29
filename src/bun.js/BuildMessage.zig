@@ -173,11 +173,8 @@ pub const BuildMessage = struct {
         return BuildMessage.generatePositionObject(this.msg, globalThis);
     }
 
-    pub fn getMessage(
-        this: *BuildMessage,
-        globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
-        return ZigString.init(this.msg.data.text).toJS(globalThis);
+    pub fn getMessageString(this: *BuildMessage) bun.String {
+        return bun.String.init(this.msg.data.text);
     }
 
     pub fn getLevel(
@@ -203,9 +200,8 @@ pub const BuildMessage = struct {
         return BuildMessage.fromJS(value);
     }
 
-    // Export functions for C++ bindings
-    pub export fn BuildMessage__getMessage(this: *BuildMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-        return this.getMessage(globalThis);
+    pub export fn BuildMessage__getMessageString(this: *BuildMessage) bun.String {
+        return this.getMessageString();
     }
 
     pub export fn BuildMessage__getLevel(this: *BuildMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {

@@ -7,7 +7,6 @@ const { kEmptyObject, throwNotImplemented } = require("internal/shared");
 const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
 const kDefaultOptions = kEmptyObject;
-const kDefaultFilePath = undefined;
 
 function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
@@ -38,13 +37,6 @@ delete assert.CallTracker;
 delete assert.strict;
 
 let checkNotInsideTest: (ctx: TestContext | undefined, fn: string) => void;
-let getTestContextHooks: (ctx: TestContext) => {
-  beforeHooks: Array<() => unknown | Promise<unknown>>;
-  afterHooks: Array<() => unknown | Promise<unknown>>;
-  beforeEachHooks: Array<() => unknown | Promise<unknown>>;
-  afterEachHooks: Array<() => unknown | Promise<unknown>>;
-  runHooks: (hooks: Array<() => unknown | Promise<unknown>>) => Promise<void>;
-};
 
 /**
  * @link https://nodejs.org/api/test.html#class-testcontext
@@ -55,10 +47,6 @@ class TestContext {
   #filePath: string | undefined;
   #parent?: TestContext;
   #abortController?: AbortController;
-  #afterHooks: Array<() => unknown | Promise<unknown>> = [];
-  #beforeHooks: Array<() => unknown | Promise<unknown>> = [];
-  #beforeEachHooks: Array<() => unknown | Promise<unknown>> = [];
-  #afterEachHooks: Array<() => unknown | Promise<unknown>> = [];
 
   constructor(
     insideTest: boolean,
@@ -127,47 +115,27 @@ class TestContext {
   }
 
   before(arg0: unknown, arg1: unknown) {
-    const { fn, fnInsideTest } = createHook(arg0, arg1);
-    if (this.#insideTest) {
-      // When called inside a test, store the hook to run at the appropriate time
-      this.#beforeHooks.push(fnInsideTest);
-    } else {
-      const { beforeAll } = bunTest();
-      beforeAll(fn);
-    }
+    const { fn } = createHook(arg0, arg1);
+    const { beforeAll } = bunTest();
+    beforeAll(fn);
   }
 
   after(arg0: unknown, arg1: unknown) {
-    const { fn, fnInsideTest } = createHook(arg0, arg1);
-    if (this.#insideTest) {
-      // When called inside a test, store the hook to run at the end of the test
-      this.#afterHooks.push(fnInsideTest);
-    } else {
-      const { afterAll } = bunTest();
-      afterAll(fn);
-    }
+    const { fn } = createHook(arg0, arg1);
+    const { afterAll } = bunTest();
+    afterAll(fn);
   }
 
   beforeEach(arg0: unknown, arg1: unknown) {
-    const { fn, fnInsideTest } = createHook(arg0, arg1);
-    if (this.#insideTest) {
-      // When called inside a test, store the hook to run for each subtest
-      this.#beforeEachHooks.push(fnInsideTest);
-    } else {
-      const { beforeEach } = bunTest();
-      beforeEach(fn);
-    }
+    const { fn } = createHook(arg0, arg1);
+    const { beforeEach } = bunTest();
+    beforeEach(fn);
   }
 
   afterEach(arg0: unknown, arg1: unknown) {
-    const { fn, fnInsideTest } = createHook(arg0, arg1);
-    if (this.#insideTest) {
-      // When called inside a test, store the hook to run after each subtest
-      this.#afterEachHooks.push(fnInsideTest);
-    } else {
-      const { afterEach } = bunTest();
-      afterEach(fn);
-    }
+    const { fn } = createHook(arg0, arg1);
+    const { afterEach } = bunTest();
+    afterEach(fn);
   }
 
   waitFor(_condition: unknown, _options: { timeout?: number } = kEmptyObject) {
@@ -200,15 +168,6 @@ class TestContext {
     describe(name, fn);
   }
 
-  async #runHooks(hooks: Array<() => unknown | Promise<unknown>>) {
-    for (const hook of hooks) {
-      const result = hook();
-      if (result instanceof Promise) {
-        await result;
-      }
-    }
-  }
-
   #checkNotInsideTest(fn: string) {
     if (this.#insideTest) {
       throwNotImplemented(`${fn}() inside another test()`, 5090, "Use `bun:test` in the interim.");
@@ -216,19 +175,9 @@ class TestContext {
   }
 
   static {
-    // expose these functions to the rest of this file without exposing them to user JS
+    // expose this function to the rest of this file without exposing it to user JS
     checkNotInsideTest = (ctx: TestContext | undefined, fn: string) => {
       if (ctx) ctx.#checkNotInsideTest(fn);
-    };
-
-    getTestContextHooks = (ctx: TestContext) => {
-      return {
-        beforeHooks: ctx.#beforeHooks,
-        afterHooks: ctx.#afterHooks,
-        beforeEachHooks: ctx.#beforeEachHooks,
-        afterEachHooks: ctx.#afterEachHooks,
-        runHooks: (hooks: Array<() => unknown | Promise<unknown>>) => ctx.#runHooks(hooks),
-      };
     };
   }
 }
@@ -353,24 +302,13 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, options, fn } = parseTestOptions(arg0, arg1, arg2);
 
   checkNotInsideTest(ctx, "test");
-  const context = new TestContext(true, name, Bun.main, ctx);
+  const originalContext = ctx;
+  const context = new TestContext(true, name, Bun.main, originalContext);
 
-  const runTest = async (done: (error?: unknown) => void) => {
-    const originalContext = ctx;
+  const runTest = (done: (error?: unknown) => void) => {
     ctx = context;
-    const hooks = getTestContextHooks(context);
-
-    const endTest = async (error?: unknown) => {
+    const endTest = (error?: unknown) => {
       try {
-        // Run after hooks before ending the test
-        if (!error && hooks.afterHooks.length > 0) {
-          try {
-            await hooks.runHooks(hooks.afterHooks);
-          } catch (hookError) {
-            done(hookError);
-            return;
-          }
-        }
         done(error);
       } finally {
         ctx = originalContext;
@@ -379,19 +317,15 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
 
     let result: unknown;
     try {
-      // Run before hooks before running the test
-      if (hooks.beforeHooks.length > 0) {
-        await hooks.runHooks(hooks.beforeHooks);
-      }
       result = fn(context);
     } catch (error) {
-      await endTest(error);
+      endTest(error);
       return;
     }
     if (result instanceof Promise) {
       (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
     } else {
-      await endTest();
+      endTest();
     }
   };
 
@@ -402,10 +336,10 @@ function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = parseTestOptions(arg0, arg1, arg2);
 
   checkNotInsideTest(ctx, "describe");
-  const context = new TestContext(false, name, Bun.main, ctx);
+  const originalContext = ctx;
+  const context = new TestContext(false, name, Bun.main, originalContext);
 
   const runDescribe = () => {
-    const originalContext = ctx;
     ctx = context;
     const endDescribe = () => {
       ctx = originalContext;
@@ -443,16 +377,7 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
-  // When used inside a test context, we don't have done callback
-  const runHookInsideTest = async () => {
-    const result = fn();
-    if (result instanceof Promise) {
-      await result;
-    }
-  };
-
-  // When used at module level, we have done callback
-  const runHookWithDone = (done: (error?: unknown) => void) => {
+  const runHook = (done: (error?: unknown) => void) => {
     let result: unknown;
     try {
       result = fn();
@@ -467,7 +392,7 @@ function createHook(arg0: unknown, arg1: unknown) {
     }
   };
 
-  return { options, fn: runHookWithDone, fnInsideTest: runHookInsideTest };
+  return { options, fn: runHook };
 }
 
 type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;

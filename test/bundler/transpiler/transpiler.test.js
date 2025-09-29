@@ -1344,6 +1344,19 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  it("parses TSX arrow functions correctly", () => {
+    var transpiler = new Bun.Transpiler({
+      loader: "tsx",
+    });
+    expect(transpiler.transformSync("console.log(A = <T = unknown,>() => null)")).toBe(
+      "console.log(A = () => null);\n",
+    );
+    expect(transpiler.transformSync("const B = <T extends string>() => null")).toBe("const B = () => null;\n");
+    expect(transpiler.transformSync("const element = <T extends/>")).toContain("jsxDEV");
+    expect(transpiler.transformSync("const element2 = <T extends={true}/>")).toContain("jsxDEV");
+    expect(transpiler.transformSync("const element3 = <T extends></T>")).toContain("jsxDEV");
+  });
+
   it.todo("JSX", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

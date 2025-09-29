@@ -424,6 +424,70 @@ test("very basic single route with url params", {
   },
 });
 
+test("catch-all route params", {
+  routes: {
+    "/api/:path*": req => {
+      // TypeScript should know that req.params.path is string[]
+      expectType<string[]>(req.params.path);
+      const paths: string[] = req.params.path;
+      return new Response(JSON.stringify(paths));
+    },
+    "/files/:dir/:files*": req => {
+      // TypeScript should know dir is string and files is string[]
+      expectType<string>(req.params.dir);
+      expectType<string[]>(req.params.files);
+      const dir: string = req.params.dir;
+      const files: string[] = req.params.files;
+      return new Response(JSON.stringify({ dir, files }));
+    },
+  },
+  fetch: () => new Response("fallback"),
+});
+
+test("mixed normal and catch-all params with type assertions", {
+  routes: {
+    "/user/:id": (req: Bun.BunRequest<"/user/:id">) => {
+      // Explicitly typed, params.id should be string
+      expectType<string>(req.params.id);
+      const id: string = req.params.id;
+      return new Response(id);
+    },
+    "/posts/:category/:tags*": (req: Bun.BunRequest<"/posts/:category/:tags*">) => {
+      // Explicitly typed, category should be string, tags should be string[]
+      expectType<string>(req.params.category);
+      expectType<string[]>(req.params.tags);
+      const category: string = req.params.category;
+      const tags: string[] = req.params.tags;
+      return Response.json({ category, tags });
+    },
+    "/:splat*": (req: Bun.BunRequest<"/:splat*">) => {
+      // Root catch-all
+      expectType<string[]>(req.params.splat);
+      const splat: string[] = req.params.splat;
+      return Response.json(splat);
+    },
+  },
+});
+
+test("type errors with incorrect param types", {
+  routes: {
+    "/test/:param": req => {
+      // This should be a string, not an array
+      expectType<string>(req.params.param);
+      // @ts-expect-error - param is string, not string[]
+      const wrongType: string[] = req.params.param;
+      return new Response("ok");
+    },
+    "/test2/:catchAll*": req => {
+      // This should be an array, not a string
+      expectType<string[]>(req.params.catchAll);
+      // @ts-expect-error - catchAll is string[], not string
+      const wrongType: string = req.params.catchAll;
+      return new Response("ok");
+    },
+  },
+});
+
 test("very basic fetch with websocket message handler", {
   fetch: () => new Response("ok"),
   websocket: {

@@ -2412,6 +2412,52 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             resp.end(json_string, resp.shouldCloseConnection());
         }
 
+        /// Transform a route path with :param* syntax to uWS-compatible format
+        fn transformRoutePathForUWS(allocator: std.mem.Allocator, path: []const u8) []const u8 {
+            // Quick check if transformation is needed
+            if (std.mem.indexOf(u8, path, ":*") == null and std.mem.indexOf(u8, path, "*") == null) {
+                return path;
+            }
+
+            var result = std.ArrayList(u8).init(allocator);
+            var i: usize = 0;
+            var found_catchall = false;
+
+            while (i < path.len) {
+                if (i + 1 < path.len and path[i] == ':') {
+                    // Found a parameter
+                    const param_start = i + 1;
+                    var param_end = param_start;
+
+                    // Find the end of the parameter name
+                    while (param_end < path.len and path[param_end] != '/' and path[param_end] != '*') {
+                        param_end += 1;
+                    }
+
+                    // Check if it's a catch-all parameter
+                    if (param_end < path.len and path[param_end] == '*') {
+                        // Found catch-all - convert to wildcard for uWS
+                        // If we're at position 0 (root catch-all like /:path*), need to keep the /
+                        if (i == 0) {
+                            result.append('/') catch unreachable;
+                        }
+                        result.append('*') catch unreachable;
+                        found_catchall = true;
+                        break; // Stop processing - uWS wildcard must be at end
+                    } else {
+                        // Regular parameter, keep as-is
+                        result.appendSlice(path[i..param_end]) catch unreachable;
+                        i = param_end;
+                    }
+                } else {
+                    result.append(path[i]) catch unreachable;
+                    i += 1;
+                }
+            }
+
+            return result.toOwnedSlice() catch unreachable;
+        }
+
         fn setRoutes(this: *ThisServer) jsc.JSValue {
             var route_list_value = jsc.JSValue.zero;
             const app = this.app.?;
@@ -2467,21 +2513,26 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var has_any_ws_route_for_star_path = false;
 
             for (this.user_routes.items) |*user_route| {
-                const is_star_path = strings.eqlComptime(user_route.route.path, "/*");
-                if (is_star_path) {
-                    has_any_user_route_for_star_path = true;
-                }
-
                 if (should_add_chrome_devtools_json_route) {
                     if (strings.eqlComptime(user_route.route.path, chrome_devtools_route) or strings.hasPrefix(user_route.route.path, "/.well-known/")) {
                         should_add_chrome_devtools_json_route = false;
                     }
                 }
 
+                // Transform the route path for uWS
+                const uws_path = transformRoutePathForUWS(bun.default_allocator, user_route.route.path);
+                defer if (uws_path.ptr != user_route.route.path.ptr) bun.default_allocator.free(uws_path);
+
+                // Check if the transformed path is the wildcard path
+                const is_star_path = strings.eqlComptime(uws_path, "/*");
+                if (is_star_path) {
+                    has_any_user_route_for_star_path = true;
+                }
+
                 // Register HTTP routes
                 switch (user_route.route.method) {
                     .any => {
-                        app.any(user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
+                        app.any(uws_path, *UserRoute, user_route, onUserRouteRequest);
                         if (is_star_path) {
                             star_methods_covered_by_user = .initFull();
                         }
@@ -2491,7 +2542,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 has_any_ws_route_for_star_path = true;
                             }
                             app.ws(
-                                user_route.route.path,
+                                uws_path,
                                 user_route,
                                 1, // id 1 means is a user route
                                 ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
@@ -2499,7 +2550,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
                     },
                     .specific => |method_val| { // method_val is HTTP.Method here
-                        app.method(method_val, user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
+                        app.method(method_val, uws_path, *UserRoute, user_route, onUserRouteRequest);
                         if (is_star_path) {
                             star_methods_covered_by_user.insert(method_val);
                         }
@@ -2509,7 +2560,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             // Websocket upgrade is a GET request
                             if (method_val == .GET) {
                                 app.ws(
-                                    user_route.route.path,
+                                    uws_path,
                                     user_route,
                                     1, // id 1 means is a user route
                                     ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),

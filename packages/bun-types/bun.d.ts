@@ -3241,10 +3241,14 @@ declare module "bun" {
   }
 
   namespace RouterTypes {
+    // Helper to check if a param ends with *
+    type ExtractParam<P> = P extends `${infer Name}*` ? { [K in Name]: string[] } : { [K in P]: string };
+
+    // Main extraction logic
     type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
-      ? { [K in Param]: string } & ExtractRouteParams<Rest>
+      ? ExtractParam<Param> & ExtractRouteParams<Rest>
       : T extends `${string}:${infer Param}`
-        ? { [K in Param]: string }
+        ? ExtractParam<Param>
         : T extends `${string}*`
           ? {}
           : {};

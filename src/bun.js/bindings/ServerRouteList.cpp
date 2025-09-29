@@ -89,6 +89,9 @@ public:
 
     JSValue callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, uWS::HttpRequest* req);
 
+    // Helper to extract catch-all segments from URL
+    WTF::Vector<WTF::String> extractCatchAllSegments(const WTF::String& urlPath, const WTF::String& pattern, size_t catchAllParamIndex);
+
 private:
     Structure* structureForParamsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<const Identifier> identifiers);
     JSObject* paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, uWS::HttpRequest* req);
@@ -106,6 +109,8 @@ private:
     WTF::FixedVector<JSC::WriteBarrier<Structure>> m_paramsObjectStructures;
     WTF::FixedVector<IdentifierRange> m_pathIdentifierRanges;
     WTF::Vector<Identifier> m_pathIdentifiers;
+    WTF::Vector<uint8_t> m_catchAllFlags; // Tracks which params are catch-all
+    WTF::Vector<WTF::String> m_originalPaths; // Store original path patterns
 
     void finishCreation(JSC::VM& vm, std::span<EncodedJSValue> callbacks, std::span<ZigString> paths)
     {
@@ -122,14 +127,26 @@ private:
         for (size_t i = 0; i < paths.size(); i++) {
             ZigString rawPath = paths[i];
             WTF::String path = Zig::toString(rawPath);
+            m_originalPaths.append(path); // Store original path
             uint32_t originalIdentifierIndex = m_pathIdentifiers.size();
             size_t startOfIdentifier = 0;
             size_t identifierCount = 0;
+            uint8_t catchAllFlags = 0; // Bitmask for catch-all params in this route
+
             for (size_t j = 0; j < path.length(); j++) {
                 switch (path[j]) {
                 case '/': {
                     if (startOfIdentifier && startOfIdentifier < j) {
                         WTF::String&& identifier = path.substring(startOfIdentifier, j - startOfIdentifier);
+                        // Check if this parameter ends with * (catch-all)
+                        if (identifier.endsWith("*"_s)) {
+                            // Remove the * from the identifier name
+                            identifier = identifier.substring(0, identifier.length() - 1);
+                            // Mark this param as catch-all
+                            if (identifierCount < 8) {
+                                catchAllFlags |= (1 << identifierCount);
+                            }
+                        }
                         m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
                         identifierCount++;
                     }
@@ -147,12 +164,22 @@ private:
             }
             if (startOfIdentifier && startOfIdentifier < path.length()) {
                 WTF::String&& identifier = path.substring(startOfIdentifier, path.length() - startOfIdentifier);
+                // Check if this parameter ends with * (catch-all)
+                if (identifier.endsWith("*"_s)) {
+                    // Remove the * from the identifier name
+                    identifier = identifier.substring(0, identifier.length() - 1);
+                    // Mark this param as catch-all
+                    if (identifierCount < 8) {
+                        catchAllFlags |= (1 << identifierCount);
+                    }
+                }
                 m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
                 identifierCount++;
             }
 
             pathIdentifierRanges[0] = { static_cast<uint16_t>(originalIdentifierIndex), static_cast<uint16_t>(identifierCount) };
             pathIdentifierRanges = pathIdentifierRanges.subspan(1);
+            m_catchAllFlags.append(catchAllFlags);
         }
     }
 };
@@ -198,6 +225,63 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
     return m_paramsObjectStructures.at(index).get();
 }
 
+WTF::Vector<WTF::String> ServerRouteList::extractCatchAllSegments(const WTF::String& urlPath, const WTF::String& pattern, size_t catchAllParamIndex)
+{
+    WTF::Vector<WTF::String> segments;
+
+    // Count how many segments to skip in the URL based on pattern before catch-all
+    // For "/files/:dir/:path*" with catchAllParamIndex=1, we need to skip 2 segments (/files/XXX/)
+    size_t segmentsToSkip = 0;
+    size_t paramCount = 0;
+
+    for (size_t i = 0; i < pattern.length(); i++) {
+        if (pattern[i] == '/') {
+            // Count segments up to the catch-all parameter
+            if (paramCount <= catchAllParamIndex) {
+                segmentsToSkip++;
+            }
+        } else if (pattern[i] == ':') {
+            if (paramCount == catchAllParamIndex) {
+                // Found the catch-all, stop counting
+                break;
+            }
+            // Skip to the end of this parameter name
+            while (i < pattern.length() && pattern[i] != '/' && pattern[i] != '*') {
+                i++;
+            }
+            paramCount++;
+            i--; // Back up one so the loop increment doesn't skip a character
+        }
+    }
+
+    // Now skip the required number of segments in the URL
+    size_t urlPos = 0;
+    size_t skippedSegments = 0;
+
+    for (size_t i = 0; i < urlPath.length() && skippedSegments < segmentsToSkip; i++) {
+        if (urlPath[i] == '/') {
+            skippedSegments++;
+            urlPos = i + 1;
+        }
+    }
+
+    // Extract all remaining segments from this position
+    if (urlPos < urlPath.length()) {
+        size_t start = urlPos;
+
+        for (size_t i = urlPos; i <= urlPath.length(); i++) {
+            if (i == urlPath.length() || urlPath[i] == '/') {
+                if (i > start) {
+                    segments.append(urlPath.substring(start, i - start));
+                }
+                start = i + 1;
+            }
+        }
+    }
+
+    return segments;
+}
+
 JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, uWS::HttpRequest* req)
 {
 
@@ -206,15 +290,47 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
     IdentifierRange range = m_pathIdentifierRanges.at(index);
     size_t offset = range.start;
     size_t identifierCount = range.count;
+    uint8_t catchAllFlags = index < m_catchAllFlags.size() ? m_catchAllFlags.at(index) : 0;
     args.ensureCapacity(identifierCount);
 
+    unsigned short nextParamIndex = 0;
+
+    // Get the URL path
+    std::string_view urlView = req->getUrl();
+    WTF::String urlPath = WTF::String::fromUTF8(std::span<const char>(urlView.data(), urlView.length()));
+
     for (size_t i = 0; i < identifierCount; i++) {
-        auto param = req->getParameter(static_cast<unsigned short>(i));
-        if (!param.empty()) {
-            const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
-            args.append(jsString(vm, decodeURIComponentSIMD(paramBytes)));
+        bool isCatchAll = (catchAllFlags & (1 << i)) != 0;
+
+        if (isCatchAll) {
+            // For catch-all parameters, extract segments from the URL path
+            JSC::MarkedArgumentBuffer segments;
+
+            // Get the original pattern for this route
+            WTF::String pattern = index < m_originalPaths.size() ? m_originalPaths.at(index) : WTF::String();
+
+            // Extract catch-all segments from the URL
+            auto catchAllSegments = extractCatchAllSegments(urlPath, pattern, i);
+
+            for (const auto& segment : catchAllSegments) {
+                // Decode the URL-encoded segment
+                const std::span<const uint8_t> segmentBytes(reinterpret_cast<const uint8_t*>(segment.utf8().data()), segment.utf8().length());
+                segments.append(jsString(vm, decodeURIComponentSIMD(segmentBytes)));
+            }
+
+            // Create an array for the catch-all parameter
+            args.append(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), segments));
+            // Catch-all consumes all remaining params
+            break;
         } else {
-            args.append(jsEmptyString(vm));
+            auto param = req->getParameter(nextParamIndex);
+            if (!param.empty()) {
+                const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
+                args.append(jsString(vm, decodeURIComponentSIMD(paramBytes)));
+            } else {
+                args.append(jsEmptyString(vm));
+            }
+            nextParamIndex++;
         }
     }
 

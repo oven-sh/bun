@@ -383,7 +383,7 @@ The `sql.array` helper creates PostgreSQL array literals from JavaScript arrays:
 
 ```ts
 // Create array literals for PostgreSQL
-await sql`INSERT INTO tags (items) VALUES (${sql.array(['red', 'blue', 'green'])})`;
+await sql`INSERT INTO tags (items) VALUES (${sql.array(["red", "blue", "green"])})`;
 // Generates: INSERT INTO tags (items) VALUES (ARRAY['red', 'blue', 'green'])
 
 // Works with numeric arrays too

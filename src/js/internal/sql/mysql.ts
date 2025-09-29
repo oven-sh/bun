@@ -134,7 +134,7 @@ const enum SQLCommand {
   update = 1,
   updateSet = 2,
   where = 3,
-  inOrAny = 4,
+  inAnyOrAll = 4,
   none = -1,
 }
 export type { SQLCommand };
@@ -146,7 +146,7 @@ function commandToString(command: SQLCommand): string {
     case SQLCommand.updateSet:
     case SQLCommand.update:
       return "UPDATE";
-    case SQLCommand.inOrAny:
+    case SQLCommand.inAnyOrAll:
     case SQLCommand.where:
       return "WHERE";
     default:
@@ -198,8 +198,10 @@ function detectCommand(query: string): SQLCommand {
             }
             return command;
           }
+          case "any":
+          case "all":
           case "in": {
-            return SQLCommand.inOrAny;
+            return SQLCommand.inAnyOrAll;
           }
           default: {
             token = "";
@@ -240,8 +242,8 @@ function detectCommand(query: string): SQLCommand {
         return SQLCommand.update;
       }
       case SQLCommand.where: {
-        if (token === "in" || token === "any") {
-          return SQLCommand.inOrAny;
+        if (token === "in" || token === "any" || token === "all") {
+          return SQLCommand.inAnyOrAll;
         }
         return SQLCommand.where;
       }
@@ -1035,7 +1037,7 @@ class MySQLAdapter
             }
             const { columns, value: items } = value as SQLHelper;
             const columnCount = columns.length;
-            if (columnCount === 0 && command !== SQLCommand.inOrAny) {
+            if (columnCount === 0 && command !== SQLCommand.inAnyOrAll) {
               throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
             }
             const lastColumnIndex = columns.length - 1;
@@ -1090,7 +1092,7 @@ class MySQLAdapter
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }
-            } else if (command === SQLCommand.inOrAny) {
+            } else if (command === SQLCommand.inAnyOrAll) {
               // SELECT * FROM users WHERE id IN (${sql([1, 2, 3])})
               if (!$isArray(items)) {
                 throw new SyntaxError("An array of values is required for WHERE IN helper");

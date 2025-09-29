@@ -83,7 +83,7 @@ describe.todo("patched packages", () => {
   });
 });
 
-describe"folder dependencies", () => {
+describe("folder dependencies", () => {
   test.todo("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
       files: join(import.meta.dir, "pnpm/folder-dependencies-basic"),

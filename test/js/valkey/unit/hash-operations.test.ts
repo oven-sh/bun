@@ -70,6 +70,93 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       expect(retrievedBuffer).toBe("binary data");
     });
 
+    test("HSET with 8 field-value pairs", async () => {
+      const key = ctx.generateKey("hset-8-pairs-test");
+
+      const result = await ctx.redis.hset(
+        key,
+        "field1", "value1",
+        "field2", "value2",
+        "field3", "value3",
+        "field4", "value4",
+        "field5", "value5",
+        "field6", "value6",
+        "field7", "value7",
+        "field8", "value8"
+      );
+
+      expectType<number>(result, "number");
+      expect(result).toBe(8);
+
+      const allFields = await ctx.redis.hgetall(key);
+      expect(allFields).toEqual({
+        field1: "value1",
+        field2: "value2",
+        field3: "value3",
+        field4: "value4",
+        field5: "value5",
+        field6: "value6",
+        field7: "value7",
+        field8: "value8",
+      });
+    });
+
+    test("HSET stress test with 1000 field-value pairs", async () => {
+      const key = ctx.generateKey("hset-stress-test");
+      const args = [key];
+      const expectedObject: Record<string, string> = {};
+
+      for (let i = 0; i < 1000; i++) {
+        const field = `field_${i}`;
+        const value = `value_${i}_${Math.random().toString(36).substring(2, 15)}`;
+        args.push(field, value);
+        expectedObject[field] = value;
+      }
+
+      const result = await ctx.redis.hset(...args);
+      expectType<number>(result, "number");
+      expect(result).toBe(1000);
+
+      const size = await ctx.redis.hlen(key);
+      expect(size).toBe(1000);
+
+      const value500 = await ctx.redis.hget(key, "field_500");
+      expect(value500).toBe(expectedObject.field_500);
+
+      const value999 = await ctx.redis.hget(key, "field_999");
+      expect(value999).toBe(expectedObject.field_999);
+
+      const allFields = await ctx.redis.hgetall(key);
+      expect(Object.keys(allFields).length).toBe(1000);
+      expect(allFields.field_0).toBe(expectedObject.field_0);
+      expect(allFields.field_999).toBe(expectedObject.field_999);
+    });
+
+    test("HSET extreme stress test with 10000 field-value pairs", async () => {
+      const key = ctx.generateKey("hset-extreme-stress-test");
+      const args = [key];
+
+      for (let i = 0; i < 10000; i++) {
+        args.push(`f${i}`, `v${i}`);
+      }
+
+      const result = await ctx.redis.hset(...args);
+      expectType<number>(result, "number");
+      expect(result).toBe(10000);
+
+      const size = await ctx.redis.hlen(key);
+      expect(size).toBe(10000);
+
+      const first = await ctx.redis.hget(key, "f0");
+      expect(first).toBe("v0");
+
+      const middle = await ctx.redis.hget(key, "f5000");
+      expect(middle).toBe("v5000");
+
+      const last = await ctx.redis.hget(key, "f9999");
+      expect(last).toBe("v9999");
+    });
+
     test("HSET error handling", async () => {
       const key = ctx.generateKey("hset-error-test");
 

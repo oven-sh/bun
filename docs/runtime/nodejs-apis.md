@@ -36,7 +36,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟢 Fully implemented. 92% of Node.js's test suite passes.
+🟢 Fully implemented. 92% of Node.js's test suite passes. `fs.glob()` matches both files and directories by default.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 

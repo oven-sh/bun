@@ -124,7 +124,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Missing `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+🟡 Missing `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
@@ -150,13 +150,22 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 🟡 Core functionality and ES modules are implemented, including `vm.Script`, `vm.createContext`, `vm.runInContext`, `vm.runInNewContext`, `vm.runInThisContext`, `vm.compileFunction`, `vm.isContext`, `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`, and `importModuleDynamically` support. Options like `timeout` and `breakOnSigint` are fully supported. Missing `vm.measureMemory` and some `cachedData` functionality.
 
+```js
+import vm from "node:vm";
+
+const module = new vm.SourceTextModule("export const x = 42;");
+await module.link(() => {});
+await module.evaluate();
+console.log(module.namespace.x); // 42
+```
+
 ### [`node:wasi`](https://nodejs.org/api/wasi.html)
 
 🟡 Partially implemented.
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🟡 `Worker` doesn't support the following options: `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
+🟡 `Worker` doesn't support the following options: `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext`.
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 

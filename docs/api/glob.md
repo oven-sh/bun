@@ -155,3 +155,23 @@ const glob = new Glob("\\!index.ts");
 glob.match("!index.ts"); // => true
 glob.match("index.ts"); // => false
 ```
+
+## Node.js `fs.glob()` compatibility
+
+Bun also implements Node.js's `fs.glob()` functions with additional features:
+
+```ts
+import { glob, globSync, promises } from "node:fs";
+
+// Array of patterns
+const files = await promises.glob(["**/*.ts", "**/*.js"]);
+
+// Exclude patterns
+const filtered = await promises.glob("**/*", {
+  exclude: ["node_modules/**", "*.test.*"]
+});
+```
+
+All three functions (`fs.glob()`, `fs.globSync()`, `fs.promises.glob()`) support:
+- Array of patterns as the first argument
+- `exclude`/`ignore` options to filter results

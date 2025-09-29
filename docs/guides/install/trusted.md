@@ -43,4 +43,15 @@ $ bun install
 
 ---
 
+## Global packages
+
+Trusted dependencies also work with global packages. Use the same `trustedDependencies` field in your global `package.json` or specify trusted packages when installing globally:
+
+```sh
+$ bun pm trust <pkg> --global
+$ bun install --global <pkg>
+```
+
+---
+
 See [Docs > Package manager > Trusted dependencies](https://bun.com/docs/install/lifecycle) for complete documentation of trusted dependencies.

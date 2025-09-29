@@ -71,14 +71,6 @@ test/js/node/test/parallel/test-fs-readfile-eof.js
 test/js/node/test/parallel/test-child-process-promisified.js
 test/js/node/test/parallel/test-child-process-exec-encoding.js
 test/js/node/test/parallel/test-child-process-execfile.js
-test/bake/dev-and-prod.test.ts
-test/bake/dev/bundle.test.ts
-test/bake/dev/css.test.ts
-test/bake/dev/esm.test.ts
-test/bake/dev/hot.test.ts
-test/bake/dev/react-spa.test.ts
-test/bake/dev/sourcemap.test.ts
-test/bake/dev/ssg-pages-router.test.ts
 test/bundler/bundler_compile.test.ts
 test/bundler/bundler_plugin.test.ts
 test/bundler/transpiler/bun-pragma.test.ts
@@ -403,3 +395,14 @@ test/js/third_party/resvg/bbox.test.js
 test/regression/issue/10139.test.ts
 test/js/bun/udp/udp_socket.test.ts
 test/cli/init/init.test.ts
+
+# Watcher Thread
+test/bake/dev-and-prod.test.ts
+test/bake/dev/bundle.test.ts
+test/bake/dev/css.test.ts
+test/bake/dev/esm.test.ts
+test/bake/dev/hot.test.ts
+test/bake/dev/react-spa.test.ts
+test/bake/dev/sourcemap.test.ts
+test/bake/dev/ssg-pages-router.test.ts
+test/bake/dev/deinitialization.test.ts

@@ -68,8 +68,8 @@ $ bunx my-cli --bun # bad
 **`--package <pkg>` or `-p <pkg>`** - Run binary from specific package. Useful when binary name differs from package name:
 
 ```bash
-$ bunx -p renovate renovate-config-validator
-$ bunx --package @angular/cli ng
+bunx -p renovate renovate-config-validator
+bunx --package @angular/cli ng
 ```
 
 To force bun to always be used with a script, use a shebang.

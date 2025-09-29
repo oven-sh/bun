@@ -785,18 +785,6 @@ $ bun build ./index.tsx --outdir ./out --minify --keep-names
 
 boolean; -->
 
-### `sideEffects`
-
-Bun supports `package.json` `sideEffects` field with glob pattern matching:
-
-```json
-{
-  "sideEffects": ["**/*.css", "./src/setup.js"]
-}
-```
-
-Supported glob patterns: `*`, `?`, `**`, `[]`, `{}`.
-
 ### `external`
 
 A list of import paths to consider _external_. Defaults to `[]`.

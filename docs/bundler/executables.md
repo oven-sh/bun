@@ -145,7 +145,7 @@ The `--bytecode` argument enables bytecode compilation. Every time you run JavaS
 **`--compile-exec-argv="args"`** - Embed runtime arguments that are available via `process.execArgv`:
 
 ```bash
-$ bun build --compile --compile-exec-argv="--smol --user-agent=MyBot" ./app.ts --outfile myapp
+bun build --compile --compile-exec-argv="--smol --user-agent=MyBot" ./app.ts --outfile myapp
 ```
 
 ```js

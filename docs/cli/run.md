@@ -217,7 +217,7 @@ This causes the garbage collector to run more frequently, which can slow down ex
 **`--user-agent <string>`** - Set User-Agent header for all `fetch()` requests:
 
 ```bash
-$ bun --user-agent "MyBot/1.0" run index.tsx
+bun --user-agent "MyBot/1.0" run index.tsx
 ```
 
 ## Resolution order

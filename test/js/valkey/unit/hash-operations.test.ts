@@ -70,6 +70,82 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       expect(retrievedBuffer).toBe("binary data");
     });
 
+    test("HSET with object syntax", async () => {
+      const key = ctx.generateKey("hset-object-test");
+
+      // Test with simple object
+      const result = await ctx.redis.hset(key, {
+        name: "Alice",
+        age: "25",
+        email: "alice@example.com"
+      });
+      expectType<number>(result, "number");
+      expect(result).toBe(3);
+
+      // Verify fields were set
+      const name = await ctx.redis.hget(key, "name");
+      expect(name).toBe("Alice");
+
+      const age = await ctx.redis.hget(key, "age");
+      expect(age).toBe("25");
+
+      // Test updating with object (some new, some existing)
+      const updateResult = await ctx.redis.hset(key, {
+        name: "Alice Smith", // Update existing
+        city: "New York",    // Add new
+        country: "USA"       // Add new
+      });
+      expect(updateResult).toBe(2); // Only 2 new fields added
+
+      // Verify all fields
+      const allFields = await ctx.redis.hgetall(key);
+      expect(allFields).toEqual({
+        name: "Alice Smith",
+        age: "25",
+        email: "alice@example.com",
+        city: "New York",
+        country: "USA"
+      });
+
+      // Test with large object
+      const largeKey = ctx.generateKey("hset-large-object");
+      const largeObject: Record<string, string> = {};
+      for (let i = 0; i < 100; i++) {
+        largeObject[`field_${i}`] = `value_${i}`;
+      }
+
+      const largeResult = await ctx.redis.hset(largeKey, largeObject);
+      expect(largeResult).toBe(100);
+
+      const size = await ctx.redis.hlen(largeKey);
+      expect(size).toBe(100);
+
+      // Test with buffer values in object
+      const bufferKey = ctx.generateKey("hset-object-buffer");
+      const bufferResult = await ctx.redis.hset(bufferKey, {
+        text: "plain text",
+        binary: Buffer.from("binary data"),
+        number: 42 // Numbers should be coerced to strings
+      });
+      expect(bufferResult).toBe(3);
+
+      const retrievedBinary = await ctx.redis.hget(bufferKey, "binary");
+      expect(retrievedBinary).toBe("binary data");
+
+      const retrievedNumber = await ctx.redis.hget(bufferKey, "number");
+      expect(retrievedNumber).toBe("42");
+
+      // Test empty object should throw
+      let thrown;
+      try {
+        await ctx.redis.hset(key, {});
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeDefined();
+      expect(thrown.message).toContain("at least one field-value pair");
+    });
+
     test("HSET with 8 field-value pairs", async () => {
       const key = ctx.generateKey("hset-8-pairs-test");
 
@@ -138,6 +214,73 @@ describe.skipIf(!isEnabled)("Valkey: Hash Data Type Operations", () => {
       expect(Object.keys(allFields).length).toBe(1000);
       expect(allFields.field_0).toBe(expectedObject.field_0);
       expect(allFields.field_999).toBe(expectedObject.field_999);
+    });
+
+    test("hset with object syntax (single field)", async () => {
+      const result = await client.hset("test:obj1", { field1: "value1" });
+      expect(result).toBe(1);
+
+      const value = await client.hget("test:obj1", "field1");
+      expect(value).toBe("value1");
+    });
+
+    test("hset with object syntax (multiple fields)", async () => {
+      const result = await client.hset("test:obj2", {
+        field1: "value1",
+        field2: "value2",
+        field3: "value3",
+      });
+      expect(result).toBe(3);
+
+      const values = await client.hmget("test:obj2", "field1", "field2", "field3");
+      expect(values).toEqual(["value1", "value2", "value3"]);
+    });
+
+    test("hset with object syntax (numbers as values)", async () => {
+      const result = await client.hset("test:obj3", {
+        count: 42,
+        price: "19.99",
+        stock: 100,
+      });
+      expect(result).toBe(3);
+
+      const values = await client.hmget("test:obj3", "count", "price", "stock");
+      expect(values).toEqual(["42", "19.99", "100"]);
+    });
+
+    test("hset with object syntax (Buffer values)", async () => {
+      const result = await client.hset("test:obj4", {
+        binary: Buffer.from("binary data"),
+        text: "plain text",
+      });
+      expect(result).toBe(2);
+
+      const values = await client.hmget("test:obj4", "binary", "text");
+      expect(values[0]).toEqual(Buffer.from("binary data"));
+      expect(values[1]).toBe("plain text");
+    });
+
+    test("hset with object syntax (empty object)", async () => {
+      let thrown;
+      try {
+        await client.hset("test:empty", {});
+      } catch (error: any) {
+        thrown = error;
+      }
+      expect(thrown).toBeDefined();
+      expect(thrown.message).toContain("at least one field-value pair");
+    });
+
+    test("hset with object syntax (stress test 100 fields)", async () => {
+      const fields: Record<string, string> = {};
+      for (let i = 0; i < 100; i++) {
+        fields[`field${i}`] = `value${i}`;
+      }
+      const result = await client.hset("test:obj_stress", fields);
+      expect(result).toBe(100);
+
+      const value50 = await client.hget("test:obj_stress", "field50");
+      expect(value50).toBe("value50");
     });
 
     test("HSET extreme stress test with 10000 field-value pairs", async () => {

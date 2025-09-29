@@ -13,7 +13,7 @@ describe("HSET error handling without server", () => {
       thrown = error;
     }
     expect(thrown).toBeDefined();
-    expect(thrown.message).toContain("hset requires at least 3 arguments");
+    expect(thrown.message).toContain("hset requires at least 2 arguments");
 
     thrown = undefined;
     try {
@@ -23,7 +23,7 @@ describe("HSET error handling without server", () => {
       thrown = error;
     }
     expect(thrown).toBeDefined();
-    expect(thrown.message).toContain("hset requires at least 3 arguments");
+    expect(thrown.message).toContain("hset requires at least 2 arguments");
 
     thrown = undefined;
     try {
@@ -33,7 +33,7 @@ describe("HSET error handling without server", () => {
       thrown = error;
     }
     expect(thrown).toBeDefined();
-    expect(thrown.message).toContain("hset requires at least 3 arguments");
+    expect(thrown.message).toContain("object or field-value pairs");
 
     thrown = undefined;
     try {
@@ -96,6 +96,49 @@ describe("HSET error handling without server", () => {
     }
     expect(thrown).toBeDefined();
     expect(thrown.message).toMatch(/value.*string or buffer/i);
+  });
+
+  test("hset with object syntax - invalid values", async () => {
+    const client = new RedisClient({ socket: { host: "localhost", port: 6379 } });
+
+    let thrown;
+    try {
+      // @ts-expect-error
+      await client.hset("key", { field: null });
+    } catch (error: any) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown.message).toMatch(/value.*string or buffer/i);
+
+    thrown = undefined;
+    try {
+      // @ts-expect-error
+      await client.hset("key", { field: undefined });
+    } catch (error: any) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown.message).toMatch(/value.*string or buffer/i);
+
+    thrown = undefined;
+    try {
+      // @ts-expect-error
+      await client.hset("key", null);
+    } catch (error: any) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown.message).toMatch(/object or field-value pairs/i);
+
+    thrown = undefined;
+    try {
+      await client.hset("key", {});
+    } catch (error: any) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown.message).toContain("at least one field-value pair");
   });
 
   test("hset method signature is correct", () => {

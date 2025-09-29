@@ -314,6 +314,17 @@ declare module "bun" {
     ): Promise<number>;
 
     /**
+     * Set multiple hash fields using an object
+     * @param key The hash key
+     * @param fields An object containing field-value pairs
+     * @returns Promise that resolves with the number of fields that were added (not updated)
+     * @example
+     * // Set multiple fields using object syntax
+     * await redis.hset("user:1", { name: "John", age: "30", email: "john@example.com" });
+     */
+    hset(key: RedisClient.KeyLike, fields: Record<string, RedisClient.KeyLike>): Promise<number>;
+
+    /**
      * Get the values of all the given hash fields
      * @param key The hash key
      * @param fields The fields to get

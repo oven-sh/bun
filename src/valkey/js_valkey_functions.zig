@@ -602,16 +602,12 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     try requireNotSubscriber(this, @src().fn_name);
 
     const args_view = callframe.arguments();
-    if (args_view.len < 3) {
-        return globalObject.throwInvalidArguments("hset requires at least 3 arguments: key, field, value", .{});
-    }
-
-    if ((args_view.len - 1) % 2 != 0) {
-        return globalObject.throwInvalidArguments("hset requires field-value pairs after the key", .{});
+    if (args_view.len < 2) {
+        return globalObject.throwInvalidArguments("hset requires at least 2 arguments: key and field-value pairs", .{});
     }
 
     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 64);
     defer {
         for (args.items) |*item| {
             item.deinit();
@@ -624,18 +620,64 @@ pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     };
     args.appendAssumeCapacity(key);
 
-    var i: usize = 1;
-    while (i < args_view.len) : (i += 2) {
-        const field = (try fromJS(globalObject, args_view[i])) orelse {
-            return globalObject.throwInvalidArgumentType("hset", "field", "string or buffer");
-        };
-        args.appendAssumeCapacity(field);
+    // Check if second argument is an object (for object syntax)
+    if (args_view.len == 2) {
+        const obj_arg = callframe.argument(1);
+        if (!obj_arg.isObject() or obj_arg.isNull()) {
+            return globalObject.throwInvalidArgumentType("hset", "fields", "object or field-value pairs");
+        }
 
-        if (i + 1 < args_view.len) {
-            const value = (try fromJS(globalObject, args_view[i + 1])) orelse {
-                return globalObject.throwInvalidArgumentType("hset", "value", "string or buffer");
+        // Iterate over object properties
+        const obj_ref = obj_arg.asObjectRef() orelse unreachable;
+        var iter = try jsc.JSPropertyIterator(.{
+            .skip_empty_name = false,
+            .include_value = true,
+        }).init(globalObject, @as(*jsc.JSObject, @ptrCast(obj_ref)));
+        defer iter.deinit();
+
+        var count: usize = 0;
+        while (try iter.next()) |prop_name| {
+            // Convert property name to JSValue for conversion
+            const name_js = prop_name.toJS(globalObject);
+            const field = (try fromJS(globalObject, name_js)) orelse {
+                return globalObject.throwInvalidArgumentType("hset", "field name", "string or buffer");
             };
-            args.appendAssumeCapacity(value);
+            try args.append(field);
+
+            // iter.value contains the property value when include_value is true
+            const value = (try fromJS(globalObject, iter.value)) orelse {
+                return globalObject.throwInvalidArgumentType("hset", "field value", "string or buffer");
+            };
+            try args.append(value);
+            count += 1;
+        }
+
+        if (count == 0) {
+            return globalObject.throwInvalidArguments("hset requires at least one field-value pair in the object", .{});
+        }
+    } else {
+        // Original syntax: key, field1, value1, field2, value2, ...
+        if (args_view.len < 3) {
+            return globalObject.throwInvalidArguments("hset requires at least 3 arguments: key, field, value", .{});
+        }
+
+        if ((args_view.len - 1) % 2 != 0) {
+            return globalObject.throwInvalidArguments("hset requires field-value pairs after the key", .{});
+        }
+
+        var i: usize = 1;
+        while (i < args_view.len) : (i += 2) {
+            const field = (try fromJS(globalObject, args_view[i])) orelse {
+                return globalObject.throwInvalidArgumentType("hset", "field", "string or buffer");
+            };
+            try args.append(field);
+
+            if (i + 1 < args_view.len) {
+                const value = (try fromJS(globalObject, args_view[i + 1])) orelse {
+                    return globalObject.throwInvalidArgumentType("hset", "value", "string or buffer");
+                };
+                try args.append(value);
+            }
         }
     }
 

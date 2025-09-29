@@ -325,6 +325,10 @@ pub const JSGlobalObject = opaque {
         }
     }
 
+    pub fn throwSyntaxError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
+        return this.throwValue(this.createSyntaxErrorInstance(fmt, args));
+    }
+
     pub fn createRangeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());

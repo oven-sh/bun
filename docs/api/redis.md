@@ -88,6 +88,9 @@ await redis.set("user:1:name", "Alice");
 // Get a key
 const name = await redis.get("user:1:name");
 
+// Get a key as Uint8Array
+const buffer = await redis.getBuffer("user:1:name");
+
 // Delete a key
 await redis.del("user:1:name");
 

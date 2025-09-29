@@ -50,6 +50,7 @@ More information about the new lockfile format can be found on [our blogpost](ht
 #### Automatic lockfile migration
 
 When running `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:
+
 - `yarn.lock` (v1)
 - `package-lock.json` (npm)
 - `pnpm-lock.yaml` (pnpm)

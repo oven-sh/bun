@@ -323,3 +323,24 @@ Error: here!
     at moduleEvaluation (native)
     at <anonymous> (native)
 ```
+
+### Async stack traces
+
+Bun includes asynchronous call frames in stack traces, making debugging async/await code easier:
+
+```js
+async function foo() {
+  return await bar();
+}
+
+async function bar() {
+  throw new Error("oops");
+}
+
+await foo();
+// error: oops
+//       at bar (async.js:6:9)
+//       at async foo (async.js:2:16)
+```
+
+The stack trace shows the complete async execution path with `async` prefixed to asynchronous frames.

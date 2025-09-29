@@ -293,6 +293,33 @@ const socket = new WebSocket("ws://localhost:3000", {
 });
 ```
 
+### Subprotocol negotiation
+
+WebSocket clients can request specific subprotocols during the connection handshake. The server can then choose which protocol to use from the client's list.
+
+```js
+// Request multiple protocols
+const ws = new WebSocket("ws://localhost:3000", ["chat", "superchat"]);
+
+ws.onopen = () => {
+  console.log(`Connected with protocol: ${ws.protocol}`); // Server's chosen protocol
+};
+```
+
+### Custom headers
+
+Bun allows you to set custom headers in the WebSocket constructor, including overriding standard WebSocket headers. This is useful for authentication, custom host headers, or other server requirements.
+
+```js
+const ws = new WebSocket("ws://localhost:3000", {
+  headers: {
+    "Host": "custom-host.example.com",
+    "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+    "X-Custom": "value"
+  }
+});
+```
+
 To add event listeners to the socket:
 
 ```ts

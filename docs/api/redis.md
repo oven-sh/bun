@@ -132,6 +132,10 @@ await redis.hmset("user:123", [
 const userFields = await redis.hmget("user:123", ["name", "email"]);
 console.log(userFields); // ["Alice", "alice@example.com"]
 
+// Get a single field from a hash
+const value = await redis.hget("user:123", "name");
+console.log(value); // "Alice"
+
 // Increment a numeric field in a hash
 await redis.hincrby("user:123", "visits", 1);
 

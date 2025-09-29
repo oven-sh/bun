@@ -166,6 +166,16 @@ will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
 Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
 
+### `--workspaces`
+
+In monorepos with workspaces, you can use the `--workspaces` flag to execute a script in all workspace packages that have the script defined.
+
+```bash
+$ bun run --workspaces build
+```
+
+This will run the `build` script in all workspace packages that have a `build` script defined in their `package.json`. Packages without the specified script will be skipped.
+
 ## `bun run -` to pipe code from stdin
 
 `bun run -` lets you read JavaScript, TypeScript, TSX, or JSX from stdin and execute it without writing to a temporary file first.

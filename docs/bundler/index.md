@@ -781,6 +781,14 @@ $ bun build ./index.tsx --outdir ./out --minify --keep-names
 
 {% /codetabs %}
 
+### Minification optimizations
+
+The minifier applies several optimizations:
+
+- **Constructor simplification**: `new Object()` → `{}`, `new Array(1,2)` → `[1,2]`
+- **typeof checks**: `typeof x === "undefined"` → `typeof x > "u"`
+- **Function names**: Unused function/class expression names are removed unless `--keep-names` is set
+
 <!-- ### `treeshaking`
 
 boolean; -->

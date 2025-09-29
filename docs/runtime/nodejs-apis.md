@@ -40,7 +40,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
+🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed. `closeIdleConnections()` is implemented.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
@@ -80,7 +80,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:tty`](https://nodejs.org/api/tty.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. Includes interactive TTY support after stdin closes.
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 
@@ -124,7 +124,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Missing `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+🟡 Missing `createHistogram`. `monitorEventLoopDelay` is implemented. It's recommended to use `performance` global instead of `perf_hooks.performance`.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
@@ -405,6 +405,10 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 ### [`structuredClone()`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
 
 🟢 Fully implemented.
+
+### Performance
+
+`structuredClone()` uses the same optimized serialization as `postMessage()`. For simple objects containing only primitives, it can be up to 240x faster than standard structured cloning.
 
 ### [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
 

@@ -719,10 +719,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             {
-                var js_string = message_value.toString(globalThis);
-                if (globalThis.hasException()) {
-                    return .zero;
-                }
+                var js_string = try message_value.toJSString(globalThis);
                 const view = js_string.view(globalThis);
                 const slice = view.toSlice(bun.default_allocator);
                 defer slice.deinit();
@@ -1460,21 +1457,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.all_closed_promise.strong.has())
             {
                 httplog("schedule other promise", .{});
-                const event_loop = vm.eventLoop();
 
                 // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
                 // again before the task has run.
                 this.flags.has_handled_all_closed_promise = true;
 
-                const task = ServerAllConnectionsClosedTask.new(.{
+                ServerAllConnectionsClosedTask.schedule(.{
                     .globalObject = this.globalThis,
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
                     .promise = .{
                         .strong = .create(this.all_closed_promise.value(), this.globalThis),
                     },
                     .tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
-                });
-                event_loop.enqueueTask(jsc.Task.init(task));
+                }, vm);
             }
             if (this.pending_requests == 0 and
                 this.listener == null and
@@ -2160,7 +2155,36 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             method: ?bun.http.Method,
         ) ?PreparedRequest {
             jsc.markBinding(@src());
+
+            // We need to register the handler immediately since uSockets will not buffer.
+            //
+            // We first validate the self-reported request body length so that
+            // we avoid needing to worry as much about what memory to free.
+            const request_body_length: ?usize = request_body_length: {
+                if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
+                    const len: usize = brk: {
+                        if (req.header("content-length")) |content_length| {
+                            break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
+                        }
+
+                        break :brk 0;
+                    };
+
+                    // Abort the request very early.
+                    if (len > this.config.max_request_body_size) {
+                        resp.writeStatus("413 Request Entity Too Large");
+                        resp.endWithoutBody(true);
+                        return null;
+                    }
+
+                    break :request_body_length len;
+                }
+
+                break :request_body_length null;
+            };
+
             this.onPendingRequest();
+
             if (comptime Environment.isDebug) {
                 this.vm.eventLoop().debug.enter();
             }
@@ -2210,25 +2234,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 };
             }
 
-            // we need to do this very early unfortunately
-            // it seems to work fine for synchronous requests but anything async will take too long to register the handler
-            // we do this only for HTTP methods that support request bodies, so not GET, HEAD, OPTIONS, or CONNECT.
-            if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
-                const req_len: usize = brk: {
-                    if (req.header("content-length")) |content_length| {
-                        break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
-                    }
-
-                    break :brk 0;
-                };
-
-                if (req_len > this.config.max_request_body_size) {
-                    resp.writeStatus("413 Request Entity Too Large");
-                    resp.endWithoutBody(true);
-                    this.finalize();
-                    return null;
-                }
-
+            if (request_body_length) |req_len| {
                 ctx.request_body_content_len = req_len;
                 ctx.flags.is_transfer_encoding = req.header("transfer-encoding") != null;
                 if (req_len > 0 or ctx.flags.is_transfer_encoding) {
@@ -2883,6 +2889,11 @@ pub const ServerAllConnectionsClosedTask = struct {
     tracker: jsc.Debugger.AsyncTaskTracker,
 
     pub const new = bun.TrivialNew(@This());
+
+    pub fn schedule(this: ServerAllConnectionsClosedTask, vm: *VirtualMachine) void {
+        const ptr = new(this);
+        vm.eventLoop().enqueueTask(jsc.Task.init(ptr));
+    }
 
     pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *jsc.VirtualMachine) void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});

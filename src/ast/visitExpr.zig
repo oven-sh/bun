@@ -78,7 +78,7 @@ pub fn VisitExpr(
             }
             pub fn e_import_meta(p: *P, expr: Expr, in: ExprIn) Expr {
                 // TODO: delete import.meta might not work
-                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta;
+                const is_delete_target = p.delete_target == .e_import_meta;
 
                 if (p.define.dots.get("meta")) |meta| {
                     for (meta) |define| {

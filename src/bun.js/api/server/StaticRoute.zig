@@ -113,7 +113,11 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                     }
                     var blob = response.body.value.use();
                     blob.globalThis = globalThis;
-                    blob.allocator = null;
+                    bun.assertf(
+                        !blob.isHeapAllocated(),
+                        "expected blob not to be heap-allocated",
+                        .{},
+                    );
                     response.body.value = .{ .Blob = blob.dupe() };
 
                     break :brk .{ .Blob = blob };

@@ -1,5 +1,6 @@
 #include "BakeAdditionsToGlobalObject.h"
 #include "JSBakeResponse.h"
+#include "JSBunRequest.h"
 #include "JavaScriptCore/SlotVisitorMacros.h"
 #include "ErrorCode.h"
 
@@ -20,7 +21,7 @@ void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initi
     init.setStructure(structure);
 }
 
-extern "C" EncodedJSValue Bake__createDevServerFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params)
+extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto& vm = globalObject->vm();
@@ -43,20 +44,20 @@ extern "C" EncodedJSValue Bake__createDevServerFrameworkRequestArgsObject(JSC::J
     return JSValue::encode(object);
 }
 
-extern "C" JSC::EncodedJSValue Bake__getAsyncLocalStorage(JSC::JSGlobalObject* globalObject)
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getAsyncLocalStorage(JSC::JSGlobalObject* globalObject)
 {
     auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     auto value = zig->bakeAdditions().getAsyncLocalStorage(zig);
     return JSValue::encode(value);
 }
 
-extern "C" JSC::EncodedJSValue Bake__getEnsureAsyncLocalStorageInstanceJSFunction(JSC::JSGlobalObject* globalObject)
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getEnsureAsyncLocalStorageInstanceJSFunction(JSC::JSGlobalObject* globalObject)
 {
     auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     return JSValue::encode(zig->bakeAdditions().ensureAsyncLocalStorageInstanceJSFunction(globalObject));
 }
 
-extern "C" JSC::EncodedJSValue Bake__getSSRResponseConstructor(JSC::JSGlobalObject* globalObject)
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getSSRResponseConstructor(JSC::JSGlobalObject* globalObject)
 {
     auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     return JSValue::encode(zig->bakeAdditions().JSBakeResponseConstructor(globalObject));
@@ -81,14 +82,14 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeEnsureAsyncLocalStorage, (JSC::JSGlobalOb
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue Bake__getBundleNewRouteJSFunction(JSC::JSGlobalObject* globalObject)
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getBundleNewRouteJSFunction(JSC::JSGlobalObject* globalObject)
 {
     auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     auto value = zig->bakeAdditions().getBundleNewRouteJSFunction(zig);
     return JSValue::encode(value);
 }
 
-extern "C" JSC::EncodedJSValue Bake__bundleNewRouteJSFunctionImpl(JSC::JSGlobalObject* globalObject, void* requestPtr, BunString url);
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__bundleNewRouteJSFunctionImpl(JSC::JSGlobalObject* globalObject, void* requestPtr, BunString url);
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -103,9 +104,9 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
         return JSValue::encode(jsUndefined());
     }
 
-    JSRequest* request = jsDynamicCast<JSRequest*>(requestValue);
+    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(requestValue);
     if (!request) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "request must be a JSRequest"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "request must be a JSBunRequest"_s);
         return JSValue::encode(jsUndefined());
     }
 
@@ -116,11 +117,12 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
     }
 
     BunString url = Bun::toString(urlValue.getString(globalObject));
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     return Bake__bundleNewRouteJSFunctionImpl(globalObject, request->m_ctx, url);
 }
 
-extern "C" JSC::EncodedJSValue Bake__getNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
 {
     auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     auto value = zig->bakeAdditions().getNewRouteParamsJSFunction(zig);

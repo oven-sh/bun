@@ -60,10 +60,10 @@ endif()
 # Windows Code Signing Option
 if(WIN32)
   optionx(ENABLE_WINDOWS_CODESIGNING BOOL "Enable Windows code signing with DigiCert KeyLocker" DEFAULT OFF)
-  
+
   if(ENABLE_WINDOWS_CODESIGNING)
     message(STATUS "Windows code signing: ENABLED")
-    
+
     # Check for required environment variables
     if(NOT DEFINED ENV{SM_API_KEY})
       message(WARNING "SM_API_KEY not set - code signing may fail")
@@ -114,8 +114,10 @@ endif()
 
 if(DEBUG AND ((APPLE AND ARCH STREQUAL "aarch64") OR LINUX))
   set(DEFAULT_ASAN ON)
+  set(DEFAULT_VALGRIND OFF)
 else()
   set(DEFAULT_ASAN OFF)
+  set(DEFAULT_VALGRIND OFF)
 endif()
 
 optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})

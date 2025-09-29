@@ -183,10 +183,14 @@ bun stores normalized `cpu` and `os` values from npm in the lockfile, along with
 You can override the target platform for package selection:
 
 ```bash
-$ bun install --cpu=x64 --os=linux
+bun install --cpu=x64 --os=linux
 ```
 
 This installs packages for the specified platform instead of the current system. Useful for cross-platform builds or when preparing deployments for different environments.
+
+**Accepted values for `--cpu`**: `arm64`, `x64`, `ia32`, `ppc64`, `s390x`
+
+**Accepted values for `--os`**: `linux`, `darwin`, `win32`, `freebsd`, `openbsd`, `sunos`, `aix`
 
 ## Peer dependencies?
 
@@ -258,11 +262,13 @@ Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but mea
 
 ## pnpm migration
 
-Bun automatically migrates projects from pnpm to bun. When a `pnpm-lock.yaml` file is detected, Bun will automatically migrate the lockfile to `bun.lock` during installation.
+Bun automatically migrates projects from pnpm to bun. When a `pnpm-lock.yaml` file is detected and no `bun.lock` file exists, Bun will automatically migrate the lockfile to `bun.lock` during installation. The original `pnpm-lock.yaml` file remains unmodified.
 
 ```bash
-$ bun install
+bun install
 ```
+
+**Note**: Migration only runs when `bun.lock` is absent. There is currently no opt-out flag for pnpm migration.
 
 The migration process handles:
 

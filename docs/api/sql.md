@@ -391,6 +391,8 @@ await sql`SELECT * FROM products WHERE ids = ANY(${sql.array([1, 2, 3])})`;
 // Generates: SELECT * FROM products WHERE ids = ANY(ARRAY[1, 2, 3])
 ```
 
+**Note**: `sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported yet.
+
 ## `sql``.simple()`
 
 The PostgreSQL wire protocol supports two types of queries: "simple" and "extended". Simple queries can contain multiple statements but don't support parameters, while extended queries (the default) support parameters but only allow one statement.

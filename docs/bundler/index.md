@@ -396,6 +396,8 @@ TODO: document IIFE once we support globalNames.
 
 Configure JSX transform behavior. Allows fine-grained control over how JSX is compiled.
 
+**Classic runtime example** (uses `factory` and `fragment`):
+
 {% codetabs %}
 
 ```ts#JavaScript
@@ -405,6 +407,27 @@ await Bun.build({
   jsx: {
     factory: 'h',
     fragment: 'Fragment',
+    runtime: 'classic',
+  },
+})
+```
+
+```bash#CLI
+# JSX configuration is handled via bunfig.toml or tsconfig.json
+$ bun build ./app.tsx --outdir ./out
+```
+
+{% /codetabs %}
+
+**Automatic runtime example** (uses `importSource`):
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./app.tsx'],
+  outdir: './out',
+  jsx: {
     importSource: 'preact',
     runtime: 'automatic',
   },

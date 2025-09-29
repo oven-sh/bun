@@ -400,9 +400,11 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
     const PrefixMap = comptime blk: {
       @setEvalBranchQuota(${Object.keys(property_defs).length * 10});
       break :blk std.enums.EnumMap(Enum, VendorPrefix).init(.{
-        ${Object.entries(property_defs).map(([name, meta]) => {
-          return `.${escapeIdent(name)} = ${constructVendorPrefix(meta.valid_prefixes)},`;
-        }).join("\n        ")}
+        ${Object.entries(property_defs)
+          .map(([name, meta]) => {
+            return `.${escapeIdent(name)} = ${constructVendorPrefix(meta.valid_prefixes)},`;
+          })
+          .join("\n        ")}
       });
     };
 
@@ -411,12 +413,14 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
       const allowed_prefixes = PrefixMap.get(prop) orelse return null;
       if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) {
         return switch (prop) {
-          ${Object.entries(property_defs).map(([name, meta]) => {
-            if (meta.valid_prefixes === undefined) {
-              return `.${escapeIdent(name)} => .${escapeIdent(name)},`;
-            }
-            return `.${escapeIdent(name)} => .{ .${escapeIdent(name)} = pre },`;
-          }).join("\n          ")}
+          ${Object.entries(property_defs)
+            .map(([name, meta]) => {
+              if (meta.valid_prefixes === undefined) {
+                return `.${escapeIdent(name)} => .${escapeIdent(name)},`;
+              }
+              return `.${escapeIdent(name)} => .{ .${escapeIdent(name)} = pre },`;
+            })
+            .join("\n          ")}
         };
       }
     }

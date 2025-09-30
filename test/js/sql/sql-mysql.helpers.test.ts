@@ -176,6 +176,55 @@ describeWithContainer(
       }
     });
 
+    test("upsert helper", async () => {
+      await using sql = new SQL({ ...getOptions(), max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`
+      CREATE TABLE IF NOT EXISTS ${sql(random_name)} (
+          id int PRIMARY KEY,
+          foo text NOT NULL,
+          email VARCHAR(255) NOT NULL UNIQUE
+      )
+    `;
+
+      const data = { id: 1, foo: "hello", email: "bunny@bun.com" };
+      await sql`
+      INSERT INTO ${sql(random_name)} ${sql(data)}
+      ON DUPLICATE KEY UPDATE ${sql(data)}
+    `;
+      let id = 0;
+      {
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result[0].id).toBeDefined();
+        expect(result[0].foo).toBe("hello");
+        expect(result[0].email).toBe("bunny@bun.com");
+        id = result.lastInsertRowid;
+      }
+
+      {
+        const data = { foo: "hello2", email: "bunny2@bun.com" };
+        await sql`
+      INSERT INTO ${sql(random_name)} ${sql({ id, ...data })}
+      ON DUPLICATE KEY UPDATE ${sql(data)}
+    `;
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result[0].id).toBeDefined();
+        expect(result[0].foo).toBe("hello2");
+        expect(result[0].email).toBe("bunny2@bun.com");
+      }
+
+      {
+        const data = { foo: "hello3", email: "bunny2@bun.com" };
+        await sql`
+      INSERT INTO ${sql(random_name)} ${sql({ id, ...data })}
+      ON DUPLICATE KEY UPDATE ${sql(data)}
+    `;
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result[0].id).toBeDefined();
+        expect(result[0].foo).toBe("hello3");
+        expect(result[0].email).toBe("bunny2@bun.com");
+      }
+    });
     test("update helper with IN and column name", async () => {
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");

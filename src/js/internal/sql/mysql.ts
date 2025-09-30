@@ -1122,10 +1122,12 @@ class MySQLAdapter
               } else {
                 item = items;
               }
-              // no need to include if is updateSet
-              if (command === SQLCommand.update) {
+              // no need to include if is updateSet or upsert
+              const isUpsert = query.trimEnd().endsWith("ON DUPLICATE KEY UPDATE");
+              if (command === SQLCommand.update && !isUpsert) {
                 query += " SET ";
               }
+              let hasValues = false;
               for (let i = 0; i < columnCount; i++) {
                 const column = columns[i];
                 const columnValue = item[column];
@@ -1133,6 +1135,7 @@ class MySQLAdapter
                   // skip undefined values, this is the expected behavior in JS
                   continue;
                 }
+                hasValues = true;
                 query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
                 binding_values.push(columnValue);
               }
@@ -1140,7 +1143,7 @@ class MySQLAdapter
                 // we got an undefined value at the end, lets remove the last comma
                 query = query.substring(0, query.length - 2);
               }
-              if (query.endsWith("SET ")) {
+              if (!hasValues) {
                 throw new SyntaxError("Update needs to have at least one column");
               }
               query += " "; // the user can add where clause after this

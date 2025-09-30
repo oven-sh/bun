@@ -385,3 +385,4 @@ Bun implements the following globals.
 - &nbsp;
 
 {% /table %}
+

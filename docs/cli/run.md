@@ -151,6 +151,14 @@ By default, Bun respects this shebang and executes the script with `node`. Howev
 $ bun run --bun vite
 ```
 
+### `--no-addons`
+
+Disable native addons and use the `node-addons` export condition.
+
+```bash
+$ bun --no-addons run server.js
+```
+
 ### Filtering
 
 In monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.
@@ -165,6 +173,14 @@ bun run --filter 'ba*' <script>
 will execute `<script>` in both `bar` and `baz`, but not in `foo`.
 
 Find more details in the docs page for [filter](https://bun.com/docs/cli/filter#running-scripts-with-filter).
+
+### `--workspaces`
+
+Run scripts across all workspaces in the monorepo:
+
+```bash
+bun run --workspaces test
+```
 
 ## `bun run -` to pipe code from stdin
 
@@ -211,6 +227,14 @@ $ bun --smol run index.tsx
 ```
 
 This causes the garbage collector to run more frequently, which can slow down execution. However, it can be useful in environments with limited memory. Bun automatically adjusts the garbage collector's heap size based on the available memory (accounting for cgroups and other memory limits) with and without the `--smol` flag, so this is mostly useful for cases where you want to make the heap size grow more slowly.
+
+## `--user-agent`
+
+**`--user-agent <string>`** - Set User-Agent header for all `fetch()` requests:
+
+```bash
+bun --user-agent "MyBot/1.0" run index.tsx
+```
 
 ## Resolution order
 

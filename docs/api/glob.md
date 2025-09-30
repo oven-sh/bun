@@ -15,6 +15,7 @@ for await (const file of glob.scan(".")) {
 }
 ```
 
+
 **Match a string against a glob pattern**:
 
 ```ts

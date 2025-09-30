@@ -250,4 +250,20 @@ describe("Shell kill() - Safety and Correctness", () => {
     // Total should be 20
     expect(killedCount + completedCount).toBe(20);
   });
+
+  test("kill after shell completes does not cause use-after-free", async () => {
+    // This test caught a critical use-after-free bug where kill() after
+    // completion would access freed Script memory
+    for (let i = 0; i < 20; i++) {
+      const p = new $.Shell()`true`;
+      const r = await p;
+      expect(r.exitCode).toBe(0);
+
+      // Kill after completion should be safe (no-op)
+      p.kill(); // This used to cause use-after-free!
+
+      // Should still be able to access result
+      expect(r.exitCode).toBe(0);
+    }
+  });
 });

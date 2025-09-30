@@ -1150,6 +1150,9 @@ pub const Interpreter = struct {
             const script = child.as(Script);
             script.deinitFromInterpreter();
 
+            // Clear the root_script pointer to prevent use-after-free
+            this.root_script = null;
+
             // Use the kill exit code if we were killed, otherwise use the script's exit code
             const final_exit_code = if (this.flags.killed) (this.exit_code orelse exit_code) else exit_code;
             this.exit_code = final_exit_code;

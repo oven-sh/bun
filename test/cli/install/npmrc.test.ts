@@ -447,7 +447,7 @@ ${Object.keys(opts)
 });
 
 describe("HOME directory .npmrc", () => {
-  // Use the existing registry instance
+  // Ensure registry is started before running these tests
   beforeAll(async () => {
     if (!registry.listening) {
       await registry.start();
@@ -487,6 +487,7 @@ cache=${customHome}/.npm-cache
       env: {
         ...env,
         HOME: customHome,
+        USERPROFILE: customHome, // Windows uses USERPROFILE instead of HOME
         BUN_INSTALL_CACHE_DIR: undefined,
       },
       stdout: "pipe",
@@ -588,6 +589,7 @@ registry=http://localhost:${registry.port}/
       env: {
         ...env,
         HOME: customHome,
+        USERPROFILE: customHome, // Windows uses USERPROFILE instead of HOME
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -637,6 +639,7 @@ registry=http://localhost:${registry.port}/
       env: {
         ...env,
         HOME: customHome,
+        USERPROFILE: customHome, // Windows uses USERPROFILE instead of HOME
         NPM_TOKEN: token,
       },
       stdout: "pipe",
@@ -687,6 +690,7 @@ registry=http://localhost:${registry.port}/
       env: {
         ...env,
         HOME: customHome,
+        USERPROFILE: customHome, // Windows uses USERPROFILE instead of HOME
       },
       stdout: "pipe",
       stderr: "pipe",

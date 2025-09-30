@@ -94,6 +94,102 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(decrementedValue).toBe(10);
       });
 
+      test("should increment by specified amount with INCRBY", async () => {
+        const redis = ctx.redis;
+        const counterKey = "incrby-counter";
+        await redis.set(counterKey, "5");
+
+        // INCRBY should increment by the specified amount
+        const result1 = await redis.incrby(counterKey, 10);
+        expect(result1).toBe(15);
+
+        // INCRBY with negative value should decrement
+        const result2 = await redis.incrby(counterKey, -3);
+        expect(result2).toBe(12);
+
+        // INCRBY on non-existent key should treat it as 0
+        const result3 = await redis.incrby("new-incrby-key", 5);
+        expect(result3).toBe(5);
+      });
+
+      test("should increment by float amount with INCRBYFLOAT", async () => {
+        const redis = ctx.redis;
+        const floatKey = "float-counter";
+        await redis.set(floatKey, "10.5");
+
+        // INCRBYFLOAT should increment by the specified float amount
+        const result1 = await redis.incrbyfloat(floatKey, 2.3);
+        expect(result1).toBe("12.8");
+
+        // INCRBYFLOAT with negative value should decrement
+        const result2 = await redis.incrbyfloat(floatKey, -0.8);
+        expect(result2).toBe("12");
+
+        // INCRBYFLOAT on non-existent key should treat it as 0
+        const result3 = await redis.incrbyfloat("new-float-key", 3.14);
+        expect(result3).toBe("3.14");
+      });
+
+      test("should decrement by specified amount with DECRBY", async () => {
+        const redis = ctx.redis;
+        const counterKey = "decrby-counter";
+        await redis.set(counterKey, "20");
+
+        // DECRBY should decrement by the specified amount
+        const result1 = await redis.decrby(counterKey, 5);
+        expect(result1).toBe(15);
+
+        // DECRBY with larger value
+        const result2 = await redis.decrby(counterKey, 10);
+        expect(result2).toBe(5);
+
+        // DECRBY on non-existent key should treat it as 0
+        const result3 = await redis.decrby("new-decrby-key", 3);
+        expect(result3).toBe(-3);
+      });
+
+      test("should set multiple keys with MSET", async () => {
+        const redis = ctx.redis;
+
+        // MSET should set multiple keys atomically
+        const result = await redis.mset("mset-key1", "value1", "mset-key2", "value2", "mset-key3", "value3");
+        expect(result).toBe("OK");
+
+        // Verify all keys were set
+        const value1 = await redis.get("mset-key1");
+        expect(value1).toBe("value1");
+        const value2 = await redis.get("mset-key2");
+        expect(value2).toBe("value2");
+        const value3 = await redis.get("mset-key3");
+        expect(value3).toBe("value3");
+      });
+
+      test("should set multiple keys only if none exist with MSETNX", async () => {
+        const redis = ctx.redis;
+
+        // First MSETNX should succeed (keys don't exist)
+        const result1 = await redis.msetnx("msetnx-key1", "value1", "msetnx-key2", "value2");
+        expect(result1).toBe(1);
+
+        // Verify keys were set
+        const value1 = await redis.get("msetnx-key1");
+        expect(value1).toBe("value1");
+        const value2 = await redis.get("msetnx-key2");
+        expect(value2).toBe("value2");
+
+        // Second MSETNX should fail (at least one key exists)
+        const result2 = await redis.msetnx("msetnx-key1", "newvalue", "msetnx-key3", "value3");
+        expect(result2).toBe(0);
+
+        // Verify original values weren't changed
+        const unchangedValue = await redis.get("msetnx-key1");
+        expect(unchangedValue).toBe("value1");
+
+        // And new key wasn't created
+        const nonExistentKey = await redis.get("msetnx-key3");
+        expect(nonExistentKey).toBeNull();
+      });
+
       test("should manage key expiration", async () => {
         const redis = ctx.redis;
         // Set a key first
@@ -110,6 +206,134 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expectType<number>(ttl, "number");
         expect(ttl).toBeGreaterThan(0);
         expect(ttl).toBeLessThanOrEqual(60); // Should be positive and not exceed our set time
+      });
+
+      test("should set key with expiration using SETEX", async () => {
+        const redis = ctx.redis;
+        const key = "setex-test-key";
+        const value = "test-value";
+
+        // SETEX should set the key with expiration in seconds
+        const result = await redis.setex(key, 10, value);
+        expect(result).toBe("OK");
+
+        // Verify the value was set
+        const getValue = await redis.get(key);
+        expect(getValue).toBe(value);
+
+        // Verify TTL is set (should be <= 10 seconds)
+        const ttl = await redis.ttl(key);
+        expect(ttl).toBeGreaterThan(0);
+        expect(ttl).toBeLessThanOrEqual(10);
+      });
+
+      test("should set key with expiration using PSETEX", async () => {
+        const redis = ctx.redis;
+        const key = "psetex-test-key";
+        const value = "test-value";
+
+        // PSETEX should set the key with expiration in milliseconds
+        const result = await redis.psetex(key, 5000, value);
+        expect(result).toBe("OK");
+
+        // Verify the value was set
+        const getValue = await redis.get(key);
+        expect(getValue).toBe(value);
+
+        // Verify TTL is set (should be <= 5000 milliseconds, i.e., <= 5 seconds)
+        const pttl = await redis.pttl(key);
+        expect(pttl).toBeGreaterThan(0);
+        expect(pttl).toBeLessThanOrEqual(5000);
+      });
+
+      test("should get and set bits", async () => {
+        const redis = ctx.redis;
+        const bitKey = "mybitkey";
+
+        // Set a bit at offset 7 to 1
+        const oldValue = await redis.setbit(bitKey, 7, 1);
+        expect(oldValue).toBe(0); // Original value was 0
+
+        // Get the bit at offset 7
+        const bitValue = await redis.getbit(bitKey, 7);
+        expect(bitValue).toBe(1);
+
+        // Get a bit that wasn't set (should be 0)
+        const unsetBit = await redis.getbit(bitKey, 100);
+        expect(unsetBit).toBe(0);
+
+        // Set the same bit again to 0
+        const oldValue2 = await redis.setbit(bitKey, 7, 0);
+        expect(oldValue2).toBe(1); // Previous value was 1
+
+        // Verify it's now 0
+        const bitValue2 = await redis.getbit(bitKey, 7);
+        expect(bitValue2).toBe(0);
+      });
+
+      test("should handle multiple bit operations", async () => {
+        const redis = ctx.redis;
+        const bitKey = "multibit";
+
+        // Set multiple bits
+        await redis.setbit(bitKey, 0, 1);
+        await redis.setbit(bitKey, 3, 1);
+        await redis.setbit(bitKey, 7, 1);
+
+        // Verify all bits
+        expect(await redis.getbit(bitKey, 0)).toBe(1);
+        expect(await redis.getbit(bitKey, 1)).toBe(0);
+        expect(await redis.getbit(bitKey, 2)).toBe(0);
+        expect(await redis.getbit(bitKey, 3)).toBe(1);
+        expect(await redis.getbit(bitKey, 4)).toBe(0);
+        expect(await redis.getbit(bitKey, 5)).toBe(0);
+        expect(await redis.getbit(bitKey, 6)).toBe(0);
+        expect(await redis.getbit(bitKey, 7)).toBe(1);
+
+        // Count the set bits
+        const count = await redis.bitcount(bitKey);
+        expect(count).toBe(3);
+      });
+
+      test("should get range of string", async () => {
+        const redis = ctx.redis;
+        const key = "rangetest";
+        await redis.set(key, "Hello World");
+
+        // Get substring from start to end
+        const result1 = await redis.getrange(key, 0, 4);
+        expect(result1).toBe("Hello");
+
+        // Get substring with different range
+        const result2 = await redis.getrange(key, 6, 10);
+        expect(result2).toBe("World");
+
+        // Get with negative offsets (count from end)
+        const result3 = await redis.getrange(key, -5, -1);
+        expect(result3).toBe("World");
+
+        // Get entire string
+        const result4 = await redis.getrange(key, 0, -1);
+        expect(result4).toBe("Hello World");
+      });
+
+      test("should set range of string", async () => {
+        const redis = ctx.redis;
+        const key = "setrangetest";
+        await redis.set(key, "Hello World");
+
+        // Overwrite part of the string
+        const newLength = await redis.setrange(key, 6, "Redis");
+        expect(newLength).toBe(11);
+
+        // Verify the change
+        const result = await redis.get(key);
+        expect(result).toBe("Hello Redis");
+
+        // Set range on non-existent key (should pad with zero bytes)
+        const key2 = "newkey";
+        const newLength2 = await redis.setrange(key2, 5, "Redis");
+        expect(newLength2).toBeGreaterThanOrEqual(10);
       });
 
       test("should implement TTL command correctly for different cases", async () => {

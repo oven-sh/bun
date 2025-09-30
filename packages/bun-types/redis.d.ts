@@ -246,11 +246,35 @@ declare module "bun" {
     incr(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Increment the integer value of a key by the given amount
+     * @param key The key to increment
+     * @param increment The amount to increment by
+     * @returns Promise that resolves with the new value after incrementing
+     */
+    incrby(key: RedisClient.KeyLike, increment: number): Promise<number>;
+
+    /**
+     * Increment the float value of a key by the given amount
+     * @param key The key to increment
+     * @param increment The amount to increment by (can be a float)
+     * @returns Promise that resolves with the new value as a string after incrementing
+     */
+    incrbyfloat(key: RedisClient.KeyLike, increment: number | string): Promise<string>;
+
+    /**
      * Decrement the integer value of a key by one
      * @param key The key to decrement
      * @returns Promise that resolves with the new value
      */
     decr(key: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Decrement the integer value of a key by the given amount
+     * @param key The key to decrement
+     * @param decrement The amount to decrement by
+     * @returns Promise that resolves with the new value after decrementing
+     */
+    decrby(key: RedisClient.KeyLike, decrement: number): Promise<number>;
 
     /**
      * Determine if a key exists
@@ -570,6 +594,36 @@ declare module "bun" {
     setnx(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Set key to hold the string value with expiration time in seconds
+     * @param key The key to set
+     * @param seconds The expiration time in seconds
+     * @param value The value to set
+     * @returns Promise that resolves with "OK" on success
+     *
+     * @example
+     * ```ts
+     * await redis.setex("mykey", 10, "Hello");
+     * // Key will expire after 10 seconds
+     * ```
+     */
+    setex(key: RedisClient.KeyLike, seconds: number, value: RedisClient.KeyLike): Promise<"OK">;
+
+    /**
+     * Set key to hold the string value with expiration time in milliseconds
+     * @param key The key to set
+     * @param milliseconds The expiration time in milliseconds
+     * @param value The value to set
+     * @returns Promise that resolves with "OK" on success
+     *
+     * @example
+     * ```ts
+     * await redis.psetex("mykey", 10000, "Hello");
+     * // Key will expire after 10000 milliseconds (10 seconds)
+     * ```
+     */
+    psetex(key: RedisClient.KeyLike, milliseconds: number, value: RedisClient.KeyLike): Promise<"OK">;
+
+    /**
      * Get the score associated with the given member in a sorted set
      * @param key The sorted set key
      * @param member The member to get the score for
@@ -587,11 +641,95 @@ declare module "bun" {
     mget(...keys: RedisClient.KeyLike[]): Promise<(string | null)[]>;
 
     /**
+     * Set multiple keys to multiple values atomically
+     *
+     * Sets the given keys to their respective values. MSET replaces existing
+     * values with new values, just as regular SET. Use MSETNX if you don't want
+     * to overwrite existing values.
+     *
+     * MSET is atomic, so all given keys are set at once. It is not possible for
+     * clients to see that some of the keys were updated while others are
+     * unchanged.
+     *
+     * @param keyValuePairs Alternating keys and values (key1, value1, key2, value2, ...)
+     * @returns Promise that resolves with "OK" on success
+     *
+     * @example
+     * ```ts
+     * await redis.mset("key1", "value1", "key2", "value2");
+     * ```
+     */
+    mset(...keyValuePairs: RedisClient.KeyLike[]): Promise<"OK">;
+
+    /**
+     * Set multiple keys to multiple values, only if none of the keys exist
+     *
+     * Sets the given keys to their respective values. MSETNX will not perform
+     * any operation at all even if just a single key already exists.
+     *
+     * Because of this semantic, MSETNX can be used in order to set different
+     * keys representing different fields of a unique logic object in a way that
+     * ensures that either all the fields or none at all are set.
+     *
+     * MSETNX is atomic, so all given keys are set at once. It is not possible
+     * for clients to see that some of the keys were updated while others are
+     * unchanged.
+     *
+     * @param keyValuePairs Alternating keys and values (key1, value1, key2, value2, ...)
+     * @returns Promise that resolves with 1 if all keys were set, 0 if no key was set
+     *
+     * @example
+     * ```ts
+     * // Returns 1 if keys don't exist
+     * await redis.msetnx("key1", "value1", "key2", "value2");
+     *
+     * // Returns 0 if any key already exists
+     * await redis.msetnx("key1", "newvalue", "key3", "value3");
+     * ```
+     */
+    msetnx(...keyValuePairs: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
      * Count the number of set bits (population counting) in a string
      * @param key The key to count bits in
      * @returns Promise that resolves with the number of bits set to 1
      */
     bitcount(key: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Returns the bit value at offset in the string value stored at key
+     * @param key The key containing the string value
+     * @param offset The bit offset (zero-based)
+     * @returns Promise that resolves with the bit value (0 or 1) at the specified offset
+     */
+    getbit(key: RedisClient.KeyLike, offset: number): Promise<number>;
+
+    /**
+     * Sets or clears the bit at offset in the string value stored at key
+     * @param key The key to modify
+     * @param offset The bit offset (zero-based)
+     * @param value The bit value to set (0 or 1)
+     * @returns Promise that resolves with the original bit value stored at offset
+     */
+    setbit(key: RedisClient.KeyLike, offset: number, value: 0 | 1): Promise<number>;
+
+    /**
+     * Get a substring of the string stored at a key
+     * @param key The key to get the substring from
+     * @param start The starting offset (can be negative to count from the end)
+     * @param end The ending offset (can be negative to count from the end)
+     * @returns Promise that resolves with the substring, or an empty string if the key doesn't exist
+     */
+    getrange(key: RedisClient.KeyLike, start: number, end: number): Promise<string>;
+
+    /**
+     * Overwrite part of a string at key starting at the specified offset
+     * @param key The key to modify
+     * @param offset The offset at which to start overwriting (zero-based)
+     * @param value The string value to write at the offset
+     * @returns Promise that resolves with the length of the string after modification
+     */
+    setrange(key: RedisClient.KeyLike, offset: number, value: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Return a serialized version of the value stored at the specified key

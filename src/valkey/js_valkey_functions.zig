@@ -631,6 +631,10 @@ pub fn ping(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 }
 
 pub const bitcount = compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key", .not_subscriber).call;
+pub const getbit = compile.@"(key: RedisKey, value: RedisValue)"("getbit", "GETBIT", "key", "offset", .not_subscriber).call;
+pub const setbit = compile.@"(...strings: string[])"("setbit", "SETBIT", .not_subscriber).call;
+pub const getrange = compile.@"(...strings: string[])"("getrange", "GETRANGE", .not_subscriber).call;
+pub const setrange = compile.@"(...strings: string[])"("setrange", "SETRANGE", .not_subscriber).call;
 pub const dump = compile.@"(key: RedisKey)"("dump", "DUMP", "key", .not_subscriber).call;
 pub const expiretime = compile.@"(key: RedisKey)"("expiretime", "EXPIRETIME", "key", .not_subscriber).call;
 pub const getdel = compile.@"(key: RedisKey)"("getdel", "GETDEL", "key", .not_subscriber).call;
@@ -657,16 +661,23 @@ pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER",
 pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value", .not_subscriber).call;
 pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value", .not_subscriber).call;
 pub const hget = compile.@"(key: RedisKey, value: RedisValue)"("hget", "HGET", "key", "field", .not_subscriber).call;
+pub const incrby = compile.@"(key: RedisKey, value: RedisValue)"("incrby", "INCRBY", "key", "increment", .not_subscriber).call;
+pub const incrbyfloat = compile.@"(key: RedisKey, value: RedisValue)"("incrbyfloat", "INCRBYFLOAT", "key", "increment", .not_subscriber).call;
+pub const decrby = compile.@"(key: RedisKey, value: RedisValue)"("decrby", "DECRBY", "key", "decrement", .not_subscriber).call;
 pub const lpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpush", "LPUSH", .not_subscriber).call;
 pub const lpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("lpushx", "LPUSHX", .not_subscriber).call;
 pub const pfadd = compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD", "key", "value", .not_subscriber).call;
 pub const rpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpush", "RPUSH", .not_subscriber).call;
 pub const rpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpushx", "RPUSHX", .not_subscriber).call;
 pub const setnx = compile.@"(key: RedisKey, value: RedisValue)"("setnx", "SETNX", "key", "value", .not_subscriber).call;
+pub const setex = compile.@"(...strings: string[])"("setex", "SETEX", .not_subscriber).call;
+pub const psetex = compile.@"(...strings: string[])"("psetex", "PSETEX", .not_subscriber).call;
 pub const zscore = compile.@"(key: RedisKey, value: RedisValue)"("zscore", "ZSCORE", "key", "value", .not_subscriber).call;
 
 pub const del = compile.@"(key: RedisKey, ...args: RedisKey[])"("del", "DEL", "key", .not_subscriber).call;
 pub const mget = compile.@"(key: RedisKey, ...args: RedisKey[])"("mget", "MGET", "key", .not_subscriber).call;
+pub const mset = compile.@"(...strings: string[])"("mset", "MSET", .not_subscriber).call;
+pub const msetnx = compile.@"(...strings: string[])"("msetnx", "MSETNX", .not_subscriber).call;
 
 pub const script = compile.@"(...strings: string[])"("script", "SCRIPT", .not_subscriber).call;
 pub const select = compile.@"(...strings: string[])"("select", "SELECT", .not_subscriber).call;

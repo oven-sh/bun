@@ -48,9 +48,21 @@ export default [
         fn: "incr",
         length: 1,
       },
+      incrby: {
+        fn: "incrby",
+        length: 2,
+      },
+      incrbyfloat: {
+        fn: "incrbyfloat",
+        length: 2,
+      },
       decr: {
         fn: "decr",
         length: 1,
+      },
+      decrby: {
+        fn: "decrby",
+        length: 2,
       },
       exists: {
         fn: "exists",
@@ -122,6 +134,18 @@ export default [
       },
       bitcount: {
         fn: "bitcount",
+      },
+      getbit: {
+        fn: "getbit",
+      },
+      setbit: {
+        fn: "setbit",
+      },
+      getrange: {
+        fn: "getrange",
+      },
+      setrange: {
+        fn: "setrange",
       },
       dump: {
         fn: "dump",
@@ -210,11 +234,23 @@ export default [
       setnx: {
         fn: "setnx",
       },
+      setex: {
+        fn: "setex",
+      },
+      psetex: {
+        fn: "psetex",
+      },
       zscore: {
         fn: "zscore",
       },
       mget: {
         fn: "mget",
+      },
+      mset: {
+        fn: "mset",
+      },
+      msetnx: {
+        fn: "msetnx",
       },
       ping: { fn: "ping" },
       publish: { fn: "publish" },

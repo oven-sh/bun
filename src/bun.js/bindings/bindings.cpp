@@ -29,6 +29,7 @@
 
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
+#include "WebCoreJSBuiltins.h"
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/BytecodeIndex.h"
@@ -59,6 +60,7 @@
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/ProxyObject.h"
@@ -2000,6 +2002,28 @@ void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
     arg0->deref();
 }
 
+WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
+    Vector<KeyValuePair<String, String>> pairs;
+    pairs.reserveCapacity(count);
+    ZigString buf = *arg3;
+    for (uint32_t i = 0; i < count; i++) {
+        WTF::String name = Zig::toStringCopy(buf, arg1[i]);
+        WTF::String value = Zig::toStringCopy(buf, arg2[i]);
+        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
+    }
+
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
+    if (throwScope.exception()) {
+        headers->deref();
+        return nullptr;
+    }
+    return headers;
+}
+
 JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
 {
     auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
@@ -2019,8 +2043,9 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
 
     JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
     fetchHeaders->computeMemoryCost();
-    return JSC::JSValue::encode(value);
+    return JSC::JSValue::encode(fetchHeaders);
 }
+
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const ZigString* arg1, ZigString* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
@@ -2358,7 +2383,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         return 0;
     }
 
-    case WebCore::JSDOMWrapperType: {
+    case JSDOMWrapperType: {
         if (jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -6016,6 +6041,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();

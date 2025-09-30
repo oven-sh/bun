@@ -327,12 +327,9 @@ describe("web worker", () => {
         hasName: "name" in self,
       });
     `;
-    const worker = new Worker(
-      URL.createObjectURL(new Blob([workerSource], { type: "application/javascript" })),
-      {
-        name: "blob-worker",
-      },
-    );
+    const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: "application/javascript" })), {
+      name: "blob-worker",
+    });
     const result = await waitForWorkerResult(worker, null);
     expect(result).toEqual({
       name: "blob-worker",

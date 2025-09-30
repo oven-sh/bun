@@ -132,6 +132,9 @@ function parseSQLQuery(query: string): SQLParsedInfo {
             firstKeyword = "EXPLAIN";
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
             firstKeyword = "WITH";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+            firstKeyword = "IN";
+            command = SQLCommand.in;
           }
         } else {
           // After we have the first keyword, look for other keywords
@@ -208,6 +211,9 @@ function parseSQLQuery(query: string): SQLParsedInfo {
             firstKeyword = "EXPLAIN";
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
             firstKeyword = "WITH";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+            firstKeyword = "IN";
+            command = SQLCommand.in;
           }
         } else {
           // After we have the first keyword, look for other keywords
@@ -267,6 +273,9 @@ function parseSQLQuery(query: string): SQLParsedInfo {
         firstKeyword = "EXPLAIN";
       } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
         firstKeyword = "WITH";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+        firstKeyword = "IN";
+        command = SQLCommand.in;
       }
     } else {
       // After we have the first keyword, look for other keywords
@@ -483,7 +492,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
 
     let binding_values: any[] = [];
     let query = "";
-    let cachedCommand: SQLCommand | null = null;
 
     for (let i = 0; i < str_len; i++) {
       const string = strings[i];
@@ -504,11 +512,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
             }
             binding_idx += sub_values.length;
           } else if (value instanceof SQLHelper) {
-            if (cachedCommand === null) {
-              const { command } = parseSQLQuery(query);
-              cachedCommand = command;
-            }
-            const command = cachedCommand;
+            const { command } = parseSQLQuery(query);
 
             // only selectIn, insert, update, updateSet are allowed
             if (command === SQLCommand.none || command === SQLCommand.where) {

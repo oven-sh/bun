@@ -342,14 +342,6 @@ pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, cal
             return globalObject.throwInvalidArgumentType("srandmember", "count", "number or string");
         };
         args.appendAssumeCapacity(count_arg);
-
-        // Optional WITHSCORES argument
-        if (args_view.len > 2 and !callframe.argument(2).isUndefinedOrNull()) {
-            const withscores_arg = try fromJS(globalObject, callframe.argument(2)) orelse {
-                return globalObject.throwInvalidArgumentType("srandmember", "withscores", "string");
-            };
-            args.appendAssumeCapacity(withscores_arg);
-        }
     }
 
     // Send SRANDMEMBER command

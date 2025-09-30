@@ -48,9 +48,17 @@ export default [
         fn: "incr",
         length: 1,
       },
+      incrby: {
+        fn: "incrby",
+        length: 2,
+      },
       decr: {
         fn: "decr",
         length: 1,
+      },
+      decrby: {
+        fn: "decrby",
+        length: 2,
       },
       exists: {
         fn: "exists",

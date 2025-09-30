@@ -170,6 +170,31 @@ pub fn incr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
     return promise.toJS();
 }
 
+// Implement incrby (increment key by integer value)
+pub fn incrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("incrby", "key", "string or buffer");
+    };
+    defer key.deinit();
+    const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+        return globalObject.throwInvalidArgumentType("incrby", "increment", "string or number");
+    };
+    defer value.deinit();
+
+    // Send INCRBY command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "INCRBY",
+            .args = .{ .args = &.{ key, value } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send INCRBY command", err);
+    };
+    return promise.toJS();
+}
+
 pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
 
@@ -188,6 +213,31 @@ pub fn decr(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send DECR command", err);
+    };
+    return promise.toJS();
+}
+
+// Implement decrby (decrement key by integer value)
+pub fn decrby(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("decrby", "key", "string or buffer");
+    };
+    defer key.deinit();
+    const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+        return globalObject.throwInvalidArgumentType("decrby", "decrement", "string or number");
+    };
+    defer value.deinit();
+
+    // Send DECRBY command
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "DECRBY",
+            .args = .{ .args = &.{ key, value } },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send DECRBY command", err);
     };
     return promise.toJS();
 }

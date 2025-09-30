@@ -246,12 +246,26 @@ declare module "bun" {
     incr(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Increment the integer value of a key by the given number
+     * @param key The key to increment
+     * @param increment The amount to increment by
+     * @returns Promise that resolves with the new value
+     */
+    incrby(key: RedisClient.KeyLike, increment: string | number): Promise<number>;
+    /**
      * Decrement the integer value of a key by one
      * @param key The key to decrement
      * @returns Promise that resolves with the new value
      */
     decr(key: RedisClient.KeyLike): Promise<number>;
 
+    /**
+     * Decrement the integer value of a key by the given number
+     * @param key The key to decrement
+     * @param decrement The amount to decrement by
+     * @returns Promise that resolves with the new value
+     */
+    decrby(key: RedisClient.KeyLike, decrement: string | number): Promise<number>;
     /**
      * Determine if a key exists
      * @param key The key to check

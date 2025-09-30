@@ -11671,6 +11671,45 @@ CREATE TABLE ${table_name} (
         }
       });
 
+      test("upsert helper", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`
+        CREATE TABLE IF NOT EXISTS ${sql(random_name)} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            foo text NOT NULL DEFAULT '',
+            email text NOT NULL UNIQUE
+        )
+      `;
+        {
+          const { email, ...data } = { email: "bunny@bun.com", foo: "hello" };
+          await sql`
+        INSERT INTO ${sql(random_name)}
+        ${sql({ ...data, email })}
+        ON CONFLICT (email) DO UPDATE
+        SET ${sql(data)}
+      `;
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result[0].id).toBeDefined();
+          expect(result[0].foo).toBe("hello");
+          expect(result[0].email).toBe("bunny@bun.com");
+        }
+
+        {
+          const { email, ...data } = { email: "bunny@bun.com", foo: "hello2" };
+          await sql`
+        INSERT INTO ${sql(random_name)}
+        ${sql({ ...data, email })}
+        ON CONFLICT (email) DO UPDATE
+        SET ${sql(data)}
+      `;
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result[0].id).toBeDefined();
+          expect(result[0].foo).toBe("hello2");
+          expect(result[0].email).toBe("bunny@bun.com");
+        }
+      });
+
       test("update helper with AND IN", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");

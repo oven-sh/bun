@@ -235,6 +235,7 @@ test("multi-file", async () => {
       import.meta.dir + "/scheduling/multi-file/preload.ts",
     ],
     stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
   });
 
   const exitCode = await result.exited;

@@ -2017,6 +2017,10 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObje
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     headers->relaxAdoptionRequirement();
     WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
+    if (throwScope.exception()) {
+        headers->deref();
+        return nullptr;
+    }
     return headers;
 }
 

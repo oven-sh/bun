@@ -22,6 +22,8 @@ import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFi
 import { expect } from "bun:test";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
+const ASAN_TIMEOUT_MULTIPLIER = isASAN ? 3 : 1;
+
 const isDebugBuild = Bun.version.includes("debug");
 
 const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
@@ -1914,6 +1916,9 @@ function testImpl<T extends DevServerTest>(
       return options;
     }
 
+    // asan makes everything slower
+    const asanTimeoutMultiplier = isASAN ? 3 : 1;
+
     (options.only ? jest.test.only : jest.test)(
       name,
       run,
@@ -1921,7 +1926,10 @@ function testImpl<T extends DevServerTest>(
         ? 11 * 60 * 1000
         : interactive
           ? interactive_timeout
-          : (options.timeoutMultiplier ?? 1) * (isWindows ? 15_000 : 10_000) * (Bun.version.includes("debug") ? 2 : 1),
+          : (options.timeoutMultiplier ?? 1) *
+            (isWindows ? 15_000 : 10_000) *
+            (Bun.version.includes("debug") ? 2 : 1) *
+            asanTimeoutMultiplier,
     );
     return options;
   } catch {

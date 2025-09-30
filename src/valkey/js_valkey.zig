@@ -1270,6 +1270,7 @@ pub const JSValkeyClient = struct {
     pub const hlen = fns.hlen;
     pub const hmget = fns.hmget;
     pub const hmset = fns.hmset;
+    pub const hset = fns.hset;
     pub const hstrlen = fns.hstrlen;
     pub const hvals = fns.hvals;
     pub const incr = fns.incr;

@@ -3976,6 +3976,158 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       });
     });
 
+    describe("Hash Operations", () => {
+      test("should set hash fields using object syntax", async () => {
+        const redis = ctx.redis;
+        const key = "hash-object-test";
+
+        const result = await redis.hset(key, { field1: "value1", field2: "value2", field3: "value3" });
+        expect(result).toBe(3); // 3 new fields added
+
+        const value1 = await redis.hget(key, "field1");
+        expect(value1).toBe("value1");
+        const value2 = await redis.hget(key, "field2");
+        expect(value2).toBe("value2");
+        const value3 = await redis.hget(key, "field3");
+        expect(value3).toBe("value3");
+      });
+
+      test("should set hash fields using variadic syntax", async () => {
+        const redis = ctx.redis;
+        const key = "hash-variadic-test";
+
+        const result = await redis.hset(key, "field1", "value1", "field2", "value2");
+        expect(result).toBe(2); // 2 new fields added
+
+        const value1 = await redis.hget(key, "field1");
+        expect(value1).toBe("value1");
+        const value2 = await redis.hget(key, "field2");
+        expect(value2).toBe("value2");
+      });
+
+      test("should set single hash field", async () => {
+        const redis = ctx.redis;
+        const key = "hash-single-test";
+
+        const result = await redis.hset(key, "field1", "value1");
+        expect(result).toBe(1); // 1 new field added
+
+        const value = await redis.hget(key, "field1");
+        expect(value).toBe("value1");
+      });
+
+      test("should update existing hash fields", async () => {
+        const redis = ctx.redis;
+        const key = "hash-update-test";
+
+        // Initial set
+        const result1 = await redis.hset(key, { field1: "value1", field2: "value2" });
+        expect(result1).toBe(2);
+
+        // Update existing and add new
+        const result2 = await redis.hset(key, { field1: "new-value1", field3: "value3" });
+        expect(result2).toBe(1); // Only field3 is new
+
+        const value1 = await redis.hget(key, "field1");
+        expect(value1).toBe("new-value1");
+        const value3 = await redis.hget(key, "field3");
+        expect(value3).toBe("value3");
+      });
+
+      test("should work with HMSET using object syntax", async () => {
+        const redis = ctx.redis;
+        const key = "hmset-object-test";
+
+        const result = await redis.hmset(key, { field1: "value1", field2: "value2" });
+        expect(result).toBe("OK");
+
+        const value1 = await redis.hget(key, "field1");
+        expect(value1).toBe("value1");
+        const value2 = await redis.hget(key, "field2");
+        expect(value2).toBe("value2");
+      });
+
+      test("should work with HMSET using variadic syntax", async () => {
+        const redis = ctx.redis;
+        const key = "hmset-variadic-test";
+
+        const result = await redis.hmset(key, "field1", "value1", "field2", "value2");
+        expect(result).toBe("OK");
+
+        const value1 = await redis.hget(key, "field1");
+        expect(value1).toBe("value1");
+      });
+
+      test("should work with HMSET using array syntax", async () => {
+        const redis = ctx.redis;
+        const key = "hmset-array-test";
+
+        const result = await redis.hmset(key, ["field1", "value1", "field2", "value2"]);
+        expect(result).toBe("OK");
+
+        const value1 = await redis.hget(key, "field1");
+        expect(value1).toBe("value1");
+      });
+
+      test("should handle numeric field names and values", async () => {
+        const redis = ctx.redis;
+        const key = "hash-numeric-test";
+
+        const result = await redis.hset(key, { 123: "value1", field2: 456 });
+        expect(result).toBe(2);
+
+        const value1 = await redis.hget(key, "123");
+        expect(value1).toBe("value1");
+        const value2 = await redis.hget(key, "field2");
+        expect(value2).toBe("456");
+      });
+
+      test("should throw error for odd number of variadic arguments", async () => {
+        const redis = ctx.redis;
+        const key = "hash-error-test";
+
+        expect(async () => {
+          await redis.hset(key, "field1", "value1", "field2");
+        }).toThrow();
+      });
+
+      test("should throw error for empty object", async () => {
+        const redis = ctx.redis;
+        const key = "hash-empty-test";
+
+        expect(async () => {
+          await redis.hset(key, {});
+        }).toThrow();
+      });
+
+      test("should throw error for array with odd number of elements", async () => {
+        const redis = ctx.redis;
+        const key = "hmset-error-test";
+
+        expect(async () => {
+          await redis.hmset(key, ["field1", "value1", "field2"]);
+        }).toThrow();
+      });
+
+      test("should handle large number of fields", async () => {
+        const redis = ctx.redis;
+        const key = "hash-large-test";
+
+        const fields: Record<string, string> = {};
+        for (let i = 0; i < 100; i++) {
+          fields[`field${i}`] = `value${i}`;
+        }
+
+        const result = await redis.hset(key, fields);
+        expect(result).toBe(100);
+
+        const value0 = await redis.hget(key, "field0");
+        expect(value0).toBe("value0");
+        const value99 = await redis.hget(key, "field99");
+        expect(value99).toBe("value99");
+      });
+    });
+
     describe("Connection State", () => {
       test("should have a connected property", () => {
         const redis = ctx.redis;

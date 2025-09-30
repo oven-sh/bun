@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 18
+# Version: 19
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -685,6 +685,8 @@ install_common_software() {
 				apt-transport-https \
 				software-properties-common
 		fi
+		install_packages \
+			libc6-dbg
 		;;
 	dnf)
 		install_packages \
@@ -1193,7 +1195,7 @@ install_docker() {
 			execute_sudo amazon-linux-extras install docker
 			;;
 		amzn-* | alpine-*)
-			install_packages docker
+			install_packages docker docker-cli-compose
 			;;
 		*)
 			sh="$(require sh)"
@@ -1208,10 +1210,17 @@ install_docker() {
 	if [ -f "$systemctl" ]; then
 		execute_sudo "$systemctl" enable docker
 	fi
+	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ]; then
+		execute doas rc-update add docker default
+		execute doas rc-service docker start
+	fi
 
 	getent="$(which getent)"
 	if [ -n "$("$getent" group docker)" ]; then
 		usermod="$(which usermod)"
+		if [ -z "$usermod" ]; then
+			usermod="$(sudo which usermod)"
+		fi
 		if [ -f "$usermod" ]; then
 			execute_sudo "$usermod" -aG docker "$user"
 		fi

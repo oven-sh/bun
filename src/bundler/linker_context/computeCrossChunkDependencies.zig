@@ -1,4 +1,4 @@
-pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
+pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) bun.OOM!void {
     if (!c.graph.code_splitting) {
         // No need to compute cross-chunk dependencies if there can't be any
         return;

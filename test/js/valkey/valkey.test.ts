@@ -4437,8 +4437,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "user:" + randomUUIDv7().substring(0, 8);
 
-        await redis.hpexpire(key, 5000, "FIELDS", 1, "name");
         await redis.hset(key, { name: "John", age: "30" });
+        await redis.hpexpire(key, 5000, "FIELDS", 1, "name");
 
         const ttls = await redis.hpttl(key, "FIELDS", 2, "name", "age");
         expect(ttls).toHaveLength(2);

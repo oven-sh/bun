@@ -1,10 +1,9 @@
-import { SQL } from "bun";
+import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUIDv7 } from "bun";
 import path from "path";
 
 describe("Connection & Initialization", () => {

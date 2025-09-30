@@ -710,7 +710,8 @@ pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.enum_literal), buf: []
                 len;
 
             const slice = io.arraybuf.buf.slice()[io.arraybuf.i .. io.arraybuf.i + write_len];
-            @memcpy(slice, buf[0..write_len]);
+            // Use copyForwards to handle potential overlap (e.g., when buf points to same arraybuf)
+            std.mem.copyForwards(u8, slice, buf[0..write_len]);
             io.arraybuf.i +|= @truncate(write_len);
             log("{s} write to arraybuf {d}\n", .{ @tagName(this.kind), write_len });
             return Maybe(usize).initResult(write_len);

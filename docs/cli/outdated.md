@@ -44,14 +44,4 @@ You can also pass glob patterns to filter by workspace names:
 
 {% bunOutdatedTerminal  glob="{e,t}*" displayGlob="--filter='@monorepo/{types,cli}'" /%}
 
-### Recursive Workspace Checking
-
-Use the `--recursive` flag to check for outdated dependencies across all workspaces in a monorepo:
-
-```bash
-$ bun outdated --recursive
-```
-
-This displays an additional "Workspace" column showing which workspace each dependency belongs to.
-
 {% bunCLIUsage command="outdated" /%}

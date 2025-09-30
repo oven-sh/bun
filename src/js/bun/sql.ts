@@ -746,12 +746,7 @@ const SQL: typeof Bun.SQL = function SQL(
         }
         // matchs the format of the savepoint name in postgres package
         const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
-        while (transactionSavepoints.size > 0) {
-          // wait for all savepoints to finish before creating a new one
-          await Promise.all([...transactionSavepoints]);
-        }
         const promise = run_internal_savepoint(save_point_name, savepoint_callback);
-        // add the promise to the set of savepoints
         transactionSavepoints.add(promise);
         return await promise.finally(onSavepointFinished.bind(null, promise));
       };

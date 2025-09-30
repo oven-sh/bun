@@ -54,18 +54,7 @@ if (isDockerEnabled()) {
           await container.ready;
           sql = new SQL(getOptions());
         });
-        test("can handle multiple savepoints in parallel", async () => {
-          await using db = new SQL({ ...getOptions(), max: 1 });
-          // in this case bun will serialize the savepoint so only one will be executed at a time
-          const result = await sql.transaction(async db => {
-            return await Promise.all([
-              db.savepoint(db => db`select 1 as x`),
-              db.savepoint(db => db`select 2 as x`),
-              db.savepoint(db => db`select 3 as x`),
-            ]);
-          });
-          expect(result).toEqual([[{ x: 1 }], [{ x: 2 }], [{ x: 3 }]]);
-        });
+
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();

@@ -38,11 +38,10 @@ function getPage(meta: Bake.RouteMetadata & { request?: Request | undefined }, s
 }
 
 function component(mod: any, params: Record<string, string | string[]> | null, request?: Request) {
+  const Page = mod.default;
   if (!mod || !mod.default) {
     throw new Error("Pages must have a default export that is a React component");
   }
-
-  const Page = mod.default;
 
   let props = {};
   if (import.meta.env.DEV) assertReactComponent(Page);

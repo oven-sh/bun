@@ -98,7 +98,6 @@ server_exports = {
       if (!serverRenderer) {
         throw new Error('Framework server entrypoint is missing a "render" export.');
       }
-
       if (typeof serverRenderer !== "function") {
         throw new Error('Framework server entrypoint\'s "render" export is not a function.');
       }

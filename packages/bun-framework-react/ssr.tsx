@@ -54,6 +54,12 @@ export function renderToHtml(
         return Promise.reject(signal.aborted);
       }
 
+      // If the signal is already aborted, we should not proceed
+      if (signal.aborted) {
+        controller.close(signal.aborted);
+        return Promise.reject(signal.aborted);
+      }
+
       // `renderToPipeableStream` is what actually generates HTML.
       // Here is where React is told what script tags to inject.
       let pipe: (stream: NodeJS.WritableStream) => void;
@@ -266,7 +272,7 @@ class RscInjectionStream extends EventEmitter {
     // Ignore flush requests from React. Bun will automatically flush when reasonable.
   }
 
-  destroy() {}
+  destroy(e) {}
 
   end() {
     return this;

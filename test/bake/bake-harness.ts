@@ -10,16 +10,17 @@
  */
 import { BunFile, Subprocess } from "bun";
 import * as Bake from "bun:app";
-import { Matchers } from "bun:test";
+import { expect, Matchers } from "bun:test";
+import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, runBunInstall, tempDirWithFiles } from "harness";
 import assert from "node:assert";
 import { EventEmitter } from "node:events";
 import fs, { readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { expect } from "bun:test";
-import { bunEnv, bunExe, isCI, isWindows, mergeWindowEnvs, runBunInstall, tempDirWithFiles } from "harness";
 import { dedent } from "../bundler/expectBundled.ts";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
+
+const ASAN_TIMEOUT_MULTIPLIER = isASAN ? 3 : 1;
 
 const isDebugBuild = Bun.version.includes("debug");
 
@@ -536,9 +537,11 @@ export class Dev extends EventEmitter {
     if (!hasAlreadyExited) {
       this.devProcess.send({ type: "graceful-exit" });
     }
+    // Leak sanitizer takes forever to exit the process
+    const timeout = isASAN ? 30 * 1000 : 2000;
     await Promise.race([
       this.devProcess.exited,
-      new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
+      new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : timeout)),
     ]);
     if (this.output.panicked) {
       await this.devProcess.exited;
@@ -1917,6 +1920,9 @@ function testImpl<T extends DevServerTest>(
       return options;
     }
 
+    // asan makes everything slower
+    const asanTimeoutMultiplier = isASAN ? 3 : 1;
+
     (options.only ? jest.test.only : jest.test)(
       name,
       run,
@@ -1924,7 +1930,10 @@ function testImpl<T extends DevServerTest>(
         ? 11 * 60 * 1000
         : interactive
           ? interactive_timeout
-          : (options.timeoutMultiplier ?? 1) * (isWindows ? 15_000 : 10_000) * (Bun.version.includes("debug") ? 2 : 1),
+          : (options.timeoutMultiplier ?? 1) *
+            (isWindows ? 15_000 : 10_000) *
+            (Bun.version.includes("debug") ? 2 : 1) *
+            asanTimeoutMultiplier,
     );
     return options;
   } catch {

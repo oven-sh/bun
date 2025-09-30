@@ -189,10 +189,11 @@ has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
 
-extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) jsc.JSValue;
+extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
 
-pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) ?jsc.JSValue {
-    const jsvalue = Bake__getAsyncLocalStorage(this.global);
+pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
+    const jsvalue = try jsc.fromJSHostCall(this.global, @src(), Bake__getAsyncLocalStorage, .{this.global});
+
     if (jsvalue.isEmptyOrUndefinedOrNull()) return null;
     return jsvalue;
 }
@@ -728,7 +729,7 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
         Output.enableBuffering();
     }
 
-    this.global.reload();
+    this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
@@ -842,6 +843,9 @@ extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     bun.assert(this.isShuttingDown());
+    // FIXME: we should be doing this, but we're not, but unfortunately doing it
+    //        causes like 50+ tests to break
+    // this.eventLoop().tick();
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);

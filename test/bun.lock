@@ -3370,6 +3370,8 @@
 
     "upper-case-first/tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
+    "v8-heapsnapshot/@types/node": ["@types/node@18.19.69", "", { "dependencies": { "undici-types": "~5.26.4" } }, "sha512-ECPdY1nlaiO/Y6GUnwgtAAhLNaQ53AyIVz+eILxpEo5OvuqE6yWkqWBIb5dU0DqhKQtMeny+FBD3PK6lm7L5xQ=="],
+
     "verdaccio/@verdaccio/config": ["@verdaccio/config@8.0.0-next-8.1", "", { "dependencies": { "@verdaccio/core": "8.0.0-next-8.1", "@verdaccio/utils": "7.0.1-next-8.1", "debug": "4.3.7", "js-yaml": "4.1.0", "lodash": "4.17.21", "minimatch": "7.4.6" } }, "sha512-goDVOH4e8xMUxjHybJpi5HwIecVFqzJ9jeNFrRUgtUUn0PtFuNMHgxOeqDKRVboZhc5HK90yed8URK/1O6VsUw=="],
 
     "verdaccio/@verdaccio/core": ["@verdaccio/core@8.0.0-next-8.1", "", { "dependencies": { "ajv": "8.17.1", "core-js": "3.37.1", "http-errors": "2.0.0", "http-status-codes": "2.3.0", "process-warning": "1.0.0", "semver": "7.6.3" } }, "sha512-kQRCB2wgXEh8H88G51eQgAFK9IxmnBtkQ8sY5FbmB6PbBkyHrbGcCp+2mtRqqo36j0W1VAlfM3XzoknMy6qQnw=="],

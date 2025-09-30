@@ -1060,6 +1060,68 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           `"Expected additional arguments to be a string or buffer for 'zremrangebylex'."`,
         );
       });
+
+      test("should remove one or more members with ZREM", async () => {
+        const redis = ctx.redis;
+        const key = "zrem-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four"]);
+
+        // Remove single member
+        const removed1 = await redis.zrem(key, "two");
+        expect(removed1).toBe(1);
+
+        // Remove multiple members
+        const removed2 = await redis.zrem(key, "one", "three");
+        expect(removed2).toBe(2);
+
+        // Remove non-existent member
+        const removed3 = await redis.zrem(key, "nonexistent");
+        expect(removed3).toBe(0);
+
+        // Remove mix of existing and non-existing
+        const removed4 = await redis.zrem(key, "four", "nothere");
+        expect(removed4).toBe(1); // Only "four" was removed
+      });
+
+      test("should get scores with ZMSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zmscore-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1.5", "one", "2.7", "two", "3.9", "three"]);
+
+        // Get single score
+        const scores1 = await redis.zmscore(key, "two");
+        expect(scores1).toEqual([2.7]);
+
+        // Get multiple scores
+        const scores2 = await redis.zmscore(key, "one", "three");
+        expect(scores2).toEqual([1.5, 3.9]);
+
+        // Get mix of existing and non-existing members
+        const scores3 = await redis.zmscore(key, "one", "nonexistent", "three");
+        expect(scores3).toEqual([1.5, null, 3.9]);
+
+        // Get all non-existent members
+        const scores4 = await redis.zmscore(key, "nothere", "alsonothere");
+        expect(scores4).toEqual([null, null]);
+      });
+
+      test("should reject invalid key in ZREM", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrem({} as any, "member");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zrem'."`);
+      });
+
+      test("should reject invalid key in ZMSCORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zmscore([] as any, "member");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zmscore'."`);
+      });
     });
 
     describe("Connection State", () => {

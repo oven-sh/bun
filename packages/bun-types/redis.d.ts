@@ -634,6 +634,14 @@ declare module "bun" {
     hmget(key: RedisClient.KeyLike, ...fields: string[]): Promise<Array<string | null>>;
 
     /**
+     * Get the values of all the given hash fields
+     * @param key The hash key
+     * @param fields The fields to get
+     * @returns Promise that resolves with an array of values
+     */
+    hmget(key: RedisClient.KeyLike, fields: string[]): Promise<Array<string | null>>;
+
+    /**
      * Delete one or more hash fields
      * @param key The hash key
      * @param field The field to delete

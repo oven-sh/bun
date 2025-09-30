@@ -5093,6 +5093,19 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(len3).toBe(3);
       });
 
+      test("should get multiple hash values with HMGET where only two arguments are passed because the second is an array", async () => {
+        const redis = ctx.redis;
+        const key = "hmget-test";
+
+        await redis.hset(key, "field1", "value1", "field2", "value2", "field3", "value3");
+
+        const values = await redis.hmget(key, ["field1", "field2", "field3"]);
+        expect(values).toEqual(["value1", "value2", "value3"]);
+
+        const mixed = await redis.hmget(key, ["field1", "nonexistent", "field2"]);
+        expect(mixed).toEqual(["value1", null, "value2"]);
+      });
+
       test("should get multiple hash values with HMGET", async () => {
         const redis = ctx.redis;
         const key = "hmget-test";

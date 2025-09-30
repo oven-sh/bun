@@ -876,9 +876,9 @@ declare module "bun" {
     /**
      * Get all the fields and values in a hash
      * @param key The hash key
-     * @returns Promise that resolves with an object containing all fields and values
+     * @returns Promise that resolves with an object containing all fields and values, or empty object if key does not exist
      */
-    hgetall(key: RedisClient.KeyLike): Promise<Record<string, string> | null>;
+    hgetall(key: RedisClient.KeyLike): Promise<Record<string, string>>;
 
     /**
      * Get all field names in a hash

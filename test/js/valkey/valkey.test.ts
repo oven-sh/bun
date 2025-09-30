@@ -3973,6 +3973,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(result).toEqual([]);
       });
 
+      test("should return empty array when ZPOPMIN on non-existent key", async () => {
+        const redis = ctx.redis;
+        const nonExistentKey = "zpopmin-nonexistent-" + randomUUIDv7();
+
+        const result = await redis.zpopmin(nonExistentKey);
+        expect(result).toEqual([]);
+      });
+
       test("should handle ties in score with ZPOPMIN", async () => {
         const redis = ctx.redis;
         const key = "zpopmin-tie-test";
@@ -4027,6 +4035,13 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const emptyKey = "zpopmax-empty-test";
 
         const result = await redis.zpopmax(emptyKey);
+        expect(result).toEqual([]);
+      });
+
+      test("should return empty array when ZPOPMAX on non-existent key", async () => {
+        const redis = ctx.redis;
+        const nonExistentKey = "zpopmax-nonexistent-" + randomUUIDv7();
+        const result = await redis.zpopmax(nonExistentKey);
         expect(result).toEqual([]);
       });
 
@@ -5737,6 +5752,13 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const remaining = await redis.hgetall(key);
         expect(remaining).toEqual({ name: "John", country: "USA" });
+      });
+
+      test("should return empty object for hgetall on non-existent key", async () => {
+        const redis = ctx.redis;
+        const key = "nonexistent-hgetall-" + randomUUIDv7();
+        const result = await redis.hgetall(key);
+        expect(result).toEqual({});
       });
 
       test("should check if hash field exists using hexists", async () => {

@@ -1013,7 +1013,7 @@ class MySQLAdapter
             const command = detectCommand(query);
             // only selectIn, insert, update, updateSet are allowed
             if (command === SQLCommand.none || command === SQLCommand.where) {
-              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and IN, ANY or ALL commands");
+              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and IN commands");
             }
             const { columns, value: items } = value as SQLHelper;
             const columnCount = columns.length;

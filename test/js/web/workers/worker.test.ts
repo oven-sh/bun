@@ -296,6 +296,59 @@ describe("web worker", () => {
       expect(err.error).toBe(null);
     });
   });
+
+  test("self.name is available in worker", async () => {
+    const worker = new Worker(new URL("worker-name-fixture.js", import.meta.url).href, {
+      name: "test-worker",
+    });
+    const result = await waitForWorkerResult(worker, null);
+    expect(result).toEqual({
+      name: "test-worker",
+      hasName: true,
+    });
+  });
+
+  test("self.name is available in worker with preload", async () => {
+    const worker = new Worker(new URL("worker-name-fixture.js", import.meta.url).href, {
+      name: "test-worker-with-preload",
+      preload: new URL("worker-name-preload-fixture.js", import.meta.url).href,
+    });
+    const { resolve, promise, reject } = Promise.withResolvers();
+    worker.onmessage = e => {
+      resolve({
+        ...e.data,
+        preloadHasName: globalThis.preloadHasName,
+        preloadName: globalThis.preloadName,
+      });
+    };
+    worker.onerror = reject;
+    const result = await promise;
+    worker.terminate();
+    expect(result.name).toBe("test-worker-with-preload");
+    expect(result.hasName).toBe(true);
+    expect(result.preloadHasName).toBe(true);
+    expect(result.preloadName).toBe("test-worker-with-preload");
+  });
+
+  test("self.name with blob URL", async () => {
+    const workerSource = `
+      self.postMessage({
+        name: self.name,
+        hasName: "name" in self,
+      });
+    `;
+    const worker = new Worker(
+      URL.createObjectURL(new Blob([workerSource], { type: "application/javascript" })),
+      {
+        name: "blob-worker",
+      },
+    );
+    const result = await waitForWorkerResult(worker, null);
+    expect(result).toEqual({
+      name: "blob-worker",
+      hasName: true,
+    });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

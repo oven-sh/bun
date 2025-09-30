@@ -16,6 +16,7 @@ pub const ConnectionFlags = struct {
     needs_to_open_socket: bool = true,
     enable_auto_reconnect: bool = true,
     is_reconnecting: bool = false,
+    failed: bool = false,
     enable_auto_pipelining: bool = true,
     finalized: bool = false,
     // This flag is a slight hack to allow returning the client instance in the
@@ -35,7 +36,6 @@ pub const Status = enum {
     disconnected,
     connecting,
     connected,
-    failed,
 };
 
 pub fn isActive(this: *const Status) bool {
@@ -321,9 +321,9 @@ pub const ValkeyClient = struct {
 
     /// Get the appropriate timeout interval based on connection state
     pub fn getTimeoutInterval(this: *const ValkeyClient) u32 {
+        if (this.flags.failed) return 0;
         return switch (this.status) {
             .connected => this.idle_timeout_interval_ms,
-            .failed => 0,
             else => this.connection_timeout_ms,
         };
     }
@@ -419,7 +419,7 @@ pub const ValkeyClient = struct {
     /// Mark the connection as failed with error message
     pub fn fail(this: *ValkeyClient, message: []const u8, err: protocol.RedisError) void {
         debug("failed: {s}: {}", .{ message, err });
-        if (this.status == .failed) return;
+        if (this.flags.failed) return;
 
         if (this.flags.finalized) {
             // We can't run promises inside finalizers.
@@ -448,7 +448,7 @@ pub const ValkeyClient = struct {
     }
 
     pub fn failWithJSValue(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
-        this.status = .failed;
+        this.flags.failed = true;
         rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
 
         if (!this.connectionReady()) {
@@ -465,9 +465,6 @@ pub const ValkeyClient = struct {
 
     /// Handle connection closed event
     pub fn onClose(this: *ValkeyClient) void {
-        this.socket = .{ .SocketTCP = .detached };
-        this.status = .disconnected;
-
         this.unregisterAutoFlusher();
         this.write_buffer.clearAndFree(this.allocator);
 
@@ -587,7 +584,7 @@ pub const ValkeyClient = struct {
                     return;
                 };
 
-                if (this.status == .disconnected or this.status == .failed) {
+                if (this.status == .disconnected) {
                     return;
                 }
                 this.sendNextCommand();
@@ -638,7 +635,7 @@ pub const ValkeyClient = struct {
             };
 
             // Check connection status after handling
-            if (this.status == .disconnected or this.status == .failed) {
+            if (this.status == .disconnected) {
                 return;
             }
 
@@ -1106,38 +1103,39 @@ pub const ValkeyClient = struct {
         var promise = Command.Promise.create(globalThis, checked_command.meta);
 
         const js_promise = promise.promise.get();
-        // Handle disconnected state with offline queue
-        switch (this.status) {
-            .connected => {
-                try this.enqueue(&checked_command, &promise);
-
-                // Schedule auto-flushing to process this command if pipelining is enabled
-                if (this.flags.enable_auto_pipelining and
-                    checked_command.meta.supports_auto_pipelining and
-                    this.status == .connected and
-                    this.queue.readableLength() > 0)
-                {
-                    this.registerAutoFlusher(this.vm);
-                }
-            },
-            .connecting, .disconnected => {
-                // Only queue if offline queue is enabled
-                if (this.flags.enable_offline_queue) {
+        if (this.flags.failed) {
+            promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
+        } else {
+            // Handle disconnected state with offline queue
+            switch (this.status) {
+                .connected => {
                     try this.enqueue(&checked_command, &promise);
-                } else {
-                    promise.reject(
-                        globalThis,
-                        globalThis.ERR(
-                            .REDIS_CONNECTION_CLOSED,
-                            "Connection is closed and offline queue is disabled",
-                            .{},
-                        ).toJS(),
-                    );
-                }
-            },
-            .failed => {
-                promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
-            },
+
+                    // Schedule auto-flushing to process this command if pipelining is enabled
+                    if (this.flags.enable_auto_pipelining and
+                        checked_command.meta.supports_auto_pipelining and
+                        this.status == .connected and
+                        this.queue.readableLength() > 0)
+                    {
+                        this.registerAutoFlusher(this.vm);
+                    }
+                },
+                .connecting, .disconnected => {
+                    // Only queue if offline queue is enabled
+                    if (this.flags.enable_offline_queue) {
+                        try this.enqueue(&checked_command, &promise);
+                    } else {
+                        promise.reject(
+                            globalThis,
+                            globalThis.ERR(
+                                .REDIS_CONNECTION_CLOSED,
+                                "Connection is closed and offline queue is disabled",
+                                .{},
+                            ).toJS(),
+                        );
+                    }
+                },
+            }
         }
 
         return js_promise;

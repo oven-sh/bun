@@ -11,11 +11,10 @@ pub const SubscriptionCtx = struct {
 
     const ParentJS = JSValkeyClient.js;
 
-    pub fn init(valkey_parent: *JSValkeyClient) bun.JSError!SubscriptionCtx {
-        const callback_map = jsc.JSMap.create(valkey_parent.globalObject);
-        const parent_this = valkey_parent.this_value.tryGet() orelse unreachable;
+    pub fn init(parent_js_value: JSValue, globalObject: *jsc.JSGlobalObject, valkey_parent: *JSValkeyClient) bun.JSError!SubscriptionCtx {
+        const callback_map = jsc.JSMap.create(globalObject);
 
-        ParentJS.gc.set(.subscriptionCallbackMap, parent_this, valkey_parent.globalObject, callback_map);
+        ParentJS.gc.set(.subscriptionCallbackMap, parent_js_value, globalObject, callback_map);
 
         const self = SubscriptionCtx{
             .original_enable_offline_queue = valkey_parent.client.flags.enable_offline_queue,
@@ -238,7 +237,6 @@ pub const JSValkeyClient = struct {
     ref_count: RefCount,
 
     pub const js = jsc.Codegen.JSRedisClient;
-    pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
@@ -247,13 +245,21 @@ pub const JSValkeyClient = struct {
     pub const deref = RefCount.deref;
     pub const new = bun.TrivialNew(@This());
 
+    pub fn toJS(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject) JSValue {
+        if (comptime bun.Environment.isDebug or bun.asan.enabled) {
+            bun.assert(this.this_value.isEmpty());
+        }
+
+        return js.toJS(this, globalObject);
+    }
+
     // Factory function to create a new Valkey client from JS
     pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, js_this: JSValue) bun.JSError!*JSValkeyClient {
         return try create(globalObject, callframe.arguments(), js_this);
     }
 
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
-    pub fn createNoJsNoPubsub(globalObject: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JSError!*JSValkeyClient {
+    pub fn createFromJS(globalObject: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JSError!*JSValkeyClient {
         const this_allocator = bun.default_allocator;
 
         const vm = globalObject.bunVM();
@@ -373,13 +379,13 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn create(globalObject: *jsc.JSGlobalObject, arguments: []const JSValue, js_this: JSValue) bun.JSError!*JSValkeyClient {
-        var new_client = try JSValkeyClient.createNoJsNoPubsub(globalObject, arguments);
+        var new_client = try JSValkeyClient.createFromJS(globalObject, arguments);
 
         // Initially, we only need to hold a weak reference to the JS object.
         new_client.this_value = jsc.JSRef.initWeak(js_this);
 
         // Need to associate the subscription context, after the JS ref has been populated.
-        new_client._subscription_ctx = try SubscriptionCtx.init(new_client);
+        new_client._subscription_ctx = try SubscriptionCtx.init(js_this, globalObject, new_client);
 
         return new_client;
     }
@@ -531,16 +537,16 @@ pub const JSValkeyClient = struct {
 
         // If already connected, resolve immediately
         if (this.client.status == .connected) {
-            return jsc.JSPromise.resolvedPromiseValue(globalObject, js.helloGetCached(this_value) orelse .js_undefined);
+            return jsc.JSPromise.resolvedPromiseValue(globalObject, js.gc.hello.get(this_value) orelse .js_undefined);
         }
 
-        if (js.connectionPromiseGetCached(this_value)) |promise| {
+        if (js.gc.connectionPromise.get(this_value)) |promise| {
             return promise;
         }
 
         const promise_ptr = jsc.JSPromise.create(globalObject);
         const promise = promise_ptr.toJS();
-        js.connectionPromiseSetCached(this_value, globalObject, promise);
+        js.gc.connectionPromise.set(this_value, globalObject, promise);
 
         // If was manually closed, reset that flag
         this.client.flags.is_manually_closed = false;
@@ -557,6 +563,7 @@ pub const JSValkeyClient = struct {
                 event_loop.enter();
                 defer event_loop.exit();
                 promise_ptr.reject(globalObject, err_value);
+                js.gc.connectionPromise.set(this_value, globalObject, .zero);
                 return promise;
             };
 
@@ -594,25 +601,25 @@ pub const JSValkeyClient = struct {
     }
 
     pub fn getOnConnect(_: *JSValkeyClient, thisValue: JSValue, _: *jsc.JSGlobalObject) JSValue {
-        if (js.onconnectGetCached(thisValue)) |value| {
+        if (js.gc.onconnect.get(thisValue)) |value| {
             return value;
         }
         return .js_undefined;
     }
 
     pub fn setOnConnect(_: *JSValkeyClient, thisValue: JSValue, globalObject: *jsc.JSGlobalObject, value: JSValue) void {
-        js.onconnectSetCached(thisValue, globalObject, value);
+        js.gc.onconnect.set(thisValue, globalObject, value);
     }
 
     pub fn getOnClose(_: *JSValkeyClient, thisValue: JSValue, _: *jsc.JSGlobalObject) JSValue {
-        if (js.oncloseGetCached(thisValue)) |value| {
+        if (js.gc.onclose.get(thisValue)) |value| {
             return value;
         }
         return .js_undefined;
     }
 
     pub fn setOnClose(_: *JSValkeyClient, thisValue: JSValue, globalObject: *jsc.JSGlobalObject, value: JSValue) void {
-        js.oncloseSetCached(thisValue, globalObject, value);
+        js.gc.onclose.set(thisValue, globalObject, value);
     }
 
     /// Safely add a timer with proper reference counting and event loop keepalive
@@ -780,24 +787,28 @@ pub const JSValkeyClient = struct {
                     break :js_hello .js_undefined;
                 };
             };
-            js.helloSetCached(this_value, globalObject, hello_value);
+            js.gc.hello.set(this_value, globalObject, hello_value);
             // Call onConnect callback if defined by the user
-            if (js.onconnectGetCached(this_value)) |on_connect| {
+            if (js.gc.onconnect.get(this_value)) |on_connect| {
                 const js_value = this_value;
                 js_value.ensureStillAlive();
                 globalObject.queueMicrotask(on_connect, &[_]JSValue{ js_value, hello_value });
             }
 
-            if (js.connectionPromiseGetCached(this_value)) |promise| {
-                js.connectionPromiseSetCached(this_value, globalObject, .zero);
-                const js_promise = promise.asPromise().?;
-                if (this.client.flags.connection_promise_returns_client) {
-                    debug("Resolving connection promise with client instance", .{});
-                    js_promise.resolve(globalObject, this_value);
-                } else {
-                    debug("Resolving connection promise with HELLO response", .{});
-                    js_promise.resolve(globalObject, hello_value);
+            if (js.gc.connectionPromise.get(this_value)) |promise_value| {
+                const promise = promise_value.asPromise().?;
+                if (promise.status(this.client.vm.jsc_vm) == .pending) {
+                    if (this.client.flags.connection_promise_returns_client) {
+                        debug("Resolving connection promise with client instance", .{});
+                        promise.resolve(globalObject, this_value);
+                    } else {
+                        debug("Resolving connection promise with HELLO response", .{});
+                        promise.resolve(globalObject, hello_value);
+                    }
                 }
+
+                js.gc.connectionPromise.set(this_value, globalObject, .zero);
+
                 this.client.flags.connection_promise_returns_client = false;
             }
         }
@@ -900,28 +911,31 @@ pub const JSValkeyClient = struct {
 
         const this_jsvalue = this.this_value.tryGet() orelse return;
         this_jsvalue.ensureStillAlive();
+        defer this_jsvalue.ensureStillAlive();
 
         // Create an error value
         const error_value = protocol.valkeyErrorToJS(globalObject, "Connection closed", protocol.RedisError.ConnectionClosed);
 
         const loop = this.client.vm.eventLoop();
-        loop.enter();
-        defer loop.exit();
+        {
+            loop.enter();
+            defer loop.exit();
 
-        if (!this_jsvalue.isUndefined()) {
-            if (js.connectionPromiseGetCached(this_jsvalue)) |promise| {
-                js.connectionPromiseSetCached(this_jsvalue, globalObject, .zero);
-                promise.asPromise().?.reject(globalObject, error_value);
+            if (js.gc.connectionPromise.get(this_jsvalue)) |promise_value| {
+                const promise = promise_value.asPromise().?;
+                if (promise.status(this.client.vm.jsc_vm) == .pending) {
+                    promise.reject(globalObject, error_value);
+                }
             }
-        }
 
-        // Call onClose callback if it exists
-        if (js.oncloseGetCached(this_jsvalue)) |on_close| {
-            _ = on_close.call(
-                globalObject,
-                this_jsvalue,
-                &[_]JSValue{error_value},
-            ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+            // Call onClose callback if it exists
+            if (js.gc.onclose.get(this_jsvalue)) |on_close| {
+                _ = on_close.call(
+                    globalObject,
+                    this_jsvalue,
+                    &[_]JSValue{error_value},
+                ) catch |e| globalObject.reportActiveExceptionAsUnhandled(e);
+            }
         }
     }
 
@@ -937,7 +951,7 @@ pub const JSValkeyClient = struct {
     pub fn failWithJSValue(this: *JSValkeyClient, value: JSValue) void {
         const this_value = this.this_value.tryGet() orelse return;
         const globalObject = this.globalObject;
-        if (js.oncloseGetCached(this_value)) |on_close| {
+        if (js.gc.onclose.get(this_value)) |on_close| {
             const loop = this.client.vm.eventLoop();
             loop.enter();
             defer loop.exit();
@@ -1337,7 +1351,9 @@ fn SocketHandler(comptime ssl: bool) type {
         pub const onHandshake = if (ssl) onHandshake_ else null;
 
         pub fn onClose(this: *JSValkeyClient, _: SocketType, _: i32, _: ?*anyopaque) void {
-            // No need to deref since this.client.onClose() invokes onValkeyClose which does the deref.
+            // We must ref/deref when it's a TLS connection failure.
+            this.ref();
+            defer this.deref();
 
             debug("Socket closed.", .{});
 
@@ -1351,7 +1367,7 @@ fn SocketHandler(comptime ssl: bool) type {
         pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {
             _ = this;
             _ = socket;
-            // Half-opened sockets are not allowed.
+            @panic("Assertion failure: onEnd should not be called for Valkey client");
         }
 
         pub fn onConnectError(this: *JSValkeyClient, _: SocketType, _: i32) void {

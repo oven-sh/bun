@@ -340,6 +340,22 @@ export default [
         fn: "zunionstore",
         length: 3,
       },
+      zmpop: {
+        fn: "zmpop",
+        length: 2,
+      },
+      bzmpop: {
+        fn: "bzmpop",
+        length: 3,
+      },
+      bzpopmin: {
+        fn: "bzpopmin",
+        length: 2,
+      },
+      bzpopmax: {
+        fn: "bzpopmax",
+        length: 2,
+      },
       mget: {
         fn: "mget",
       },

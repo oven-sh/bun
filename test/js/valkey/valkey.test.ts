@@ -2473,6 +2473,267 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           `"Expected additional arguments to be a string or buffer for 'zunionstore'."`,
         );
       });
+
+      test("should pop members with MIN option using ZMPOP", async () => {
+        const redis = ctx.redis;
+        const key = "zmpop-min-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Pop member with lowest score
+        const result1 = await redis.zmpop(1, key, "MIN");
+        expect(result1).toBeDefined();
+        expect(result1).not.toBeNull();
+        expect(result1![0]).toBe(key);
+        expect(result1![1]).toEqual([["one", 1]]);
+
+        // Verify remaining count
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(4);
+      });
+
+      test("should pop members with MAX option using ZMPOP", async () => {
+        const redis = ctx.redis;
+        const key = "zmpop-max-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Pop member with highest score
+        const result1 = await redis.zmpop(1, key, "MAX");
+        expect(result1).toBeDefined();
+        expect(result1).not.toBeNull();
+        expect(result1![0]).toBe(key);
+        expect(result1![1]).toEqual([["five", 5]]);
+
+        // Verify remaining count
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(4);
+      });
+
+      test("should pop multiple members with COUNT option using ZMPOP", async () => {
+        const redis = ctx.redis;
+        const key = "zmpop-count-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Pop 3 members with lowest scores
+        const result = await redis.zmpop(1, key, "MIN", "COUNT", 3);
+        expect(result).toBeDefined();
+        expect(result).not.toBeNull();
+        expect(result![0]).toBe(key);
+        expect(result![1]).toEqual([
+          ["one", 1],
+          ["two", 2],
+          ["three", 3],
+        ]);
+
+        // Verify remaining count
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(2);
+      });
+
+      test("should return null when ZMPOP on empty set", async () => {
+        const redis = ctx.redis;
+        const emptyKey = "zmpop-empty-test";
+
+        // Try to pop from empty set
+        const result = await redis.zmpop(1, emptyKey, "MIN");
+        expect(result).toBeNull();
+      });
+
+      test("should pop from first non-empty set with ZMPOP", async () => {
+        const redis = ctx.redis;
+        const key1 = "zmpop-multi-test1";
+        const key2 = "zmpop-multi-test2";
+        const key3 = "zmpop-multi-test3";
+
+        // Only populate key2
+        await redis.send("ZADD", [key2, "1", "one", "2", "two"]);
+
+        // Pop from multiple keys (should get from key2)
+        const result = await redis.zmpop(3, key1, key2, key3, "MIN");
+        expect(result).toBeDefined();
+        expect(result).not.toBeNull();
+        expect(result![0]).toBe(key2);
+        expect(result![1]).toEqual([["one", 1]]);
+      });
+
+      test("should block and pop with BZMPOP", async () => {
+        const redis = ctx.redis;
+        const key = "bzmpop-test";
+
+        // Add a member to the set
+        await redis.send("ZADD", [key, "1", "one", "2", "two"]);
+
+        // Use short timeout for testing
+        const result = await redis.bzmpop(0.1, 1, key, "MIN");
+        expect(result).toBeDefined();
+        expect(result).not.toBeNull();
+        expect(result![0]).toBe(key);
+        expect(result![1]).toEqual([["one", 1]]);
+
+        // Verify member was removed
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(1);
+      });
+
+      test("should timeout with BZMPOP on empty set", async () => {
+        const redis = ctx.redis;
+        const emptyKey = "bzmpop-timeout-test";
+
+        // Try to pop from empty set with short timeout
+        const result = await redis.bzmpop(0.1, 1, emptyKey, "MIN");
+        expect(result).toBeNull();
+      });
+
+      test("should block and pop multiple members with BZMPOP COUNT", async () => {
+        const redis = ctx.redis;
+        const key = "bzmpop-count-test";
+
+        // Add members to the set
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three"]);
+
+        // Pop 2 members with short timeout
+        const result = await redis.bzmpop(0.5, 1, key, "MAX", "COUNT", 2);
+        expect(result).toBeDefined();
+        expect(result).not.toBeNull();
+        expect(result![0]).toBe(key);
+        expect(result![1]).toEqual([
+          ["three", 3],
+          ["two", 2],
+        ]);
+
+        // Verify one member remains
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(1);
+      });
+
+      test("should reject invalid arguments in ZMPOP", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zmpop({} as any, "key1", "MIN");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zmpop'."`);
+      });
+
+      test("should reject invalid arguments in BZMPOP", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.bzmpop(1, {} as any, "key1", "MIN");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'bzmpop'."`,
+        );
+      });
+
+      test("should block and pop lowest score with BZPOPMIN", async () => {
+        const redis = ctx.redis;
+        const key = "bzpopmin-test";
+
+        // Add members to sorted set
+        await redis.send("ZADD", [key, "1.0", "one", "2.0", "two", "3.0", "three"]);
+
+        // Pop lowest score with short timeout
+        const result = await redis.bzpopmin(key, 0.1);
+        expect(result).toBeDefined();
+        expect(result).toHaveLength(3);
+        expect(result![0]).toBe(key);
+        expect(result![1]).toBe("one");
+        expect(result![2]).toBe(1);
+
+        // Verify member was removed
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(2);
+      });
+
+      test("should timeout with BZPOPMIN when no elements available", async () => {
+        const redis = ctx.redis;
+        const key = "bzpopmin-empty-test";
+
+        // Try to pop from non-existent key with short timeout
+        const result = await redis.bzpopmin(key, 0.1);
+        expect(result).toBeNull();
+      });
+
+      test("should block and pop highest score with BZPOPMAX", async () => {
+        const redis = ctx.redis;
+        const key = "bzpopmax-test";
+
+        // Add members to sorted set
+        await redis.send("ZADD", [key, "1.0", "one", "2.0", "two", "3.0", "three"]);
+
+        // Pop highest score with short timeout
+        const result = await redis.bzpopmax(key, 0.1);
+        expect(result).toBeDefined();
+        expect(result).toHaveLength(3);
+        expect(result![0]).toBe(key);
+        expect(result![1]).toBe("three");
+        expect(result![2]).toBe(3);
+
+        // Verify member was removed
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(2);
+      });
+
+      test("should timeout with BZPOPMAX when no elements available", async () => {
+        const redis = ctx.redis;
+        const key = "bzpopmax-empty-test";
+
+        // Try to pop from non-existent key with short timeout
+        const result = await redis.bzpopmax(key, 0.1);
+        expect(result).toBeNull();
+      });
+
+      test("should work with multiple keys in BZPOPMIN", async () => {
+        const redis = ctx.redis;
+        const key1 = "bzpopmin-multi-1";
+        const key2 = "bzpopmin-multi-2";
+
+        // Add members to second key only
+        await redis.send("ZADD", [key2, "5.0", "five", "6.0", "six"]);
+
+        // Pop from multiple keys (should return from key2)
+        const result = await redis.bzpopmin(key1, key2, 0.1);
+        expect(result).toBeDefined();
+        expect(result![0]).toBe(key2);
+        expect(result![1]).toBe("five");
+        expect(result![2]).toBe(5);
+      });
+
+      test("should work with multiple keys in BZPOPMAX", async () => {
+        const redis = ctx.redis;
+        const key1 = "bzpopmax-multi-1";
+        const key2 = "bzpopmax-multi-2";
+
+        // Add members to second key only
+        await redis.send("ZADD", [key2, "5.0", "five", "6.0", "six"]);
+
+        // Pop from multiple keys (should return from key2)
+        const result = await redis.bzpopmax(key1, key2, 0.5);
+        expect(result).toBeDefined();
+        expect(result![0]).toBe(key2);
+        expect(result![1]).toBe("six");
+        expect(result![2]).toBe(6);
+      });
+
+      test("should reject invalid arguments in BZPOPMIN", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.bzpopmin({} as any, 1);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'bzpopmin'."`,
+        );
+      });
+
+      test("should reject invalid arguments in BZPOPMAX", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.bzpopmax([] as any, 1);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'bzpopmax'."`,
+        );
+      });
     });
 
     describe("Connection State", () => {

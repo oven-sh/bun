@@ -1354,6 +1354,10 @@ pub const JSValkeyClient = struct {
     pub const zinterstore = fns.zinterstore;
     pub const zunion = fns.zunion;
     pub const zunionstore = fns.zunionstore;
+    pub const zmpop = fns.zmpop;
+    pub const bzmpop = fns.bzmpop;
+    pub const bzpopmin = fns.bzpopmin;
+    pub const bzpopmax = fns.bzpopmax;
 
     const fns = @import("./js_valkey_functions.zig");
 };

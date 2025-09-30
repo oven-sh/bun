@@ -690,6 +690,38 @@ declare module "bun" {
     zpopmin(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Remove and return the member with the lowest score from one or more sorted sets, or block until one is available
+     * @param args Keys followed by timeout in seconds (e.g., "key1", "key2", 1.0)
+     * @returns Promise that resolves with [key, member, score] or null if timeout
+     * @example
+     * ```ts
+     * // Block for up to 1 second waiting for an element
+     * const result = await redis.bzpopmin("myzset", 1.0);
+     * if (result) {
+     *   const [key, member, score] = result;
+     *   console.log(`Popped ${member} with score ${score} from ${key}`);
+     * }
+     * ```
+     */
+    bzpopmin(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
+
+    /**
+     * Remove and return the member with the highest score from one or more sorted sets, or block until one is available
+     * @param args Keys followed by timeout in seconds (e.g., "key1", "key2", 1.0)
+     * @returns Promise that resolves with [key, member, score] or null if timeout
+     * @example
+     * ```ts
+     * // Block for up to 1 second waiting for an element
+     * const result = await redis.bzpopmax("myzset", 1.0);
+     * if (result) {
+     *   const [key, member, score] = result;
+     *   console.log(`Popped ${member} with score ${score} from ${key}`);
+     * }
+     * ```
+     */
+    bzpopmax(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
+
+    /**
      * Get one or multiple random members from a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with a random member, or null if the set
@@ -2267,6 +2299,51 @@ declare module "bun" {
      * ```
      */
     zunionstore(destination: RedisClient.KeyLike, numkeys: number, ...args: (string | number)[]): Promise<number>;
+
+    /**
+     * Remove and return members with scores from one or more sorted sets.
+     * Pops from the first non-empty sorted set.
+     *
+     * @example
+     * ```ts
+     * // Pop lowest score from one set
+     * const result1 = await redis.zmpop(1, "myzset", "MIN");
+     * // Returns: ["myzset", [["member1", 1]]]
+     *
+     * // Pop highest score from multiple sets
+     * const result2 = await redis.zmpop(2, "zset1", "zset2", "MAX");
+     * // Returns: ["zset1", [["member5", 5]]] (pops from first non-empty)
+     *
+     * // Pop multiple members
+     * const result3 = await redis.zmpop(1, "myzset", "MIN", "COUNT", 3);
+     * // Returns: ["myzset", [["member1", 1], ["member2", 2], ["member3", 3]]]
+     *
+     * // Empty set returns null
+     * const result4 = await redis.zmpop(1, "emptyset", "MIN");
+     * // Returns: null
+     * ```
+     */
+    zmpop(numkeys: number, ...args: (string | number)[]): Promise<[string, [string, number][]] | null>;
+
+    /**
+     * Blocking version of ZMPOP. Blocks until a member is available or timeout expires.
+     *
+     * @example
+     * ```ts
+     * // Block for 5 seconds waiting for a member
+     * const result1 = await redis.bzmpop(5, 1, "myzset", "MIN");
+     * // Returns: ["myzset", [["member1", 1]]] or null if timeout
+     *
+     * // Block indefinitely (timeout 0)
+     * const result2 = await redis.bzmpop(0, 2, "zset1", "zset2", "MAX");
+     * // Returns: ["zset1", [["member5", 5]]]
+     *
+     * // Block with COUNT option
+     * const result3 = await redis.bzmpop(1, 1, "myzset", "MIN", "COUNT", 2);
+     * // Returns: ["myzset", [["member1", 1], ["member2", 2]]] or null if timeout
+     * ```
+     */
+    bzmpop(timeout: number, numkeys: number, ...args: (string | number)[]): Promise<[string, [string, number][]] | null>;
   }
 
   /**

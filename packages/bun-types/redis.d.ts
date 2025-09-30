@@ -631,7 +631,7 @@ declare module "bun" {
      * @param fields The fields to get
      * @returns Promise that resolves with an array of values
      */
-    hmget(key: RedisClient.KeyLike, fields: string[]): Promise<Array<string | null>>;
+    hmget(key: RedisClient.KeyLike, ...fields: string[]): Promise<Array<string | null>>;
 
     /**
      * Delete one or more hash fields
@@ -741,22 +741,20 @@ declare module "bun" {
     sismember(key: RedisClient.KeyLike, member: string): Promise<boolean>;
 
     /**
-     * Add a member to a set
+     * Add one or more members to a set
      * @param key The set key
-     * @param member The member to add
-     * @returns Promise that resolves with 1 if the member was added, 0 if it
-     * already existed
+     * @param members The members to add
+     * @returns Promise that resolves with the number of members added
      */
-    sadd(key: RedisClient.KeyLike, member: string): Promise<number>;
+    sadd(key: RedisClient.KeyLike, ...members: string[]): Promise<number>;
 
     /**
-     * Remove a member from a set
+     * Remove one or more members from a set
      * @param key The set key
-     * @param member The member to remove
-     * @returns Promise that resolves with 1 if the member was removed, 0 if it
-     * didn't exist
+     * @param members The members to remove
+     * @returns Promise that resolves with the number of members removed
      */
-    srem(key: RedisClient.KeyLike, member: string): Promise<number>;
+    srem(key: RedisClient.KeyLike, ...members: string[]): Promise<number>;
 
     /**
      * Move a member from one set to another
@@ -2428,12 +2426,30 @@ declare module "bun" {
     zrank(key: RedisClient.KeyLike, member: string): Promise<number | null>;
 
     /**
+     * Determine the index of a member in a sorted set with score
+     * @param key The sorted set key
+     * @param member The member to find
+     * @param withscore "WITHSCORE" to include the score
+     * @returns Promise that resolves with [rank, score] or null if the member doesn't exist
+     */
+    zrank(key: RedisClient.KeyLike, member: string, withscore: "WITHSCORE"): Promise<[number, number] | null>;
+
+    /**
      * Determine the index of a member in a sorted set, with scores ordered from high to low
      * @param key The sorted set key
      * @param member The member to find
      * @returns Promise that resolves with the rank (index) of the member, or null if the member doesn't exist
      */
     zrevrank(key: RedisClient.KeyLike, member: string): Promise<number | null>;
+
+    /**
+     * Determine the index of a member in a sorted set with score, with scores ordered from high to low
+     * @param key The sorted set key
+     * @param member The member to find
+     * @param withscore "WITHSCORE" to include the score
+     * @returns Promise that resolves with [rank, score] or null if the member doesn't exist
+     */
+    zrevrank(key: RedisClient.KeyLike, member: string, withscore: "WITHSCORE"): Promise<[number, number] | null>;
 
     /**
      * Get the values of all specified keys

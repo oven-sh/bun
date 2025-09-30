@@ -315,7 +315,7 @@ declare module "bun" {
      * @param fields Object/Record with field-value pairs
      * @returns Promise that resolves with the number of fields that were added
      */
-    hset(key: RedisClient.KeyLike, fields: Record<string | number, RedisClient.KeyLike>): Promise<number>;
+    hset(key: RedisClient.KeyLike, fields: Record<string | number, RedisClient.KeyLike | number>): Promise<number>;
 
     /**
      * Set the value of a hash field or multiple fields (variadic)
@@ -341,7 +341,7 @@ declare module "bun" {
      * @param fields Object/Record with field-value pairs
      * @returns Promise that resolves with "OK"
      */
-    hmset(key: RedisClient.KeyLike, fields: Record<string | number, RedisClient.KeyLike>): Promise<"OK">;
+    hmset(key: RedisClient.KeyLike, fields: Record<string | number, RedisClient.KeyLike | number>): Promise<"OK">;
 
     /**
      * Set multiple hash fields to multiple values (variadic)

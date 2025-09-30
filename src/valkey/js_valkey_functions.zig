@@ -534,68 +534,114 @@ pub fn hincrbyfloat(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, ca
     return promise.toJS();
 }
 
-// Implement hmset (set multiple values in hash)
-pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    try requireNotSubscriber(this, @src().fn_name);
+fn hsetImpl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, comptime command: []const u8) bun.JSError!JSValue {
+    try requireNotSubscriber(this, command);
 
     const key = try callframe.argument(0).toBunString(globalObject);
     defer key.deref();
 
-    // For simplicity, let's accept a list of alternating keys and values
-    const array_arg = callframe.argument(1);
-    if (!array_arg.isObject() or !array_arg.isArray()) {
-        return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
-    }
+    const second_arg = callframe.argument(1);
 
-    var iter = try array_arg.arrayIterator(globalObject);
-    if (iter.len % 2 != 0) {
-        return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
-    }
-
-    var args = try std.ArrayList(jsc.ZigString.Slice).initCapacity(bun.default_allocator, iter.len + 1);
+    var args = std.ArrayList(jsc.ZigString.Slice).init(bun.default_allocator);
     defer {
-        for (args.items) |item| {
-            item.deinit();
-        }
+        for (args.items) |item| item.deinit();
         args.deinit();
     }
 
-    // Add key as first argument
-    const key_slice = key.toUTF8WithoutRef(bun.default_allocator);
-    defer key_slice.deinit();
-    args.appendAssumeCapacity(key_slice);
+    try args.append(key.toUTF8(bun.default_allocator));
 
-    // Add field-value pairs
-    while (try iter.next()) |field_js| {
-        // Add field name
-        const field_str = try field_js.toBunString(globalObject);
-        defer field_str.deref();
-        const field_slice = field_str.toUTF8WithoutRef(bun.default_allocator);
-        args.appendAssumeCapacity(field_slice);
+    if (second_arg.isObject() and !second_arg.isArray()) {
+        // Pattern 1: Object/Record - hset(key, {field: value, ...})
+        const obj = second_arg.getObject() orelse {
+            return globalObject.throwInvalidArgumentType(command, "fields", "object");
+        };
 
-        // Add value
-        if (try iter.next()) |value_js| {
-            const value_str = try value_js.toBunString(globalObject);
+        var object_iter = try jsc.JSPropertyIterator(.{
+            .skip_empty_name = false,
+            .include_value = true,
+        }).init(globalObject, obj);
+        defer object_iter.deinit();
+
+        try args.ensureTotalCapacity(1 + object_iter.len * 2);
+
+        while (try object_iter.next()) |field_name| {
+            const field_slice = field_name.toUTF8(bun.default_allocator);
+            args.appendAssumeCapacity(field_slice);
+
+            const value_str = try object_iter.value.toBunString(globalObject);
             defer value_str.deref();
-            const value_slice = value_str.toUTF8WithoutRef(bun.default_allocator);
+
+            const value_slice = value_str.toUTF8(bun.default_allocator);
             args.appendAssumeCapacity(value_slice);
-        } else {
-            return globalObject.throw("Arguments must be an array of alternating field names and values", .{});
+        }
+    } else if (second_arg.isArray()) {
+        // Pattern 3: Array - hmset(key, [field, value, ...])
+        var iter = try second_arg.arrayIterator(globalObject);
+        if (iter.len % 2 != 0) {
+            return globalObject.throw("Array must have an even number of elements (field-value pairs)", .{});
+        }
+
+        try args.ensureTotalCapacity(1 + iter.len);
+
+        while (try iter.next()) |field_js| {
+            const field_str = try field_js.toBunString(globalObject);
+            args.appendAssumeCapacity(field_str.toUTF8(bun.default_allocator));
+            field_str.deref();
+
+            const value_js = try iter.next() orelse {
+                return globalObject.throw("Array must have an even number of elements (field-value pairs)", .{});
+            };
+            const value_str = try value_js.toBunString(globalObject);
+            args.appendAssumeCapacity(value_str.toUTF8(bun.default_allocator));
+            value_str.deref();
+        }
+    } else {
+        // Pattern 2: Variadic - hset(key, field, value, ...)
+        const args_count = callframe.argumentsCount();
+        if (args_count < 3) {
+            return globalObject.throw("HSET requires at least key, field, and value arguments", .{});
+        }
+
+        const field_value_count = args_count - 1; // Exclude key
+        if (field_value_count % 2 != 0) {
+            return globalObject.throw("HSET requires field-value pairs (even number of arguments after key)", .{});
+        }
+
+        try args.ensureTotalCapacity(args_count);
+
+        var i: u32 = 1;
+        while (i < args_count) : (i += 1) {
+            const arg_str = try callframe.argument(i).toBunString(globalObject);
+            args.appendAssumeCapacity(arg_str.toUTF8(bun.default_allocator));
+            arg_str.deref();
         }
     }
 
-    // Send HMSET command
+    if (args.items.len == 1) {
+        return globalObject.throw("HSET requires at least one field-value pair", .{});
+    }
+
     const promise = this.send(
         globalObject,
         callframe.this(),
         &.{
-            .command = "HMSET",
+            .command = command,
             .args = .{ .slices = args.items },
         },
     ) catch |err| {
-        return protocol.valkeyErrorToJS(globalObject, "Failed to send HMSET command", err);
+        const msg = if (bun.strings.eqlComptime(command, "HSET")) "Failed to send HSET command" else "Failed to send HMSET command";
+        return protocol.valkeyErrorToJS(globalObject, msg, err);
     };
+
     return promise.toJS();
+}
+
+pub fn hset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    return hsetImpl(this, globalObject, callframe, "HSET");
+}
+
+pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    return hsetImpl(this, globalObject, callframe, "HMSET");
 }
 
 // Implement ping (send a PING command with an optional message)

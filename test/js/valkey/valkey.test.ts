@@ -2517,6 +2517,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
 
         expect(async () => {
+          // @ts-expect-error
           await redis.sinter();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sinter' command"`);
       });
@@ -2525,6 +2526,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
 
         expect(async () => {
+          // @ts-expect-error
           await redis.sinterstore();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sinterstore' command"`);
       });
@@ -2533,6 +2535,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
 
         expect(async () => {
+          // @ts-expect-error
           await redis.sintercard();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sintercard' command"`);
       });

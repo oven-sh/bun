@@ -874,6 +874,892 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       });
     });
 
+    describe("List Operations", () => {
+      test("should get range of elements with LRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "lrange-test";
+
+        // Create a list with multiple elements
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Get full list
+        const fullList = await redis.lrange(key, 0, -1);
+        expect(fullList).toEqual(["one", "two", "three"]);
+
+        // Get first two elements
+        const firstTwo = await redis.lrange(key, 0, 1);
+        expect(firstTwo).toEqual(["one", "two"]);
+
+        // Get last two elements using negative indexes
+        const lastTwo = await redis.lrange(key, -2, -1);
+        expect(lastTwo).toEqual(["two", "three"]);
+
+        // Get middle element
+        const middle = await redis.lrange(key, 1, 1);
+        expect(middle).toEqual(["two"]);
+
+        // Out of range should return empty array
+        const outOfRange = await redis.lrange(key, 10, 20);
+        expect(outOfRange).toEqual([]);
+
+        // Non-existent key should return empty array
+        const nonExistent = await redis.lrange("nonexistent-list", 0, -1);
+        expect(nonExistent).toEqual([]);
+      });
+
+      test("should get element at index with LINDEX", async () => {
+        const redis = ctx.redis;
+        const key = "lindex-test";
+
+        // Create a list
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Get element at positive index
+        const first = await redis.lindex(key, 0);
+        expect(first).toBe("one");
+
+        const second = await redis.lindex(key, 1);
+        expect(second).toBe("two");
+
+        const third = await redis.lindex(key, 2);
+        expect(third).toBe("three");
+
+        // Get element at negative index (counting from end)
+        const last = await redis.lindex(key, -1);
+        expect(last).toBe("three");
+
+        const secondLast = await redis.lindex(key, -2);
+        expect(secondLast).toBe("two");
+
+        // Out of range should return null
+        const outOfRange = await redis.lindex(key, 10);
+        expect(outOfRange).toBeNull();
+
+        const outOfRangeNeg = await redis.lindex(key, -10);
+        expect(outOfRangeNeg).toBeNull();
+
+        // Non-existent key should return null
+        const nonExistent = await redis.lindex("nonexistent-list", 0);
+        expect(nonExistent).toBeNull();
+      });
+
+      test("should set element at index with LSET", async () => {
+        const redis = ctx.redis;
+        const key = "lset-test";
+
+        // Create a list
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Set element at positive index
+        const result1 = await redis.lset(key, 0, "zero");
+        expect(result1).toBe("OK");
+
+        // Verify the change
+        const first = await redis.lindex(key, 0);
+        expect(first).toBe("zero");
+
+        // Set element at negative index
+        const result2 = await redis.lset(key, -1, "last");
+        expect(result2).toBe("OK");
+
+        // Verify the change
+        const last = await redis.lindex(key, -1);
+        expect(last).toBe("last");
+
+        // Check full list
+        const fullList = await redis.lrange(key, 0, -1);
+        expect(fullList).toEqual(["zero", "two", "last"]);
+      });
+
+      test("should handle LSET errors", async () => {
+        const redis = ctx.redis;
+
+        // Test out of range index on existing list
+        await redis.lpush("lset-error-test", "value");
+
+        // Out of range should throw an error
+        await expect(async () => {
+          await redis.lset("lset-error-test", 10, "newvalue");
+        }).toThrow();
+
+        // Non-existent key should throw an error
+        await expect(async () => {
+          await redis.lset("nonexistent-list", 0, "value");
+        }).toThrow();
+
+        // Wrong type (not a list) should throw an error
+        await redis.set("string-key", "value");
+        await expect(async () => {
+          await redis.lset("string-key", 0, "value");
+        }).toThrow();
+      });
+
+      test("should handle LRANGE with various ranges", async () => {
+        const redis = ctx.redis;
+        const key = "lrange-advanced";
+
+        // Create a longer list
+        for (let i = 5; i >= 1; i--) {
+          await redis.lpush(key, String(i));
+        }
+
+        // Verify the list: [1, 2, 3, 4, 5]
+        const fullList = await redis.lrange(key, 0, -1);
+        expect(fullList).toEqual(["1", "2", "3", "4", "5"]);
+
+        // Test with stop less than start (should return empty)
+        const invalid = await redis.lrange(key, 3, 1);
+        expect(invalid).toEqual([]);
+
+        // Test with negative start and positive stop
+        const mixed = await redis.lrange(key, -3, 4);
+        expect(mixed).toEqual(["3", "4", "5"]);
+
+        // Test with both negative
+        const bothNeg = await redis.lrange(key, -4, -2);
+        expect(bothNeg).toEqual(["2", "3", "4"]);
+      });
+
+      test("should handle LINDEX and LSET with numbers", async () => {
+        const redis = ctx.redis;
+        const key = "list-numbers";
+
+        // Push numeric strings
+        await redis.lpush(key, "100");
+        await redis.lpush(key, "200");
+        await redis.lpush(key, "300");
+
+        // Get element
+        const elem = await redis.lindex(key, 1);
+        expect(elem).toBe("200");
+
+        // Set with number (should convert to string)
+        await redis.lset(key, 1, "250");
+        const updated = await redis.lindex(key, 1);
+        expect(updated).toBe("250");
+      });
+
+      test("should insert element before pivot with LINSERT", async () => {
+        const redis = ctx.redis;
+        const key = "linsert-before-test";
+
+        // Create a list
+        await redis.lpush(key, "World");
+        await redis.lpush(key, "Hello");
+
+        // Insert before "World"
+        const result = await redis.linsert(key, "BEFORE", "World", "There");
+        expect(result).toBe(3); // List length after insert
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["Hello", "There", "World"]);
+      });
+
+      test("should insert element after pivot with LINSERT", async () => {
+        const redis = ctx.redis;
+        const key = "linsert-after-test";
+
+        // Create a list
+        await redis.lpush(key, "World");
+        await redis.lpush(key, "Hello");
+
+        // Insert after "Hello"
+        const result = await redis.linsert(key, "AFTER", "Hello", "Beautiful");
+        expect(result).toBe(3); // List length after insert
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["Hello", "Beautiful", "World"]);
+      });
+
+      test("should handle LINSERT when pivot not found", async () => {
+        const redis = ctx.redis;
+        const key = "linsert-notfound-test";
+
+        // Create a list
+        await redis.lpush(key, "value1");
+        await redis.lpush(key, "value2");
+
+        // Try to insert before non-existent pivot
+        const result = await redis.linsert(key, "BEFORE", "nonexistent", "newvalue");
+        expect(result).toBe(-1); // Pivot not found
+
+        // Verify list unchanged
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["value2", "value1"]);
+      });
+
+      test("should handle LINSERT on non-existent key", async () => {
+        const redis = ctx.redis;
+
+        // Try to insert into non-existent list
+        const result = await redis.linsert("nonexistent-list", "BEFORE", "pivot", "element");
+        expect(result).toBe(0); // Key doesn't exist
+      });
+
+      test("should remove elements from head with LREM", async () => {
+        const redis = ctx.redis;
+        const key = "lrem-positive-test";
+
+        // Create a list with duplicates
+        await redis.rpush(key, "hello");
+        await redis.rpush(key, "hello");
+        await redis.rpush(key, "world");
+        await redis.rpush(key, "hello");
+
+        // Remove first 2 "hello" from head to tail
+        const result = await redis.lrem(key, 2, "hello");
+        expect(result).toBe(2); // Number of elements removed
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["world", "hello"]);
+      });
+
+      test("should remove elements from tail with LREM", async () => {
+        const redis = ctx.redis;
+        const key = "lrem-negative-test";
+
+        // Create a list with duplicates
+        await redis.rpush(key, "hello");
+        await redis.rpush(key, "world");
+        await redis.rpush(key, "hello");
+        await redis.rpush(key, "hello");
+
+        // Remove first 2 "hello" from tail to head
+        const result = await redis.lrem(key, -2, "hello");
+        expect(result).toBe(2); // Number of elements removed
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["hello", "world"]);
+      });
+
+      test("should remove all occurrences with LREM count=0", async () => {
+        const redis = ctx.redis;
+        const key = "lrem-all-test";
+
+        // Create a list with multiple duplicates
+        await redis.rpush(key, "hello");
+        await redis.rpush(key, "world");
+        await redis.rpush(key, "hello");
+        await redis.rpush(key, "foo");
+        await redis.rpush(key, "hello");
+
+        // Remove all "hello"
+        const result = await redis.lrem(key, 0, "hello");
+        expect(result).toBe(3); // Number of elements removed
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["world", "foo"]);
+      });
+
+      test("should handle LREM when element not found", async () => {
+        const redis = ctx.redis;
+        const key = "lrem-notfound-test";
+
+        // Create a list
+        await redis.rpush(key, "value1");
+        await redis.rpush(key, "value2");
+
+        // Try to remove non-existent element
+        const result = await redis.lrem(key, 1, "nonexistent");
+        expect(result).toBe(0); // No elements removed
+
+        // Verify list unchanged
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["value1", "value2"]);
+      });
+
+      test("should trim list to range with LTRIM", async () => {
+        const redis = ctx.redis;
+        const key = "ltrim-test";
+
+        // Create a list
+        await redis.rpush(key, "one");
+        await redis.rpush(key, "two");
+        await redis.rpush(key, "three");
+        await redis.rpush(key, "four");
+
+        // Trim to keep only elements 1-2
+        const result = await redis.ltrim(key, 1, 2);
+        expect(result).toBe("OK");
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["two", "three"]);
+      });
+
+      test("should handle LTRIM with negative indexes", async () => {
+        const redis = ctx.redis;
+        const key = "ltrim-negative-test";
+
+        // Create a list
+        await redis.rpush(key, "one");
+        await redis.rpush(key, "two");
+        await redis.rpush(key, "three");
+        await redis.rpush(key, "four");
+        await redis.rpush(key, "five");
+
+        // Trim to keep last 3 elements
+        const result = await redis.ltrim(key, -3, -1);
+        expect(result).toBe("OK");
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["three", "four", "five"]);
+      });
+
+      test("should handle LTRIM with out of range indexes", async () => {
+        const redis = ctx.redis;
+        const key = "ltrim-outofrange-test";
+
+        // Create a list
+        await redis.rpush(key, "one");
+        await redis.rpush(key, "two");
+        await redis.rpush(key, "three");
+
+        // Trim with large range (should keep all elements)
+        const result = await redis.ltrim(key, 0, 100);
+        expect(result).toBe("OK");
+
+        // Verify the list unchanged
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["one", "two", "three"]);
+      });
+
+      test("should empty list with LTRIM when stop < start", async () => {
+        const redis = ctx.redis;
+        const key = "ltrim-empty-test";
+
+        // Create a list
+        await redis.rpush(key, "one");
+        await redis.rpush(key, "two");
+        await redis.rpush(key, "three");
+
+        // Trim with invalid range (stop < start)
+        const result = await redis.ltrim(key, 2, 0);
+        expect(result).toBe("OK");
+
+        // Verify the list is empty
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual([]);
+      });
+
+      test("should block and pop element with BLPOP", async () => {
+        const redis = ctx.redis;
+        const key = "blpop-test";
+
+        // Push an element
+        await redis.lpush(key, "value1");
+
+        // BLPOP should return immediately
+        const result = await redis.blpop(key, 0.1);
+        expect(result).toEqual([key, "value1"]);
+
+        // BLPOP on empty list should timeout and return null
+        const timeout = await redis.blpop(key, 0.1);
+        expect(timeout).toBeNull();
+      });
+
+      test("should block and pop element with BRPOP", async () => {
+        const redis = ctx.redis;
+        const key = "brpop-test";
+
+        // Push multiple elements
+        await redis.lpush(key, "value2");
+        await redis.lpush(key, "value1");
+
+        // BRPOP should return last element
+        const result = await redis.brpop(key, 0.1);
+        expect(result).toEqual([key, "value2"]);
+
+        // BRPOP on empty list should timeout and return null
+        await redis.brpop(key, 0.1); // Pop remaining element
+        const timeout = await redis.brpop(key, 0.1);
+        expect(timeout).toBeNull();
+      });
+
+      test("should pop from first non-empty list with BLPOP", async () => {
+        const redis = ctx.redis;
+        const key1 = "blpop-list1";
+        const key2 = "blpop-list2";
+
+        // Only push to second list
+        await redis.lpush(key2, "value2");
+
+        // Should pop from key2 since key1 is empty
+        const result = await redis.blpop(key1, key2, 0.1);
+        expect(result).toEqual([key2, "value2"]);
+      });
+
+      test("should pop elements with LMPOP LEFT", async () => {
+        const redis = ctx.redis;
+        const key = "lmpop-left-test";
+
+        // Push elements
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Pop one element from head (LEFT)
+        const result = await redis.lmpop(1, key, "LEFT");
+        expect(result).toEqual([key, ["one"]]);
+
+        // Verify remaining elements
+        const remaining = await redis.lrange(key, 0, -1);
+        expect(remaining).toEqual(["two", "three"]);
+      });
+
+      test("should pop elements with LMPOP RIGHT", async () => {
+        const redis = ctx.redis;
+        const key = "lmpop-right-test";
+
+        // Push elements
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Pop one element from tail (RIGHT)
+        const result = await redis.lmpop(1, key, "RIGHT");
+        expect(result).toEqual([key, ["three"]]);
+
+        // Verify remaining elements
+        const remaining = await redis.lrange(key, 0, -1);
+        expect(remaining).toEqual(["one", "two"]);
+      });
+
+      test("should pop multiple elements with LMPOP COUNT", async () => {
+        const redis = ctx.redis;
+        const key = "lmpop-count-test";
+
+        // Push elements
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Pop 2 elements from head
+        const result = await redis.lmpop(1, key, "LEFT", "COUNT", 2);
+        expect(result).toEqual([key, ["one", "two"]]);
+
+        // Verify remaining element
+        const remaining = await redis.lrange(key, 0, -1);
+        expect(remaining).toEqual(["three"]);
+      });
+
+      test("should return null for LMPOP on empty list", async () => {
+        const redis = ctx.redis;
+
+        // Try to pop from non-existent list
+        const result = await redis.lmpop(1, "nonexistent-list", "LEFT");
+        expect(result).toBeNull();
+      });
+
+      test("should pop from first non-empty list with LMPOP", async () => {
+        const redis = ctx.redis;
+        const key1 = "lmpop-empty";
+        const key2 = "lmpop-full";
+
+        // Only push to second list
+        await redis.lpush(key2, "value");
+
+        // Should pop from key2 since key1 is empty
+        const result = await redis.lmpop(2, key1, key2, "LEFT");
+        expect(result).toEqual([key2, ["value"]]);
+      });
+
+      test("should find position of element with LPOS", async () => {
+        const redis = ctx.redis;
+        const key = "lpos-test";
+
+        // Create a list with some duplicates
+        await redis.lpush(key, "d");
+        await redis.lpush(key, "b");
+        await redis.lpush(key, "c");
+        await redis.lpush(key, "b");
+        await redis.lpush(key, "a");
+        // List is now: ["a", "b", "c", "b", "d"]
+
+        // Find first occurrence of "b"
+        const pos1 = await redis.lpos(key, "b");
+        expect(pos1).toBe(1);
+
+        // Find first occurrence of "a"
+        const pos2 = await redis.lpos(key, "a");
+        expect(pos2).toBe(0);
+
+        // Find element at the end
+        const pos3 = await redis.lpos(key, "d");
+        expect(pos3).toBe(4);
+
+        // Non-existent element should return null
+        const pos4 = await redis.lpos(key, "x");
+        expect(pos4).toBeNull();
+      });
+
+      test("should find position with RANK option in LPOS", async () => {
+        const redis = ctx.redis;
+        const key = "lpos-rank-test";
+
+        // Create a list with duplicates
+        await redis.lpush(key, "b");
+        await redis.lpush(key, "a");
+        await redis.lpush(key, "b");
+        await redis.lpush(key, "a");
+        await redis.lpush(key, "b");
+        // List is now: ["b", "a", "b", "a", "b"]
+
+        // Find first occurrence (default behavior)
+        const first = await redis.lpos(key, "b");
+        expect(first).toBe(0);
+
+        // Find second occurrence
+        const second = await redis.lpos(key, "b", "RANK", 2);
+        expect(second).toBe(2);
+
+        // Find third occurrence
+        const third = await redis.lpos(key, "b", "RANK", 3);
+        expect(third).toBe(4);
+
+        // Find with RANK that doesn't exist
+        const fourth = await redis.lpos(key, "b", "RANK", 4);
+        expect(fourth).toBeNull();
+
+        // Find with negative RANK (from tail)
+        const fromEnd = await redis.lpos(key, "b", "RANK", -1);
+        expect(fromEnd).toBe(4);
+
+        const fromEnd2 = await redis.lpos(key, "b", "RANK", -2);
+        expect(fromEnd2).toBe(2);
+      });
+
+      test("should find multiple positions with COUNT option in LPOS", async () => {
+        const redis = ctx.redis;
+        const key = "lpos-count-test";
+
+        // Create a list with duplicates
+        await redis.lpush(key, "c");
+        await redis.lpush(key, "b");
+        await redis.lpush(key, "b");
+        await redis.lpush(key, "a");
+        await redis.lpush(key, "b");
+        // List is now: ["b", "a", "b", "b", "c"]
+
+        // Find all occurrences (COUNT 0 means all)
+        const all = await redis.lpos(key, "b", "COUNT", 0);
+        expect(all).toEqual([0, 2, 3]);
+
+        // Find first 2 occurrences
+        const first2 = await redis.lpos(key, "b", "COUNT", 2);
+        expect(first2).toEqual([0, 2]);
+
+        // Find with COUNT greater than actual occurrences
+        const more = await redis.lpos(key, "b", "COUNT", 10);
+        expect(more).toEqual([0, 2, 3]);
+
+        // Find non-existent with COUNT
+        const none = await redis.lpos(key, "x", "COUNT", 5);
+        expect(none).toEqual([]);
+      });
+
+      test("should find position with MAXLEN option in LPOS", async () => {
+        const redis = ctx.redis;
+        const key = "lpos-maxlen-test";
+
+        // Create a longer list
+        for (let i = 5; i >= 1; i--) {
+          await redis.lpush(key, String(i));
+        }
+        await redis.lpush(key, "target");
+        // List is now: ["target", "1", "2", "3", "4", "5"]
+
+        // Find within first 6 elements (should find it)
+        const found = await redis.lpos(key, "target", "MAXLEN", 6);
+        expect(found).toBe(0);
+
+        // Find "5" with MAXLEN that's too short
+        const notFound = await redis.lpos(key, "5", "MAXLEN", 3);
+        expect(notFound).toBeNull();
+
+        // Find "3" with MAXLEN
+        const found3 = await redis.lpos(key, "3", "MAXLEN", 10);
+        expect(found3).toBe(3);
+      });
+
+      test("should move element from source to destination with LMOVE", async () => {
+        const redis = ctx.redis;
+        const source = "lmove-source";
+        const dest = "lmove-dest";
+
+        // Setup source list
+        await redis.lpush(source, "three");
+        await redis.lpush(source, "two");
+        await redis.lpush(source, "one");
+        // Source: ["one", "two", "three"]
+
+        // Move from LEFT of source to RIGHT of dest
+        const result1 = await redis.lmove(source, dest, "LEFT", "RIGHT");
+        expect(result1).toBe("one");
+
+        // Verify source and dest
+        const sourceList1 = await redis.lrange(source, 0, -1);
+        expect(sourceList1).toEqual(["two", "three"]);
+
+        const destList1 = await redis.lrange(dest, 0, -1);
+        expect(destList1).toEqual(["one"]);
+
+        // Move from RIGHT of source to LEFT of dest
+        const result2 = await redis.lmove(source, dest, "RIGHT", "LEFT");
+        expect(result2).toBe("three");
+
+        const sourceList2 = await redis.lrange(source, 0, -1);
+        expect(sourceList2).toEqual(["two"]);
+
+        const destList2 = await redis.lrange(dest, 0, -1);
+        expect(destList2).toEqual(["three", "one"]);
+      });
+
+      test("should handle all LMOVE direction combinations", async () => {
+        const redis = ctx.redis;
+
+        // Test LEFT -> LEFT
+        await redis.lpush("src1", "b", "a");
+        const res1 = await redis.lmove("src1", "dst1", "LEFT", "LEFT");
+        expect(res1).toBe("a");
+        expect(await redis.lrange("dst1", 0, -1)).toEqual(["a"]);
+
+        // Test LEFT -> RIGHT
+        await redis.lpush("src2", "b", "a");
+        const res2 = await redis.lmove("src2", "dst2", "LEFT", "RIGHT");
+        expect(res2).toBe("a");
+        expect(await redis.lrange("dst2", 0, -1)).toEqual(["a"]);
+
+        // Test RIGHT -> LEFT
+        await redis.lpush("src3", "b", "a");
+        const res3 = await redis.lmove("src3", "dst3", "RIGHT", "LEFT");
+        expect(res3).toBe("b");
+        expect(await redis.lrange("dst3", 0, -1)).toEqual(["b"]);
+
+        // Test RIGHT -> RIGHT
+        await redis.lpush("src4", "b", "a");
+        const res4 = await redis.lmove("src4", "dst4", "RIGHT", "RIGHT");
+        expect(res4).toBe("b");
+        expect(await redis.lrange("dst4", 0, -1)).toEqual(["b"]);
+      });
+
+      test("should return null for LMOVE on empty source", async () => {
+        const redis = ctx.redis;
+
+        const result = await redis.lmove("empty-source", "some-dest", "LEFT", "RIGHT");
+        expect(result).toBeNull();
+
+        // Destination should also be empty
+        const destList = await redis.lrange("some-dest", 0, -1);
+        expect(destList).toEqual([]);
+      });
+
+      test("should handle LMOVE to same list", async () => {
+        const redis = ctx.redis;
+        const key = "circular-list";
+
+        await redis.lpush(key, "c", "b", "a");
+        // List: ["a", "b", "c"]
+
+        // Move from LEFT to RIGHT (rotate left)
+        const result = await redis.lmove(key, key, "LEFT", "RIGHT");
+        expect(result).toBe("a");
+        expect(await redis.lrange(key, 0, -1)).toEqual(["b", "c", "a"]);
+      });
+
+      test("should pop from source and push to dest with RPOPLPUSH", async () => {
+        const redis = ctx.redis;
+        const source = "rpoplpush-source";
+        const dest = "rpoplpush-dest";
+
+        // Setup source list
+        await redis.lpush(source, "three");
+        await redis.lpush(source, "two");
+        await redis.lpush(source, "one");
+        // Source: ["one", "two", "three"]
+
+        // Pop from tail (RIGHT) of source and push to head (LEFT) of dest
+        const result = await redis.rpoplpush(source, dest);
+        expect(result).toBe("three");
+
+        // Verify source and dest
+        const sourceList = await redis.lrange(source, 0, -1);
+        expect(sourceList).toEqual(["one", "two"]);
+
+        const destList = await redis.lrange(dest, 0, -1);
+        expect(destList).toEqual(["three"]);
+
+        // Do it again
+        const result2 = await redis.rpoplpush(source, dest);
+        expect(result2).toBe("two");
+
+        const sourceList2 = await redis.lrange(source, 0, -1);
+        expect(sourceList2).toEqual(["one"]);
+
+        const destList2 = await redis.lrange(dest, 0, -1);
+        expect(destList2).toEqual(["two", "three"]);
+      });
+
+      test("should return null for RPOPLPUSH on empty source", async () => {
+        const redis = ctx.redis;
+
+        const result = await redis.rpoplpush("empty-source", "some-dest");
+        expect(result).toBeNull();
+      });
+
+      test("should handle RPOPLPUSH to same list (circular)", async () => {
+        const redis = ctx.redis;
+        const key = "circular-rpoplpush";
+
+        await redis.lpush(key, "c", "b", "a");
+        // List: ["a", "b", "c"]
+
+        // Pop from tail and push to head (rotate right)
+        const result = await redis.rpoplpush(key, key);
+        expect(result).toBe("c");
+        expect(await redis.lrange(key, 0, -1)).toEqual(["c", "a", "b"]);
+      });
+
+      test("should block and move element with BLMOVE", async () => {
+        const redis = ctx.redis;
+        const source = "blmove-source";
+        const dest = "blmove-dest";
+
+        // Push elements to source
+        await redis.lpush(source, "three");
+        await redis.lpush(source, "two");
+        await redis.lpush(source, "one");
+
+        // Move from right of source to left of dest (like BRPOPLPUSH)
+        const result = await redis.blmove(source, dest, "RIGHT", "LEFT", 0.1);
+        expect(result).toBe("three");
+
+        // Verify source has 2 elements
+        const sourceRemaining = await redis.lrange(source, 0, -1);
+        expect(sourceRemaining).toEqual(["one", "two"]);
+
+        // Verify dest has 1 element at head
+        const destElements = await redis.lrange(dest, 0, -1);
+        expect(destElements).toEqual(["three"]);
+
+        // Move from left of source to right of dest
+        const result2 = await redis.blmove(source, dest, "LEFT", "RIGHT", 0.1);
+        expect(result2).toBe("one");
+
+        // Verify final state
+        const finalSource = await redis.lrange(source, 0, -1);
+        expect(finalSource).toEqual(["two"]);
+
+        const finalDest = await redis.lrange(dest, 0, -1);
+        expect(finalDest).toEqual(["three", "one"]);
+      });
+
+      test("should timeout and return null with BLMOVE on empty list", async () => {
+        const redis = ctx.redis;
+
+        // Try to move from empty list with short timeout
+        const result = await redis.blmove("empty-source", "dest", "LEFT", "RIGHT", 0.1);
+        expect(result).toBeNull();
+      });
+
+      test("should block and pop multiple elements with BLMPOP", async () => {
+        const redis = ctx.redis;
+        const key = "blmpop-test";
+
+        // Push elements
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Pop one element from head (LEFT)
+        const result = await redis.blmpop(0.1, 1, key, "LEFT");
+        expect(result).toEqual([key, ["one"]]);
+
+        // Pop 2 elements from tail (RIGHT) with COUNT
+        const result2 = await redis.blmpop(0.1, 1, key, "RIGHT", "COUNT", 2);
+        expect(result2).toEqual([key, ["three", "two"]]);
+
+        // List should now be empty
+        const remaining = await redis.lrange(key, 0, -1);
+        expect(remaining).toEqual([]);
+      });
+
+      test("should pop from first non-empty list with BLMPOP", async () => {
+        const redis = ctx.redis;
+        const key1 = "blmpop-empty";
+        const key2 = "blmpop-full";
+
+        // Only push to second list
+        await redis.lpush(key2, "value");
+
+        // Should pop from key2 since key1 is empty
+        const result = await redis.blmpop(0.1, 2, key1, key2, "LEFT");
+        expect(result).toEqual([key2, ["value"]]);
+      });
+
+      test("should timeout and return null with BLMPOP on empty lists", async () => {
+        const redis = ctx.redis;
+
+        // Try to pop from non-existent lists with short timeout
+        const result = await redis.blmpop(0.1, 2, "empty-list1", "empty-list2", "LEFT");
+        expect(result).toBeNull();
+      });
+
+      test("should block and move element with BRPOPLPUSH", async () => {
+        const redis = ctx.redis;
+        const source = "brpoplpush-source";
+        const dest = "brpoplpush-dest";
+
+        // Push elements to source
+        await redis.lpush(source, "value2");
+        await redis.lpush(source, "value1");
+
+        // Move from tail of source to head of dest
+        const result = await redis.brpoplpush(source, dest, 0.1);
+        expect(result).toBe("value2");
+
+        // Verify source has 1 element
+        const sourceRemaining = await redis.lrange(source, 0, -1);
+        expect(sourceRemaining).toEqual(["value1"]);
+
+        // Verify dest has 1 element
+        const destElements = await redis.lrange(dest, 0, -1);
+        expect(destElements).toEqual(["value2"]);
+
+        // Move again
+        const result2 = await redis.brpoplpush(source, dest, 0.1);
+        expect(result2).toBe("value1");
+
+        // Source should be empty
+        const finalSource = await redis.lrange(source, 0, -1);
+        expect(finalSource).toEqual([]);
+
+        // Dest should have both elements
+        const finalDest = await redis.lrange(dest, 0, -1);
+        expect(finalDest).toEqual(["value1", "value2"]);
+      });
+
+      test("should timeout and return null with BRPOPLPUSH on empty list", async () => {
+        const redis = ctx.redis;
+
+        // Try to move from empty list with short timeout
+        const result = await redis.brpoplpush("empty-source", "dest", 0.1);
+        expect(result).toBeNull();
+      });
+    });
+
     describe("Sorted Set Operations", () => {
       test("should increment score with ZINCRBY", async () => {
         const redis = ctx.redis;

@@ -631,6 +631,11 @@ pub fn ping(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 }
 
 pub const bitcount = compile.@"(key: RedisKey)"("bitcount", "BITCOUNT", "key", .not_subscriber).call;
+pub const blmove = compile.@"(...strings: string[])"("blmove", "BLMOVE", .not_subscriber).call;
+pub const blmpop = compile.@"(...strings: string[])"("blmpop", "BLMPOP", .not_subscriber).call;
+pub const blpop = compile.@"(...strings: string[])"("blpop", "BLPOP", .not_subscriber).call;
+pub const brpop = compile.@"(...strings: string[])"("brpop", "BRPOP", .not_subscriber).call;
+pub const brpoplpush = compile.@"(...strings: string[])"("brpoplpush", "BRPOPLPUSH", .not_subscriber).call;
 pub const getbit = compile.@"(key: RedisKey, value: RedisValue)"("getbit", "GETBIT", "key", "offset", .not_subscriber).call;
 pub const setbit = compile.@"(...strings: string[])"("setbit", "SETBIT", .not_subscriber).call;
 pub const getrange = compile.@"(...strings: string[])"("getrange", "GETRANGE", .not_subscriber).call;
@@ -645,8 +650,17 @@ pub const hkeys = compile.@"(key: RedisKey)"("hkeys", "HKEYS", "key", .not_subsc
 pub const hlen = compile.@"(key: RedisKey)"("hlen", "HLEN", "key", .not_subscriber).call;
 pub const hvals = compile.@"(key: RedisKey)"("hvals", "HVALS", "key", .not_subscriber).call;
 pub const keys = compile.@"(key: RedisKey)"("keys", "KEYS", "key", .not_subscriber).call;
+pub const lindex = compile.@"(...strings: string[])"("lindex", "LINDEX", .not_subscriber).call;
+pub const linsert = compile.@"(...strings: string[])"("linsert", "LINSERT", .not_subscriber).call;
 pub const llen = compile.@"(key: RedisKey)"("llen", "LLEN", "key", .not_subscriber).call;
+pub const lmove = compile.@"(...strings: string[])"("lmove", "LMOVE", .not_subscriber).call;
+pub const lmpop = compile.@"(...strings: string[])"("lmpop", "LMPOP", .not_subscriber).call;
 pub const lpop = compile.@"(key: RedisKey)"("lpop", "LPOP", "key", .not_subscriber).call;
+pub const lpos = compile.@"(...strings: string[])"("lpos", "LPOS", .not_subscriber).call;
+pub const lrange = compile.@"(...strings: string[])"("lrange", "LRANGE", .not_subscriber).call;
+pub const lrem = compile.@"(...strings: string[])"("lrem", "LREM", .not_subscriber).call;
+pub const lset = compile.@"(...strings: string[])"("lset", "LSET", .not_subscriber).call;
+pub const ltrim = compile.@"(...strings: string[])"("ltrim", "LTRIM", .not_subscriber).call;
 pub const persist = compile.@"(key: RedisKey)"("persist", "PERSIST", "key", .not_subscriber).call;
 pub const pexpire = compile.@"(key: RedisKey, value: RedisValue)"("pexpire", "PEXPIRE", "key", "milliseconds", .not_subscriber).call;
 pub const pexpireat = compile.@"(key: RedisKey, value: RedisValue)"("pexpireat", "PEXPIREAT", "key", "milliseconds-timestamp", .not_subscriber).call;
@@ -654,6 +668,7 @@ pub const pexpiretime = compile.@"(key: RedisKey)"("pexpiretime", "PEXPIRETIME",
 pub const pttl = compile.@"(key: RedisKey)"("pttl", "PTTL", "key", .not_subscriber).call;
 pub const randomkey = compile.@"()"("randomkey", "RANDOMKEY", .not_subscriber).call;
 pub const rpop = compile.@"(key: RedisKey)"("rpop", "RPOP", "key", .not_subscriber).call;
+pub const rpoplpush = compile.@"(...strings: string[])"("rpoplpush", "RPOPLPUSH", .not_subscriber).call;
 pub const scan = compile.@"(...strings: string[])"("scan", "SCAN", .not_subscriber).call;
 pub const scard = compile.@"(key: RedisKey)"("scard", "SCARD", "key", .not_subscriber).call;
 pub const strlen = compile.@"(key: RedisKey)"("strlen", "STRLEN", "key", .not_subscriber).call;

@@ -437,6 +437,157 @@ declare module "bun" {
     keys(pattern: string): Promise<string[]>;
 
     /**
+     * Blocking pop from head of one or more lists
+     *
+     * Blocks until an element is available in one of the lists or the timeout expires.
+     * Checks keys in order and pops from the first non-empty list.
+     *
+     * @param args Keys followed by timeout in seconds (can be fractional, 0 = block indefinitely)
+     * @returns Promise that resolves with [key, element] or null on timeout
+     *
+     * @example
+     * ```ts
+     * // Block for up to 1 second
+     * const result = await redis.blpop("mylist", 1.0);
+     * if (result) {
+     *   const [key, element] = result;
+     *   console.log(`Popped ${element} from ${key}`);
+     * }
+     *
+     * // Block indefinitely (timeout = 0)
+     * const result2 = await redis.blpop("list1", "list2", 0);
+     * ```
+     */
+    blpop(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string] | null>;
+
+    /**
+     * Blocking pop from tail of one or more lists
+     *
+     * Blocks until an element is available in one of the lists or the timeout expires.
+     * Checks keys in order and pops from the first non-empty list.
+     *
+     * @param args Keys followed by timeout in seconds (can be fractional, 0 = block indefinitely)
+     * @returns Promise that resolves with [key, element] or null on timeout
+     *
+     * @example
+     * ```ts
+     * // Block for up to 1 second
+     * const result = await redis.brpop("mylist", 1.0);
+     * if (result) {
+     *   const [key, element] = result;
+     *   console.log(`Popped ${element} from ${key}`);
+     * }
+     *
+     * // Block indefinitely (timeout = 0)
+     * const result2 = await redis.brpop("list1", "list2", 0);
+     * ```
+     */
+    brpop(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string] | null>;
+
+    /**
+     * Blocking move from one list to another
+     *
+     * Atomically moves an element from source to destination list, blocking until an element is available
+     * or the timeout expires. Allows specifying which end to pop from (LEFT/RIGHT) and which end to push to (LEFT/RIGHT).
+     *
+     * @param source Source list key
+     * @param destination Destination list key
+     * @param from Direction to pop from source: "LEFT" or "RIGHT"
+     * @param to Direction to push to destination: "LEFT" or "RIGHT"
+     * @param timeout Timeout in seconds (can be fractional, 0 = block indefinitely)
+     * @returns Promise that resolves with the moved element or null on timeout
+     *
+     * @example
+     * ```ts
+     * // Move from right of source to left of destination (like BRPOPLPUSH)
+     * const element = await redis.blmove("mylist", "otherlist", "RIGHT", "LEFT", 1.0);
+     * if (element) {
+     *   console.log(`Moved element: ${element}`);
+     * }
+     *
+     * // Move from left to left
+     * await redis.blmove("list1", "list2", "LEFT", "LEFT", 0.5);
+     * ```
+     */
+    blmove(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      from: "LEFT" | "RIGHT",
+      to: "LEFT" | "RIGHT",
+      timeout: number,
+    ): Promise<string | null>;
+
+    /**
+     * Blocking pop multiple elements from lists
+     *
+     * Blocks until an element is available from one of the specified lists or the timeout expires.
+     * Can pop from the LEFT or RIGHT end and optionally pop multiple elements at once using COUNT.
+     *
+     * @param timeout Timeout in seconds (can be fractional, 0 = block indefinitely)
+     * @param numkeys Number of keys that follow
+     * @param args Keys, direction ("LEFT" or "RIGHT"), and optional COUNT modifier
+     * @returns Promise that resolves with [key, [elements]] or null on timeout
+     *
+     * @example
+     * ```ts
+     * // Pop from left end of first available list, wait 1 second
+     * const result = await redis.blmpop(1.0, 2, "list1", "list2", "LEFT");
+     * if (result) {
+     *   const [key, elements] = result;
+     *   console.log(`Popped from ${key}: ${elements.join(", ")}`);
+     * }
+     *
+     * // Pop 3 elements from right end
+     * const result2 = await redis.blmpop(0.5, 1, "mylist", "RIGHT", "COUNT", 3);
+     * // Returns: ["mylist", ["elem1", "elem2", "elem3"]] or null if timeout
+     * ```
+     */
+    blmpop(timeout: number, numkeys: number, ...args: (string | number)[]): Promise<[string, string[]] | null>;
+
+    /**
+     * Blocking right pop from source and left push to destination
+     *
+     * Atomically pops an element from the tail of source list and pushes it to the head of destination list,
+     * blocking until an element is available or the timeout expires. This is the blocking version of RPOPLPUSH.
+     *
+     * @param source Source list key
+     * @param destination Destination list key
+     * @param timeout Timeout in seconds (can be fractional, 0 = block indefinitely)
+     * @returns Promise that resolves with the moved element or null on timeout
+     *
+     * @example
+     * ```ts
+     * // Block for up to 1 second
+     * const element = await redis.brpoplpush("tasks", "processing", 1.0);
+     * if (element) {
+     *   console.log(`Processing task: ${element}`);
+     * } else {
+     *   console.log("No tasks available");
+     * }
+     *
+     * // Block indefinitely (timeout = 0)
+     * const task = await redis.brpoplpush("queue", "active", 0);
+     * ```
+     */
+    brpoplpush(source: RedisClient.KeyLike, destination: RedisClient.KeyLike, timeout: number): Promise<string | null>;
+
+    /**
+     * Get element at index from a list
+     * @param key The list key
+     * @param index Zero-based index (negative indexes count from the end, -1 is last element)
+     * @returns Promise that resolves with the element at index, or null if index is out of range
+     *
+     * @example
+     * ```ts
+     * await redis.lpush("mylist", "three", "two", "one");
+     * console.log(await redis.lindex("mylist", 0)); // "one"
+     * console.log(await redis.lindex("mylist", -1)); // "three"
+     * console.log(await redis.lindex("mylist", 5)); // null
+     * ```
+     */
+    lindex(key: RedisClient.KeyLike, index: number): Promise<string | null>;
+
+    /**
      * Get the length of a list
      * @param key The list key
      * @returns Promise that resolves with the length of the list
@@ -444,12 +595,135 @@ declare module "bun" {
     llen(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Atomically pop an element from a source list and push it to a destination list
+     *
+     * Pops an element from the source list (from LEFT or RIGHT) and pushes it
+     * to the destination list (to LEFT or RIGHT).
+     *
+     * @param source The source list key
+     * @param destination The destination list key
+     * @param from Direction to pop from source: "LEFT" (head) or "RIGHT" (tail)
+     * @param to Direction to push to destination: "LEFT" (head) or "RIGHT" (tail)
+     * @returns Promise that resolves with the element moved, or null if the source list is empty
+     *
+     * @example
+     * ```ts
+     * await redis.lpush("source", "a", "b", "c");
+     * const result1 = await redis.lmove("source", "dest", "LEFT", "RIGHT");
+     * // result1: "c" (popped from head of source, pushed to tail of dest)
+     *
+     * const result2 = await redis.lmove("source", "dest", "RIGHT", "LEFT");
+     * // result2: "a" (popped from tail of source, pushed to head of dest)
+     * ```
+     */
+    lmove(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      from: "LEFT" | "RIGHT",
+      to: "LEFT" | "RIGHT",
+    ): Promise<string | null>;
+
+    /**
      * Remove and get the first element in a list
      * @param key The list key
-     * @returns Promise that resolves with the first element, or null if the
-     * list is empty
+     * @returns Promise that resolves with the first element, or null if the list is empty
      */
     lpop(key: RedisClient.KeyLike): Promise<string | null>;
+
+    /**
+     * Find the position(s) of an element in a list
+     *
+     * Returns the index of matching elements inside a Redis list.
+     * By default, returns the index of the first match. Use RANK to find the nth occurrence,
+     * COUNT to get multiple positions, and MAXLEN to limit the search.
+     *
+     * @param key The list key
+     * @param element The element to search for
+     * @param options Optional arguments: "RANK", rank, "COUNT", num, "MAXLEN", len
+     * @returns Promise that resolves with the index (number), an array of indices (number[]),
+     *          or null if element is not found. Returns array when COUNT option is used.
+     *
+     * @example
+     * ```ts
+     * await redis.lpush("mylist", "a", "b", "c", "b", "d");
+     * const pos1 = await redis.lpos("mylist", "b");
+     * // pos1: 1 (first occurrence of "b")
+     *
+     * const pos2 = await redis.lpos("mylist", "b", "RANK", 2);
+     * // pos2: 3 (second occurrence of "b")
+     *
+     * const positions = await redis.lpos("mylist", "b", "COUNT", 0);
+     * // positions: [1, 3] (all occurrences of "b")
+     *
+     * const pos3 = await redis.lpos("mylist", "x");
+     * // pos3: null (element not found)
+     * ```
+     */
+    lpos(
+      key: RedisClient.KeyLike,
+      element: RedisClient.ValueLike,
+      ...options: (string | number)[]
+    ): Promise<number | number[] | null>;
+
+    /**
+     * Pop one or more elements from one or more lists
+     *
+     * Pops elements from the first non-empty list in the specified order (LEFT = from head, RIGHT = from tail).
+     * Optionally specify COUNT to pop multiple elements at once.
+     *
+     * @param numkeys The number of keys that follow
+     * @param args Keys followed by LEFT or RIGHT, optionally followed by "COUNT" and count value
+     * @returns Promise that resolves with [key, [elements]] or null if all lists are empty
+     *
+     * @example
+     * ```ts
+     * await redis.lpush("list1", "a", "b", "c");
+     * const result1 = await redis.lmpop(1, "list1", "LEFT");
+     * // result1: ["list1", ["c"]]
+     *
+     * const result2 = await redis.lmpop(1, "list1", "RIGHT", "COUNT", 2);
+     * // result2: ["list1", ["a", "b"]]
+     *
+     * const result3 = await redis.lmpop(2, "emptylist", "list1", "LEFT");
+     * // result3: null (if both lists are empty)
+     * ```
+     */
+    lmpop(numkeys: number, ...args: (string | number)[]): Promise<[string, string[]] | null>;
+
+    /**
+     * Get a range of elements from a list
+     * @param key The list key
+     * @param start Zero-based start index (negative indexes count from the end)
+     * @param stop Zero-based stop index (negative indexes count from the end)
+     * @returns Promise that resolves with array of elements in the specified range
+     *
+     * @example
+     * ```ts
+     * await redis.lpush("mylist", "three", "two", "one");
+     * console.log(await redis.lrange("mylist", 0, -1)); // ["one", "two", "three"]
+     * console.log(await redis.lrange("mylist", 0, 1)); // ["one", "two"]
+     * console.log(await redis.lrange("mylist", -2, -1)); // ["two", "three"]
+     * ```
+     */
+    lrange(key: RedisClient.KeyLike, start: number, stop: number): Promise<string[]>;
+
+    /**
+     * Set element at index in a list
+     * @param key The list key
+     * @param index Zero-based index (negative indexes count from the end)
+     * @param element The value to set
+     * @returns Promise that resolves with "OK" on success
+     *
+     * @example
+     * ```ts
+     * await redis.lpush("mylist", "three", "two", "one");
+     * await redis.lset("mylist", 0, "zero");
+     * console.log(await redis.lrange("mylist", 0, -1)); // ["zero", "two", "three"]
+     * await redis.lset("mylist", -1, "last");
+     * console.log(await redis.lrange("mylist", 0, -1)); // ["zero", "two", "last"]
+     * ```
+     */
+    lset(key: RedisClient.KeyLike, index: number, element: RedisClient.KeyLike): Promise<string>;
 
     /**
      * Remove the expiration from a key
@@ -508,6 +782,29 @@ declare module "bun" {
      * @returns Promise that resolves with the last element, or null if the list is empty
      */
     rpop(key: RedisClient.KeyLike): Promise<string | null>;
+
+    /**
+     * Atomically pop the last element from a source list and push it to the head of a destination list
+     *
+     * This is equivalent to LMOVE with "RIGHT" "LEFT". It's an atomic operation that removes
+     * the last element (tail) from the source list and pushes it to the head of the destination list.
+     *
+     * @param source The source list key
+     * @param destination The destination list key
+     * @returns Promise that resolves with the element moved, or null if the source list is empty
+     *
+     * @example
+     * ```ts
+     * await redis.lpush("source", "a", "b", "c");
+     * // source: ["c", "b", "a"]
+     *
+     * const result = await redis.rpoplpush("source", "dest");
+     * // result: "a" (removed from tail of source, added to head of dest)
+     * // source: ["c", "b"]
+     * // dest: ["a"]
+     * ```
+     */
+    rpoplpush(source: RedisClient.KeyLike, destination: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Incrementally iterate the keyspace
@@ -913,13 +1210,36 @@ declare module "bun" {
     getset(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Insert an element before or after another element in a list
+     * @param key The list key
+     * @param position "BEFORE" or "AFTER" to specify where to insert
+     * @param pivot The pivot element to insert before or after
+     * @param element The element to insert
+     * @returns Promise that resolves with the length of the list after insert, -1 if pivot not found, or 0 if key doesn't exist
+     *
+     * @example
+     * ```ts
+     * await redis.lpush("mylist", "World");
+     * await redis.lpush("mylist", "Hello");
+     * await redis.linsert("mylist", "BEFORE", "World", "There");
+     * // List is now: ["Hello", "There", "World"]
+     * ```
+     */
+    linsert(
+      key: RedisClient.KeyLike,
+      position: "BEFORE" | "AFTER",
+      pivot: RedisClient.KeyLike,
+      element: RedisClient.KeyLike,
+    ): Promise<number>;
+
+    /**
      * Prepend one or multiple values to a list
      * @param key The list key
      * @param value The value to prepend
      * @returns Promise that resolves with the length of the list after the push
      * operation
      */
-    lpush(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
+    lpush(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...rest: RedisClient.KeyLike[]): Promise<number>;
 
     /**
      * Prepend a value to a list, only if the list exists
@@ -929,6 +1249,41 @@ declare module "bun" {
      * operation, or 0 if the list doesn't exist
      */
     lpushx(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Remove elements from a list
+     * @param key The list key
+     * @param count Number of elements to remove
+     *   - count > 0: Remove count occurrences from head to tail
+     *   - count < 0: Remove count occurrences from tail to head
+     *   - count = 0: Remove all occurrences
+     * @param element The element to remove
+     * @returns Promise that resolves with the number of elements removed
+     *
+     * @example
+     * ```ts
+     * await redis.rpush("mylist", "hello", "hello", "world", "hello");
+     * await redis.lrem("mylist", 2, "hello"); // Removes first 2 "hello"
+     * // List is now: ["world", "hello"]
+     * ```
+     */
+    lrem(key: RedisClient.KeyLike, count: number, element: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Trim a list to the specified range
+     * @param key The list key
+     * @param start The start index (0-based, can be negative)
+     * @param stop The stop index (0-based, can be negative)
+     * @returns Promise that resolves with "OK"
+     *
+     * @example
+     * ```ts
+     * await redis.rpush("mylist", "one", "two", "three", "four");
+     * await redis.ltrim("mylist", 1, 2);
+     * // List is now: ["two", "three"]
+     * ```
+     */
+    ltrim(key: RedisClient.KeyLike, start: number, stop: number): Promise<string>;
 
     /**
      * Add one or more members to a HyperLogLog
@@ -2343,7 +2698,11 @@ declare module "bun" {
      * // Returns: ["myzset", [["member1", 1], ["member2", 2]]] or null if timeout
      * ```
      */
-    bzmpop(timeout: number, numkeys: number, ...args: (string | number)[]): Promise<[string, [string, number][]] | null>;
+    bzmpop(
+      timeout: number,
+      numkeys: number,
+      ...args: (string | number)[]
+    ): Promise<[string, [string, number][]] | null>;
   }
 
   /**

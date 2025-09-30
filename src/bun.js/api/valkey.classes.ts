@@ -143,6 +143,26 @@ export default [
       bitcount: {
         fn: "bitcount",
       },
+      blmove: {
+        fn: "blmove",
+        length: 5,
+      },
+      blmpop: {
+        fn: "blmpop",
+        length: 3,
+      },
+      blpop: {
+        fn: "blpop",
+        length: 2,
+      },
+      brpop: {
+        fn: "brpop",
+        length: 2,
+      },
+      brpoplpush: {
+        fn: "brpoplpush",
+        length: 3,
+      },
       getbit: {
         fn: "getbit",
       },
@@ -182,11 +202,47 @@ export default [
       keys: {
         fn: "keys",
       },
+      lindex: {
+        fn: "lindex",
+        length: 2,
+      },
+      linsert: {
+        fn: "linsert",
+        length: 4,
+      },
       llen: {
         fn: "llen",
       },
+      lmove: {
+        fn: "lmove",
+        length: 4,
+      },
+      lmpop: {
+        fn: "lmpop",
+        length: 2,
+      },
       lpop: {
         fn: "lpop",
+      },
+      lpos: {
+        fn: "lpos",
+        length: 2,
+      },
+      lrange: {
+        fn: "lrange",
+        length: 3,
+      },
+      lrem: {
+        fn: "lrem",
+        length: 3,
+      },
+      lset: {
+        fn: "lset",
+        length: 3,
+      },
+      ltrim: {
+        fn: "ltrim",
+        length: 3,
       },
       persist: {
         fn: "persist",
@@ -206,6 +262,10 @@ export default [
       },
       rpop: {
         fn: "rpop",
+      },
+      rpoplpush: {
+        fn: "rpoplpush",
+        length: 2,
       },
       scan: {
         fn: "scan",

@@ -926,7 +926,7 @@ describe("--tolerate-republish", async () => {
     // Second publish with --tolerate-republish should skip
     ({ out, err, exitCode } = await publish(env, packageDir, "./republish-test-3-1.0.0.tgz", "--tolerate-republish"));
     expect(exitCode).toBe(0);
-    expect(err).toContain("warning: Registry already knows about version 1.0.0; skipping.");
+    expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
     expect(err).not.toContain("error:");
   });
 });

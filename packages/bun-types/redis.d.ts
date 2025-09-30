@@ -342,135 +342,240 @@ declare module "bun" {
     hsetnx(key: RedisClient.KeyLike, field: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<boolean>;
 
     /**
-     * Get the value of a hash field and delete the field
+     * Get and delete one or more hash fields (Redis 8.0.0+)
+     * Syntax: HGETDEL key FIELDS numfields field [field ...]
      * @param key The hash key
-     * @param field The field to get and delete
-     * @returns Promise that resolves with the field value or null if the field doesn't exist
+     * @param fieldsKeyword Must be the literal string "FIELDS"
+     * @param numfields Number of fields to follow
+     * @param fields The field names to get and delete
+     * @returns Promise that resolves with array of field values (null for non-existent fields)
+     * @example redis.hgetdel("mykey", "FIELDS", 2, "field1", "field2")
      */
-    hgetdel(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<string | null>;
-
-    /**
-     * Get the value of a hash field with expiration options
-     * @param key The hash key
-     * @param field The field to get
-     * @param ex Literal "EX"
-     * @param seconds Expiration time in seconds
-     * @returns Promise that resolves with the field value or null if the field doesn't exist
-     */
-    hgetex(key: RedisClient.KeyLike, field: RedisClient.KeyLike, ex: "EX", seconds: number): Promise<string | null>;
-
-    /**
-     * Get the value of a hash field with expiration options
-     * @param key The hash key
-     * @param field The field to get
-     * @param exat Literal "EXAT"
-     * @param timestamp Unix timestamp for expiration
-     * @returns Promise that resolves with the field value or null if the field doesn't exist
-     */
-    hgetex(
+    hgetdel(
       key: RedisClient.KeyLike,
-      field: RedisClient.KeyLike,
-      exat: "EXAT",
-      timestamp: number,
-    ): Promise<string | null>;
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<Array<string | null>>;
 
     /**
-     * Get the value of a hash field with expiration options
-     * @param key The hash key
-     * @param field The field to get
-     * @param px Literal "PX"
-     * @param milliseconds Expiration time in milliseconds
-     * @returns Promise that resolves with the field value or null if the field doesn't exist
+     * Get hash field values with expiration options (Redis 8.0.0+)
+     * Syntax: HGETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | PERSIST] FIELDS numfields field [field ...]
+     * @example redis.hgetex("mykey", "FIELDS", 1, "field1")
+     * @example redis.hgetex("mykey", "EX", 10, "FIELDS", 1, "field1")
+     * @example redis.hgetex("mykey", "PX", 5000, "FIELDS", 2, "field1", "field2")
+     * @example redis.hgetex("mykey", "PERSIST", "FIELDS", 1, "field1")
      */
-    hgetex(
-      key: RedisClient.KeyLike,
-      field: RedisClient.KeyLike,
-      px: "PX",
-      milliseconds: number,
-    ): Promise<string | null>;
+    //prettier-ignore
+    hgetex(key: RedisClient.KeyLike, fieldsKeyword: "FIELDS", numfields: number, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
+    //prettier-ignore
+    hgetex(key: RedisClient.KeyLike, ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
+    //prettier-ignore
+    hgetex(key: RedisClient.KeyLike, px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
+    //prettier-ignore
+    hgetex(key: RedisClient.KeyLike, exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
+    //prettier-ignore
+    hgetex(key: RedisClient.KeyLike, pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
+    //prettier-ignore
+    hgetex(key: RedisClient.KeyLike, persist: "PERSIST", fieldsKeyword: "FIELDS", numfields: number, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
 
     /**
-     * Get the value of a hash field with expiration options
-     * @param key The hash key
-     * @param field The field to get
-     * @param pxat Literal "PXAT"
-     * @param timestamp Unix timestamp in milliseconds for expiration
-     * @returns Promise that resolves with the field value or null if the field doesn't exist
+     * Set hash fields with expiration options (Redis 8.0.0+)
+     * Syntax: HSETEX key [FNX | FXX] [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | KEEPTTL] FIELDS numfields field value [field value ...]
+     * @example redis.hsetex("mykey", "FIELDS", 1, "field1", "value1")
+     * @example redis.hsetex("mykey", "EX", 10, "FIELDS", 1, "field1", "value1")
+     * @example redis.hsetex("mykey", "FNX", "EX", 10, "FIELDS", 1, "field1", "value1")
      */
-    hgetex(
-      key: RedisClient.KeyLike,
-      field: RedisClient.KeyLike,
-      pxat: "PXAT",
-      timestamp: number,
-    ): Promise<string | null>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    //prettier-ignore
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
 
     /**
-     * Set the value of a hash field with expiration
-     * @param key The hash key
-     * @param field The field to set
-     * @param value The value to set
-     * @param ex Literal "EX"
-     * @param seconds Expiration time in seconds
-     * @returns Promise that resolves with "OK"
+     * Set expiration for hash fields (Redis 7.4+)
+     * Syntax: HEXPIRE key seconds [NX | XX | GT | LT] FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), 0 (condition not met), 1 (expiration set), 2 (field deleted)
+     * @example redis.hexpire("mykey", 10, "FIELDS", 1, "field1")
+     * @example redis.hexpire("mykey", 10, "NX", "FIELDS", 2, "field1", "field2")
      */
-    hsetex(
+    hexpire(
       key: RedisClient.KeyLike,
-      field: RedisClient.KeyLike,
-      value: RedisClient.KeyLike,
-      ex: "EX",
       seconds: number,
-    ): Promise<"OK">;
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+    hexpire(
+      key: RedisClient.KeyLike,
+      seconds: number,
+      condition: "NX" | "XX" | "GT" | "LT",
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
 
     /**
-     * Set the value of a hash field with expiration
-     * @param key The hash key
-     * @param field The field to set
-     * @param value The value to set
-     * @param exat Literal "EXAT"
-     * @param timestamp Unix timestamp for expiration
-     * @returns Promise that resolves with "OK"
+     * Set expiration for hash fields using Unix timestamp in seconds (Redis 7.4+)
+     * Syntax: HEXPIREAT key unix-time-seconds [NX | XX | GT | LT] FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), 0 (condition not met), 1 (expiration set), 2 (field deleted)
+     * @example redis.hexpireat("mykey", 1735689600, "FIELDS", 1, "field1")
      */
-    hsetex(
+    hexpireat(
       key: RedisClient.KeyLike,
-      field: RedisClient.KeyLike,
-      value: RedisClient.KeyLike,
-      exat: "EXAT",
-      timestamp: number,
-    ): Promise<"OK">;
+      unixTimeSeconds: number,
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+    hexpireat(
+      key: RedisClient.KeyLike,
+      unixTimeSeconds: number,
+      condition: "NX" | "XX" | "GT" | "LT",
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
 
     /**
-     * Set the value of a hash field with expiration
-     * @param key The hash key
-     * @param field The field to set
-     * @param value The value to set
-     * @param px Literal "PX"
-     * @param milliseconds Expiration time in milliseconds
-     * @returns Promise that resolves with "OK"
+     * Get expiration time of hash fields as Unix timestamp in seconds (Redis 7.4+)
+     * Syntax: HEXPIRETIME key FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), -1 (no expiration), Unix timestamp in seconds
+     * @example redis.hexpiretime("mykey", "FIELDS", 2, "field1", "field2")
      */
-    hsetex(
+    hexpiretime(
       key: RedisClient.KeyLike,
-      field: RedisClient.KeyLike,
-      value: RedisClient.KeyLike,
-      px: "PX",
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+
+    /**
+     * Remove expiration from hash fields (Redis 7.4+)
+     * Syntax: HPERSIST key FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), -1 (no expiration), 1 (expiration removed)
+     * @example redis.hpersist("mykey", "FIELDS", 1, "field1")
+     */
+    hpersist(
+      key: RedisClient.KeyLike,
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+
+    /**
+     * Set expiration for hash fields in milliseconds (Redis 7.4+)
+     * Syntax: HPEXPIRE key milliseconds [NX | XX | GT | LT] FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), 0 (condition not met), 1 (expiration set), 2 (field deleted)
+     * @example redis.hpexpire("mykey", 10000, "FIELDS", 1, "field1")
+     */
+    hpexpire(
+      key: RedisClient.KeyLike,
       milliseconds: number,
-    ): Promise<"OK">;
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+    hpexpire(
+      key: RedisClient.KeyLike,
+      milliseconds: number,
+      condition: "NX" | "XX" | "GT" | "LT",
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
 
     /**
-     * Set the value of a hash field with expiration
-     * @param key The hash key
-     * @param field The field to set
-     * @param value The value to set
-     * @param pxat Literal "PXAT"
-     * @param timestamp Unix timestamp in milliseconds for expiration
-     * @returns Promise that resolves with "OK"
+     * Set expiration for hash fields using Unix timestamp in milliseconds (Redis 7.4+)
+     * Syntax: HPEXPIREAT key unix-time-milliseconds [NX | XX | GT | LT] FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), 0 (condition not met), 1 (expiration set), 2 (field deleted)
+     * @example redis.hpexpireat("mykey", 1735689600000, "FIELDS", 1, "field1")
      */
-    hsetex(
+    hpexpireat(
       key: RedisClient.KeyLike,
-      field: RedisClient.KeyLike,
-      value: RedisClient.KeyLike,
-      pxat: "PXAT",
-      timestamp: number,
-    ): Promise<"OK">;
+      unixTimeMilliseconds: number,
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+    hpexpireat(
+      key: RedisClient.KeyLike,
+      unixTimeMilliseconds: number,
+      condition: "NX" | "XX" | "GT" | "LT",
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+
+    /**
+     * Get expiration time of hash fields as Unix timestamp in milliseconds (Redis 7.4+)
+     * Syntax: HPEXPIRETIME key FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), -1 (no expiration), Unix timestamp in milliseconds
+     * @example redis.hpexpiretime("mykey", "FIELDS", 2, "field1", "field2")
+     */
+    hpexpiretime(
+      key: RedisClient.KeyLike,
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+
+    /**
+     * Get TTL of hash fields in milliseconds (Redis 7.4+)
+     * Syntax: HPTTL key FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), -1 (no expiration), TTL in milliseconds
+     * @example redis.hpttl("mykey", "FIELDS", 2, "field1", "field2")
+     */
+    hpttl(
+      key: RedisClient.KeyLike,
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
+
+    /**
+     * Get TTL of hash fields in seconds (Redis 7.4+)
+     * Syntax: HTTL key FIELDS numfields field [field ...]
+     * @returns Array where each element is: -2 (field doesn't exist), -1 (no expiration), TTL in seconds
+     * @example redis.httl("mykey", "FIELDS", 2, "field1", "field2")
+     */
+    httl(
+      key: RedisClient.KeyLike,
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<number[]>;
 
     /**
      * Set multiple hash fields to multiple values

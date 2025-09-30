@@ -153,6 +153,8 @@ services:
       context: ../js/valkey/docker-unified
       dockerfile: Dockerfile
     image: bun-redis-unified:local
+    environment:
+      SKIP_FIX_PERMS: "1"
     ports:
       - target: 6379
         published: 0
@@ -163,8 +165,9 @@ services:
         protocol: tcp
         name: tls
     volumes:
-      - redis-unix:/tmp/redis
-      - redis-data:/data
+      - redis-unix:/tmp/redis:rw
+    tmpfs:
+      - /data
 
   # MinIO (S3) Service
   minio:
@@ -208,8 +211,6 @@ services:
 
 volumes:
   redis-unix:
-  redis-data:
-    driver: local
 
 networks:
   default:

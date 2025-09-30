@@ -4148,8 +4148,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await redis.hset(key, { name: "John", age: "30" });
 
-        const value = await redis.hgetdel(key, "name");
-        expect(value).toBe("John");
+        const values = await redis.hgetdel(key, "FIELDS", 1, "name");
+        expect(values).toEqual(["John"]);
 
         const check = await redis.hget(key, "name");
         expect(check).toBeNull();
@@ -4158,36 +4158,293 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(age).toBe("30");
       });
 
+      test("should get and delete multiple hash fields using hgetdel", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const values = await redis.hgetdel(key, "FIELDS", 2, "name", "city");
+        expect(values).toEqual(["John", "NYC"]);
+
+        expect(await redis.hget(key, "name")).toBeNull();
+        expect(await redis.hget(key, "city")).toBeNull();
+        expect(await redis.hget(key, "age")).toBe("30");
+      });
+
       test("should get hash field with expiration using hgetex", async () => {
         const redis = ctx.redis;
         const key = "user:" + randomUUIDv7().substring(0, 8);
 
         await redis.hset(key, { name: "John" });
 
-        const value = await redis.hgetex(key, "name", "EX", 10);
-        expect(value).toBe("John");
+        const values = await redis.hgetex(key, "EX", 10, "FIELDS", 1, "name");
+        expect(values).toEqual(["John"]);
 
         const check = await redis.hget(key, "name");
         expect(check).toBe("John");
 
-        const ttl = await redis.ttl(key);
-        expect(ttl).toBeGreaterThan(0);
-        expect(ttl).toBeLessThanOrEqual(10);
+        const ttls = await redis.httl(key, "FIELDS", 1, "name");
+        expect(ttls).toHaveLength(1);
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(10);
+      });
+
+      test("should get hash fields without expiration using hgetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const values = await redis.hgetex(key, "FIELDS", 2, "name", "age");
+        expect(values).toEqual(["John", "30"]);
+      });
+
+      test("should get hash fields with PX expiration using hgetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const values = await redis.hgetex(key, "PX", 5000, "FIELDS", 1, "name");
+        expect(values).toEqual(["John"]);
+
+        const ttls = await redis.hpttl(key, "FIELDS", 1, "name");
+        expect(ttls).toHaveLength(1);
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(5000);
+      });
+
+      test("should get hash fields with EXAT using hgetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 60;
+        const values = await redis.hgetex(key, "EXAT", futureTimestamp, "FIELDS", 1, "name");
+        expect(values).toEqual(["John"]);
+      });
+
+      test("should get hash fields with PXAT using hgetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const futureTimestamp = Date.now() + 60000;
+        const values = await redis.hgetex(key, "PXAT", futureTimestamp, "FIELDS", 1, "name");
+        expect(values).toEqual(["John"]);
+      });
+
+      test("should get hash fields with PERSIST using hgetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hsetex(key, "EX", 100, "FIELDS", 1, "name", "John");
+
+        const values = await redis.hgetex(key, "PERSIST", "FIELDS", 1, "name");
+        expect(values).toEqual(["John"]);
+      });
+
+      test("should get multiple hash fields and return null for missing fields using hgetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const values = await redis.hgetex(key, "FIELDS", 3, "name", "age", "city");
+        expect(values).toEqual(["John", null, null]);
       });
 
       test("should set hash field with expiration using hsetex", async () => {
         const redis = ctx.redis;
         const key = "user:" + randomUUIDv7().substring(0, 8);
 
-        const result = await redis.hsetex(key, "name", "John", "EX", 10);
-        expect(result).toBe("OK");
+        const result = await redis.hsetex(key, "EX", 10, "FIELDS", 1, "name", "John");
+        expect(result).toBe(1);
 
         const value = await redis.hget(key, "name");
         expect(value).toBe("John");
 
-        const ttl = await redis.ttl(key);
-        expect(ttl).toBeGreaterThan(0);
-        expect(ttl).toBeLessThanOrEqual(10);
+        const ttls = await redis.httl(key, "FIELDS", 1, "name");
+        expect(ttls).toHaveLength(1);
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(10);
+      });
+
+      test("should set multiple hash fields with expiration using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        const result = await redis.hsetex(key, "EX", 10, "FIELDS", 2, "name", "John", "age", "30");
+        expect(result).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+        expect(await redis.hget(key, "age")).toBe("30");
+
+        const ttls = await redis.httl(key, "FIELDS", 2, "name", "age");
+        expect(ttls).toHaveLength(2);
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(10);
+        expect(ttls[1]).toBeGreaterThan(0);
+        expect(ttls[1]).toBeLessThanOrEqual(10);
+      });
+
+      test("should set hash fields without expiration using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        const result = await redis.hsetex(key, "FIELDS", 2, "name", "John", "age", "30");
+        expect(result).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+        expect(await redis.hget(key, "age")).toBe("30");
+
+        const ttls = await redis.httl(key, "FIELDS", 2, "name", "age");
+        expect(ttls).toEqual([-1, -1]);
+      });
+
+      test("should set hash fields with PX (milliseconds) using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        const result = await redis.hsetex(key, "PX", 5000, "FIELDS", 1, "name", "John");
+        expect(result).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+      });
+
+      test("should set hash fields with EXAT (unix timestamp seconds) using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 60; // 60 seconds from now
+        const result = await redis.hsetex(key, "EXAT", futureTimestamp, "FIELDS", 1, "name", "John");
+        expect(result).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+      });
+
+      test("should set hash fields with PXAT (unix timestamp milliseconds) using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        const futureTimestamp = Date.now() + 60000; // 60 seconds from now
+        const result = await redis.hsetex(key, "PXAT", futureTimestamp, "FIELDS", 1, "name", "John");
+        expect(result).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+      });
+
+      test("should set hash fields with KEEPTTL using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hsetex(key, "EX", 100, "FIELDS", 1, "name", "John");
+
+        const result = await redis.hsetex(key, "KEEPTTL", "FIELDS", 1, "name", "Jane");
+        expect(result).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("Jane");
+      });
+
+      test("should set hash fields with FNX flag using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const result1 = await redis.hsetex(key, "FNX", "FIELDS", 2, "name", "Jane", "age", "30");
+        expect(result1).toBe(0);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+        expect(await redis.hget(key, "age")).toBeNull();
+
+        const result2 = await redis.hsetex(key, "FNX", "FIELDS", 2, "city", "NYC", "country", "USA");
+        expect(result2).toBe(1);
+
+        expect(await redis.hget(key, "city")).toBe("NYC");
+        expect(await redis.hget(key, "country")).toBe("USA");
+      });
+
+      test("should set hash fields with FXX flag using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const result1 = await redis.hsetex(key, "FXX", "FIELDS", 2, "name", "Jane", "age", "30");
+        expect(result1).toBe(0);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+        expect(await redis.hget(key, "age")).toBeNull();
+
+        await redis.hset(key, { age: "25" });
+        const result2 = await redis.hsetex(key, "FXX", "FIELDS", 2, "name", "Jane", "age", "30");
+        expect(result2).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("Jane");
+        expect(await redis.hget(key, "age")).toBe("30");
+      });
+
+      test("should set hash fields with FNX and EX combined using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        const result1 = await redis.hsetex(key, "FNX", "EX", 10, "FIELDS", 2, "name", "John", "age", "30");
+        expect(result1).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+        expect(await redis.hget(key, "age")).toBe("30");
+
+        const result2 = await redis.hsetex(key, "FNX", "EX", 10, "FIELDS", 2, "name", "Jane", "age", "35");
+        expect(result2).toBe(0);
+
+        expect(await redis.hget(key, "name")).toBe("John");
+        expect(await redis.hget(key, "age")).toBe("30");
+      });
+
+      test("should set hash fields with FXX and PX combined using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const result = await redis.hsetex(key, "FXX", "PX", 5000, "FIELDS", 2, "name", "Jane", "age", "35");
+        expect(result).toBe(1);
+
+        expect(await redis.hget(key, "name")).toBe("Jane");
+        expect(await redis.hget(key, "age")).toBe("35");
+      });
+
+      test("should check TTL of hash fields using httl", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hsetex(key, "EX", 100, "FIELDS", 1, "name", "John");
+        await redis.hset(key, { age: "30" });
+
+        const ttls = await redis.httl(key, "FIELDS", 3, "name", "age", "nonexistent");
+        expect(ttls).toHaveLength(3);
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(100);
+        expect(ttls[1]).toBe(-1);
+        expect(ttls[2]).toBe(-2);
+      });
+
+      test("should check TTL of hash fields using hpttl in milliseconds", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hpexpire(key, 5000, "FIELDS", 1, "name");
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const ttls = await redis.hpttl(key, "FIELDS", 2, "name", "age");
+        expect(ttls).toHaveLength(2);
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(5000);
+        expect(ttls[1]).toBe(-1);
       });
 
       test("should delete hash fields using hdel", async () => {

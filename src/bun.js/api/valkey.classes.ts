@@ -144,6 +144,42 @@ export default [
         fn: "hsetex",
         length: 3,
       },
+      hexpire: {
+        fn: "hexpire",
+        length: 3,
+      },
+      hexpireat: {
+        fn: "hexpireat",
+        length: 3,
+      },
+      hexpiretime: {
+        fn: "hexpiretime",
+        length: 2,
+      },
+      hpersist: {
+        fn: "hpersist",
+        length: 2,
+      },
+      hpexpire: {
+        fn: "hpexpire",
+        length: 3,
+      },
+      hpexpireat: {
+        fn: "hpexpireat",
+        length: 3,
+      },
+      hpexpiretime: {
+        fn: "hpexpiretime",
+        length: 2,
+      },
+      hpttl: {
+        fn: "hpttl",
+        length: 2,
+      },
+      httl: {
+        fn: "httl",
+        length: 2,
+      },
       sismember: {
         fn: "sismember",
         length: 2,

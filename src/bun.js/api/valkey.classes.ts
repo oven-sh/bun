@@ -237,15 +237,19 @@ export default [
       },
       getbit: {
         fn: "getbit",
+        length: 2,
       },
       setbit: {
         fn: "setbit",
+        length: 3,
       },
       getrange: {
         fn: "getrange",
+        length: 3,
       },
       setrange: {
         fn: "setrange",
+        length: 3,
       },
       dump: {
         fn: "dump",
@@ -331,6 +335,7 @@ export default [
       },
       randomkey: {
         fn: "randomkey",
+        length: 0,
       },
       rpop: {
         fn: "rpop",
@@ -386,15 +391,18 @@ export default [
       },
       type: {
         fn: "type",
+        length: 1,
       },
       zcard: {
         fn: "zcard",
       },
       zcount: {
         fn: "zcount",
+        length: 3,
       },
       zlexcount: {
         fn: "zlexcount",
+        length: 3,
       },
       zpopmax: {
         fn: "zpopmax",
@@ -420,6 +428,22 @@ export default [
       zrangestore: {
         fn: "zrangestore",
         length: 4,
+      },
+      zrem: {
+        fn: "zrem",
+        length: 2,
+      },
+      zremrangebylex: {
+        fn: "zremrangebylex",
+        length: 3,
+      },
+      zremrangebyrank: {
+        fn: "zremrangebyrank",
+        length: 3,
+      },
+      zremrangebyscore: {
+        fn: "zremrangebyscore",
+        length: 3,
       },
       zrevrange: {
         fn: "zrevrange",
@@ -459,15 +483,18 @@ export default [
       },
       setex: {
         fn: "setex",
+        length: 3,
       },
       psetex: {
         fn: "psetex",
+        length: 3,
       },
       zscore: {
         fn: "zscore",
       },
       zincrby: {
         fn: "zincrby",
+        length: 3,
       },
       zmscore: {
         fn: "zmscore",
@@ -542,10 +569,6 @@ export default [
       substr: { fn: "substr" },
       hstrlen: { fn: "hstrlen" },
       zrank: { fn: "zrank" },
-      zrem: { fn: "zrem" },
-      zremrangebylex: { fn: "zremrangebylex" },
-      zremrangebyrank: { fn: "zremrangebyrank" },
-      zremrangebyscore: { fn: "zremrangebyscore" },
       zrevrank: { fn: "zrevrank" },
       subscribe: { fn: "subscribe" },
       duplicate: { fn: "duplicate" },
@@ -556,8 +579,8 @@ export default [
       copy: { fn: "copy" },
       unlink: { fn: "unlink" },
       touch: { fn: "touch" },
-      rename: { fn: "rename" },
-      renamenx: { fn: "renamenx" },
+      rename: { fn: "rename", length: 2 },
+      renamenx: { fn: "renamenx", length: 2 },
     },
     values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
   }),

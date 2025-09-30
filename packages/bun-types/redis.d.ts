@@ -1851,7 +1851,7 @@ declare module "bun" {
      * Get the score associated with the given member in a sorted set
      * @param key The sorted set key
      * @param member The member to get the score for
-     * @returns Promise that resolves with the score of the member as a string,
+     * @returns Promise that resolves with the score of the member as a number,
      * or null if the member or key doesn't exist
      */
     zscore(key: RedisClient.KeyLike, member: string): Promise<number | null>;

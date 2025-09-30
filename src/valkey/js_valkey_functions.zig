@@ -824,11 +824,11 @@ pub const pfadd = compile.@"(key: RedisKey, value: RedisValue)"("pfadd", "PFADD"
 pub const rpush = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpush", "RPUSH", .not_subscriber).call;
 pub const rpushx = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("rpushx", "RPUSHX", .not_subscriber).call;
 pub const setnx = compile.@"(key: RedisKey, value: RedisValue)"("setnx", "SETNX", "key", "value", .not_subscriber).call;
-pub const setex = compile.@"(...strings: string[])"("setex", "SETEX", .not_subscriber).call;
-pub const psetex = compile.@"(...strings: string[])"("psetex", "PSETEX", .not_subscriber).call;
+pub const setex = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("setex", "SETEX", "key", "seconds", "value", .not_subscriber).call;
+pub const psetex = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("psetex", "PSETEX", "key", "milliseconds", "value", .not_subscriber).call;
 pub const zscore = compile.@"(key: RedisKey, value: RedisValue)"("zscore", "ZSCORE", "key", "value", .not_subscriber).call;
-pub const zincrby = compile.@"(...strings: string[])"("zincrby", "ZINCRBY", .not_subscriber).call;
-pub const zmscore = compile.@"(...strings: string[])"("zmscore", "ZMSCORE", .not_subscriber).call;
+pub const zincrby = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("zincrby", "ZINCRBY", "key", "increment", "member", .not_subscriber).call;
+pub const zmscore = compile.@"(key: RedisKey, value: RedisValue, ...args: RedisValue)"("zmscore", "ZMSCORE", .not_subscriber).call;
 pub const zadd = compile.@"(...strings: string[])"("zadd", "ZADD", .not_subscriber).call;
 pub const zscan = compile.@"(...strings: string[])"("zscan", "ZSCAN", .not_subscriber).call;
 pub const zdiff = compile.@"(...strings: string[])"("zdiff", "ZDIFF", .not_subscriber).call;
@@ -1322,6 +1322,46 @@ const compile = struct {
                     &.{
                         .command = command,
                         .args = .{ .args = &.{ key, value } },
+                    },
+                ) catch |err| {
+                    return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
+                };
+                return promise.toJS();
+            }
+        };
+    }
+
+    pub fn @"(key: RedisKey, value: RedisValue, value2: RedisValue)"(
+        comptime name: []const u8,
+        comptime command: []const u8,
+        comptime arg0_name: []const u8,
+        comptime arg1_name: []const u8,
+        comptime arg2_name: []const u8,
+        comptime client_state_requirement: ClientStateRequirement,
+    ) type {
+        return struct {
+            pub fn call(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+                try testCorrectState(this, name, client_state_requirement);
+
+                const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+                    return globalObject.throwInvalidArgumentType(name, arg0_name, "string or buffer");
+                };
+                defer key.deinit();
+                const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
+                    return globalObject.throwInvalidArgumentType(name, arg1_name, "string or buffer");
+                };
+                defer value.deinit();
+                const value2 = (try fromJS(globalObject, callframe.argument(2))) orelse {
+                    return globalObject.throwInvalidArgumentType(name, arg2_name, "string or buffer");
+                };
+                defer value2.deinit();
+
+                const promise = this.send(
+                    globalObject,
+                    callframe.this(),
+                    &.{
+                        .command = command,
+                        .args = .{ .args = &.{ key, value, value2 } },
                     },
                 ) catch |err| {
                     return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);

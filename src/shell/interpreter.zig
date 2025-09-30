@@ -1300,7 +1300,10 @@ pub const Interpreter = struct {
 
     pub fn killFromJS(this: *ThisInterpreter, _: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const sig_arg = callframe.argument(0);
-        const signal: i32 = if (sig_arg.isNumber()) sig_arg.to(i32) else @intFromEnum(bun.SignalCode.SIGKILL);
+        const signal_raw: i32 = if (sig_arg.isNumber()) sig_arg.to(i32) else @intFromEnum(bun.SignalCode.SIGKILL);
+
+        // Validate signal is in valid range (1-31 for standard signals)
+        const signal: i32 = if (signal_raw < 1 or signal_raw > 31) @intFromEnum(bun.SignalCode.SIGKILL) else signal_raw;
 
         // If already done or killed, do nothing
         if (this.flags.done or this.flags.killed) {

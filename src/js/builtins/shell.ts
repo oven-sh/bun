@@ -189,7 +189,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (this.#interp) {
         this.#interp.kill(killSignal);
       } else {
-        this.#killSignal = killSignal;
+        // Only save kill signal if not already killed
+        if (this.#killSignal === undefined) {
+          this.#killSignal = killSignal;
+        }
       }
     }
 

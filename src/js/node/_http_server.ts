@@ -589,7 +589,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
         function onClose() {
           didFinish = true;
-          resolveFunction && resolveFunction();
+          if (resolveFunction) resolveFunction();
         }
 
         setCloseCallback(http_res, onClose);
@@ -732,7 +732,7 @@ Server.prototype.setTimeout = function (msecs, callback) {
   const server = this[serverSymbol];
   if (server) {
     setServerIdleTimeout(server, Math.ceil(msecs / 1000));
-    typeof callback === "function" && this.once("timeout", callback);
+    if (typeof callback === "function") this.once("timeout", callback);
   } else {
     (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
   }
@@ -905,7 +905,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onCloseForDestroy(closeCallback) {
     this.#onClose();
-    $isCallable(closeCallback) && closeCallback();
+    if ($isCallable(closeCallback)) closeCallback();
   }
 
   _onTimeout() {
@@ -937,7 +937,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _destroy(err, callback) {
     const handle = this[kHandle];
     if (!handle) {
-      $isCallable(callback) && callback(err);
+      if ($isCallable(callback)) callback(err);
       return;
     }
     handle.ondata = undefined;
@@ -947,7 +947,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       if ($isCallable(onclose)) {
         onclose.$call(handle);
       }
-      $isCallable(callback) && callback(err);
+      if ($isCallable(callback)) callback(err);
       return;
     }
 
@@ -1081,7 +1081,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     } catch (e) {
       err = e;
     }
-    err ? _callback(err) : _callback();
+    if (err) _callback(err); else _callback();
   }
 
   pause() {
@@ -1510,7 +1510,7 @@ ServerResponse.prototype._finish = function () {
 
 ServerResponse.prototype.detachSocket = function (socket) {
   if (socket._httpMessage === this) {
-    socket[kCloseCallback] && (socket[kCloseCallback] = undefined);
+    if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
     socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
   }

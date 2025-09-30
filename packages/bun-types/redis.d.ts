@@ -759,6 +759,15 @@ declare module "bun" {
     srem(key: RedisClient.KeyLike, member: string): Promise<number>;
 
     /**
+     * Move a member from one set to another
+     * @param source The source set key
+     * @param destination The destination set key
+     * @param member The member to move
+     * @returns Promise that resolves with true if the element was moved, false if it wasn't a member of source
+     */
+    smove(source: RedisClient.KeyLike, destination: RedisClient.KeyLike, member: string): Promise<boolean>;
+
+    /**
      * Get all the members in a set
      * @param key The set key
      * @returns Promise that resolves with an array of all members
@@ -774,12 +783,36 @@ declare module "bun" {
     srandmember(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Get count random members from a set
+     * @param key The set key
+     * @returns Promise that resolves with an array of up to count random members, or null if the set
+     * doesn't exist
+     */
+    srandmember(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
+
+    /**
      * Remove and return a random member from a set
      * @param key The set key
      * @returns Promise that resolves with the removed member, or null if the
      * set is empty
      */
     spop(key: RedisClient.KeyLike): Promise<string | null>;
+
+    /**
+     * Remove and return count members from the set
+     * @param key The set key
+     * @returns Promise that resolves with the removed members, or null if the
+     * set is empty
+     */
+    spop(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
+
+    /**
+     * Post a message to a shard channel
+     * @param channel The shard channel name
+     * @param message The message to publish
+     * @returns Promise that resolves with the number of clients that received the message
+     */
+    spublish(channel: RedisClient.KeyLike, message: string): Promise<number>;
 
     /**
      * Store the difference of multiple sets in a key
@@ -1062,6 +1095,13 @@ declare module "bun" {
      * @returns Promise that resolves with the first element, or null if the list is empty
      */
     lpop(key: RedisClient.KeyLike): Promise<string | null>;
+
+    /**
+     * Remove and get the first count elements in a list
+     * @param key The list key
+     * @returns Promise that resolves with a list of elements, or null if the list doesn't exist
+     */
+    lpop(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
 
     /**
      * Find the position(s) of an element in a list
@@ -1469,18 +1509,20 @@ declare module "bun" {
     /**
      * Remove and return members with the highest scores in a sorted set
      * @param key The sorted set key
-     * @returns Promise that resolves with the removed member and its score, or
-     * null if the set is empty
+     * @param count Optional number of members to pop (default: 1)
+     * @returns Promise that resolves with array of [member, score] tuples, or
+     * empty array if the set is empty
      */
-    zpopmax(key: RedisClient.KeyLike): Promise<string | null>;
+    zpopmax(key: RedisClient.KeyLike, count?: number): Promise<Array<[string, number]>>;
 
     /**
      * Remove and return members with the lowest scores in a sorted set
      * @param key The sorted set key
-     * @returns Promise that resolves with the removed member and its score, or
-     * null if the set is empty
+     * @param count Optional number of members to pop (default: 1)
+     * @returns Promise that resolves with array of [member, score] tuples, or
+     * empty array if the set is empty
      */
-    zpopmin(key: RedisClient.KeyLike): Promise<string | null>;
+    zpopmin(key: RedisClient.KeyLike, count?: number): Promise<[string, number][]>;
 
     /**
      * Remove and return the member with the lowest score from one or more sorted sets, or block until one is available
@@ -1521,6 +1563,22 @@ declare module "bun" {
      * is empty
      */
     zrandmember(key: RedisClient.KeyLike): Promise<string | null>;
+
+    /**
+     * Get one or multiple random members from a sorted set
+     * @param key The sorted set key
+     * @returns Promise that resolves with a random member, or null if the set
+     * is empty
+     */
+    zrandmember(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
+
+    /**
+     * Get one or multiple random members from a sorted set, with scores
+     * @param key The sorted set key
+     * @returns Promise that resolves with a random member, or null if the set
+     * is empty
+     */
+    zrandmember(key: RedisClient.KeyLike, count: number, withscores: "WITHSCORES"): Promise<[string, number][] | null>;
 
     /**
      * Return a range of members in a sorted set with their scores
@@ -2362,6 +2420,22 @@ declare module "bun" {
     ): Promise<number>;
 
     /**
+     * Determine the index of a member in a sorted set
+     * @param key The sorted set key
+     * @param member The member to find
+     * @returns Promise that resolves with the rank (index) of the member, or null if the member doesn't exist
+     */
+    zrank(key: RedisClient.KeyLike, member: string): Promise<number | null>;
+
+    /**
+     * Determine the index of a member in a sorted set, with scores ordered from high to low
+     * @param key The sorted set key
+     * @param member The member to find
+     * @returns Promise that resolves with the rank (index) of the member, or null if the member doesn't exist
+     */
+    zrevrank(key: RedisClient.KeyLike, member: string): Promise<number | null>;
+
+    /**
      * Get the values of all specified keys
      * @param keys The keys to get
      * @returns Promise that resolves with an array of values, with null for
@@ -2450,6 +2524,17 @@ declare module "bun" {
      * @returns Promise that resolves with the substring, or an empty string if the key doesn't exist
      */
     getrange(key: RedisClient.KeyLike, start: number, end: number): Promise<string>;
+
+    /**
+     * Get a substring of the string stored at a key
+     * @param key The key to retrieve from
+     * @param start The starting offset
+     * @param end The ending offset
+     * @returns Promise that resolves with the substring value
+     *
+     * @deprecated Use {@link getrange} instead. SUBSTR is a deprecated Redis command.
+     */
+    substr(key: RedisClient.KeyLike, start: number, end: number): Promise<string>;
 
     /**
      * Overwrite part of a string at key starting at the specified offset

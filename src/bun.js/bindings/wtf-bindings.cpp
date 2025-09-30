@@ -183,7 +183,7 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-extern "C" double WTF__parseISODate(const LChar* string, size_t length)
+extern "C" double WTF__parseES5Date(const LChar* string, size_t length)
 {
     bool isLocalTime;
     return WTF::parseES5Date({ string, length }, isLocalTime);

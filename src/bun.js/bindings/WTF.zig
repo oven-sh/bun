@@ -25,7 +25,7 @@ pub const WTF = struct {
     extern fn WTF__parseISODate(bytes: [*]const u8, length: usize) f64;
 
     // 2000-01-01T00:00:00.000Z -> 946684800000 (ms)
-    pub fn parseISODate(buf: []const u8) !f64 {
+    pub fn parseES5Date(buf: []const u8) !f64 {
         jsc.markBinding(@src());
 
         if (buf.len == 0)

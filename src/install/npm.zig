@@ -2578,7 +2578,7 @@ pub const PackageManifest = struct {
                             .e_object => |time_obj_obj| {
                                 if (time_obj_obj.get(version_name)) |time_str| {
                                     if (time_str.asString(allocator)) |version_str| {
-                                        const parse_result = bun.jsc.wtf.parseISODate(version_str) catch null;
+                                        const parse_result = bun.jsc.wtf.parseES5Date(version_str) catch null;
                                         if (parse_result) |ms| {
                                             const seconds: u32 = @intFromFloat(ms / @as(f64, @floatFromInt(std.time.ms_per_s)));
                                             package_version.publish_timestamp = seconds;

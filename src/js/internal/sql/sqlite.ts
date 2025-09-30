@@ -23,7 +23,7 @@ const enum SQLCommand {
   update = 1,
   updateSet = 2,
   where = 3,
-  whereIn = 4,
+  in = 4,
   none = -1,
 }
 
@@ -40,7 +40,7 @@ function commandToString(command: SQLCommand): string {
     case SQLCommand.updateSet:
     case SQLCommand.update:
       return "UPDATE";
-    case SQLCommand.whereIn:
+    case SQLCommand.in:
     case SQLCommand.where:
       return "WHERE";
     default:
@@ -132,6 +132,9 @@ function parseSQLQuery(query: string): SQLParsedInfo {
             firstKeyword = "EXPLAIN";
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
             firstKeyword = "WITH";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+            firstKeyword = "IN";
+            command = SQLCommand.in;
           }
         } else {
           // After we have the first keyword, look for other keywords
@@ -142,9 +145,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
               command = SQLCommand.updateSet;
             }
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-            if (command === SQLCommand.where) {
-              command = SQLCommand.whereIn;
-            }
+            command = SQLCommand.in;
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
             hasReturning = true;
           }
@@ -210,6 +211,9 @@ function parseSQLQuery(query: string): SQLParsedInfo {
             firstKeyword = "EXPLAIN";
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
             firstKeyword = "WITH";
+          } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+            firstKeyword = "IN";
+            command = SQLCommand.in;
           }
         } else {
           // After we have the first keyword, look for other keywords
@@ -220,9 +224,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
               command = SQLCommand.updateSet;
             }
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-            if (command === SQLCommand.where) {
-              command = SQLCommand.whereIn;
-            }
+            command = SQLCommand.in;
           } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
             hasReturning = true;
           }
@@ -271,6 +273,9 @@ function parseSQLQuery(query: string): SQLParsedInfo {
         firstKeyword = "EXPLAIN";
       } else if (matchAsciiIgnoreCase(query, tokenStart, i, "with")) {
         firstKeyword = "WITH";
+      } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
+        firstKeyword = "IN";
+        command = SQLCommand.in;
       }
     } else {
       // After we have the first keyword, look for other keywords
@@ -281,9 +286,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
           command = SQLCommand.updateSet;
         }
       } else if (matchAsciiIgnoreCase(query, tokenStart, i, "in")) {
-        if (command === SQLCommand.where) {
-          command = SQLCommand.whereIn;
-        }
+        command = SQLCommand.in;
       } else if (matchAsciiIgnoreCase(query, tokenStart, i, "returning")) {
         hasReturning = true;
       }
@@ -489,7 +492,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
 
     let binding_values: any[] = [];
     let query = "";
-    let cachedCommand: SQLCommand | null = null;
 
     for (let i = 0; i < str_len; i++) {
       const string = strings[i];
@@ -510,11 +512,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
             }
             binding_idx += sub_values.length;
           } else if (value instanceof SQLHelper) {
-            if (cachedCommand === null) {
-              const { command } = parseSQLQuery(query);
-              cachedCommand = command;
-            }
-            const command = cachedCommand;
+            const { command } = parseSQLQuery(query);
 
             // only selectIn, insert, update, updateSet are allowed
             if (command === SQLCommand.none || command === SQLCommand.where) {
@@ -522,7 +520,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
             }
             const { columns, value: items } = value as SQLHelper;
             const columnCount = columns.length;
-            if (columnCount === 0 && command !== SQLCommand.whereIn) {
+            if (columnCount === 0 && command !== SQLCommand.in) {
               throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
             }
             const lastColumnIndex = columns.length - 1;
@@ -579,7 +577,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }
-            } else if (command === SQLCommand.whereIn) {
+            } else if (command === SQLCommand.in) {
               // SELECT * FROM users WHERE id IN (${sql([1, 2, 3])})
               if (!$isArray(items)) {
                 throw new SyntaxError("An array of values is required for WHERE IN helper");
@@ -637,6 +635,10 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
               for (let i = 0; i < columnCount; i++) {
                 const column = columns[i];
                 const columnValue = item[column];
+                if (typeof columnValue === "undefined") {
+                  // skip undefined values, this is the expected behavior in JS
+                  continue;
+                }
                 // SQLite uses ? for placeholders
                 query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
                 if (typeof columnValue === "undefined") {
@@ -645,7 +647,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
                   binding_values.push(columnValue);
                 }
               }
-              query += " "; // the user can add where clause after this
+              if (query.endsWith(", ")) {
+                // we got an undefined value at the end, lets remove the last comma
+                query = query.substring(0, query.length - 2);
+              }
+              if (query.endsWith("SET ")) {
+                throw new SyntaxError("Update needs to have at least one column");
+              }
+              // the user can add where clause after this
+              query += " ";
             }
           } else {
             // SQLite uses ? for placeholders

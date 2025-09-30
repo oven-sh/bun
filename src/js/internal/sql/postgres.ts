@@ -354,7 +354,7 @@ const enum SQLCommand {
   update = 1,
   updateSet = 2,
   where = 3,
-  whereIn = 4,
+  in = 4,
   none = -1,
 }
 export type { SQLCommand };
@@ -366,7 +366,7 @@ function commandToString(command: SQLCommand): string {
     case SQLCommand.updateSet:
     case SQLCommand.update:
       return "UPDATE";
-    case SQLCommand.whereIn:
+    case SQLCommand.in:
     case SQLCommand.where:
       return "WHERE";
     default:
@@ -381,7 +381,8 @@ function detectCommand(query: string): SQLCommand {
   let token = "";
   let command = SQLCommand.none;
   let quoted = false;
-  for (let i = 0; i < text_len; i++) {
+  // we need to reverse search so we find the closest command to the parameter
+  for (let i = text_len - 1; i >= 0; i--) {
     const char = text[i];
     switch (char) {
       case " ": // Space
@@ -392,37 +393,19 @@ function detectCommand(query: string): SQLCommand {
       case "\v": {
         switch (token) {
           case "insert": {
-            if (command === SQLCommand.none) {
-              return SQLCommand.insert;
-            }
-            return command;
+            return SQLCommand.insert;
           }
           case "update": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.update;
-              token = "";
-              continue; // try to find SET
-            }
-            return command;
+            return SQLCommand.update;
           }
           case "where": {
-            command = SQLCommand.where;
-            token = "";
-            continue; // try to find IN
+            return SQLCommand.where;
           }
           case "set": {
-            if (command === SQLCommand.update) {
-              command = SQLCommand.updateSet;
-              token = "";
-              continue; // try to find WHERE
-            }
-            return command;
+            return SQLCommand.updateSet;
           }
           case "in": {
-            if (command === SQLCommand.where) {
-              return SQLCommand.whereIn;
-            }
-            return command;
+            return SQLCommand.in;
           }
           default: {
             token = "";
@@ -437,40 +420,27 @@ function detectCommand(query: string): SQLCommand {
           continue;
         }
         if (!quoted) {
-          token += char;
+          token = char + token;
         }
       }
     }
   }
   if (token) {
-    switch (command) {
-      case SQLCommand.none: {
-        switch (token) {
-          case "insert":
-            return SQLCommand.insert;
-          case "update":
-            return SQLCommand.update;
-          case "where":
-            return SQLCommand.where;
-          default:
-            return SQLCommand.none;
-        }
-      }
-      case SQLCommand.update: {
-        if (token === "set") {
-          return SQLCommand.updateSet;
-        }
+    switch (token) {
+      case "insert":
+        return SQLCommand.insert;
+      case "update":
         return SQLCommand.update;
-      }
-      case SQLCommand.where: {
-        if (token === "in") {
-          return SQLCommand.whereIn;
-        }
+      case "where":
         return SQLCommand.where;
-      }
+      case "set":
+        return SQLCommand.updateSet;
+      case "in":
+        return SQLCommand.in;
+      default:
+        return SQLCommand.none;
     }
   }
-
   return command;
 }
 
@@ -1268,11 +1238,11 @@ class PostgresAdapter
             const command = detectCommand(query);
             // only selectIn, insert, update, updateSet are allowed
             if (command === SQLCommand.none || command === SQLCommand.where) {
-              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
+              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and IN commands");
             }
             const { columns, value: items } = value as SQLHelper;
             const columnCount = columns.length;
-            if (columnCount === 0 && command !== SQLCommand.whereIn) {
+            if (columnCount === 0 && command !== SQLCommand.in) {
               throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
             }
             const lastColumnIndex = columns.length - 1;
@@ -1302,8 +1272,6 @@ class PostgresAdapter
                     query += `$${binding_idx++}${k < lastColumnIndex ? ", " : ""}`;
                     if (typeof columnValue === "undefined") {
                       binding_values.push(null);
-                    } else if ($isArray(columnValue)) {
-                      binding_values.push(serializeArray(columnValue, "JSON"));
                     } else {
                       binding_values.push(columnValue);
                     }
@@ -1323,19 +1291,13 @@ class PostgresAdapter
                   query += `$${binding_idx++}${j < lastColumnIndex ? ", " : ""}`;
                   if (typeof columnValue === "undefined") {
                     binding_values.push(null);
-                  } else if ($isArray(columnValue)) {
-                    // Handle array values in single fields:
-                    // - JSON/JSONB fields can be an array
-                    // - For dedicated SQL array field types (e.g., INTEGER[], TEXT[]),
-                    //   users should use the sql.array() helper instead
-                    binding_values.push(serializeArray(columnValue, "JSON"));
                   } else {
                     binding_values.push(columnValue);
                   }
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }
-            } else if (command === SQLCommand.whereIn) {
+            } else if (command === SQLCommand.in) {
               // SELECT * FROM users WHERE id IN (${sql([1, 2, 3])})
               if (!$isArray(items)) {
                 throw new SyntaxError("An array of values is required for WHERE IN helper");
@@ -1360,8 +1322,6 @@ class PostgresAdapter
 
                     if (typeof value_from_key === "undefined") {
                       binding_values.push(null);
-                    } else if ($isArray(value_from_key)) {
-                      binding_values.push(serializeArray(value_from_key, "JSON"));
                     } else {
                       binding_values.push(value_from_key);
                     }
@@ -1370,8 +1330,6 @@ class PostgresAdapter
                   const value = items[j];
                   if (typeof value === "undefined") {
                     binding_values.push(null);
-                  } else if ($isArray(value)) {
-                    binding_values.push(serializeArray(value, "JSON"));
                   } else {
                     binding_values.push(value);
                   }
@@ -1393,21 +1351,27 @@ class PostgresAdapter
               if (command === SQLCommand.update) {
                 query += " SET ";
               }
+              let hasValues = false;
               for (let i = 0; i < columnCount; i++) {
                 const column = columns[i];
                 const columnValue = item[column];
-                query += `${this.escapeIdentifier(column)} = $${binding_idx++}${i < lastColumnIndex ? ", " : ""}`;
                 if (typeof columnValue === "undefined") {
-                  binding_values.push(null);
-                } else {
-                  if ($isArray(columnValue)) {
-                    binding_values.push(serializeArray(columnValue, "JSON"));
-                  } else {
-                    binding_values.push(columnValue);
-                  }
+                  // skip undefined values, this is the expected behavior in JS
+                  continue;
                 }
+                hasValues = true;
+                query += `${this.escapeIdentifier(column)} = $${binding_idx++}${i < lastColumnIndex ? ", " : ""}`;
+                binding_values.push(columnValue);
               }
-              query += " "; // the user can add where clause after this
+              if (query.endsWith(", ")) {
+                // we got an undefined value at the end, lets remove the last comma
+                query = query.substring(0, query.length - 2);
+              }
+              if (!hasValues) {
+                throw new SyntaxError("Update needs to have at least one column");
+              }
+              // the user can add where clause after this
+              query += " ";
             }
           } else if (value instanceof SQLArrayParameter) {
             query += `$${binding_idx++}::${value.arrayType}[] `;
@@ -1417,11 +1381,7 @@ class PostgresAdapter
             if (typeof value === "undefined") {
               binding_values.push(null);
             } else {
-              if ($isArray(value)) {
-                binding_values.push(serializeArray(value, "JSON"));
-              } else {
-                binding_values.push(value);
-              }
+              binding_values.push(value);
             }
           }
         }

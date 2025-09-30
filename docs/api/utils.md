@@ -610,13 +610,12 @@ Compresses a `Uint8Array` using the Zstandard algorithm.
 const buf = Buffer.from("hello".repeat(100));
 
 // Synchronous
-const compressed = Bun.zstdCompressSync(buf);
+const compressedSync = Bun.zstdCompressSync(buf);
 // Asynchronous
-const compressed = await Bun.zstdCompress(buf);
+const compressedAsync = await Bun.zstdCompress(buf);
 
 // With compression level (1-22, default: 3)
-const compressed = Bun.zstdCompressSync(buf, { level: 6 });
-```
+const compressedLevel = Bun.zstdCompressSync(buf, { level: 6 });
 
 ## `Bun.zstdDecompress()` / `Bun.zstdDecompressSync()`
 
@@ -627,14 +626,13 @@ const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.zstdCompressSync(buf);
 
 // Synchronous
-const decompressed = Bun.zstdDecompressSync(compressed);
+const decompressedSync = Bun.zstdDecompressSync(compressed);
 // Asynchronous
-const decompressed = await Bun.zstdDecompress(compressed);
+const decompressedAsync = await Bun.zstdDecompress(compressed);
 
 const dec = new TextDecoder();
-dec.decode(decompressed);
+dec.decode(decompressedSync);
 // => "hellohellohello..."
-```
 
 ## `Bun.inspect()`
 

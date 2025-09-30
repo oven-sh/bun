@@ -336,6 +336,13 @@ describe("web worker", () => {
       hasName: true,
     });
   });
+
+  test("self.name defaults to empty string when not provided", async () => {
+    const worker = new Worker(new URL("worker-name-fixture.js", import.meta.url).href);
+    const result = await waitForWorkerResult(worker, null);
+    expect(result.name).toBe("");
+    expect(result.hasName).toBe(true);
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

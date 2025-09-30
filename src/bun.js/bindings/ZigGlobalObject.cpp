@@ -1058,9 +1058,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
 
-            if (!options.name.isEmpty()) {
-                globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), jsString(vm, options.name), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
-            }
+            globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), jsString(vm, options.name), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
 
             // Ensure that the TerminationException singleton is constructed. Workers need this so
             // that we can request their termination from another thread. For the main thread, we

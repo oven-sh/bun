@@ -228,6 +228,14 @@ $ bun --smol run index.tsx
 
 This causes the garbage collector to run more frequently, which can slow down execution. However, it can be useful in environments with limited memory. Bun automatically adjusts the garbage collector's heap size based on the available memory (accounting for cgroups and other memory limits) with and without the `--smol` flag, so this is mostly useful for cases where you want to make the heap size grow more slowly.
 
+## `--user-agent`
+
+**`--user-agent <string>`** - Set User-Agent header for all `fetch()` requests:
+
+```bash
+bun --user-agent "MyBot/1.0" run index.tsx
+```
+
 ## Resolution order
 
 Absolute paths and paths starting with `./` or `.\\` are always executed as source files. Unless using `bun run`, running a file with an allowed extension will prefer the file over a package.json script.

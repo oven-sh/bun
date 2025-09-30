@@ -1275,6 +1275,7 @@ pub const JSValkeyClient = struct {
     pub const hrandfield = fns.hrandfield;
     pub const hscan = fns.hscan;
     pub const hset = fns.hset;
+    pub const hsetnx = fns.hsetnx;
     pub const hstrlen = fns.hstrlen;
     pub const hvals = fns.hvals;
     pub const incr = fns.incr;

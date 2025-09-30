@@ -333,6 +333,15 @@ declare module "bun" {
     ): Promise<number>;
 
     /**
+     * Set the value of a hash field, only if the field does not exist
+     * @param key The hash key
+     * @param field The field to set
+     * @param value The value to set
+     * @returns Promise that resolves with true if field was set, false if field already exists
+     */
+    hsetnx(key: RedisClient.KeyLike, field: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<boolean>;
+
+    /**
      * Set multiple hash fields to multiple values
      *
      * @deprecated Use {@link hset} instead. Since Redis 4.0.0, `HSET` supports multiple field-value pairs.

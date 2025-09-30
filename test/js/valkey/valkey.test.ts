@@ -4125,6 +4125,23 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(value99).toBe("value99");
       });
 
+      test("should set hash field only if it doesn't exist using hsetnx", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        const result1 = await redis.hsetnx(key, "name", "John");
+        expect(result1).toBe(true);
+
+        const result2 = await redis.hsetnx(key, "name", "Jane");
+        expect(result2).toBe(false);
+
+        const value = await redis.hget(key, "name");
+        expect(value).toBe("John");
+
+        const result3 = await redis.hsetnx(key, "age", "30");
+        expect(result3).toBe(true);
+      });
+
       test("should delete hash fields using hdel", async () => {
         const redis = ctx.redis;
         const key = "user:" + randomUUIDv7().substring(0, 8);

@@ -648,6 +648,36 @@ pub const hdel = compile.@"(key: RedisKey, ...args: RedisKey[])"("hdel", "HDEL",
 pub const hrandfield = compile.@"(key: RedisKey, ...args: RedisKey[])"("hrandfield", "HRANDFIELD", "key", .not_subscriber).call;
 pub const hscan = compile.@"(key: RedisKey, ...args: RedisKey[])"("hscan", "HSCAN", "key", .not_subscriber).call;
 
+pub fn hsetnx(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    try requireNotSubscriber(this, "hsetnx");
+
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("hsetnx", "key", "string or buffer");
+    };
+    defer key.deinit();
+    const field = (try fromJS(globalObject, callframe.argument(1))) orelse {
+        return globalObject.throwInvalidArgumentType("hsetnx", "field", "string or buffer");
+    };
+    defer field.deinit();
+    const value = (try fromJS(globalObject, callframe.argument(2))) orelse {
+        return globalObject.throwInvalidArgumentType("hsetnx", "value", "string or buffer");
+    };
+    defer value.deinit();
+
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "HSETNX",
+            .args = .{ .args = &.{ key, field, value } },
+            .meta = .{ .return_as_bool = true },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send HSETNX command", err);
+    };
+    return promise.toJS();
+}
+
 pub fn hexists(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, "hexists");
 

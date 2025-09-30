@@ -1613,7 +1613,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     // That means even though this looks like the wrong thing to do,
     // we should be converting to latin1, not utf8.
     if (!encodedString.is8Bit()) {
-        std::span<LChar> ptr;
+        std::span<Latin1Character> ptr;
         unsigned length = encodedString.length();
         auto dest = WTF::String::tryCreateUninitialized(length, ptr);
         if (dest.isNull()) [[unlikely]] {

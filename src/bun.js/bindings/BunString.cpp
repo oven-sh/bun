@@ -92,10 +92,10 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return JSValue::encode(jsEmptyString(vm));
     }
     if (simdutf::validate_ascii(ptr, length)) {
-        return JSValue::encode(jsString(vm, WTF::String(std::span<const LChar>(reinterpret_cast<const LChar*>(ptr), length))));
+        return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(ptr), length });
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(ptr), length });
     EXCEPTION_ASSERT(str.isNull() == !!scope.exception());
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -369,7 +369,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(siz
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(size_t length)
 {
     ASSERT(length > 0);
-    std::span<LChar> ptr;
+    std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
@@ -391,7 +391,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(bytes), length });
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(bytes), length });
     if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
@@ -402,7 +402,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
-    std::span<LChar> ptr;
+    std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
@@ -417,7 +417,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const 
     ASSERT(length > 0);
     ASSERT_WITH_MESSAGE(simdutf::validate_utf16le(bytes, length), "This function only accepts ascii UTF16 strings");
     size_t outLength = simdutf::latin1_length_from_utf16(length);
-    std::span<LChar> ptr;
+    std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
     if (!impl) [[unlikely]] {
         return { BunStringTag::Dead };
@@ -452,7 +452,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromBytes(const char* by
 
 extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t length, bool isLatin1)
 {
-    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const LChar*>(bytes), length }) :
+    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const Latin1Character*>(bytes), length }) :
 
                                                  WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const char16_t*>(bytes), length });
 
@@ -461,7 +461,7 @@ extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t l
 
 extern "C" BunString BunString__createExternal(const char* bytes, size_t length, bool isLatin1, void* ctx, void (*callback)(void* arg0, void* arg1, size_t arg2))
 {
-    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(bytes), length }, ctx, callback) :
+    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(bytes), length }, ctx, callback) :
 
                                                  WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(bytes), length }, ctx, callback);
 
@@ -793,7 +793,7 @@ WTF::String BunString::transferToWTFString()
 }
 
 extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
-    const LChar* bytes,
+    const Latin1Character* bytes,
     size_t length)
 {
     ASSERT(length > 0);

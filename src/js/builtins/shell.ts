@@ -109,6 +109,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     #throws: boolean = true;
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
     #reject: (code: number, stdout: Buffer, stderr: Buffer) => void;
+    #interp: $ZigGeneratedClasses.ShellInterpreter | undefined = undefined;
+    #killSignal: number | undefined = undefined;
 
     constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
@@ -170,8 +172,24 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
         this.#hasRun = true;
 
         let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
+        this.#interp = interp;
         this.#args = undefined;
+
+        // If killed before starting, kill immediately
+        if (this.#killSignal !== undefined) {
+          interp.kill(this.#killSignal);
+        }
+
         interp.run();
+      }
+    }
+
+    kill(signal?: number): void {
+      const killSignal = signal ?? 9;
+      if (this.#interp) {
+        this.#interp.kill(killSignal);
+      } else {
+        this.#killSignal = killSignal;
       }
     }
 

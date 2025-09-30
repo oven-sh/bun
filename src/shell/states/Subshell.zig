@@ -170,6 +170,10 @@ pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?jsc.SystemError) Yield {
     return this.parent.childDone(this, this.exit_code);
 }
 
+pub fn kill(this: *Subshell, signal: i32) void {
+    log("{} kill sig={d}", .{ this, signal });
+}
+
 pub fn deinit(this: *Subshell) void {
     this.base.shell.deinit();
     this.io.deref();

@@ -142,6 +142,23 @@ pub fn deinit(this: *Async) void {
     _ = this;
 }
 
+pub fn kill(this: *Async, signal: i32) void {
+    log("{} kill sig={d}", .{ this, signal });
+    if (this.state == .exec) {
+        if (this.state.exec.child) |child| {
+            if (child.ptr.is(Cmd)) {
+                child.as(Cmd).kill(signal);
+            } else if (child.ptr.is(Pipeline)) {
+                child.as(Pipeline).kill(signal);
+            } else if (child.ptr.is(If)) {
+                child.as(If).kill(signal);
+            } else if (child.ptr.is(CondExpr)) {
+                child.as(CondExpr).kill(signal);
+            }
+        }
+    }
+}
+
 pub fn actuallyDeinit(this: *Async) void {
     this.io.deref();
     bun.destroy(this);

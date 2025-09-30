@@ -213,6 +213,23 @@ pub fn isSubproc(this: *Cmd) bool {
     return this.exec == .subproc;
 }
 
+pub fn kill(this: *Cmd, signal: i32) void {
+    log("Cmd(0x{x}, {s}) kill sig={d}", .{ @intFromPtr(this), @tagName(this.exec), signal });
+    switch (this.exec) {
+        .subproc => |*subproc| {
+            if (!subproc.child.hasExited()) {
+                _ = subproc.child.tryKill(signal);
+            }
+        },
+        .bltn => |*bltn| {
+            if (bltn.exit_code == null) {
+                _ = bltn.done(@as(ExitCode, @intCast(128 + @as(u8, @intCast(signal)))));
+            }
+        },
+        .none => {},
+    }
+}
+
 /// If starting a command results in an error (failed to find executable in path for example)
 /// then it should write to the stderr of the entire shell script process
 pub fn writeFailingError(this: *Cmd, comptime fmt: []const u8, args: anytype) Yield {

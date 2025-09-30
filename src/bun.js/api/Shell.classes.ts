@@ -23,6 +23,10 @@ export default [
         fn: "getStarted",
         length: 0,
       },
+      kill: {
+        fn: "killFromJS",
+        length: 1,
+      },
     },
   }),
 ];

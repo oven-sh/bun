@@ -148,6 +148,10 @@ pub fn next(this: *If) Yield {
     return this.parent.childDone(this, 0);
 }
 
+pub fn kill(this: *If, signal: i32) void {
+    log("{} kill sig={d}", .{ this, signal });
+}
+
 pub fn deinit(this: *If) void {
     log("{} deinit", .{this});
     this.io.deref();

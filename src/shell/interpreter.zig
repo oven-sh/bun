@@ -271,10 +271,12 @@ pub const Interpreter = struct {
     flags: packed struct(u8) {
         done: bool = false,
         quiet: bool = false,
-        __unused: u6 = 0,
+        killed: bool = false,
+        __unused: u5 = 0,
     } = .{},
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
+    root_script: ?*Script = null,
 
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
 
@@ -1074,12 +1076,23 @@ pub const Interpreter = struct {
     }
 
     pub fn run(this: *ThisInterpreter) !Maybe(void) {
-        log("Interpreter(0x{x}) run", .{@intFromPtr(this)});
+        log("Interpreter(0x{x}) run killed={}", .{ @intFromPtr(this), this.flags.killed });
+
+        // Check if killed before starting
+        if (this.flags.killed) {
+            log("Interpreter(0x{x}) was killed before starting, finishing immediately", .{@intFromPtr(this)});
+            incrPendingActivityFlag(&this.has_pending_activity);
+            const exit_code = this.exit_code orelse 137; // Default to SIGKILL
+            _ = this.finish(exit_code);
+            return .success;
+        }
+
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
         }
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
+        this.root_script = root;
         this.started.store(true, .seq_cst);
         root.start().run();
 
@@ -1087,8 +1100,15 @@ pub const Interpreter = struct {
     }
 
     pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-        log("Interpreter(0x{x}) runFromJS", .{@intFromPtr(this)});
         _ = callframe; // autofix
+
+        // Check if killed before starting
+        if (this.flags.killed) {
+            incrPendingActivityFlag(&this.has_pending_activity);
+            const exit_code = this.exit_code orelse 137; // Default to SIGKILL
+            _ = this.finish(exit_code);
+            return .js_undefined;
+        }
 
         if (this.setupIOBeforeRun().asErr()) |e| {
             defer this.deinitEverything();
@@ -1098,6 +1118,7 @@ pub const Interpreter = struct {
         incrPendingActivityFlag(&this.has_pending_activity);
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
+        this.root_script = root;
         this.started.store(true, .seq_cst);
         root.start().run();
         if (globalThis.hasException()) return error.JSError;
@@ -1128,8 +1149,12 @@ pub const Interpreter = struct {
         if (child.ptr.is(Script)) {
             const script = child.as(Script);
             script.deinitFromInterpreter();
-            this.exit_code = exit_code;
-            if (this.async_commands_executing == 0) return this.finish(exit_code);
+
+            // Use the kill exit code if we were killed, otherwise use the script's exit code
+            const final_exit_code = if (this.flags.killed) (this.exit_code orelse exit_code) else exit_code;
+            this.exit_code = final_exit_code;
+
+            if (this.async_commands_executing == 0) return this.finish(final_exit_code);
             return .suspended;
         }
         @panic("Bad child");
@@ -1271,6 +1296,33 @@ pub const Interpreter = struct {
         _ = callframe; // autofix
 
         return jsc.JSValue.jsBoolean(this.started.load(.seq_cst));
+    }
+
+    pub fn killFromJS(this: *ThisInterpreter, _: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const sig_arg = callframe.argument(0);
+        const signal: i32 = if (sig_arg.isNumber()) sig_arg.to(i32) else @intFromEnum(bun.SignalCode.SIGKILL);
+
+        // If already done or killed, do nothing
+        if (this.flags.done or this.flags.killed) {
+            return .js_undefined;
+        }
+
+        // Mark as killed and set exit code
+        this.flags.killed = true;
+        const exit_code: ExitCode = 128 + @as(u8, @intCast(signal));
+        this.exit_code = exit_code;
+
+        // If not started yet, it will check flags.killed when it starts and finish immediately
+        if (!this.started.load(.seq_cst)) {
+            return .js_undefined;
+        }
+
+        // Kill all active processes/builtins in the execution tree
+        if (this.root_script) |root| {
+            root.kill(signal);
+        }
+
+        return .js_undefined;
     }
 
     pub fn getBufferedStdout(this: *ThisInterpreter, globalThis: *JSGlobalObject) jsc.JSValue {

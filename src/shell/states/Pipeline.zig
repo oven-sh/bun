@@ -260,6 +260,26 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
     return .suspended;
 }
 
+pub fn kill(this: *Pipeline, signal: i32) void {
+    log("Pipeline(0x{x}) kill sig={d}", .{ @intFromPtr(this), signal });
+    if (this.cmds) |cmds| {
+        for (cmds) |*cmd_or_result| {
+            if (cmd_or_result.* == .cmd) {
+                const cmd = cmd_or_result.cmd;
+                if (cmd.is(Cmd)) {
+                    cmd.as(Cmd).kill(signal);
+                } else if (cmd.is(If)) {
+                    cmd.as(If).kill(signal);
+                } else if (cmd.is(CondExpr)) {
+                    cmd.as(CondExpr).kill(signal);
+                } else if (cmd.is(Subshell)) {
+                    cmd.as(Subshell).kill(signal);
+                }
+            }
+        }
+    }
+}
+
 pub fn deinit(this: *Pipeline) void {
     // If commands was zero then we didn't allocate anything
     if (this.cmds == null) return;

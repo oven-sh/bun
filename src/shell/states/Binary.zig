@@ -141,6 +141,27 @@ pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) Yield {
     return this.parent.childDone(this, exit_code);
 }
 
+pub fn kill(this: *Binary, signal: i32) void {
+    log("Binary(0x{x}) kill sig={d}", .{ @intFromPtr(this), signal });
+    if (this.currently_executing) |child| {
+        if (child.ptr.is(Cmd)) {
+            child.as(Cmd).kill(signal);
+        } else if (child.ptr.is(Pipeline)) {
+            child.as(Pipeline).kill(signal);
+        } else if (child.ptr.is(Binary)) {
+            child.as(Binary).kill(signal);
+        } else if (child.ptr.is(Async)) {
+            child.as(Async).kill(signal);
+        } else if (child.ptr.is(Subshell)) {
+            child.as(Subshell).kill(signal);
+        } else if (child.ptr.is(If)) {
+            child.as(If).kill(signal);
+        } else if (child.ptr.is(CondExpr)) {
+            child.as(CondExpr).kill(signal);
+        }
+    }
+}
+
 pub fn deinit(this: *Binary) void {
     if (this.currently_executing) |child| {
         child.deinit();

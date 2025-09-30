@@ -616,6 +616,7 @@ const compressedAsync = await Bun.zstdCompress(buf);
 
 // With compression level (1-22, default: 3)
 const compressedLevel = Bun.zstdCompressSync(buf, { level: 6 });
+```
 
 ## `Bun.zstdDecompress()` / `Bun.zstdDecompressSync()`
 

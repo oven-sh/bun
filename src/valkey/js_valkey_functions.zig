@@ -528,14 +528,30 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
     };
     args.appendAssumeCapacity(key);
 
-    for (args_view[1..]) |arg| {
-        if (arg.isUndefinedOrNull()) {
-            break;
+    const second_arg = callframe.argument(1);
+    if (second_arg.isArray()) {
+        const array_len = try second_arg.getLength(globalObject);
+        if (array_len == 0) {
+            return globalObject.throw("HMGET requires at least one field", .{});
         }
-        const field = (try fromJS(globalObject, arg)) orelse {
-            return globalObject.throwInvalidArgumentType("hmget", "field", "string or buffer");
-        };
-        args.appendAssumeCapacity(field);
+
+        var array_iter = try second_arg.arrayIterator(globalObject);
+        while (try array_iter.next()) |element| {
+            const field = (try fromJS(globalObject, element)) orelse {
+                return globalObject.throwInvalidArgumentType("hmget", "field", "string or buffer");
+            };
+            try args.append(field);
+        }
+    } else {
+        for (args_view[1..]) |arg| {
+            if (arg.isUndefinedOrNull()) {
+                break;
+            }
+            const field = (try fromJS(globalObject, arg)) orelse {
+                return globalObject.throwInvalidArgumentType("hmget", "field", "string or buffer");
+            };
+            try args.append(field);
+        }
     }
 
     // Send HMGET command

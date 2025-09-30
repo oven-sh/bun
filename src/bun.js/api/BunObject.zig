@@ -1009,7 +1009,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
             &config,
             &args,
             .{
-                .allow_bake_config = bun.FeatureFlags.bake() and callframe.isFromBunMain(globalObject.vm()),
+                .allow_bake_config = bun.FeatureFlags.bake(),
                 .is_fetch_required = true,
                 .has_user_routes = false,
             },
@@ -1276,6 +1276,7 @@ pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
+
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.WebCore.S3Client.js.getConstructor(globalThis);
 }
@@ -1294,7 +1295,9 @@ pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, c
 }
 
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    var valkey = jsc.API.Valkey.createNoJs(globalThis, &.{.js_undefined}) catch |err| {
+    const SubscriptionCtx = @import("../../valkey/js_valkey.zig").SubscriptionCtx;
+
+    var valkey = jsc.API.Valkey.createNoJsNoPubsub(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {
             _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
             return .zero;
@@ -1305,6 +1308,13 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
     const as_js = valkey.toJS(globalThis);
 
     valkey.this_value = jsc.JSRef.initWeak(as_js);
+    valkey._subscription_ctx = SubscriptionCtx.init(valkey) catch |err| {
+        if (err != error.JSError) {
+            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
+            return .zero;
+        }
+        return .zero;
+    };
 
     return as_js;
 }

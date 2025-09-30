@@ -52,6 +52,16 @@ pub const JSValue = enum(i64) {
         return jsc.JSObject.getIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__isJSXElement(JSValue, *JSGlobalObject) bool;
+    pub fn isJSXElement(this: JSValue, globalThis: *jsc.JSGlobalObject) JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(
+            globalThis,
+            @src(),
+            JSC__JSValue__isJSXElement,
+            .{ this, globalThis },
+        );
+    }
+
     extern fn JSC__JSValue__getDirectIndex(JSValue, *JSGlobalObject, u32) JSValue;
     pub fn getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
@@ -324,6 +334,13 @@ pub const JSValue = enum(i64) {
         if (comptime bun.Environment.isDebug)
             jsc.markBinding(@src());
         JSC__JSValue__putBunString(value, global, key, result);
+    }
+
+    extern "c" fn JSC__JSValue__upsertBunStringArray(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) JSValue;
+
+    /// Put key/val pair into `obj`. If `key` is already present on the object, create an array for the values.
+    pub fn putBunStringOneOrArray(obj: JSValue, global: *JSGlobalObject, key: *const bun.String, value: jsc.JSValue) bun.JSError!JSValue {
+        return fromJSHostCall(global, @src(), JSC__JSValue__upsertBunStringArray, .{ obj, global, key, value });
     }
 
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: jsc.JSValue) void {
@@ -1110,12 +1127,10 @@ pub const JSValue = enum(i64) {
         return bun.String.fromJS(this, globalObject);
     }
 
-    extern fn JSC__JSValue__toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool;
-
     /// this: RegExp value
     /// other: string value
-    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
-        return JSC__JSValue__toMatch(this, global, other);
+    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) !bool {
+        return bun.cpp.JSC__JSValue__toMatch(this, global, other);
     }
 
     extern fn JSC__JSValue__asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;

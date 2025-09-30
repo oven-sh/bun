@@ -23,7 +23,7 @@ test/js/node/test/parallel/test-require-dot.js
 test/js/node/test/parallel/test-util-promisify-custom-names.mjs
 test/js/node/test/parallel/test-whatwg-readablestream.mjs
 test/js/node/test/parallel/test-worker.mjs
-test/js/node/test/system-ca/test-native-root-certs.test.mjs 
+test/js/node/test/system-ca/test-native-root-certs.test.mjs
 test/js/node/events/event-emitter.test.ts
 test/js/node/module/node-module-module.test.js
 test/js/node/process/call-constructor.test.js
@@ -44,6 +44,11 @@ test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/bun/resolve/resolve.test.ts
 test/cli/install/bunx.test.ts
 test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js
+test/integration/vite-build/vite-build.test.ts
+test/bundler/esbuild/default.test.ts
+test/cli/install/bun-repl.test.ts
+test/js/third_party/astro/astro-post.test.js
+test/regression/issue/ctrl-c.test.ts
 
 # trips asan on my macos test machine
 test/js/node/test/parallel/test-fs-watch.js
@@ -139,14 +144,3 @@ vendor/elysia/test/core/dynamic.test.ts
 vendor/elysia/test/lifecycle/error.test.ts
 vendor/elysia/test/validator/body.test.ts
 vendor/elysia/test/ws/message.test.ts
-
-
-test/regression/issue/ctrl-c.test.ts
-test/cli/install/bun-run.test.ts
-test/js/node/http2/node-http2.test.js
-test/js/third_party/astro/astro-post.test.js
-test/cli/hot/hot.test.ts
-test/cli/install/bun-repl.test.ts
-test/bundler/esbuild/default.test.ts
-test/integration/vite-build/vite-build.test.ts
-test/cli/inspect/HTTPServerAgent.test.ts

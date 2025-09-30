@@ -44,6 +44,14 @@ else()
   set(CONFIGURE_DEPENDS "")
 endif()
 
+set(LLVM_ZIG_CODEGEN_THREADS 0)
+# This makes the build slower, so we turn it off for now.
+# if (DEBUG)
+#   include(ProcessorCount)
+#   ProcessorCount(CPU_COUNT)
+#   set(LLVM_ZIG_CODEGEN_THREADS ${CPU_COUNT})
+# endif()
+
 # --- Dependencies ---
 
 set(BUN_DEPENDENCIES
@@ -578,7 +586,13 @@ if (TEST)
   set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)
   set(ZIG_STEPS test)
 else()
-  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+  if (LLVM_ZIG_CODEGEN_THREADS GREATER 1)
+    foreach(i RANGE ${LLVM_ZIG_CODEGEN_THREADS})
+      list(APPEND BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.${i}.o)
+    endforeach()
+  else()
+    set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+  endif()
   set(ZIG_STEPS obj)
 endif()
 
@@ -622,6 +636,7 @@ register_command(
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Denable_valgrind=$<IF:$<BOOL:${ENABLE_VALGRIND}>,true,false>
+      -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}

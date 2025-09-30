@@ -70,7 +70,8 @@ pub const Entry = struct {
     ) !Entry {
         return Entry{
             .serialized_data = try command.serialize(allocator),
-            .meta = command.meta.check(command),
+            .meta = command.meta, // TODO(markovejnovic): We should be calling .check against command here but due
+            // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             .promise = promise,
         };
     }
@@ -84,7 +85,8 @@ pub const Meta = packed struct(u8) {
     return_as_bool: bool = false,
     supports_auto_pipelining: bool = true,
     return_as_buffer: bool = false,
-    _padding: u5 = 0,
+    subscription_request: bool = false,
+    _padding: u4 = 0,
 
     const not_allowed_autopipeline_commands = bun.ComptimeStringMap(void, .{
         .{"AUTH"},

@@ -1507,20 +1507,34 @@ declare module "bun" {
     /**
      * Remove and return members with the highest scores in a sorted set
      * @param key The sorted set key
+     * @returns Promise that resolves with either [member, score] or empty
+     * array if the set is empty
+     */
+    zpopmax(key: RedisClient.KeyLike): Promise<[string, number] | []>;
+
+    /**
+     * Remove and return members with the highest scores in a sorted set
+     * @param key The sorted set key
      * @param count Optional number of members to pop (default: 1)
+     * @returns Promise that resolves with an array of [member, score] tuples
+     */
+    zpopmax(key: RedisClient.KeyLike, count: number): Promise<Array<[string, number]>>;
+
+    /**
+     * Remove and return members with the lowest scores in a sorted set
+     * @param key The sorted set key
      * @returns Promise that resolves with array of [member, score] tuples, or
      * empty array if the set is empty
      */
-    zpopmax(key: RedisClient.KeyLike, count?: number): Promise<Array<[string, number]>>;
+    zpopmin(key: RedisClient.KeyLike): Promise<[string, number] | []>;
 
     /**
      * Remove and return members with the lowest scores in a sorted set
      * @param key The sorted set key
      * @param count Optional number of members to pop (default: 1)
-     * @returns Promise that resolves with array of [member, score] tuples, or
-     * empty array if the set is empty
+     * @returns Promise that resolves with an array of [member, score] tuples
      */
-    zpopmin(key: RedisClient.KeyLike, count?: number): Promise<[string, number][]>;
+    zpopmin(key: RedisClient.KeyLike, count: number): Promise<[string, number][]>;
 
     /**
      * Remove and return the member with the lowest score from one or more sorted sets, or block until one is available

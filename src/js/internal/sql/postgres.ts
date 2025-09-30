@@ -355,8 +355,6 @@ const enum SQLCommand {
   updateSet = 2,
   where = 3,
   in = 4,
-  anyOrSome = 5,
-  all = 6,
   none = -1,
 }
 export type { SQLCommand };

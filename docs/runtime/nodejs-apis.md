@@ -124,7 +124,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Missing `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
+🟡 APIs are implemented, but Node.js test suite does not pass yet for this module.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 

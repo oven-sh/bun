@@ -88,6 +88,9 @@ await redis.set("user:1:name", "Alice");
 // Get a key
 const name = await redis.get("user:1:name");
 
+// Get a key as Uint8Array
+const buffer = await redis.getBuffer("user:1:name");
+
 // Delete a key
 await redis.del("user:1:name");
 
@@ -131,6 +134,10 @@ await redis.hmset("user:123", [
 // Get multiple fields from a hash
 const userFields = await redis.hmget("user:123", ["name", "email"]);
 console.log(userFields); // ["Alice", "alice@example.com"]
+
+// Get single field from hash (returns value directly, null if missing)
+const userName = await redis.hget("user:123", "name");
+console.log(userName); // "Alice"
 
 // Increment a numeric field in a hash
 await redis.hincrby("user:123", "visits", 1);

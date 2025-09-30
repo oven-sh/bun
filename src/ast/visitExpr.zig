@@ -609,7 +609,8 @@ pub fn VisitExpr(
                                     p.delete_target = dot.data;
                                 }
 
-                                return p.visitExprInOut(dot, in);
+                                // don't call visitExprInOut on `dot` because we've already visited `target` above!
+                                return dot;
                             }
 
                             // Handle property rewrites to ensure things

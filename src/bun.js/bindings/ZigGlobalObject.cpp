@@ -2234,11 +2234,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
 }
 
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Jest__createTestPreloadObject(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Jest__testPreloadObject(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->lazyPreloadTestModuleObject());
-}
 extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->lazyTestModuleObject());
@@ -2874,14 +2869,6 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
-        });
-
-    m_lazyPreloadTestModuleObject.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            JSValue result = JSValue::decode(Bun__Jest__createTestPreloadObject(globalObject));
             init.set(result.toObject(globalObject));
         });
 
@@ -4136,12 +4123,14 @@ void GlobalObject::reload()
 {
     JSModuleLoader* moduleLoader = this->moduleLoader();
     auto& vm = this->vm();
-    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(
-        this,
-        Identifier::fromString(vm, "registry"_s)));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(this, Identifier::fromString(vm, "registry"_s)));
+    RETURN_IF_EXCEPTION(scope, );
 
     registry->clear(this);
+    RETURN_IF_EXCEPTION(scope, );
     this->requireMap()->clear(this);
+    RETURN_IF_EXCEPTION(scope, );
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
     // So we run the GC every other time.
@@ -4150,7 +4139,7 @@ void GlobalObject::reload()
     }
 }
 
-extern "C" void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     globalObject->reload();
@@ -4580,10 +4569,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
     } else if (handler == jsFunctionOnLoadObjectResultReject) {
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultReject;
-    } else if (handler == Bun__TestScope__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__onReject;
-    } else if (handler == Bun__TestScope__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__onResolve;
+    } else if (handler == Bun__TestScope__Describe2__bunTestThen) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
+    } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
     } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
     } else if (handler == Bun__BodyValueBufferer__onRejectStream) {

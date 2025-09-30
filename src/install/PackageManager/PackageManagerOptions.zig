@@ -77,9 +77,13 @@ security_scanner: ?[]const u8 = null,
 // Minimum release age in days (security feature)
 // Only install packages published at least N days ago
 minimal_age_gate: ?f32 = null,
-
 // Packages to exclude from minimum release age checking
 minimal_age_gate_excludes: ?[]const []const u8 = null,
+
+/// Override CPU architecture for optional dependencies filtering
+cpu: Npm.Architecture = Npm.Architecture.current,
+/// Override OS for optional dependencies filtering
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
 
 pub const PublishConfig = struct {
     access: ?Access = null,
@@ -606,6 +610,10 @@ pub fn load(
         if (cli.backend) |backend| {
             PackageInstall.supported_method = backend;
         }
+
+        // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+        this.cpu = cli.cpu;
+        this.os = cli.os;
 
         this.do.update_to_latest = cli.latest;
         this.do.recursive = cli.recursive;

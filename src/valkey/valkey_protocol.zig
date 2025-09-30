@@ -288,7 +288,7 @@ pub const RESPValue = union(RESPType) {
                     defer key_str.deref();
                     const js_value = try entry.value.toJSWithOptions(globalObject, options);
 
-                    js_obj.putMayBeIndex(globalObject, &key_str, js_value);
+                    try js_obj.putMayBeIndex(globalObject, &key_str, js_value);
                 }
                 return js_obj;
             },
@@ -654,6 +654,18 @@ pub const Attribute = struct {
         self.value.deinit(allocator);
         allocator.destroy(self.value);
     }
+};
+
+pub const SubscriptionPushMessage = enum(u2) {
+    message,
+    subscribe,
+    unsubscribe,
+
+    pub const map = bun.ComptimeStringMap(SubscriptionPushMessage, .{
+        .{ "message", .message },
+        .{ "subscribe", .subscribe },
+        .{ "unsubscribe", .unsubscribe },
+    });
 };
 
 const std = @import("std");

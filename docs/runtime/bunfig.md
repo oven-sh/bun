@@ -232,6 +232,23 @@ Set path where coverage reports will be saved. Please notice, that it works only
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
 
+### `test.concurrentTestGlob`
+
+Specify a glob pattern to automatically run matching test files with concurrent test execution enabled. Test files matching this pattern will behave as if the `--concurrent` flag was passed, running all tests within those files concurrently.
+
+```toml
+[test]
+concurrentTestGlob = "**/concurrent-*.test.ts"
+```
+
+This is useful for:
+
+- Gradually migrating test suites to concurrent execution
+- Running integration tests concurrently while keeping unit tests sequential
+- Separating fast concurrent tests from tests that require sequential execution
+
+The `--concurrent` CLI flag will override this setting when specified.
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.

@@ -1,5 +1,5 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
-import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import * as net from "node:net";
 import path from "path";
@@ -18,7 +18,7 @@ import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 
 if (isDockerEnabled()) {
-  describe("PostgreSQL tests", () => {
+  describe("PostgreSQL tests", async () => {
     let container: { port: number; host: string };
     let socketProxy: UnixDomainSocketProxy;
     let login: Bun.SQL.PostgresOrMySQLOptions;
@@ -27,55 +27,53 @@ if (isDockerEnabled()) {
     let login_scram: Bun.SQL.PostgresOrMySQLOptions;
     let options: Bun.SQL.PostgresOrMySQLOptions;
 
-    beforeAll(async () => {
-      const info = await dockerCompose.ensure("postgres_plain");
-      console.log("PostgreSQL container ready at:", info.host + ":" + info.ports[5432]);
-      container = {
-        port: info.ports[5432],
-        host: info.host,
-      };
-      process.env.DATABASE_URL = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    const info = await dockerCompose.ensure("postgres_plain");
+    console.log("PostgreSQL container ready at:", info.host + ":" + info.ports[5432]);
+    container = {
+      port: info.ports[5432],
+      host: info.host,
+    };
+    process.env.DATABASE_URL = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
-      // Create Unix socket proxy for PostgreSQL
-      socketProxy = await UnixDomainSocketProxy.create("PostgreSQL", container.host, container.port);
+    // Create Unix socket proxy for PostgreSQL
+    socketProxy = await UnixDomainSocketProxy.create("PostgreSQL", container.host, container.port);
 
-      login = {
-        username: "bun_sql_test",
-        host: container.host,
-        port: container.port,
-        path: socketProxy.path,
-      };
+    login = {
+      username: "bun_sql_test",
+      host: container.host,
+      port: container.port,
+      path: socketProxy.path,
+    };
 
-      login_domain_socket = {
-        username: "bun_sql_test",
-        host: container.host,
-        port: container.port,
-        path: socketProxy.path,
-      };
+    login_domain_socket = {
+      username: "bun_sql_test",
+      host: container.host,
+      port: container.port,
+      path: socketProxy.path,
+    };
 
-      login_md5 = {
-        username: "bun_sql_test_md5",
-        password: "bun_sql_test_md5",
-        host: container.host,
-        port: container.port,
-      };
+    login_md5 = {
+      username: "bun_sql_test_md5",
+      password: "bun_sql_test_md5",
+      host: container.host,
+      port: container.port,
+    };
 
-      login_scram = {
-        username: "bun_sql_test_scram",
-        password: "bun_sql_test_scram",
-        host: container.host,
-        port: container.port,
-      };
+    login_scram = {
+      username: "bun_sql_test_scram",
+      password: "bun_sql_test_scram",
+      host: container.host,
+      port: container.port,
+    };
 
-      options = {
-        db: "bun_sql_test",
-        username: login.username,
-        password: login.password,
-        host: container.host,
-        port: container.port,
-        max: 1,
-      };
-    });
+    options = {
+      db: "bun_sql_test",
+      username: login.username,
+      password: login.password,
+      host: container.host,
+      port: container.port,
+      max: 1,
+    };
 
     afterAll(async () => {
       // Containers persist - managed by docker-compose
@@ -118,6 +116,317 @@ if (isDockerEnabled()) {
       if (socketProxy) {
         socketProxy.stop();
       }
+    });
+
+    test("should handle numeric values with many digits", async () => {
+      await using sql = postgres(options);
+      // handle numbers big than 10,4 with zeros at the end and start, starting with 0. or not
+      for (let value of [
+        "1234.00005678912345670000",
+        "1234.12345678912345670000",
+        "1234.12345678912345678912",
+        "1234.12345678912345678900",
+        "0.00005678912345670000",
+        "0.12345678912345670000",
+        "0.12345678912345678912",
+        "0.12345678912345678900",
+      ]) {
+        const [{ x }] = await sql`select CAST(${value} as NUMERIC(30,20)) as x`;
+        expect(x).toBe(value);
+      }
+      // zero specifically
+      const [{ x }] = await sql`select CAST(${"0.00000000000000000000"} as NUMERIC(30,20)) as x`;
+      expect(x).toBe("0");
+    });
+
+    describe("Array helpers", () => {
+      test("SQL heper should support sql.array", async () => {
+        await using sql = postgres(options);
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            roles TEXT[]
+        );`;
+
+        const [{ id, name, roles }] =
+          await sql`insert into ${sql(random_name)} (name, roles) values (${"test"}, ${sql.array(["a", "b"], "TEXT")}) returning *`;
+
+        expect(id).toBe(1);
+        expect(name).toBe("test");
+        expect(roles).toEqual(["a", "b"]);
+
+        const [{ id: update_id, name: update_name, roles: update_roles }] =
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "test2", roles: sql.array(["c", "d"], "TEXT") })} WHERE id = ${id} RETURNING *`;
+        expect(update_id).toBe(1);
+        expect(update_name).toBe("test2");
+        expect(update_roles).toEqual(["c", "d"]);
+      });
+
+      test("sql.array should support jsonb and json", async () => {
+        await using sql = postgres(options);
+        {
+          const [{ x }] = await sql`select ${sql.array([{ a: 1 }, { b: 2 }], "JSONB")} as x`;
+          expect(x).toEqual([{ a: 1 }, { b: 2 }]);
+        }
+        {
+          const [{ x }] = await sql`select ${sql.array([{ a: 1 }, { b: 2 }], "JSON")} as x`;
+          expect(x).toEqual([{ a: 1 }, { b: 2 }]);
+        }
+
+        {
+          // should handle most common types properly
+          const date = new Date(Date.UTC(2025, 1, 1));
+          const buffer = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04]);
+          const [{ x }] =
+            await sql`select ${sql.array([date, 1n, 1, 1.1, true, false, null, undefined, "hello", buffer], "JSON")} as x`;
+          expect(x).toEqual([date.toISOString(), 1, 1, 1.1, true, false, null, null, "hello", buffer.toString("hex")]);
+        }
+      });
+
+      test("should be able to insert array in jsonb fields", async () => {
+        await using sql = postgres(options);
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (
+            id SERIAL PRIMARY KEY,
+            json JSONB
+        );`;
+
+        await sql`insert into ${sql(random_name)} (json) values (${["a", "b"]})`;
+        const [{ id, json }] = await sql`select * from ${sql(random_name)}`;
+
+        expect(id).toBe(1);
+        // TODO: we should properly parse the jsonb values here but we are returning the string as is
+        // internally we are probably trying to JSON.parse the string but it fails because of the array format is different
+        expect(json).toEqual('{"\\"a\\"","\\"b\\""}');
+      });
+      test("should be able to insert array in fields", async () => {
+        await using sql = postgres(options);
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (
+            id SERIAL PRIMARY KEY,
+            json JSON
+        );`;
+
+        await sql`insert into ${sql(random_name)} (json) values (${["a", "b"]})`;
+        const [{ id, json }] = await sql`select * from ${sql(random_name)}`;
+        expect(id).toBe(1);
+        // TODO: we should properly parse the jsonb values here
+        // internally we are probably trying to JSON.parse the string but it fails because of the array format is different
+        expect(json).toEqual('{"\\"a\\"","\\"b\\""}');
+      });
+
+      test("sql.array should support TEXT arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array(["hello", "world", "test"], "TEXT")} as x`;
+        expect(x).toEqual(["hello", "world", "test"]);
+      });
+
+      test("sql.array should support BOOLEAN arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array([true, false, true], "BOOLEAN")} as x`;
+        expect(x).toEqual([true, false, true]);
+      });
+
+      test("sql.array should support SMALLINT arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array([1, 2, 3, -32768, 32767], "SMALLINT")} as x`;
+        expect(x).toEqual([1, 2, 3, -32768, 32767]);
+      });
+
+      test("sql.array should support INTEGER arrays", async () => {
+        await using sql = postgres(options);
+
+        {
+          const [{ x }] = await sql`select ${sql.array([100000, -2147483648, 2147483647], "INT")} as x`;
+          expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
+        }
+        {
+          const [{ x }] =
+            await sql`select ${sql.array(Int32Array.from([100000, -2147483648, 2147483647]), "INT")} as x`;
+          expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
+        }
+      });
+
+      test("sql.array should support BIGINT arrays", async () => {
+        await using sql = postgres(options);
+
+        const bigints = [1n, 9999999999n, -9999999999n, 2147483648n];
+        const [{ x }] = await sql`select ${sql.array(bigints, "BIGINT")} as x`;
+        expect(x).toEqual(bigints.map(n => n.toString()));
+      });
+
+      test("sql.array should support REAL (float4) arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array([1.5, 2.7, -3.14], "REAL")} as x`;
+        expect(x[0]).toBeCloseTo(1.5);
+        expect(x[1]).toBeCloseTo(2.7);
+        expect(x[2]).toBeCloseTo(-3.14);
+      });
+
+      test("sql.array should support DOUBLE PRECISION (float8) arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array([1.123456789, 2.987654321, Math.PI], "DOUBLE PRECISION")} as x`;
+        expect(x[0]).toBeCloseTo(1.123456789);
+        expect(x[1]).toBeCloseTo(2.987654321);
+        expect(x[2]).toBeCloseTo(Math.PI);
+      });
+
+      test("sql.array should support NUMERIC arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] =
+          await sql`select ${sql.array([1.1, 2.22, 333.333, "99999999999999999999.9999"], "NUMERIC")} as x`;
+        expect(x).toEqual(["1.1", "2.22", "333.333", "99999999999999999999.9999"]);
+      });
+
+      test("sql.array should support DATE arrays", async () => {
+        await using sql = postgres(options);
+
+        const date1 = new Date("2025-01-01");
+        const date2 = new Date("2025-12-31");
+        const [{ x }] = await sql`select ${sql.array([date1, date2], "DATE")} as x`;
+        expect(x[0]).toEqual(date1);
+        expect(x[1]).toEqual(date2);
+      });
+
+      test("sql.array should support TIMESTAMP arrays", async () => {
+        await using sql = postgres(options);
+
+        const ts1 = new Date("2025-01-01T12:30:45");
+        const ts2 = new Date("2025-06-15T18:45:30");
+        const [{ x }] = await sql`select ${sql.array([ts1, ts2], "TIMESTAMP")} as x`;
+        expect(new Date(x[0])).toEqual(ts1);
+        expect(new Date(x[1])).toEqual(ts2);
+      });
+
+      test("sql.array should support TIMESTAMPTZ arrays", async () => {
+        await using sql = postgres(options);
+
+        const ts1 = new Date(Date.UTC(2025, 0, 1, 10, 30, 0));
+        const ts2 = new Date(Date.UTC(2025, 5, 15, 20, 45, 0));
+        const [{ x }] = await sql`select ${sql.array([ts1, ts2], "TIMESTAMPTZ")} as x`;
+        expect(new Date(x[0])).toEqual(ts1);
+        expect(new Date(x[1])).toEqual(ts2);
+      });
+
+      test("sql.array should support TIME arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array(["12:30:45", "18:45:30", "00:00:00"], "TIME")} as x`;
+        expect(x).toEqual(["12:30:45", "18:45:30", "00:00:00"]);
+      });
+
+      test("sql.array should support INTERVAL arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array(["1 day", "2 hours", "30 minutes"], "INTERVAL")} as x`;
+        expect(x).toEqual(["1 day", "02:00:00", "00:30:00"]);
+      });
+
+      test("sql.array should support UUID arrays", async () => {
+        await using sql = postgres(options);
+
+        const uuids = ["123e4567-e89b-12d3-a456-426614174000", "550e8400-e29b-41d4-a716-446655440000"];
+        const [{ x }] = await sql`select ${sql.array(uuids, "UUID")} as x`;
+        // TODO: we should parse it as an array of UUIDs
+        expect(x).toEqual("{123e4567-e89b-12d3-a456-426614174000,550e8400-e29b-41d4-a716-446655440000}");
+      });
+
+      test("sql.array should support INET arrays", async () => {
+        await using sql = postgres(options);
+
+        const ips = ["192.168.1.1", "10.0.0.1", "::1", "2001:db8::1"];
+        const [{ x }] = await sql`select ${sql.array(ips, "INET")} as x`;
+        expect(x).toEqual(ips);
+      });
+
+      test("sql.array should support CIDR arrays", async () => {
+        await using sql = postgres(options);
+
+        const cidrs = ["192.168.1.0/24", "10.0.0.0/8", "2001:db8::/32"];
+        const [{ x }] = await sql`select ${sql.array(cidrs, "CIDR")} as x`;
+        expect(x).toEqual(cidrs);
+      });
+
+      test("sql.array should support MACADDR arrays", async () => {
+        await using sql = postgres(options);
+
+        const macs = ["08:00:27:01:02:03", "aa:bb:cc:dd:ee:ff"];
+        const [{ x }] = await sql`select ${sql.array(macs, "MACADDR")} as x`;
+        expect(x).toEqual(macs);
+      });
+
+      test("sql.array should support BIT arrays", async () => {
+        await using sql = postgres(options);
+
+        const bits = ["101", "1111", "0000"];
+        const [{ x }] = await sql`select ${sql.array(bits, "BIT")} as x`;
+        expect(x).toEqual(["1", "1", "0"]);
+      });
+
+      test("sql.array should support VARBIT arrays", async () => {
+        await using sql = postgres(options);
+
+        const varbits = ["1", "101010", "11111111"];
+        const [{ x }] = await sql`select ${sql.array(varbits, "VARBIT")} as x`;
+        expect(x).toEqual(varbits);
+      });
+
+      test("sql.array should support MONEY arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array(["$1.50", "$999.99", "-$50.00"], "MONEY")} as x`;
+        expect(x).toEqual(["$1.50", "$999.99", "-$50.00"]);
+      });
+
+      test("sql.array should support CHAR arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array(["a", "b", "c"], "CHAR")} as x`;
+        expect(x).toEqual(["a", "b", "c"]);
+      });
+
+      test("sql.array should support VARCHAR arrays", async () => {
+        await using sql = postgres(options);
+
+        const [{ x }] = await sql`select ${sql.array(["hello", "world", "test"], "VARCHAR")} as x`;
+        expect(x).toEqual(["hello", "world", "test"]);
+      });
+
+      test("sql.array should support geometric types", async () => {
+        await using sql = postgres(options);
+
+        // POINT arrays
+        const points = ["(1,2)", "(3.5,4.5)", "(-1,-2)"];
+        const [{ p }] = await sql`select ${sql.array(points, "POINT")} as p`;
+        expect(p).toEqual(points);
+
+        // BOX arrays
+        const boxes = ["((0,0),(1,1))", "((2,2),(4,4))"];
+        const [{ b }] = await sql`select ${sql.array(boxes, "BOX")} as b`;
+        expect(b.length).toBe(2);
+
+        // CIRCLE arrays
+        const circles = ["<(0,0),5>", "<(10,10),2.5>"];
+        const [{ c }] = await sql`select ${sql.array(circles, "CIRCLE")} as c`;
+        expect(c.length).toBe(2);
+      });
+
+      test("sql.array should handle mixed types with explicit casting", async () => {
+        await using sql = postgres(options);
+
+        // Everything gets cast to the specified type
+        const date = new Date();
+        const mixed = [1, "2", 3.5, date];
+        const [{ x }] = await sql`select ${sql.array(mixed, "TEXT")} as x`;
+        expect(x).toEqual(["1", "2", "3.5", date.toISOString()]);
+      });
     });
 
     describe("Time/TimeZ", () => {

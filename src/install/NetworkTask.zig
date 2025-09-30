@@ -72,6 +72,10 @@ fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) v
     header_builder.count("npm-auth-type", "legacy");
 }
 
+const ForManifestError = OOM || error{
+    InvalidURL,
+};
+
 pub fn forManifest(
     this: *NetworkTask,
     name: string,
@@ -80,7 +84,7 @@ pub fn forManifest(
     loaded_manifest: ?*const Npm.PackageManifest,
     is_optional: bool,
     needs_extended: bool,
-) !void {
+) ForManifestError!void {
     this.url_buf = blk: {
 
         // Not all registries support scoped package names when fetching the manifest.

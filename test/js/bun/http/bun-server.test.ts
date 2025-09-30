@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
 import path from "path";
 
-describe("Server", () => {
+describe.concurrent("Server", () => {
   test("normlizes incoming request URLs", async () => {
     using server = Bun.serve({
       fetch(request) {
@@ -183,31 +183,32 @@ describe("Server", () => {
 
   test("abort signal on server", async () => {
     {
-      let signalOnServer = false;
+      let abortPromise = Promise.withResolvers();
       let fetchAborted = false;
       const abortController = new AbortController();
       using server = Bun.serve({
         async fetch(req) {
           req.signal.addEventListener("abort", () => {
-            signalOnServer = true;
+            abortPromise.resolve();
           });
           abortController.abort();
-          await Bun.sleep(15);
+          await abortPromise.promise;
           return new Response("Hello");
         },
         port: 0,
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal }).then(res =>
+          res.text(),
+        );
       } catch (err: any) {
         expect(err).toBeDefined();
         expect(err?.name).toBe("AbortError");
         fetchAborted = true;
       }
       // wait for the server to process the abort signal, fetch may throw before the server processes the signal
-      await Bun.sleep(15);
-      expect(signalOnServer).toBe(true);
+      await abortPromise.promise;
       expect(fetchAborted).toBe(true);
     }
   });
@@ -229,7 +230,9 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal }).then(res =>
+          res.text(),
+        );
       } catch {
         fetchAborted = true;
       }
@@ -278,7 +281,9 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal }).then(res =>
+          res.text(),
+        );
       } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
@@ -374,7 +379,9 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal }).then(res =>
+          res.text(),
+        );
       } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);

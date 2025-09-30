@@ -382,8 +382,10 @@ pub fn isResolvedDependencyDisabled(
     dep_id: DependencyID,
     features: Features,
     meta: *const Package.Meta,
+    cpu: Npm.Architecture,
+    os: Npm.OperatingSystem,
 ) bool {
-    if (meta.isDisabled()) return true;
+    if (meta.isDisabled(cpu, os)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
@@ -540,6 +542,18 @@ pub fn clean(
     }
 
     return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
+}
+
+pub fn resolveCatalogDependency(this: *Lockfile, dep: *const Dependency) ?Dependency.Version {
+    if (dep.version.tag != .catalog) {
+        return dep.version;
+    }
+
+    const catalog_dep = this.catalogs.get(this, dep.version.value.catalog, dep.name) orelse {
+        return null;
+    };
+
+    return catalog_dep.version;
 }
 
 /// Is this a direct dependency of the workspace root package.json?
@@ -936,6 +950,53 @@ const PendingResolution = struct {
 };
 
 const PendingResolutions = std.ArrayList(PendingResolution);
+
+pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, manager: *PackageManager) OOM!void {
+    manager.populateManifestCache(.all) catch return;
+
+    const pkgs = this.packages.slice();
+
+    const pkg_names = pkgs.items(.name);
+    const pkg_name_hashes = pkgs.items(.name_hash);
+    const pkg_resolutions = pkgs.items(.resolution);
+    const pkg_bins = pkgs.items(.bin);
+
+    for (pkg_names, pkg_name_hashes, pkg_resolutions, pkg_bins) |pkg_name, pkg_name_hash, pkg_res, *pkg_bin| {
+        switch (pkg_res.tag) {
+            .npm => {
+                const manifest = manager.manifests.byNameHash(
+                    manager,
+                    manager.scopeForPackageName(pkg_name.slice(this.buffers.string_bytes.items)),
+                    pkg_name_hash,
+                    .load_from_memory_fallback_to_disk,
+                ) orelse {
+                    continue;
+                };
+
+                const pkg = manifest.findByVersion(pkg_res.value.npm.version) orelse {
+                    continue;
+                };
+
+                var builder = manager.lockfile.stringBuilder();
+
+                var bin_extern_strings_count: u32 = 0;
+
+                bin_extern_strings_count += pkg.package.bin.count(manifest.string_buf, manifest.extern_strings_bin_entries, @TypeOf(&builder), &builder);
+
+                try builder.allocate();
+                defer builder.clamp();
+
+                var extern_strings_list = &manager.lockfile.buffers.extern_strings;
+                try extern_strings_list.ensureUnusedCapacity(manager.lockfile.allocator, bin_extern_strings_count);
+                extern_strings_list.items.len += bin_extern_strings_count;
+                const extern_strings = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
+
+                pkg_bin.* = pkg.package.bin.clone(manifest.string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings, @TypeOf(&builder), &builder);
+            },
+            else => {},
+        }
+    }
+}
 
 pub const Printer = struct {
     lockfile: *Lockfile,
@@ -1583,9 +1644,11 @@ pub const FormatVersion = enum(u32) {
     // bun v0.1.7+
     // This change added tarball URLs to npm-resolved packages
     v2 = 2,
+    // Changed semver major/minor/patch to each use u64 instead of u32
+    v3 = 3,
 
     _,
-    pub const current = FormatVersion.v2;
+    pub const current = FormatVersion.v3;
 };
 
 pub const PackageIDSlice = ExternalSlice(PackageID);
@@ -1605,7 +1668,7 @@ pub const Buffers = @import("./lockfile/Buffers.zig");
 pub const Serializer = @import("./lockfile/bun.lockb.zig");
 pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
 pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
-pub const Package = @import("./lockfile/Package.zig").Package;
+pub const Package = @import("./lockfile/Package.zig").Package(u64);
 pub const Tree = @import("./lockfile/Tree.zig");
 
 pub fn deinit(this: *Lockfile) void {
@@ -2016,6 +2079,7 @@ const stringZ = [:0]const u8;
 
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
+const Npm = @import("./npm.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const TextLockfile = @import("./lockfile/bun.lock.zig");
 const migration = @import("./migration.zig");

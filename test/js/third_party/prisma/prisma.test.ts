@@ -18,7 +18,7 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
     await prisma.user.deleteMany({ where: { testId } });
   } catch {}
 }
-["sqlite", "postgres" /*"mssql", "mongodb"*/].forEach(async type => {
+for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
   let Client: typeof PrismaClient;
 
   const env_name = `TLS_${type.toUpperCase()}_DATABASE_URL`;
@@ -325,4 +325,4 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
       }
     });
   });
-});
+}

@@ -1,7 +1,7 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: []const u8,
+    root_package_json_path: [:0]const u8,
     original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
@@ -48,9 +48,6 @@ pub fn installWithManager(
     // but we force allowing updates to the lockfile when you do bun add
     var had_any_diffs = false;
     manager.progress = .{};
-
-    // Step 2. Parse the package.json file
-    const root_package_json_source = &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents);
 
     switch (load_result) {
         .err => |cause| {
@@ -139,13 +136,38 @@ pub fn installWithManager(
                 lockfile.initEmpty(manager.allocator);
                 var maybe_root = Lockfile.Package{};
 
+                const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
+                    manager.allocator,
+                    manager.log,
+                    root_package_json_path,
+                    .{},
+                )) {
+                    .entry => |entry| entry,
+                    .read_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                    .parse_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                };
+
+                const source_copy = root_package_json_entry.source;
+
                 var resolver: void = {};
                 try maybe_root.parse(
                     &lockfile,
                     manager,
                     manager.allocator,
                     manager.log,
-                    root_package_json_source,
+                    &source_copy,
                     void,
                     &resolver,
                     Features.main,
@@ -403,13 +425,38 @@ pub fn installWithManager(
             Global.crash();
         }
 
+        const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            root_package_json_path,
+            .{},
+        )) {
+            .entry => |entry| entry,
+            .read_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+            .parse_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+        };
+
+        const source_copy = root_package_json_entry.source;
+
         var resolver: void = {};
         try root.parse(
             manager.lockfile,
             manager,
             manager.allocator,
             manager.log,
-            root_package_json_source,
+            &source_copy,
             void,
             &resolver,
             Features.main,
@@ -782,7 +829,7 @@ pub fn installWithManager(
             (did_meta_hash_change or
                 had_any_diffs or
                 manager.update_requests.len > 0 or
-                (load_result == .ok and load_result.ok.serializer_result.packages_need_update) or
+                (load_result == .ok and (load_result.ok.serializer_result.packages_need_update or load_result.ok.serializer_result.migrated_from_lockb_v2)) or
                 manager.lockfile.isEmpty() or
                 manager.options.enable.force_save_lockfile));
 
@@ -1046,7 +1093,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
-const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 

@@ -227,6 +227,68 @@ pub fn deinit(this: *SSLConfig) void {
         this.ca = null;
     }
 }
+pub fn clone(this: *const SSLConfig) SSLConfig {
+    var cloned: SSLConfig = .{
+        .secure_options = this.secure_options,
+        .request_cert = this.request_cert,
+        .reject_unauthorized = this.reject_unauthorized,
+        .client_renegotiation_limit = this.client_renegotiation_limit,
+        .client_renegotiation_window = this.client_renegotiation_window,
+        .requires_custom_request_ctx = this.requires_custom_request_ctx,
+        .is_using_default_ciphers = this.is_using_default_ciphers,
+        .low_memory_mode = this.low_memory_mode,
+        .protos_len = this.protos_len,
+    };
+    const fields_cloned_by_memcopy = .{
+        "server_name",
+        "key_file_name",
+        "cert_file_name",
+        "ca_file_name",
+        "dh_params_file_name",
+        "passphrase",
+        "protos",
+    };
+
+    if (!this.is_using_default_ciphers) {
+        if (this.ssl_ciphers) |slice_ptr| {
+            const slice = std.mem.span(slice_ptr);
+            if (slice.len > 0) {
+                cloned.ssl_ciphers = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+            } else {
+                cloned.ssl_ciphers = null;
+            }
+        }
+    }
+
+    inline for (fields_cloned_by_memcopy) |field| {
+        if (@field(this, field)) |slice_ptr| {
+            const slice = std.mem.span(slice_ptr);
+            @field(cloned, field) = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+        }
+    }
+
+    const array_fields_cloned_by_memcopy = .{
+        "cert",
+        "key",
+        "ca",
+    };
+    inline for (array_fields_cloned_by_memcopy) |field| {
+        if (@field(this, field)) |array| {
+            const cloned_array = bun.handleOom(bun.default_allocator.alloc([*c]const u8, @field(this, field ++ "_count")));
+            @field(cloned, field) = cloned_array;
+            @field(cloned, field ++ "_count") = @field(this, field ++ "_count");
+            for (0..@field(this, field ++ "_count")) |i| {
+                const slice = std.mem.span(array[i]);
+                if (slice.len > 0) {
+                    cloned_array[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
+                } else {
+                    cloned_array[i] = "";
+                }
+            }
+        }
+    }
+    return cloned;
+}
 
 pub const zero = SSLConfig{};
 

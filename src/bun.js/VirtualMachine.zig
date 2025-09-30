@@ -189,10 +189,10 @@ has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
 
-extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) jsc.JSValue;
+extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
 
-pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) ?jsc.JSValue {
-    const jsvalue = Bake__getAsyncLocalStorage(this.global);
+pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
+    const jsvalue = try jsc.fromJSHostCall(this.global, @src(), Bake__getAsyncLocalStorage, .{this.global});
     if (jsvalue.isEmptyOrUndefinedOrNull()) return null;
     return jsvalue;
 }

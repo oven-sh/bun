@@ -146,6 +146,13 @@ pub fn init(
     expansion.current_out = std.ArrayList(u8).init(expansion.base.allocator());
 }
 
+pub fn kill(this: *Expansion, signal: i32) void {
+    log("Expansion(0x{x}) kill sig={d}", .{ @intFromPtr(this), signal });
+    if (this.child_state == .cmd_subst) {
+        this.child_state.cmd_subst.cmd.kill(signal);
+    }
+}
+
 pub fn deinit(expansion: *Expansion) void {
     log("Expansion(0x{x}) deinit", .{@intFromPtr(expansion)});
     expansion.current_out.deinit();

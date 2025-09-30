@@ -4,6 +4,7 @@ base: State,
 node: *const ast.Subshell,
 parent: ParentPtr,
 io: IO,
+currently_executing: ?*Script = null,
 state: union(enum) {
     idle,
     expanding_redirect: struct {
@@ -80,6 +81,7 @@ pub fn initDupeShellState(
 pub fn start(this: *Subshell) Yield {
     log("{} start", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
+    this.currently_executing = script;
     return script.start();
 }
 
@@ -132,6 +134,7 @@ pub fn next(this: *Subshell) Yield {
 pub fn transitionToExec(this: *Subshell) Yield {
     log("{} transitionToExec", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
+    this.currently_executing = script;
     this.state = .exec;
     return script.start();
 }
@@ -150,6 +153,7 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
     }
 
     if (child_ptr.ptr.is(Script)) {
+        this.currently_executing = null;
         child_ptr.deinit();
         return this.parent.childDone(this, exit_code);
     }
@@ -172,6 +176,9 @@ pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?jsc.SystemError) Yield {
 
 pub fn kill(this: *Subshell, signal: i32) void {
     log("{} kill sig={d}", .{ this, signal });
+    if (this.currently_executing) |script| {
+        script.kill(signal);
+    }
 }
 
 pub fn deinit(this: *Subshell) void {

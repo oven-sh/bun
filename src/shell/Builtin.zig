@@ -605,6 +605,9 @@ pub inline fn parentCmdMut(this: *Builtin) *Cmd {
 }
 
 pub fn done(this: *Builtin, exit_code: anytype) Yield {
+    // Guard against concurrent calls (e.g., normal completion racing with kill())
+    if (this.exit_code != null) return .done;
+
     const code: ExitCode = switch (@TypeOf(exit_code)) {
         bun.sys.E => @intFromEnum(exit_code),
         u1, u8, u16 => exit_code,

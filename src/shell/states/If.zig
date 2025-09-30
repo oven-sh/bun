@@ -4,6 +4,7 @@ base: State,
 node: *const ast.If,
 parent: ParentPtr,
 io: IO,
+currently_executing: ?*Stmt = null,
 state: union(enum) {
     idle,
     exec: struct {
@@ -138,6 +139,7 @@ pub fn next(this: *If) Yield {
                 this.state.exec.stmt_idx += 1;
                 const stmt = this.state.exec.stmts.getConst(idx);
                 var newstmt = Stmt.init(this.base.interpreter, this.base.shell, stmt, this, this.io.copy());
+                this.currently_executing = newstmt;
                 return newstmt.start();
             },
             .waiting_write_err => return .suspended, // yield execution
@@ -150,6 +152,9 @@ pub fn next(this: *If) Yield {
 
 pub fn kill(this: *If, signal: i32) void {
     log("{} kill sig={d}", .{ this, signal });
+    if (this.currently_executing) |stmt| {
+        stmt.kill(signal);
+    }
 }
 
 pub fn deinit(this: *If) void {
@@ -166,6 +171,7 @@ pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
         @panic("Expected `exec` state in If, this indicates a bug in Bun. Please file a GitHub issue.");
     }
 
+    this.currently_executing = null;
     var exec = &this.state.exec;
     exec.last_exit_code = exit_code;
 

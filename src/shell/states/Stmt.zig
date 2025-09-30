@@ -139,6 +139,8 @@ pub fn kill(this: *Stmt, signal: i32) void {
             child.as(Subshell).kill(signal);
         } else if (child.ptr.is(If)) {
             child.as(If).kill(signal);
+        } else if (child.ptr.is(CondExpr)) {
+            child.as(CondExpr).kill(signal);
         }
     }
 }

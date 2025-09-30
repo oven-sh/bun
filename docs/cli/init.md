@@ -34,6 +34,7 @@ It creates:
 - a `README.md` file
 
 AI Agent rules (disable with `$BUN_AGENT_RULE_DISABLED=1`):
+
 - a `CLAUDE.md` file when Claude CLI is detected (disable with `CLAUDE_CODE_AGENT_RULE_DISABLED` env var)
 - a `.cursor/rules/*.mdc` file to guide [Cursor AI](https://cursor.sh) to use Bun instead of Node.js and npm when Cursor is detected
 

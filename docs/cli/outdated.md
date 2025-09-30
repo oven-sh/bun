@@ -88,4 +88,3 @@ $ bun outdated -r
 ```
 
 {% bunCLIUsage command="outdated" /%}
-

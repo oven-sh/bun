@@ -20,7 +20,7 @@ else()
   unsupported(CMAKE_SYSTEM_NAME)
 endif()
 
-set(ZIG_COMMIT "2cfd33bca16acc9a792a12800a5b8b57e9a5838d")
+set(ZIG_COMMIT "9853cc36e73702ad4032dcaceb22e53db9a039f2")
 optionx(ZIG_TARGET STRING "The zig target to use" DEFAULT ${DEFAULT_ZIG_TARGET})
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")

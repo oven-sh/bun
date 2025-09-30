@@ -690,6 +690,13 @@ pub const zincrby = compile.@"(...strings: string[])"("zincrby", "ZINCRBY", .not
 pub const zmscore = compile.@"(...strings: string[])"("zmscore", "ZMSCORE", .not_subscriber).call;
 pub const zadd = compile.@"(...strings: string[])"("zadd", "ZADD", .not_subscriber).call;
 pub const zscan = compile.@"(...strings: string[])"("zscan", "ZSCAN", .not_subscriber).call;
+pub const zdiff = compile.@"(...strings: string[])"("zdiff", "ZDIFF", .not_subscriber).call;
+pub const zdiffstore = compile.@"(...strings: string[])"("zdiffstore", "ZDIFFSTORE", .not_subscriber).call;
+pub const zinter = compile.@"(...strings: string[])"("zinter", "ZINTER", .not_subscriber).call;
+pub const zintercard = compile.@"(...strings: string[])"("zintercard", "ZINTERCARD", .not_subscriber).call;
+pub const zinterstore = compile.@"(...strings: string[])"("zinterstore", "ZINTERSTORE", .not_subscriber).call;
+pub const zunion = compile.@"(...strings: string[])"("zunion", "ZUNION", .not_subscriber).call;
+pub const zunionstore = compile.@"(...strings: string[])"("zunionstore", "ZUNIONSTORE", .not_subscriber).call;
 
 pub const del = compile.@"(key: RedisKey, ...args: RedisKey[])"("del", "DEL", "key", .not_subscriber).call;
 pub const mget = compile.@"(key: RedisKey, ...args: RedisKey[])"("mget", "MGET", "key", .not_subscriber).call;

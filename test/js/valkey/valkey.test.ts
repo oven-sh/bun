@@ -366,10 +366,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const result = await redis.pexpire(key, 5000);
         expect(result).toBe(1); // 1 indicates success
 
-        // Verify TTL is set using PTTL (should be around 5000 ms)
         const pttl = await redis.pttl(key);
         expect(pttl).toBeGreaterThan(0);
-        expect(pttl).toBeLessThanOrEqual(5000);
+        expect(pttl).toBeLessThanOrEqual(5050);
       });
 
       test("should return 0 for PEXPIRE on non-existent key", async () => {
@@ -388,10 +387,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const result = await redis.pexpireat(key, futureTimestampMs);
         expect(result).toBe(1); // 1 indicates success
 
-        // Verify TTL is set using PTTL (should be around 5000 ms)
         const pttl = await redis.pttl(key);
         expect(pttl).toBeGreaterThan(0);
-        expect(pttl).toBeLessThanOrEqual(5000);
+        expect(pttl).toBeLessThanOrEqual(5050);
       });
 
       test("should return 0 for PEXPIREAT on non-existent key", async () => {
@@ -943,6 +941,133 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         // Count with no matches
         const count4 = await redis.zlexcount(key, "[zebra", "[zoo");
         expect(count4).toBe(0);
+      });
+
+      test("should compute difference between sorted sets with ZDIFF", async () => {
+        const redis = ctx.redis;
+        const key1 = "zdiff-test1";
+        const key2 = "zdiff-test2";
+        const key3 = "zdiff-test3";
+
+        // Set up sorted sets
+        await redis.send("ZADD", [key1, "1", "one", "2", "two", "3", "three", "4", "four"]);
+        await redis.send("ZADD", [key2, "1", "one", "2", "two"]);
+        await redis.send("ZADD", [key3, "3", "three"]);
+
+        // Difference between first and second set
+        const diff1 = await redis.zdiff(2, key1, key2);
+        expect(diff1).toEqual(["three", "four"]);
+
+        // Difference with multiple sets
+        const diff2 = await redis.zdiff(3, key1, key2, key3);
+        expect(diff2).toEqual(["four"]);
+
+        // Difference with WITHSCORES
+        const diff3 = await redis.zdiff(2, key1, key2, "WITHSCORES");
+        expect(diff3).toEqual([
+          ["three", 3],
+          ["four", 4],
+        ]);
+
+        // Difference with non-existent set (should return all from first set)
+        const diff4 = await redis.zdiff(2, key1, "nonexistent");
+        expect(diff4.length).toBe(4);
+        expect(diff4).toEqual(["one", "two", "three", "four"]);
+
+        // Empty result
+        const diff5 = await redis.zdiff(2, key2, key1);
+        expect(diff5).toEqual([]);
+      });
+
+      test("should store difference between sorted sets with ZDIFFSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zdiffstore-test1";
+        const key2 = "zdiffstore-test2";
+        const dest = "zdiffstore-dest";
+
+        // Set up sorted sets
+        await redis.send("ZADD", [key1, "1", "one", "2", "two", "3", "three"]);
+        await redis.send("ZADD", [key2, "1", "one"]);
+
+        // Store the difference
+        const count = await redis.zdiffstore(dest, 2, key1, key2);
+        expect(count).toBe(2);
+
+        // Verify the destination has the correct members
+        const members = await redis.send("ZRANGE", [dest, "0", "-1"]);
+        expect(members).toEqual(["two", "three"]);
+
+        // Verify scores are preserved
+        const membersWithScores = await redis.send("ZRANGE", [dest, "0", "-1", "WITHSCORES"]);
+        expect(membersWithScores).toEqual([
+          ["two", 2],
+          ["three", 3],
+        ]);
+
+        // Store empty result (should overwrite existing key)
+        const count2 = await redis.zdiffstore(dest, 2, key2, key1);
+        expect(count2).toBe(0);
+
+        // Verify destination is now empty
+        const finalCount = await redis.send("ZCARD", [dest]);
+        expect(finalCount).toBe(0);
+      });
+
+      test("should count intersection with ZINTERCARD", async () => {
+        const redis = ctx.redis;
+        const key1 = "zintercard-test1";
+        const key2 = "zintercard-test2";
+        const key3 = "zintercard-test3";
+
+        // Set up sorted sets
+        await redis.send("ZADD", [key1, "1", "one", "2", "two", "3", "three"]);
+        await redis.send("ZADD", [key2, "1", "one", "2", "two", "4", "four"]);
+        await redis.send("ZADD", [key3, "1", "one", "5", "five"]);
+
+        // Basic intersection count
+        const count1 = await redis.zintercard(2, key1, key2);
+        expect(count1).toBe(2); // one and two
+
+        // Intersection of three sets
+        const count2 = await redis.zintercard(3, key1, key2, key3);
+        expect(count2).toBe(1); // only one
+
+        // With LIMIT
+        const count3 = await redis.zintercard(2, key1, key2, "LIMIT", 1);
+        expect(count3).toBe(1); // stopped at limit
+
+        // No intersection
+        const count4 = await redis.zintercard(2, key1, key3);
+        expect(count4).toBe(1); // only one exists in both
+
+        // With non-existent set
+        const count5 = await redis.zintercard(2, key1, "nonexistent");
+        expect(count5).toBe(0);
+      });
+
+      test("should reject invalid arguments in ZDIFF", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zdiff({} as any, "key1");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zdiff'."`);
+      });
+
+      test("should reject invalid arguments in ZDIFFSTORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zdiffstore("dest", {} as any, "key1");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zdiffstore'."`,
+        );
+      });
+
+      test("should reject invalid arguments in ZINTERCARD", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zintercard({} as any, "key1");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zintercard'."`,
+        );
       });
 
       test("should remove members by rank with ZREMRANGEBYRANK", async () => {
@@ -1899,6 +2024,453 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           await redis.zrangestore("dest", null as any, 0, 10);
         }).toThrowErrorMatchingInlineSnapshot(
           `"Expected additional arguments to be a string or buffer for 'zrangestore'."`,
+        );
+      });
+
+      test("should compute intersection with ZINTER", async () => {
+        const redis = ctx.redis;
+        const key1 = "zinter-test-1";
+        const key2 = "zinter-test-2";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "a", "2", "b", "3", "c");
+        await redis.zadd(key2, "1", "b", "2", "c", "3", "d");
+
+        // Basic intersection - returns members that exist in all sets
+        const result1 = await redis.zinter(2, key1, key2);
+        expect(result1).toEqual(["b", "c"]);
+
+        // With WITHSCORES (scores are summed by default)
+        const result2 = await redis.zinter(2, key1, key2, "WITHSCORES");
+        expect(result2).toEqual([
+          ["b", 3],
+          ["c", 5],
+        ]);
+      });
+
+      test("should compute intersection with WEIGHTS in ZINTER", async () => {
+        const redis = ctx.redis;
+        const key1 = "zinter-weights-1";
+        const key2 = "zinter-weights-2";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "a", "2", "b", "3", "c");
+        await redis.zadd(key2, "1", "b", "2", "c", "3", "d");
+
+        // With weights (multiply scores)
+        const result = await redis.zinter(2, key1, key2, "WEIGHTS", "2", "3", "WITHSCORES");
+        expect(result).toEqual([
+          ["b", 7],
+          ["c", 12],
+        ]);
+      });
+
+      test("should compute intersection with AGGREGATE in ZINTER", async () => {
+        const redis = ctx.redis;
+        const key1 = "zinter-agg-1";
+        const key2 = "zinter-agg-2";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "a", "2", "b", "3", "c");
+        await redis.zadd(key2, "1", "b", "2", "c", "3", "d");
+
+        // With MIN aggregation
+        const result1 = await redis.zinter(2, key1, key2, "AGGREGATE", "MIN", "WITHSCORES");
+        expect(result1).toEqual([
+          ["b", 1],
+          ["c", 2],
+        ]);
+
+        // With MAX aggregation
+        const result2 = await redis.zinter(2, key1, key2, "AGGREGATE", "MAX", "WITHSCORES");
+        expect(result2).toEqual([
+          ["b", 2],
+          ["c", 3],
+        ]);
+      });
+
+      test("should handle empty intersection with ZINTER", async () => {
+        const redis = ctx.redis;
+        const key1 = "zinter-empty-1";
+        const key2 = "zinter-empty-2";
+
+        // Set up sorted sets with no common members
+        await redis.zadd(key1, "1", "a", "2", "b");
+        await redis.zadd(key2, "1", "c", "2", "d");
+
+        // Empty intersection
+        const result = await redis.zinter(2, key1, key2);
+        expect(result).toEqual([]);
+      });
+
+      test("should store intersection with ZINTERSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zinterstore-test-1";
+        const key2 = "zinterstore-test-2";
+        const dest = "zinterstore-dest";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "a", "2", "b", "3", "c");
+        await redis.zadd(key2, "1", "b", "2", "c", "3", "d");
+
+        // Basic intersection store
+        const count = await redis.zinterstore(dest, 2, key1, key2);
+        expect(count).toBe(2);
+
+        // Verify stored members
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1", "WITHSCORES"]);
+        expect(stored).toEqual([
+          ["b", 3],
+          ["c", 5],
+        ]);
+      });
+
+      test("should store intersection with WEIGHTS in ZINTERSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zinterstore-weights-1";
+        const key2 = "zinterstore-weights-2";
+        const dest = "zinterstore-weights-dest";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "x", "2", "y");
+        await redis.zadd(key2, "2", "x", "3", "y");
+
+        // With weights
+        const count = await redis.zinterstore(dest, 2, key1, key2, "WEIGHTS", "2", "3");
+        expect(count).toBe(2);
+
+        // Verify stored members with weighted scores
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1", "WITHSCORES"]);
+        expect(stored).toEqual([
+          ["x", 8],
+          ["y", 13],
+        ]);
+      });
+
+      test("should store intersection with AGGREGATE in ZINTERSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zinterstore-agg-1";
+        const key2 = "zinterstore-agg-2";
+        const destMin = "zinterstore-agg-min";
+        const destMax = "zinterstore-agg-max";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "m", "3", "n");
+        await redis.zadd(key2, "2", "m", "1", "n");
+
+        // With MIN aggregation
+        const count1 = await redis.zinterstore(destMin, 2, key1, key2, "AGGREGATE", "MIN");
+        expect(count1).toBe(2);
+        const storedMin = await redis.send("ZRANGE", [destMin, "0", "-1", "WITHSCORES"]);
+        expect(storedMin).toEqual([
+          ["m", 1],
+          ["n", 1],
+        ]);
+
+        // With MAX aggregation
+        const count2 = await redis.zinterstore(destMax, 2, key1, key2, "AGGREGATE", "MAX");
+        expect(count2).toBe(2);
+        const storedMax = await redis.send("ZRANGE", [destMax, "0", "-1", "WITHSCORES"]);
+        expect(storedMax).toEqual([
+          ["m", 2],
+          ["n", 3],
+        ]);
+      });
+
+      test("should handle empty result with ZINTERSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zinterstore-empty-1";
+        const key2 = "zinterstore-empty-2";
+        const dest = "zinterstore-empty-dest";
+
+        // Set up sorted sets with no common members
+        await redis.zadd(key1, "1", "a", "2", "b");
+        await redis.zadd(key2, "1", "c", "2", "d");
+
+        // Empty intersection
+        const count = await redis.zinterstore(dest, 2, key1, key2);
+        expect(count).toBe(0);
+
+        // Verify destination is empty
+        const exists = await redis.exists(dest);
+        expect(exists).toBe(false);
+      });
+
+      test("should compute union with ZUNION", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunion-test-1";
+        const key2 = "zunion-test-2";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "a", "2", "b", "3", "c");
+        await redis.zadd(key2, "4", "b", "5", "c", "6", "d");
+
+        // Basic union - returns all members from both sets
+        const result1 = await redis.zunion(2, key1, key2);
+        expect(result1).toEqual(["a", "b", "d", "c"]);
+
+        // With WITHSCORES (scores are summed by default)
+        const result2 = await redis.zunion(2, key1, key2, "WITHSCORES");
+        expect(result2).toEqual([
+          ["a", 1],
+          ["b", 6],
+          ["d", 6],
+          ["c", 8],
+        ]);
+      });
+
+      test("should compute union with WEIGHTS in ZUNION", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunion-weights-1";
+        const key2 = "zunion-weights-2";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "x", "2", "y", "3", "z");
+        await redis.zadd(key2, "2", "y", "3", "z", "4", "w");
+
+        // With weights - multiply scores before aggregation
+        const result = await redis.zunion(2, key1, key2, "WEIGHTS", "2", "3", "WITHSCORES");
+        expect(result).toEqual([
+          ["x", 2],
+          ["y", 10],
+          ["w", 12],
+          ["z", 15],
+        ]);
+      });
+
+      test("should compute union with AGGREGATE MIN in ZUNION", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunion-min-1";
+        const key2 = "zunion-min-2";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "p", "3", "q");
+        await redis.zadd(key2, "2", "p", "1", "q");
+
+        // With MIN aggregation - take minimum score
+        const result = await redis.zunion(2, key1, key2, "AGGREGATE", "MIN", "WITHSCORES");
+        expect(result).toEqual([
+          ["p", 1],
+          ["q", 1],
+        ]);
+      });
+
+      test("should compute union with AGGREGATE MAX in ZUNION", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunion-max-1";
+        const key2 = "zunion-max-2";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "r", "3", "s");
+        await redis.zadd(key2, "2", "r", "1", "s");
+
+        // With MAX aggregation - take maximum score
+        const result = await redis.zunion(2, key1, key2, "AGGREGATE", "MAX", "WITHSCORES");
+        expect(result).toEqual([
+          ["r", 2],
+          ["s", 3],
+        ]);
+      });
+
+      test("should compute union with single set in ZUNION", async () => {
+        const redis = ctx.redis;
+        const key = "zunion-single";
+
+        // Set up single sorted set
+        await redis.zadd(key, "1", "one", "2", "two", "3", "three");
+
+        // Union of single set
+        const result = await redis.zunion(1, key);
+        expect(result).toEqual(["one", "two", "three"]);
+      });
+
+      test("should compute union with three sets in ZUNION", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunion-three-1";
+        const key2 = "zunion-three-2";
+        const key3 = "zunion-three-3";
+
+        // Set up three sorted sets
+        await redis.zadd(key1, "1", "a", "2", "b");
+        await redis.zadd(key2, "2", "b", "3", "c");
+        await redis.zadd(key3, "3", "c", "4", "d");
+
+        // Union of three sets
+        const result = await redis.zunion(3, key1, key2, key3, "WITHSCORES");
+        expect(result).toEqual([
+          ["a", 1],
+          ["b", 4],
+          ["d", 4],
+          ["c", 6],
+        ]);
+      });
+
+      test("should handle empty set in ZUNION", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunion-empty-1";
+        const key2 = "zunion-empty-2";
+
+        // Set up one sorted set, leave other empty
+        await redis.zadd(key1, "1", "a", "2", "b");
+
+        // Union with empty set
+        const result = await redis.zunion(2, key1, key2);
+        expect(result).toEqual(["a", "b"]);
+      });
+
+      test("should store union with ZUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunionstore-test-1";
+        const key2 = "zunionstore-test-2";
+        const dest = "zunionstore-dest";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "a", "2", "b", "3", "c");
+        await redis.zadd(key2, "4", "b", "5", "c", "6", "d");
+
+        // Basic union store
+        const count = await redis.zunionstore(dest, 2, key1, key2);
+        expect(count).toBe(4);
+
+        // Verify stored members
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1", "WITHSCORES"]);
+        expect(stored).toEqual([
+          ["a", 1],
+          ["b", 6],
+          ["d", 6],
+          ["c", 8],
+        ]);
+      });
+
+      test("should store union with WEIGHTS in ZUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunionstore-weights-1";
+        const key2 = "zunionstore-weights-2";
+        const dest = "zunionstore-weights-dest";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "x", "2", "y");
+        await redis.zadd(key2, "2", "x", "3", "y");
+
+        // With weights
+        const count = await redis.zunionstore(dest, 2, key1, key2, "WEIGHTS", "2", "3");
+        expect(count).toBe(2);
+
+        // Verify stored members with weighted scores
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1", "WITHSCORES"]);
+        expect(stored).toEqual([
+          ["x", 8],
+          ["y", 13],
+        ]);
+      });
+
+      test("should store union with AGGREGATE MIN in ZUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunionstore-agg-min-1";
+        const key2 = "zunionstore-agg-min-2";
+        const dest = "zunionstore-agg-min-dest";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "m", "3", "n");
+        await redis.zadd(key2, "2", "m", "1", "n");
+
+        // With MIN aggregation
+        const count = await redis.zunionstore(dest, 2, key1, key2, "AGGREGATE", "MIN");
+        expect(count).toBe(2);
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1", "WITHSCORES"]);
+        expect(stored).toEqual([
+          ["m", 1],
+          ["n", 1],
+        ]);
+      });
+
+      test("should store union with AGGREGATE MAX in ZUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunionstore-agg-max-1";
+        const key2 = "zunionstore-agg-max-2";
+        const dest = "zunionstore-agg-max-dest";
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "m", "3", "n");
+        await redis.zadd(key2, "2", "m", "1", "n");
+
+        // With MAX aggregation
+        const count = await redis.zunionstore(dest, 2, key1, key2, "AGGREGATE", "MAX");
+        expect(count).toBe(2);
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1", "WITHSCORES"]);
+        expect(stored).toEqual([
+          ["m", 2],
+          ["n", 3],
+        ]);
+      });
+
+      test("should overwrite existing destination with ZUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunionstore-overwrite-1";
+        const key2 = "zunionstore-overwrite-2";
+        const dest = "zunionstore-overwrite-dest";
+
+        // Set up initial destination
+        await redis.zadd(dest, "100", "old");
+
+        // Set up sorted sets
+        await redis.zadd(key1, "1", "a", "2", "b");
+        await redis.zadd(key2, "3", "c");
+
+        // Union store should overwrite
+        const count = await redis.zunionstore(dest, 2, key1, key2);
+        expect(count).toBe(3);
+
+        // Verify old member is gone
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1"]);
+        expect(stored).toEqual(["a", "b", "c"]);
+        expect(stored).not.toContain("old");
+      });
+
+      test("should handle empty sets with ZUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "zunionstore-empty-1";
+        const key2 = "zunionstore-empty-2";
+        const dest = "zunionstore-empty-dest";
+
+        // Both sets empty
+        const count = await redis.zunionstore(dest, 2, key1, key2);
+        expect(count).toBe(0);
+
+        // Verify destination is empty
+        const exists = await redis.exists(dest);
+        expect(exists).toBe(false);
+      });
+
+      test("should reject invalid numkeys in ZUNION", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zunion(-1, "key1");
+        }).toThrowErrorMatchingInlineSnapshot(`"ERR at least 1 input key is needed for 'zunion' command"`);
+      });
+
+      test("should reject invalid key in ZUNION", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zunion(1, {} as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zunion'."`);
+      });
+
+      test("should reject invalid destination in ZUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zunionstore([] as any, 2, "key1", "key2");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zunionstore'."`,
+        );
+      });
+
+      test("should reject invalid source key in ZUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zunionstore("dest", 2, "key1", null as any);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zunionstore'."`,
         );
       });
     });

@@ -312,6 +312,34 @@ export default [
         fn: "zscan",
         length: 2,
       },
+      zdiff: {
+        fn: "zdiff",
+        length: 1,
+      },
+      zdiffstore: {
+        fn: "zdiffstore",
+        length: 2,
+      },
+      zinter: {
+        fn: "zinter",
+        length: 2,
+      },
+      zintercard: {
+        fn: "zintercard",
+        length: 1,
+      },
+      zinterstore: {
+        fn: "zinterstore",
+        length: 3,
+      },
+      zunion: {
+        fn: "zunion",
+        length: 2,
+      },
+      zunionstore: {
+        fn: "zunionstore",
+        length: 3,
+      },
       mget: {
         fn: "mget",
       },

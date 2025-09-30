@@ -1347,6 +1347,13 @@ pub const JSValkeyClient = struct {
     pub const zmscore = fns.zmscore;
     pub const zadd = fns.zadd;
     pub const zscan = fns.zscan;
+    pub const zdiff = fns.zdiff;
+    pub const zdiffstore = fns.zdiffstore;
+    pub const zinter = fns.zinter;
+    pub const zintercard = fns.zintercard;
+    pub const zinterstore = fns.zinterstore;
+    pub const zunion = fns.zunion;
+    pub const zunionstore = fns.zunionstore;
 
     const fns = @import("./js_valkey_functions.zig");
 };

@@ -1921,6 +1921,352 @@ declare module "bun" {
      * ```
      */
     renamenx(key: RedisClient.KeyLike, newkey: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Compute the difference between sorted sets with scores
+     *
+     * @param numkeys The number of sorted set keys
+     * @param keys The sorted set keys followed by "WITHSCORES"
+     * @returns Promise that resolves with an array of [member, score] pairs
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["zset1", "1", "one", "2", "two", "3", "three"]);
+     * await redis.send("ZADD", ["zset2", "1", "one", "2", "two"]);
+     * const diff = await redis.zdiff(2, "zset1", "zset2", "WITHSCORES");
+     * console.log(diff); // ["three", "3"]
+     * ```
+     */
+    zdiff(
+      numkeys: number,
+      ...args: [...keys: RedisClient.KeyLike[], withscores: "WITHSCORES"]
+    ): Promise<[string, number][]>;
+
+    /**
+     * Compute the difference between the first sorted set and all successive sorted sets
+     *
+     * Returns the members of the sorted set resulting from the difference between the first
+     * sorted set and all the successive sorted sets. The first key is the only one used to
+     * compute the members of the difference.
+     *
+     * @param numkeys The number of sorted set keys
+     * @param keys The sorted set keys to compare
+     * @returns Promise that resolves with an array of members
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["zset1", "1", "one", "2", "two", "3", "three"]);
+     * await redis.send("ZADD", ["zset2", "1", "one", "2", "two"]);
+     * const diff = await redis.zdiff(2, "zset1", "zset2");
+     * console.log(diff); // ["three"]
+     * ```
+     */
+    zdiff(numkeys: number, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
+
+    /**
+     * Compute the difference between sorted sets and store the result
+     *
+     * Computes the difference between the first and all successive sorted sets given by the
+     * specified keys and stores the result in destination. Keys that do not exist are
+     * considered to be empty sets.
+     *
+     * @param destination The destination key to store the result
+     * @param numkeys The number of input sorted set keys
+     * @param keys The sorted set keys to compare
+     * @returns Promise that resolves with the number of elements in the resulting sorted set
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["zset1", "1", "one", "2", "two", "3", "three"]);
+     * await redis.send("ZADD", ["zset2", "1", "one"]);
+     * const count = await redis.zdiffstore("out", 2, "zset1", "zset2");
+     * console.log(count); // 2 (two, three)
+     * ```
+     */
+    zdiffstore(destination: RedisClient.KeyLike, numkeys: number, ...keys: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Compute the intersection of multiple sorted sets
+     *
+     * Returns the members of the set resulting from the intersection of all the given sorted sets.
+     * Keys that do not exist are considered to be empty sets.
+     *
+     * By default, the resulting score of each member is the sum of its scores in the sorted sets where it exists.
+     *
+     * Options:
+     * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
+     * - AGGREGATE SUM|MIN|MAX: Specify how the scores are aggregated (default: SUM)
+     * - WITHSCORES: Return the scores along with the members
+     *
+     * @param numkeys The number of input keys (sorted sets)
+     * @param keys The sorted set keys to intersect
+     * @returns Promise that resolves with an array of members (or [member, score] pairs if WITHSCORES)
+     *
+     * @example
+     * ```ts
+     * // Set up sorted sets
+     * await redis.zadd("zset1", "1", "a", "2", "b", "3", "c");
+     * await redis.zadd("zset2", "1", "b", "2", "c", "3", "d");
+     *
+     * // Basic intersection - returns members that exist in all sets
+     * const result1 = await redis.zinter(2, "zset1", "zset2");
+     * // Returns: ["b", "c"]
+     *
+     * // With scores (sum by default)
+     * const result2 = await redis.zinter(2, "zset1", "zset2", "WITHSCORES");
+     * // Returns: ["b", "3", "c", "5"] (b: 2+1=3, c: 3+2=5)
+     *
+     * // With weights
+     * const result3 = await redis.zinter(2, "zset1", "zset2", "WEIGHTS", "2", "3", "WITHSCORES");
+     * // Returns: ["b", "7", "c", "12"] (b: 2*2+1*3=7, c: 3*2+2*3=12)
+     *
+     * // With MIN aggregation
+     * const result4 = await redis.zinter(2, "zset1", "zset2", "AGGREGATE", "MIN", "WITHSCORES");
+     * // Returns: ["b", "1", "c", "2"] (minimum scores)
+     * ```
+     */
+    zinter(
+      numkeys: number,
+      ...args: [...args: (string | number)[], withscores: "WITHSCORES"]
+    ): Promise<[string, number][]>;
+
+    /**
+     * Compute the intersection of multiple sorted sets
+     *
+     * Returns the members of the set resulting from the intersection of all the given sorted sets.
+     * Keys that do not exist are considered to be empty sets.
+     *
+     * By default, the resulting score of each member is the sum of its scores in the sorted sets where it exists.
+     *
+     * Options:
+     * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
+     * - AGGREGATE SUM|MIN|MAX: Specify how the scores are aggregated (default: SUM)
+     * - WITHSCORES: Return the scores along with the members
+     *
+     * @param numkeys The number of input keys (sorted sets)
+     * @param keys The sorted set keys to intersect
+     * @returns Promise that resolves with an array of members (or [member, score] pairs if WITHSCORES)
+     *
+     * @example
+     * ```ts
+     * // Set up sorted sets
+     * await redis.zadd("zset1", "1", "a", "2", "b", "3", "c");
+     * await redis.zadd("zset2", "1", "b", "2", "c", "3", "d");
+     *
+     * // Basic intersection - returns members that exist in all sets
+     * const result1 = await redis.zinter(2, "zset1", "zset2");
+     * // Returns: ["b", "c"]
+     *
+     * // With scores (sum by default)
+     * const result2 = await redis.zinter(2, "zset1", "zset2", "WITHSCORES");
+     * // Returns: ["b", "3", "c", "5"] (b: 2+1=3, c: 3+2=5)
+     *
+     * // With weights
+     * const result3 = await redis.zinter(2, "zset1", "zset2", "WEIGHTS", "2", "3", "WITHSCORES");
+     * // Returns: ["b", "7", "c", "12"] (b: 2*2+1*3=7, c: 3*2+2*3=12)
+     *
+     * // With MIN aggregation
+     * const result4 = await redis.zinter(2, "zset1", "zset2", "AGGREGATE", "MIN", "WITHSCORES");
+     * // Returns: ["b", "1", "c", "2"] (minimum scores)
+     * ```
+     */
+    zinter(numkeys: number, ...args: (string | number)[]): Promise<string[]>;
+
+    /**
+     * Count the number of members in the intersection of multiple sorted sets
+     *
+     * Computes the cardinality of the intersection of the sorted sets at the specified keys.
+     * The intersection includes only elements that exist in all of the given sorted sets.
+     *
+     * When a LIMIT is provided, the command stops counting once the limit is reached, which
+     * is useful for performance when you only need to know if the cardinality exceeds a
+     * certain threshold.
+     *
+     * @param numkeys The number of sorted set keys
+     * @param keys The sorted set keys to intersect
+     * @returns Promise that resolves with the number of elements in the intersection
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["zset1", "1", "one", "2", "two", "3", "three"]);
+     * await redis.send("ZADD", ["zset2", "1", "one", "2", "two", "4", "four"]);
+     * const count = await redis.zintercard(2, "zset1", "zset2");
+     * console.log(count); // 2 (one, two)
+     * ```
+     */
+    zintercard(numkeys: number, ...keys: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Count the number of members in the intersection with a limit
+     *
+     * @param numkeys The number of sorted set keys
+     * @param keys The sorted set keys followed by "LIMIT" and limit value
+     * @returns Promise that resolves with the number of elements (up to limit)
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["zset1", "1", "a", "2", "b", "3", "c"]);
+     * await redis.send("ZADD", ["zset2", "1", "a", "2", "b", "3", "c"]);
+     * const count = await redis.zintercard(2, "zset1", "zset2", "LIMIT", 2);
+     * console.log(count); // 2 (stopped at limit)
+     * ```
+     */
+    zintercard(numkeys: number, ...args: (RedisClient.KeyLike | "LIMIT" | number)[]): Promise<number>;
+
+    /**
+     * Compute the intersection of multiple sorted sets and store in destination
+     *
+     * This command is similar to ZINTER, but instead of returning the result, it stores it in the destination key.
+     * If the destination key already exists, it is overwritten.
+     *
+     * Options:
+     * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
+     * - AGGREGATE SUM|MIN|MAX: Specify how the scores are aggregated (default: SUM)
+     *
+     * @param destination The destination key to store the result
+     * @param numkeys The number of input keys (sorted sets)
+     * @param keys The sorted set keys to intersect and optional WEIGHTS/AGGREGATE options
+     * @returns Promise that resolves with the number of elements in the resulting sorted set
+     *
+     * @example
+     * ```ts
+     * // Set up sorted sets
+     * await redis.zadd("zset1", "1", "a", "2", "b", "3", "c");
+     * await redis.zadd("zset2", "1", "b", "2", "c", "3", "d");
+     *
+     * // Basic intersection store
+     * const count1 = await redis.zinterstore("out", 2, "zset1", "zset2");
+     * // Returns: 2 (stored "b" and "c" in "out")
+     *
+     * // With weights
+     * const count2 = await redis.zinterstore("out2", 2, "zset1", "zset2", "WEIGHTS", "2", "3");
+     * // Returns: 2
+     *
+     * // With MAX aggregation
+     * const count3 = await redis.zinterstore("out3", 2, "zset1", "zset2", "AGGREGATE", "MAX");
+     * // Returns: 2 (stores maximum scores)
+     * ```
+     */
+    zinterstore(destination: RedisClient.KeyLike, numkeys: number, ...args: (string | number)[]): Promise<number>;
+
+    /**
+     * Compute the union of multiple sorted sets
+     *
+     * Returns the union of the sorted sets given by the specified keys.
+     * For every element that appears in at least one of the input sorted sets, the output will contain that element.
+     *
+     * Options:
+     * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
+     * - AGGREGATE SUM|MIN|MAX: Specify how the scores are aggregated (default: SUM)
+     * - WITHSCORES: Include scores in the result
+     *
+     * @param numkeys The number of input keys (sorted sets)
+     * @param keys The sorted set keys to union and optional WEIGHTS/AGGREGATE/WITHSCORES options
+     * @returns Promise that resolves with an array of members (or members with scores if WITHSCORES is used)
+     *
+     * @example
+     * ```ts
+     * // Set up sorted sets
+     * await redis.zadd("zset1", "1", "a", "2", "b", "3", "c");
+     * await redis.zadd("zset2", "4", "b", "5", "c", "6", "d");
+     *
+     * // Basic union
+     * const members1 = await redis.zunion(2, "zset1", "zset2");
+     * // Returns: ["a", "b", "c", "d"]
+     *
+     * // With weights
+     * const members2 = await redis.zunion(2, "zset1", "zset2", "WEIGHTS", "2", "3");
+     * // Returns: ["a", "b", "c", "d"] with calculated scores
+     *
+     * // With MIN aggregation
+     * const members3 = await redis.zunion(2, "zset1", "zset2", "AGGREGATE", "MIN");
+     * // Returns: ["a", "b", "c", "d"] with minimum scores
+     *
+     * // With scores
+     * const withScores = await redis.zunion(2, "zset1", "zset2", "WITHSCORES");
+     * // Returns: ["a", "1", "b", "2", "c", "3", "d", "6"] (alternating member and score)
+     * ```
+     */
+    zunion(
+      numkeys: number,
+      ...args: [...args: (string | number)[], withscores: "WITHSCORES"]
+    ): Promise<[string, number][]>;
+
+    /**
+     * Compute the union of multiple sorted sets
+     *
+     * Returns the union of the sorted sets given by the specified keys.
+     * For every element that appears in at least one of the input sorted sets, the output will contain that element.
+     *
+     * Options:
+     * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
+     * - AGGREGATE SUM|MIN|MAX: Specify how the scores are aggregated (default: SUM)
+     * - WITHSCORES: Include scores in the result
+     *
+     * @param numkeys The number of input keys (sorted sets)
+     * @param keys The sorted set keys to union and optional WEIGHTS/AGGREGATE/WITHSCORES options
+     * @returns Promise that resolves with an array of members (or members with scores if WITHSCORES is used)
+     *
+     * @example
+     * ```ts
+     * // Set up sorted sets
+     * await redis.zadd("zset1", "1", "a", "2", "b", "3", "c");
+     * await redis.zadd("zset2", "4", "b", "5", "c", "6", "d");
+     *
+     * // Basic union
+     * const members1 = await redis.zunion(2, "zset1", "zset2");
+     * // Returns: ["a", "b", "c", "d"]
+     *
+     * // With weights
+     * const members2 = await redis.zunion(2, "zset1", "zset2", "WEIGHTS", "2", "3");
+     * // Returns: ["a", "b", "c", "d"] with calculated scores
+     *
+     * // With MIN aggregation
+     * const members3 = await redis.zunion(2, "zset1", "zset2", "AGGREGATE", "MIN");
+     * // Returns: ["a", "b", "c", "d"] with minimum scores
+     *
+     * // With scores
+     * const withScores = await redis.zunion(2, "zset1", "zset2", "WITHSCORES");
+     * // Returns: ["a", "1", "b", "2", "c", "3", "d", "6"] (alternating member and score)
+     * ```
+     */
+    zunion(numkeys: number, ...args: (string | number)[]): Promise<string[]>;
+
+    /**
+     * Compute the union of multiple sorted sets and store in destination
+     *
+     * This command is similar to ZUNION, but instead of returning the result, it stores it in the destination key.
+     * If the destination key already exists, it is overwritten.
+     *
+     * Options:
+     * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
+     * - AGGREGATE SUM|MIN|MAX: Specify how the scores are aggregated (default: SUM)
+     *
+     * @param destination The destination key to store the result
+     * @param numkeys The number of input keys (sorted sets)
+     * @param keys The sorted set keys to union and optional WEIGHTS/AGGREGATE options
+     * @returns Promise that resolves with the number of elements in the resulting sorted set
+     *
+     * @example
+     * ```ts
+     * // Set up sorted sets
+     * await redis.zadd("zset1", "1", "a", "2", "b", "3", "c");
+     * await redis.zadd("zset2", "4", "b", "5", "c", "6", "d");
+     *
+     * // Basic union store
+     * const count1 = await redis.zunionstore("out", 2, "zset1", "zset2");
+     * // Returns: 4 (stored "a", "b", "c", "d" in "out")
+     *
+     * // With weights
+     * const count2 = await redis.zunionstore("out2", 2, "zset1", "zset2", "WEIGHTS", "2", "3");
+     * // Returns: 4
+     *
+     * // With MAX aggregation
+     * const count3 = await redis.zunionstore("out3", 2, "zset1", "zset2", "AGGREGATE", "MAX");
+     * // Returns: 4 (stores maximum scores)
+     * ```
+     */
+    zunionstore(destination: RedisClient.KeyLike, numkeys: number, ...args: (string | number)[]): Promise<number>;
   }
 
   /**

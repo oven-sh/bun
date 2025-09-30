@@ -775,7 +775,7 @@ pub const Transpiler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache,
-    ) !usize {
+    ) js_printer.Error!usize {
         const tracer = if (enable_source_map)
             bun.perf.trace("JSPrinter.printWithSourceMap")
         else
@@ -881,7 +881,7 @@ pub const Transpiler = struct {
         comptime Writer: type,
         writer: Writer,
         comptime format: js_printer.Format,
-    ) !usize {
+    ) js_printer.Error!usize {
         return transpiler.printWithSourceMapMaybe(
             result.ast,
             &result.source,
@@ -901,7 +901,7 @@ pub const Transpiler = struct {
         writer: Writer,
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
-    ) !usize {
+    ) js_printer.Error!usize {
         if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS)) {
             return transpiler.printWithSourceMapMaybe(
                 result.ast,

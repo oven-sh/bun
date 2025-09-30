@@ -526,8 +526,7 @@ JSValue fetchBuiltinModuleWithoutResolution(
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunString referrer = BunStringEmpty;
-    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, &referrer, res)) {
+    if (Bun__fetchBuiltinModule(bunVM, specifier, res)) {
         if (!res->success) {
             return {};
         }
@@ -943,7 +942,7 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, referrer, res)) {
+    if (Bun__fetchBuiltinModule(bunVM, specifier, res)) {
         if (!res->success) {
             throwException(scope, res->result.err, globalObject);
             auto* exception = scope.exception();

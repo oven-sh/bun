@@ -209,7 +209,7 @@ pub fn Parse(
         }
 
         pub fn parseTemplateParts(p: *P, include_raw: bool) ![]E.TemplatePart {
-            var parts = ListManaged(E.TemplatePart).initCapacity(p.allocator, 1) catch unreachable;
+            var parts = try ListManaged(E.TemplatePart).initCapacity(p.allocator, 1);
             // Allow "in" inside template literals
             const oldAllowIn = p.allow_in;
             p.allow_in = true;
@@ -222,14 +222,14 @@ pub fn Parse(
 
                 const tail: E.Template.Contents = brk: {
                     if (!include_raw) break :brk .{ .cooked = try p.lexer.toEString() };
-                    break :brk .{ .raw = p.lexer.rawTemplateContents() };
+                    break :brk .{ .raw = try p.lexer.rawTemplateContents() };
                 };
 
-                parts.append(E.TemplatePart{
+                try parts.append(E.TemplatePart{
                     .value = value,
                     .tail_loc = tail_loc,
                     .tail = tail,
-                }) catch unreachable;
+                });
 
                 if (p.lexer.token == .t_template_tail) {
                     try p.lexer.next();

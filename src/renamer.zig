@@ -132,7 +132,7 @@ pub const MinifyRenamer = struct {
         symbols: js_ast.Symbol.Map,
         first_top_level_slots: js_ast.SlotCounts,
         reserved_names: bun.StringHashMapUnmanaged(u32),
-    ) !*MinifyRenamer {
+    ) bun.OOM!*MinifyRenamer {
         const renamer = try allocator.create(MinifyRenamer);
         var slots = SymbolSlot.List.initUndefined();
 
@@ -209,7 +209,7 @@ pub const MinifyRenamer = struct {
         _ref: Ref,
         count: u32,
         stable_source_indices: []const u32,
-    ) !void {
+    ) bun.OOM!void {
         var ref = this.symbols.follow(_ref);
         var symbol = this.symbols.get(ref).?;
 
@@ -239,7 +239,7 @@ pub const MinifyRenamer = struct {
         });
     }
 
-    pub fn allocateTopLevelSymbolSlots(this: *MinifyRenamer, top_level_symbols: StableSymbolCount.Array) !void {
+    pub fn allocateTopLevelSymbolSlots(this: *MinifyRenamer, top_level_symbols: StableSymbolCount.Array) bun.OOM!void {
         for (top_level_symbols.items) |stable| {
             const symbol = this.symbols.get(stable.ref).?;
             var slots = this.slots.getPtr(symbol.slotNamespace());
@@ -261,7 +261,7 @@ pub const MinifyRenamer = struct {
         }
     }
 
-    pub fn assignNamesByFrequency(this: *MinifyRenamer, name_minifier: *js_ast.NameMinifier) !void {
+    pub fn assignNamesByFrequency(this: *MinifyRenamer, name_minifier: *js_ast.NameMinifier) bun.OOM!void {
         var name_buf = try std.ArrayList(u8).initCapacity(this.allocator, 64);
         defer name_buf.deinit();
 
@@ -859,7 +859,7 @@ pub const ExportRenamer = struct {
 pub fn computeInitialReservedNames(
     allocator: std.mem.Allocator,
     output_format: bun.options.Format,
-) !bun.StringHashMapUnmanaged(u32) {
+) bun.OOM!bun.StringHashMapUnmanaged(u32) {
     if (comptime bun.Environment.isWasm) {
         unreachable;
     }

@@ -165,7 +165,7 @@ pub const NameMinifier = struct {
         };
     }
 
-    pub fn numberToMinifiedName(this: *NameMinifier, name: *std.ArrayList(u8), _i: isize) !void {
+    pub fn numberToMinifiedName(this: *NameMinifier, name: *std.ArrayList(u8), _i: isize) bun.OOM!void {
         name.clearRetainingCapacity();
         var i = _i;
         var j = @as(usize, @intCast(@mod(i, 54)));
@@ -180,7 +180,7 @@ pub const NameMinifier = struct {
         }
     }
 
-    pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: isize) !string {
+    pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: isize) bun.OOM!string {
         var i = _i;
         var j = @as(usize, @intCast(@mod(i, 54)));
         var name = std.ArrayList(u8).init(allocator);
@@ -206,7 +206,7 @@ pub const OptionalChain = enum(u1) {
     /// "(a?.b).c" => ".c" is null
     continuation,
 
-    pub fn jsonStringify(self: @This(), writer: anytype) !void {
+    pub fn jsonStringify(self: @This(), writer: anytype) @TypeOf(writer).Error!void {
         return try writer.write(@tagName(self));
     }
 };

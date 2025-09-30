@@ -817,6 +817,13 @@ pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.Str
     return loader;
 }
 
+pub const TranspileSourceCodeError = js_printer.Error || bun.JSError || error{
+    AsyncModule,
+    ParseError,
+    ResolveMessage,
+    UnexpectedPendingResolution,
+};
+
 pub fn transpileSourceCode(
     jsc_vm: *VirtualMachine,
     specifier: string,
@@ -829,9 +836,9 @@ pub fn transpileSourceCode(
     virtual_source: ?*const logger.Source,
     promise_ptr: ?*?*jsc.JSInternalPromise,
     source_code_printer: *js_printer.BufferPrinter,
-    globalObject: ?*JSGlobalObject,
+    globalObject: *JSGlobalObject,
     comptime flags: FetchFlags,
-) !ResolvedSource {
+) TranspileSourceCodeError!ResolvedSource {
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
@@ -1111,7 +1118,10 @@ pub fn transpileSourceCode(
                     .allocator = null,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .jsvalue_for_export = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
+                    .jsvalue_for_export = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject) catch |err| switch (err) {
+                        error.JSError, error.OutOfMemory => |e| return e,
+                        else => panic("Unexpected JS error: {s}", .{@errorName(err)}),
+                    },
                     .tag = .exports_object,
                 };
             }
@@ -1217,7 +1227,7 @@ pub fn transpileSourceCode(
                 }
 
                 jsc_vm.modules.enqueue(
-                    globalObject.?,
+                    globalObject,
                     .{
                         .parse_result = parse_result,
                         .path = path,
@@ -1348,18 +1358,16 @@ pub fn transpileSourceCode(
         .wasm => {
             if (strings.eqlComptime(referrer, "undefined") and strings.eqlLong(jsc_vm.main, path.text, true)) {
                 if (virtual_source) |source| {
-                    if (globalObject) |globalThis| {
-                        // attempt to avoid reading the WASM file twice.
-                        const encoded = jsc.EncodedJSValue{
-                            .asPtr = globalThis,
-                        };
-                        const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
-                        globalValue.put(
-                            globalThis,
-                            ZigString.static("wasmSourceBytes"),
-                            try jsc.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
-                        );
-                    }
+                    // attempt to avoid reading the WASM file twice.
+                    const encoded = jsc.EncodedJSValue{
+                        .asPtr = globalObject,
+                    };
+                    const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
+                    globalValue.put(
+                        globalObject,
+                        ZigString.static("wasmSourceBytes"),
+                        try jsc.ArrayBuffer.create(globalObject, source.contents, .Uint8Array),
+                    );
                 }
                 return ResolvedSource{
                     .allocator = null,
@@ -1440,14 +1448,10 @@ pub fn transpileSourceCode(
                 };
             }
 
-            if (globalObject == null) {
-                return error.NotSupported;
-            }
-
-            const html_bundle = try jsc.API.HTMLBundle.init(globalObject.?, path.text);
+            const html_bundle = try jsc.API.HTMLBundle.init(globalObject, path.text);
             return ResolvedSource{
                 .allocator = &jsc_vm.allocator,
-                .jsvalue_for_export = html_bundle.toJS(globalObject.?),
+                .jsvalue_for_export = html_bundle.toJS(globalObject),
                 .specifier = input_specifier,
                 .source_url = input_specifier.createIfDifferent(path.text),
                 .tag = .export_default_object,
@@ -1521,10 +1525,10 @@ pub fn transpileSourceCode(
                     defer buf.deinit();
                     var writer = buf.writer();
                     jsc.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
-                    break :brk try bun.String.createUTF8ForJS(globalObject.?, buf.slice());
+                    break :brk try bun.String.createUTF8ForJS(globalObject, buf.slice());
                 }
 
-                break :brk try bun.String.createUTF8ForJS(globalObject.?, path.text);
+                break :brk try bun.String.createUTF8ForJS(globalObject, path.text);
             };
 
             return ResolvedSource{
@@ -1562,26 +1566,14 @@ pub export fn Bun__resolveAndFetchBuiltinModule(
 
 pub export fn Bun__fetchBuiltinModule(
     jsc_vm: *VirtualMachine,
-    globalObject: *JSGlobalObject,
     specifier: *bun.String,
-    referrer: *bun.String,
     ret: *jsc.ErrorableResolvedSource,
 ) bool {
     jsc.markBinding(@src());
     var log = logger.Log.init(jsc_vm.transpiler.allocator);
     defer log.deinit();
 
-    if (ModuleLoader.fetchBuiltinModule(
-        jsc_vm,
-        specifier.*,
-    ) catch |err| {
-        if (err == error.AsyncModule) {
-            unreachable;
-        }
-
-        VirtualMachine.processFetchLog(globalObject, specifier.*, referrer.*, &log, ret, err);
-        return true;
-    }) |builtin| {
+    if (ModuleLoader.fetchBuiltinModule(jsc_vm, specifier.*)) |builtin| {
         ret.* = jsc.ErrorableResolvedSource.ok(builtin);
         return true;
     } else {
@@ -1816,9 +1808,12 @@ pub export fn Bun__transpileFile(
                     bun.assert(promise != null);
                     return promise;
                 },
-                error.PluginError => return null,
-                error.JSError => {
-                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
+                error.JSError, error.OutOfMemory => |e| {
+                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(e));
+                    return null;
+                },
+                error.StackOverflow => {
+                    ret.* = .err(error.JSError, globalObject.takeError(globalObject.throwStackOverflow()));
                     return null;
                 },
                 else => {
@@ -1882,7 +1877,7 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
     };
 }
 
-pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
+pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) ?ResolvedSource {
     if (HardcodedModule.map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
         return getHardcodedModule(jsc_vm, specifier, hardcoded);
     }
@@ -1993,9 +1988,12 @@ export fn Bun__transpileVirtualModule(
             FetchFlags.transpile,
         ) catch |err| {
             switch (err) {
-                error.PluginError => return true,
-                error.JSError => {
-                    ret.* = jsc.ErrorableResolvedSource.err(error.JSError, globalObject.takeError(error.JSError));
+                error.JSError, error.OutOfMemory => |e| {
+                    ret.* = .err(error.JSError, globalObject.takeError(e));
+                    return true;
+                },
+                error.StackOverflow => {
+                    ret.* = .err(error.JSError, globalObject.takeError(globalObject.throwStackOverflow()));
                     return true;
                 },
                 else => {

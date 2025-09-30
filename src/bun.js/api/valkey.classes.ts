@@ -237,6 +237,34 @@ export default [
       zrandmember: {
         fn: "zrandmember",
       },
+      zrange: {
+        fn: "zrange",
+        length: 3,
+      },
+      zrangebylex: {
+        fn: "zrangebylex",
+        length: 3,
+      },
+      zrangebyscore: {
+        fn: "zrangebyscore",
+        length: 3,
+      },
+      zrangestore: {
+        fn: "zrangestore",
+        length: 4,
+      },
+      zrevrange: {
+        fn: "zrevrange",
+        length: 3,
+      },
+      zrevrangebylex: {
+        fn: "zrevrangebylex",
+        length: 3,
+      },
+      zrevrangebyscore: {
+        fn: "zrevrangebyscore",
+        length: 3,
+      },
       append: {
         fn: "append",
       },
@@ -275,6 +303,14 @@ export default [
       },
       zmscore: {
         fn: "zmscore",
+      },
+      zadd: {
+        fn: "zadd",
+        length: 3,
+      },
+      zscan: {
+        fn: "zscan",
+        length: 2,
       },
       mget: {
         fn: "mget",

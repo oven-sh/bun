@@ -1120,7 +1120,786 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zmscore([] as any, "member");
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zmscore'."`);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zmscore'."`,
+        );
+      });
+
+      test("should add members to sorted set with ZADD", async () => {
+        const redis = ctx.redis;
+        const key = "zadd-basic-test";
+
+        // Add single member
+        const added1 = await redis.zadd(key, "1", "one");
+        expect(added1).toBe(1);
+
+        // Add multiple members
+        const added2 = await redis.zadd(key, "2", "two", "3", "three");
+        expect(added2).toBe(2);
+
+        // Update existing member (should return 0 since no new members added)
+        const added3 = await redis.zadd(key, "1.5", "one");
+        expect(added3).toBe(0);
+
+        // Verify members were added/updated
+        const score = await redis.zscore(key, "one");
+        expect(score).toBe(1.5);
+      });
+
+      test("should add members with NX option in ZADD", async () => {
+        const redis = ctx.redis;
+        const key = "zadd-nx-test";
+
+        // Add initial member
+        await redis.zadd(key, "1", "one");
+
+        // Try to add with NX (should fail since member exists)
+        const added1 = await redis.zadd(key, "NX", "2", "one");
+        expect(added1).toBe(0);
+
+        // Verify score wasn't updated
+        const score1 = await redis.zscore(key, "one");
+        expect(score1).toBe(1);
+
+        // Add new member with NX (should succeed)
+        const added2 = await redis.zadd(key, "NX", "2", "two");
+        expect(added2).toBe(1);
+
+        const score2 = await redis.zscore(key, "two");
+        expect(score2).toBe(2);
+      });
+
+      test("should update members with XX option in ZADD", async () => {
+        const redis = ctx.redis;
+        const key = "zadd-xx-test";
+
+        // Add initial member
+        await redis.zadd(key, "1", "one");
+
+        // Update with XX (should succeed)
+        const updated1 = await redis.zadd(key, "XX", "2", "one");
+        expect(updated1).toBe(0); // No new members added
+
+        // Verify score was updated
+        const score1 = await redis.zscore(key, "one");
+        expect(score1).toBe(2);
+
+        // Try to add new member with XX (should fail)
+        const added = await redis.zadd(key, "XX", "3", "three");
+        expect(added).toBe(0);
+
+        // Verify member wasn't added
+        const score2 = await redis.zscore(key, "three");
+        expect(score2).toBeNull();
+      });
+
+      test("should return changed count with CH option in ZADD", async () => {
+        const redis = ctx.redis;
+        const key = "zadd-ch-test";
+
+        // Add initial members
+        await redis.zadd(key, "1", "one", "2", "two");
+
+        // Add and update with CH (should return total changed count)
+        const changed = await redis.zadd(key, "CH", "1.5", "one", "3", "three");
+        expect(changed).toBe(2); // one updated, three added
+      });
+
+      test("should increment score with INCR option in ZADD", async () => {
+        const redis = ctx.redis;
+        const key = "zadd-incr-test";
+
+        // Add initial member
+        await redis.zadd(key, "1", "one");
+
+        // Increment with INCR option (returns new score as string)
+        const newScore = await redis.zadd(key, "INCR", "2.5", "one");
+        expect(newScore).toBe(3.5);
+
+        // Verify the score
+        const score = await redis.zscore(key, "one");
+        expect(score).toBe(3.5);
+      });
+
+      test("should handle GT option in ZADD", async () => {
+        const redis = ctx.redis;
+        const key = "zadd-gt-test";
+
+        // Add initial member
+        await redis.zadd(key, "5", "one");
+
+        // Try to update with lower score and GT (should fail)
+        const updated1 = await redis.zadd(key, "GT", "3", "one");
+        expect(updated1).toBe(0);
+
+        // Verify score wasn't updated
+        const score1 = await redis.zscore(key, "one");
+        expect(score1).toBe(5);
+
+        // Update with higher score and GT (should succeed)
+        const updated2 = await redis.zadd(key, "GT", "7", "one");
+        expect(updated2).toBe(0); // No new members added
+
+        // Verify score was updated
+        const score2 = await redis.zscore(key, "one");
+        expect(score2).toBe(7);
+      });
+
+      test("should handle LT option in ZADD", async () => {
+        const redis = ctx.redis;
+        const key = "zadd-lt-test";
+
+        // Add initial member
+        await redis.zadd(key, "5", "one");
+
+        // Try to update with higher score and LT (should fail)
+        const updated1 = await redis.zadd(key, "LT", "7", "one");
+        expect(updated1).toBe(0);
+
+        // Verify score wasn't updated
+        const score1 = await redis.zscore(key, "one");
+        expect(score1).toBe(5);
+
+        // Update with lower score and LT (should succeed)
+        const updated2 = await redis.zadd(key, "LT", "3", "one");
+        expect(updated2).toBe(0); // No new members added
+
+        // Verify score was updated
+        const score2 = await redis.zscore(key, "one");
+        expect(score2).toBe(3);
+      });
+
+      test("should iterate sorted set with ZSCAN", async () => {
+        const redis = ctx.redis;
+        const key = "zscan-test";
+
+        // Add members
+        await redis.zadd(key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five");
+
+        // Scan all elements
+        let cursor = "0";
+        const allElements: string[] = [];
+        do {
+          const [nextCursor, elements] = await redis.zscan(key, cursor);
+          allElements.push(...elements);
+          cursor = nextCursor;
+        } while (cursor !== "0");
+
+        // Should have member-score pairs (10 elements total: 5 members + 5 scores)
+        expect(allElements.length).toBe(10);
+
+        // Verify we got all members (check every other element for member names)
+        const members = allElements.filter((_, index) => index % 2 === 0);
+        expect(members).toContain("one");
+        expect(members).toContain("two");
+        expect(members).toContain("three");
+        expect(members).toContain("four");
+        expect(members).toContain("five");
+      });
+
+      test("should iterate sorted set with ZSCAN and MATCH", async () => {
+        const redis = ctx.redis;
+        const key = "zscan-match-test";
+
+        // Add members with different patterns
+        await redis.zadd(key, "1", "user:1", "2", "user:2", "3", "post:1", "4", "post:2");
+
+        // Scan with MATCH pattern
+        let cursor = "0";
+        const userElements: string[] = [];
+        do {
+          const [nextCursor, elements] = await redis.zscan(key, cursor, "MATCH", "user:*");
+          userElements.push(...elements);
+          cursor = nextCursor;
+        } while (cursor !== "0");
+
+        // Extract member names (every other element)
+        const members = userElements.filter((_, index) => index % 2 === 0);
+
+        // Should only find user keys
+        expect(members).toContain("user:1");
+        expect(members).toContain("user:2");
+        expect(members).not.toContain("post:1");
+        expect(members).not.toContain("post:2");
+      });
+
+      test("should iterate sorted set with ZSCAN and COUNT", async () => {
+        const redis = ctx.redis;
+        const key = "zscan-count-test";
+
+        // Add many members
+        const promises: Promise<number>[] = [];
+        for (let i = 0; i < 100; i++) {
+          promises.push(redis.zadd(key, String(i), `member:${i}`));
+        }
+        await Promise.all(promises);
+
+        // Scan with COUNT hint
+        const [cursor, elements] = await redis.zscan(key, "0", "COUNT", "10");
+
+        expect(cursor).toBe("0"); // Should complete in one scan since we know the size
+        // COUNT is a hint, so we might get more or fewer elements
+        // Just verify we got some elements back
+        expect(elements.length).toBeGreaterThan(0);
+        expect(Array.isArray(elements)).toBe(true);
+
+        const [cursor2, elements2] = await redis.zscan(key, 0, "COUNT", "10");
+        expect(cursor2).toBe("0");
+        expect(elements2.length).toBeGreaterThan(0);
+        expect(Array.isArray(elements2)).toBe(true);
+      });
+
+      test("should reject invalid key in ZADD", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zadd({} as any, "1", "member");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zadd'."`);
+      });
+
+      test("should reject invalid key in ZSCAN", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zscan([] as any, 0);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zscan'."`);
+      });
+
+      test("should return range of members with ZRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrange-basic-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get all members
+        const all = await redis.zrange(key, 0, -1);
+        expect(all).toEqual(["one", "two", "three", "four", "five"]);
+
+        // Get first 3 members
+        const first3 = await redis.zrange(key, 0, 2);
+        expect(first3).toEqual(["one", "two", "three"]);
+
+        // Get last 2 members using negative indices
+        const last2 = await redis.zrange(key, -2, -1);
+        expect(last2).toEqual(["four", "five"]);
+      });
+
+      test("should return members with scores using WITHSCORES option in ZRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrange-withscores-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2.5", "two", "3", "three"]);
+
+        // Get members with scores
+        const result = await redis.zrange(key, 0, -1, "WITHSCORES");
+        expect(result).toEqual([
+          ["one", 1],
+          ["two", 2.5],
+          ["three", 3],
+        ]);
+      });
+
+      test("should return members by score range with BYSCORE option in ZRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrange-byscore-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get members with score 2-4 (inclusive)
+        const range1 = await redis.zrange(key, "2", "4", "BYSCORE");
+        expect(range1).toEqual(["two", "three", "four"]);
+
+        // Get members with score > 2 and <= 4 (exclusive start)
+        const range2 = await redis.zrange(key, "(2", "4", "BYSCORE");
+        expect(range2).toEqual(["three", "four"]);
+
+        // Get all members using infinity
+        const all = await redis.zrange(key, "-inf", "+inf", "BYSCORE");
+        expect(all).toEqual(["one", "two", "three", "four", "five"]);
+      });
+
+      test("should return members in reverse order with REV option in ZRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrange-rev-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three"]);
+
+        // Get members in reverse order
+        const reversed = await redis.zrange(key, 0, -1, "REV");
+        expect(reversed).toEqual(["three", "two", "one"]);
+
+        // Get top 2 with highest scores
+        const top2 = await redis.zrange(key, 0, 1, "REV");
+        expect(top2).toEqual(["three", "two"]);
+      });
+
+      test("should support LIMIT option with BYSCORE in ZRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrange-limit-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get members with score >= 1, limit 2 starting from offset 1
+        const result = await redis.zrange(key, "1", "5", "BYSCORE", "LIMIT", "1", "2");
+        expect(result).toEqual(["two", "three"]);
+      });
+
+      test("should return members by lexicographical range with BYLEX option in ZRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrange-bylex-test";
+
+        // Add members with same score (required for lex operations)
+        await redis.send("ZADD", [key, "0", "apple", "0", "banana", "0", "cherry", "0", "date"]);
+
+        // Get range from "banana" to "cherry" (inclusive)
+        const range1 = await redis.zrange(key, "[banana", "[cherry", "BYLEX");
+        expect(range1).toEqual(["banana", "cherry"]);
+
+        // Get range with exclusive bounds
+        const range2 = await redis.zrange(key, "(banana", "(date", "BYLEX");
+        expect(range2).toEqual(["cherry"]);
+      });
+
+      test("should return members in reverse order with ZREVRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrange-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get all members in reverse order
+        const all = await redis.zrevrange(key, 0, -1);
+        expect(all).toEqual(["five", "four", "three", "two", "one"]);
+
+        // Get top 3 members with highest scores
+        const top3 = await redis.zrevrange(key, 0, 2);
+        expect(top3).toEqual(["five", "four", "three"]);
+
+        // Get members using negative indices
+        const last2 = await redis.zrevrange(key, -2, -1);
+        expect(last2).toEqual(["two", "one"]);
+      });
+
+      test("should return members with scores using WITHSCORES option in ZREVRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrange-withscores-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1.5", "one", "2", "two", "3.7", "three"]);
+
+        // Get members with scores in reverse order
+        const result = await redis.zrevrange(key, 0, -1, "WITHSCORES");
+        expect(result).toEqual([
+          ["three", 3.7],
+          ["two", 2],
+          ["one", 1.5],
+        ]);
+      });
+
+      test("should handle empty sorted set with ZRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrange-empty-test";
+
+        // Query empty set
+        const result = await redis.zrange(key, 0, -1);
+        expect(result).toEqual([]);
+      });
+
+      test("should handle empty sorted set with ZREVRANGE", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrange-empty-test";
+
+        // Query empty set
+        const result = await redis.zrevrange(key, 0, -1);
+        expect(result).toEqual([]);
+      });
+
+      test("should reject invalid key in ZRANGE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrange({} as any, 0, 10);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zrange'."`);
+      });
+
+      test("should reject invalid key in ZREVRANGE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrevrange([] as any, 0, 10);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zrevrange'."`,
+        );
+      });
+      test("should return members by score range with ZRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zrangebyscore-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get all members
+        const all = await redis.zrangebyscore(key, "-inf", "+inf");
+        expect(all).toEqual(["one", "two", "three", "four", "five"]);
+
+        // Get members with score 2-4 (inclusive)
+        const range1 = await redis.zrangebyscore(key, 2, 4);
+        expect(range1).toEqual(["two", "three", "four"]);
+
+        // Get members with exclusive lower bound
+        const range2 = await redis.zrangebyscore(key, "(2", 4);
+        expect(range2).toEqual(["three", "four"]);
+
+        // Get members with exclusive upper bound
+        const range3 = await redis.zrangebyscore(key, 2, "(4");
+        expect(range3).toEqual(["two", "three"]);
+
+        // Get members with both exclusive bounds
+        const range4 = await redis.zrangebyscore(key, "(2", "(4");
+        expect(range4).toEqual(["three"]);
+      });
+
+      test("should support WITHSCORES option with ZRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zrangebyscore-withscores-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1.5", "one", "2.7", "two", "3.9", "three"]);
+
+        // Get with scores
+        const result = await redis.zrangebyscore(key, 1, 3, "WITHSCORES");
+        expect(result).toEqual([
+          ["one", 1.5],
+          ["two", 2.7],
+        ]);
+      });
+
+      test("should support LIMIT option with ZRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zrangebyscore-limit-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get first 2 members in score range
+        const limited1 = await redis.zrangebyscore(key, "-inf", "+inf", "LIMIT", 0, 2);
+        expect(limited1).toEqual(["one", "two"]);
+
+        // Skip first, get next 2
+        const limited2 = await redis.zrangebyscore(key, "-inf", "+inf", "LIMIT", 1, 2);
+        expect(limited2).toEqual(["two", "three"]);
+
+        // Can combine with score range
+        const limited3 = await redis.zrangebyscore(key, 2, 5, "LIMIT", 1, 2);
+        expect(limited3).toEqual(["three", "four"]);
+      });
+
+      test("should support WITHSCORES with ZRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zrangebyscore-withscores-only-test";
+
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four"]);
+
+        const result = await redis.zrangebyscore(key, "-inf", "+inf", "WITHSCORES");
+        expect(result).toEqual([
+          ["one", 1],
+          ["two", 2],
+          ["three", 3],
+          ["four", 4],
+        ]);
+      });
+
+      test("should support LIMIT and WITHSCORES together with ZRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zrangebyscore-combined-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four"]);
+
+        // Get with both options
+        const result = await redis.zrangebyscore(key, "-inf", "+inf", "WITHSCORES", "LIMIT", 1, 2);
+        expect(result).toEqual([
+          ["two", 2],
+          ["three", 3],
+        ]);
+      });
+
+      test("should return members by score range in reverse with ZREVRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrangebyscore-test";
+
+        // Add members with scores (note: max comes before min in ZREVRANGEBYSCORE)
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get all members in reverse order
+        const all = await redis.zrevrangebyscore(key, "+inf", "-inf");
+        expect(all).toEqual(["five", "four", "three", "two", "one"]);
+
+        // Get members with score 4-2 (note: max=4, min=2)
+        const range1 = await redis.zrevrangebyscore(key, 4, 2);
+        expect(range1).toEqual(["four", "three", "two"]);
+
+        // Get with exclusive bounds
+        const range2 = await redis.zrevrangebyscore(key, "(4", "(2");
+        expect(range2).toEqual(["three"]);
+
+        // Get with one exclusive bound
+        const range3 = await redis.zrevrangebyscore(key, 4, "(2");
+        expect(range3).toEqual(["four", "three"]);
+      });
+
+      test("should support WITHSCORES option with ZREVRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrangebyscore-withscores-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1.5", "one", "2.7", "two", "3.9", "three"]);
+
+        // Get with scores (max=3, min=1)
+        const result = await redis.zrevrangebyscore(key, 3, 1, "WITHSCORES");
+        expect(result).toEqual([
+          ["two", 2.7],
+          ["one", 1.5],
+        ]);
+      });
+
+      test("should support LIMIT option with ZREVRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrangebyscore-limit-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get first 2 members in reverse
+        const limited1 = await redis.zrevrangebyscore(key, "+inf", "-inf", "LIMIT", 0, 2);
+        expect(limited1).toEqual(["five", "four"]);
+
+        // Skip first, get next 2
+        const limited2 = await redis.zrevrangebyscore(key, "+inf", "-inf", "LIMIT", 1, 2);
+        expect(limited2).toEqual(["four", "three"]);
+      });
+
+      test("should return members by lexicographical range with ZRANGEBYLEX", async () => {
+        const redis = ctx.redis;
+        const key = "zrangebylex-test";
+
+        // Add members with same score (required for lex operations)
+        await redis.send("ZADD", [key, "0", "apple", "0", "banana", "0", "cherry", "0", "date", "0", "elderberry"]);
+
+        // Get all members
+        const all = await redis.zrangebylex(key, "-", "+");
+        expect(all).toEqual(["apple", "banana", "cherry", "date", "elderberry"]);
+
+        // Get range from "banana" to "date" (inclusive)
+        const range1 = await redis.zrangebylex(key, "[banana", "[date");
+        expect(range1).toEqual(["banana", "cherry", "date"]);
+
+        // Get range with exclusive bounds
+        const range2 = await redis.zrangebylex(key, "(banana", "(date");
+        expect(range2).toEqual(["cherry"]);
+
+        // Get range with one exclusive, one inclusive
+        const range3 = await redis.zrangebylex(key, "[banana", "(date");
+        expect(range3).toEqual(["banana", "cherry"]);
+
+        // Get range from start to specific member
+        const range4 = await redis.zrangebylex(key, "-", "[cherry");
+        expect(range4).toEqual(["apple", "banana", "cherry"]);
+
+        // Get range from specific member to end
+        const range5 = await redis.zrangebylex(key, "[cherry", "+");
+        expect(range5).toEqual(["cherry", "date", "elderberry"]);
+      });
+
+      test("should support LIMIT option with ZRANGEBYLEX", async () => {
+        const redis = ctx.redis;
+        const key = "zrangebylex-limit-test";
+
+        // Add members with same score
+        await redis.send("ZADD", [key, "0", "a", "0", "b", "0", "c", "0", "d", "0", "e", "0", "f", "0", "g"]);
+
+        // Get first 3 members
+        const limited1 = await redis.zrangebylex(key, "-", "+", "LIMIT", 0, 3);
+        expect(limited1).toEqual(["a", "b", "c"]);
+
+        // Skip first 2, get next 3
+        const limited2 = await redis.zrangebylex(key, "-", "+", "LIMIT", 2, 3);
+        expect(limited2).toEqual(["c", "d", "e"]);
+
+        // Get last 2 with large offset
+        const limited3 = await redis.zrangebylex(key, "-", "+", "LIMIT", 5, 10);
+        expect(limited3).toEqual(["f", "g"]);
+      });
+
+      test("should reject invalid key in ZRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrangebyscore({} as any, 0, 10);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zrangebyscore'."`,
+        );
+      });
+
+      test("should reject invalid key in ZREVRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrevrangebyscore([] as any, 10, 0);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zrevrangebyscore'."`,
+        );
+      });
+
+      test("should reject invalid key in ZRANGEBYLEX", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrangebylex(null as any, "-", "+");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zrangebylex'."`,
+        );
+      });
+
+      test("should return members in reverse lexicographical order with ZREVRANGEBYLEX", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrangebylex-test";
+
+        // Add members with same score (required for lex operations)
+        await redis.send("ZADD", [key, "0", "apple", "0", "banana", "0", "cherry", "0", "date", "0", "elderberry"]);
+
+        // Get all members in reverse order
+        const all = await redis.zrevrangebylex(key, "+", "-");
+        expect(all).toEqual(["elderberry", "date", "cherry", "banana", "apple"]);
+
+        // Get range from "date" to "banana" (inclusive, reverse order)
+        const range1 = await redis.zrevrangebylex(key, "[date", "[banana");
+        expect(range1).toEqual(["date", "cherry", "banana"]);
+
+        // Get range with exclusive bounds
+        const range2 = await redis.zrevrangebylex(key, "(date", "(banana");
+        expect(range2).toEqual(["cherry"]);
+
+        // Get range with one exclusive, one inclusive
+        const range3 = await redis.zrevrangebylex(key, "[elderberry", "(cherry");
+        expect(range3).toEqual(["elderberry", "date"]);
+      });
+
+      test("should support LIMIT option with ZREVRANGEBYLEX", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrangebylex-limit-test";
+
+        // Add members with same score
+        await redis.send("ZADD", [key, "0", "a", "0", "b", "0", "c", "0", "d", "0", "e", "0", "f", "0", "g"]);
+
+        // Get first 3 members in reverse order
+        const limited1 = await redis.zrevrangebylex(key, "+", "-", "LIMIT", "0", "3");
+        expect(limited1).toEqual(["g", "f", "e"]);
+
+        // Skip first 2, get next 3
+        const limited2 = await redis.zrevrangebylex(key, "+", "-", "LIMIT", "2", "3");
+        expect(limited2).toEqual(["e", "d", "c"]);
+
+        // Get last 2 with large offset
+        const limited3 = await redis.zrevrangebylex(key, "+", "-", "LIMIT", "5", "10");
+        expect(limited3).toEqual(["b", "a"]);
+      });
+
+      test("should store range of members with ZRANGESTORE", async () => {
+        const redis = ctx.redis;
+        const source = "zrangestore-source";
+        const dest = "zrangestore-dest";
+
+        // Add members with scores
+        await redis.send("ZADD", [source, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Store members by rank (index 1 to 3)
+        const count1 = await redis.zrangestore(dest, source, 1, 3);
+        expect(count1).toBe(3);
+
+        // Verify stored members
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1"]);
+        expect(stored).toEqual(["two", "three", "four"]);
+      });
+
+      test("should store range with BYSCORE option in ZRANGESTORE", async () => {
+        const redis = ctx.redis;
+        const source = "zrangestore-byscore-source";
+        const dest = "zrangestore-byscore-dest";
+
+        // Add members
+        await redis.send("ZADD", [source, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Store members with score 2-4 (inclusive)
+        const count = await redis.zrangestore(dest, source, "2", "4", "BYSCORE");
+        expect(count).toBe(3);
+
+        // Verify stored members
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1", "WITHSCORES"]);
+        expect(stored).toEqual([
+          ["two", 2],
+          ["three", 3],
+          ["four", 4],
+        ]);
+      });
+
+      test("should store range in reverse order with REV option in ZRANGESTORE", async () => {
+        const redis = ctx.redis;
+        const source = "zrangestore-rev-source";
+        const dest = "zrangestore-rev-dest";
+
+        // Add members
+        await redis.send("ZADD", [source, "1", "one", "2", "two", "3", "three"]);
+
+        // Store in reverse order
+        const count = await redis.zrangestore(dest, source, "0", "-1", "REV");
+        expect(count).toBe(3);
+
+        // Verify stored members (they maintain their scores but were selected in reverse)
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1"]);
+        expect(stored).toEqual(["one", "two", "three"]);
+      });
+
+      test("should support LIMIT option with ZRANGESTORE", async () => {
+        const redis = ctx.redis;
+        const source = "zrangestore-limit-source";
+        const dest = "zrangestore-limit-dest";
+
+        // Add members
+        await redis.send("ZADD", [source, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Store with BYSCORE and LIMIT
+        const count = await redis.zrangestore(dest, source, "-inf", "+inf", "BYSCORE", "LIMIT", "1", "2");
+        expect(count).toBe(2);
+
+        // Verify stored members (skip first, get next 2)
+        const stored = await redis.send("ZRANGE", [dest, "0", "-1"]);
+        expect(stored).toEqual(["two", "three"]);
+      });
+
+      test("should reject invalid key in ZREVRANGEBYLEX", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrevrangebylex({} as any, "+", "-");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zrevrangebylex'."`,
+        );
+      });
+
+      test("should reject invalid destination in ZRANGESTORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrangestore([] as any, "source", 0, 10);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zrangestore'."`,
+        );
+      });
+
+      test("should reject invalid source in ZRANGESTORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zrangestore("dest", null as any, 0, 10);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zrangestore'."`,
+        );
       });
     });
 

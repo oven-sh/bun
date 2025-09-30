@@ -698,6 +698,171 @@ declare module "bun" {
     zrandmember(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Return a range of members in a sorted set with their scores
+     *
+     * @param key The sorted set key
+     * @param start The starting index
+     * @param stop The stopping index
+     * @param withscores Return members with their scores
+     * @returns Promise that resolves with an array of [member, score, member, score, ...]
+     *
+     * @example
+     * ```ts
+     * const results = await redis.zrange("myzset", 0, -1, "WITHSCORES");
+     * // Returns ["member1", "1.5", "member2", "2.5", ...]
+     * ```
+     */
+    zrange(
+      key: RedisClient.KeyLike,
+      start: string | number,
+      stop: string | number,
+      withscores: "WITHSCORES",
+    ): Promise<[string, number][]>;
+
+    /**
+     * Return a range of members in a sorted set by score
+     *
+     * @param key The sorted set key
+     * @param start The minimum score (use "-inf" for negative infinity, "(" prefix for exclusive)
+     * @param stop The maximum score (use "+inf" for positive infinity, "(" prefix for exclusive)
+     * @param byscore Indicates score-based range
+     * @returns Promise that resolves with an array of members with scores in the range
+     *
+     * @example
+     * ```ts
+     * // Get members with score between 1 and 3
+     * const members = await redis.zrange("myzset", "1", "3", "BYSCORE");
+     *
+     * // Get members with score > 1 and <= 3 (exclusive start)
+     * const members2 = await redis.zrange("myzset", "(1", "3", "BYSCORE");
+     * ```
+     */
+    zrange(
+      key: RedisClient.KeyLike,
+      start: string | number,
+      stop: string | number,
+      byscore: "BYSCORE",
+    ): Promise<string[]>;
+
+    /**
+     * Return a range of members in a sorted set lexicographically
+     *
+     * @param key The sorted set key
+     * @param start The minimum lexicographical value (use "-" for start, "[" for inclusive, "(" for exclusive)
+     * @param stop The maximum lexicographical value (use "+" for end, "[" for inclusive, "(" for exclusive)
+     * @param bylex Indicates lexicographical range
+     * @returns Promise that resolves with an array of members in the lexicographical range
+     *
+     * @example
+     * ```ts
+     * // Get members lexicographically from "a" to "c" (inclusive)
+     * const members = await redis.zrange("myzset", "[a", "[c", "BYLEX");
+     * ```
+     */
+    zrange(key: RedisClient.KeyLike, start: string, stop: string, bylex: "BYLEX"): Promise<string[]>;
+
+    /**
+     * Return a range of members in a sorted set with various options
+     *
+     * @param key The sorted set key
+     * @param start The starting value (index, score, or lex depending on options)
+     * @param stop The stopping value
+     * @param options Additional options (BYSCORE, BYLEX, REV, LIMIT offset count, WITHSCORES)
+     * @returns Promise that resolves with an array of members (or with scores if WITHSCORES)
+     *
+     * @example
+     * ```ts
+     * // Get members by score with limit
+     * const members = await redis.zrange("myzset", "1", "10", "BYSCORE", "LIMIT", "0", "5");
+     *
+     * // Get members in reverse order with scores
+     * const reversed = await redis.zrange("myzset", "0", "-1", "REV", "WITHSCORES");
+     * ```
+     */
+    zrange(
+      key: RedisClient.KeyLike,
+      start: string | number,
+      stop: string | number,
+      ...options: string[]
+    ): Promise<string[]>;
+
+    /**
+     * Return a range of members in a sorted set
+     *
+     * Returns the specified range of elements in the sorted set stored at key.
+     * The elements are considered to be ordered from the lowest to the highest score by default.
+     *
+     * @param key The sorted set key
+     * @param start The starting index (0-based, can be negative to count from end)
+     * @param stop The stopping index (0-based, can be negative to count from end)
+     * @returns Promise that resolves with an array of members in the specified range
+     *
+     * @example
+     * ```ts
+     * // Get all members
+     * const members = await redis.zrange("myzset", 0, -1);
+     *
+     * // Get first 3 members
+     * const top3 = await redis.zrange("myzset", 0, 2);
+     * ```
+     */
+    zrange(key: RedisClient.KeyLike, start: string | number, stop: string | number): Promise<string[]>;
+
+    /**
+     * Return a range of members in a sorted set, by index, with scores ordered from high to low
+     *
+     * This is equivalent to ZRANGE with the REV option. Returns members in reverse order.
+     *
+     * @param key The sorted set key
+     * @param start The starting index (0-based, can be negative to count from end)
+     * @param stop The stopping index (0-based, can be negative to count from end)
+     * @returns Promise that resolves with an array of members in reverse order
+     *
+     * @example
+     * ```ts
+     * // Get all members in reverse order (highest to lowest score)
+     * const members = await redis.zrevrange("myzset", 0, -1);
+     *
+     * // Get top 3 members with highest scores
+     * const top3 = await redis.zrevrange("myzset", 0, 2);
+     * ```
+     */
+    zrevrange(key: RedisClient.KeyLike, start: number, stop: number): Promise<string[]>;
+
+    /**
+     * Return a range of members in a sorted set with their scores, ordered from high to low
+     *
+     * @param key The sorted set key
+     * @param start The starting index
+     * @param stop The stopping index
+     * @param withscores Return members with their scores
+     * @returns Promise that resolves with an array of [member, score, member, score, ...] in reverse order
+     *
+     * @example
+     * ```ts
+     * const results = await redis.zrevrange("myzset", 0, -1, "WITHSCORES");
+     * // Returns ["member3", "3.5", "member2", "2.5", "member1", "1.5", ...]
+     * ```
+     */
+    zrevrange(
+      key: RedisClient.KeyLike,
+      start: number,
+      stop: number,
+      withscores: "WITHSCORES",
+    ): Promise<[string, number][]>;
+
+    /**
+     * Return a range of members in a sorted set with options, ordered from high to low
+     *
+     * @param key The sorted set key
+     * @param start The starting index
+     * @param stop The stopping index
+     * @param options Additional options (WITHSCORES)
+     * @returns Promise that resolves with an array of members (or with scores if WITHSCORES)
+     */
+    zrevrange(key: RedisClient.KeyLike, start: number, stop: number, ...options: string[]): Promise<string[]>;
+
+    /**
      * Append a value to a key
      * @param key The key to append to
      * @param value The value to append
@@ -806,7 +971,7 @@ declare module "bun" {
      * @returns Promise that resolves with the score of the member as a string,
      * or null if the member or key doesn't exist
      */
-    zscore(key: RedisClient.KeyLike, member: string): Promise<string | null>;
+    zscore(key: RedisClient.KeyLike, member: string): Promise<number | null>;
 
     /**
      * Increment the score of a member in a sorted set
@@ -824,7 +989,113 @@ declare module "bun" {
      * @param members Additional members to get scores for
      * @returns Promise that resolves with an array of scores (number for each score, or null if member doesn't exist)
      */
-    zmscore(key: RedisClient.KeyLike, member: RedisClient.KeyLike, ...members: RedisClient.KeyLike[]): Promise<(number | null)[]>;
+    zmscore(
+      key: RedisClient.KeyLike,
+      member: RedisClient.KeyLike,
+      ...members: RedisClient.KeyLike[]
+    ): Promise<(number | null)[]>;
+
+    /**
+     * Add one or more members to a sorted set, or update scores if they already exist
+     *
+     * ZADD adds all the specified members with the specified scores to the sorted set stored at key.
+     * It is possible to specify multiple score / member pairs. If a specified member is already a
+     * member of the sorted set, the score is updated and the element reinserted at the right position
+     * to ensure the correct ordering.
+     *
+     * If key does not exist, a new sorted set with the specified members as sole members is created.
+     * If the key exists but does not hold a sorted set, an error is returned.
+     *
+     * The score values should be the string representation of a double precision floating point number.
+     * +inf and -inf values are valid values as well.
+     *
+     * Options:
+     * - NX: Only add new elements. Don't update already existing elements.
+     * - XX: Only update elements that already exist. Never add elements.
+     * - GT: Only update existing elements if the new score is greater than the current score. This flag doesn't prevent adding new elements.
+     * - LT: Only update existing elements if the new score is less than the current score. This flag doesn't prevent adding new elements.
+     * - CH: Modify the return value from the number of new elements added, to the total number of elements changed (CH is an abbreviation of changed).
+     * - INCR: When this option is specified ZADD acts like ZINCRBY. Only one score-member pair can be specified in this mode.
+     *
+     * Note: The GT, LT and NX options are mutually exclusive.
+     *
+     * @param key The sorted set key
+     * @param args Score-member pairs and optional flags (NX, XX, GT, LT, CH, INCR)
+     * @returns Promise that resolves with the number of elements added (or changed if CH is used, or new score if INCR is used)
+     *
+     * @example
+     * ```ts
+     * // Add members with scores
+     * await redis.zadd("myzset", "1", "one", "2", "two", "3", "three");
+     *
+     * // Add with NX option (only if member doesn't exist)
+     * await redis.zadd("myzset", "NX", "4", "four");
+     *
+     * // Add with XX option (only if member exists)
+     * await redis.zadd("myzset", "XX", "2.5", "two");
+     *
+     * // Add with CH option (return count of changed elements)
+     * await redis.zadd("myzset", "CH", "5", "five", "2.1", "two");
+     *
+     * // Use INCR option (increment score)
+     * await redis.zadd("myzset", "INCR", "1.5", "one");
+     * ```
+     */
+    zadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<number>;
+
+    /**
+     * Incrementally iterate sorted set elements and their scores
+     *
+     * The ZSCAN command is used in order to incrementally iterate over sorted set elements and their scores.
+     * ZSCAN is a cursor based iterator. This means that at every call of the command, the server returns an
+     * updated cursor that the user needs to use as the cursor argument in the next call.
+     *
+     * An iteration starts when the cursor is set to 0, and terminates when the cursor returned by the server is 0.
+     *
+     * ZSCAN and the other SCAN family commands are able to provide to the user a set of guarantees associated
+     * to full iterations:
+     * - A full iteration always retrieves all the elements that were present in the collection from the start
+     *   to the end of a full iteration. This means that if a given element is inside the collection when an
+     *   iteration is started, and is still there when an iteration terminates, then at some point ZSCAN returned it.
+     * - A full iteration never returns any element that was NOT present in the collection from the start to the
+     *   end of a full iteration. So if an element was removed before the start of an iteration, and is never
+     *   added back to the collection for all the time an iteration lasts, ZSCAN ensures that this element will
+     *   never be returned.
+     *
+     * Options:
+     * - MATCH pattern: Only return elements matching the pattern (glob-style)
+     * - COUNT count: Amount of work done at every call (hint, not exact)
+     *
+     * @param key The sorted set key
+     * @param cursor The cursor value (use 0 to start a new iteration)
+     * @param options Additional ZSCAN options (MATCH pattern, COUNT hint, etc.)
+     * @returns Promise that resolves with a tuple [cursor, [member1, score1, member2, score2, ...]]
+     *
+     * @example
+     * ```ts
+     * // Basic scan - iterate all elements
+     * let cursor = "0";
+     * const allElements: string[] = [];
+     * do {
+     *   const [nextCursor, elements] = await redis.zscan("myzset", cursor);
+     *   allElements.push(...elements);
+     *   cursor = nextCursor;
+     * } while (cursor !== "0");
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Scan with MATCH pattern
+     * const [cursor, elements] = await redis.zscan("myzset", "0", "MATCH", "user:*");
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Scan with COUNT hint
+     * const [cursor, elements] = await redis.zscan("myzset", "0", "COUNT", "100");
+     * ```
+     */
+    zscan(key: RedisClient.KeyLike, cursor: string | number, ...options: string[]): Promise<[string, string[]]>;
 
     /**
      * Remove one or more members from a sorted set
@@ -861,6 +1132,351 @@ declare module "bun" {
      * @returns Promise that resolves with the number of elements removed
      */
     zremrangebyscore(key: RedisClient.KeyLike, min: string | number, max: string | number): Promise<number>;
+
+    /**
+     * Return members in a sorted set within a lexicographical range
+     *
+     * When all the elements in a sorted set have the same score, this command
+     * returns the elements between min and max in lexicographical order.
+     *
+     * Lex ranges:
+     * - `[member` for inclusive lower bound
+     * - `(member` for exclusive lower bound
+     * - `-` for negative infinity
+     * - `+` for positive infinity
+     *
+     * @param key The sorted set key (all members must have the same score)
+     * @param min Minimum lexicographical value (use "-" for negative infinity, "[" or "(" for inclusive/exclusive)
+     * @param max Maximum lexicographical value (use "+" for positive infinity, "[" or "(" for inclusive/exclusive)
+     * @returns Promise that resolves with array of members
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["myzset", "0", "apple", "0", "banana", "0", "cherry"]);
+     * const members = await redis.zrangebylex("myzset", "[banana", "[cherry");
+     * // Returns: ["banana", "cherry"]
+     * ```
+     */
+    zrangebylex(key: RedisClient.KeyLike, min: string, max: string): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set within a lexicographical range, with pagination
+     *
+     * @param key The sorted set key
+     * @param min Minimum lexicographical value
+     * @param max Maximum lexicographical value
+     * @param limit The "LIMIT" keyword
+     * @param offset The number of elements to skip
+     * @param count The maximum number of elements to return
+     * @returns Promise that resolves with array of members
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["myzset", "0", "a", "0", "b", "0", "c", "0", "d"]);
+     * const result = await redis.zrangebylex("myzset", "-", "+", "LIMIT", 1, 2);
+     * // Returns: ["b", "c"]
+     * ```
+     */
+    zrangebylex(
+      key: RedisClient.KeyLike,
+      min: string,
+      max: string,
+      limit: "LIMIT",
+      offset: number,
+      count: number,
+    ): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set within a lexicographical range, with options
+     *
+     * @param key The sorted set key
+     * @param min Minimum lexicographical value
+     * @param max Maximum lexicographical value
+     * @param options Additional options (LIMIT offset count)
+     * @returns Promise that resolves with array of members
+     */
+    zrangebylex(key: RedisClient.KeyLike, min: string, max: string, ...options: (string | number)[]): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range
+     *
+     * Returns all the elements in the sorted set at key with a score between min
+     * and max (inclusive by default). The elements are considered to be ordered
+     * from low to high scores.
+     *
+     * Score ranges support:
+     * - `-inf` and `+inf` for negative and positive infinity
+     * - `(` prefix for exclusive bounds (e.g., `(5` means greater than 5, not including 5)
+     *
+     * @param key The sorted set key
+     * @param min Minimum score (can be "-inf", a number, or prefixed with "(" for exclusive)
+     * @param max Maximum score (can be "+inf", a number, or prefixed with "(" for exclusive)
+     * @returns Promise that resolves with array of members
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three"]);
+     * const members = await redis.zrangebyscore("myzset", 1, 2);
+     * // Returns: ["one", "two"]
+     * ```
+     */
+    zrangebyscore(key: RedisClient.KeyLike, min: string | number, max: string | number): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, with scores
+     *
+     * @param key The sorted set key
+     * @param min Minimum score
+     * @param max Maximum score
+     * @param withscores The "WITHSCORES" keyword to return scores along with members
+     * @returns Promise that resolves with array of [member, score, member, score, ...]
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three"]);
+     * const result = await redis.zrangebyscore("myzset", 1, 2, "WITHSCORES");
+     * // Returns: ["one", "1", "two", "2"]
+     * ```
+     */
+    zrangebyscore(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      withscores: "WITHSCORES",
+    ): Promise<[string, number][]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, with pagination
+     *
+     * @param key The sorted set key
+     * @param min Minimum score
+     * @param max Maximum score
+     * @param limit The "LIMIT" keyword
+     * @param offset The number of elements to skip
+     * @param count The maximum number of elements to return
+     * @returns Promise that resolves with array of members
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three", "4", "four"]);
+     * const result = await redis.zrangebyscore("myzset", "-inf", "+inf", "LIMIT", 1, 2);
+     * // Returns: ["two", "three"]
+     * ```
+     */
+    zrangebyscore(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      limit: "LIMIT",
+      offset: number,
+      count: number,
+    ): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, with the score values
+     *
+     * @param key The sorted set key
+     * @param min Minimum score
+     * @param max Maximum score
+     * @param options Additional options (WITHSCORES, LIMIT offset count)
+     * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
+     */
+    zrangebyscore(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      withscores: "WITHSCORES",
+      ...options: (string | number)[]
+    ): Promise<[string, number][]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, with the score values
+     *
+     * @param key The sorted set key
+     * @param min Minimum score
+     * @param max Maximum score
+     * @param options Additional options (WITHSCORES, LIMIT offset count)
+     * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
+     */
+    zrangebyscore(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      withscores: "WITHSCORES",
+      limit: "LIMIT",
+      offset: number,
+      count: number,
+      ...options: (string | number)[]
+    ): Promise<[string, number][]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, with various options
+     *
+     * @param key The sorted set key
+     * @param min Minimum score
+     * @param max Maximum score
+     * @param options Additional options (WITHSCORES, LIMIT offset count)
+     * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
+     */
+    zrangebyscore(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      ...options: (string | number)[]
+    ): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, ordered from high to low
+     *
+     * Returns all the elements in the sorted set at key with a score between max
+     * and min (note: max comes before min). The elements are considered to be
+     * ordered from high to low scores.
+     *
+     * Score ranges support:
+     * - `-inf` and `+inf` for negative and positive infinity
+     * - `(` prefix for exclusive bounds (e.g., `(5` means less than 5, not including 5)
+     *
+     * @param key The sorted set key
+     * @param max Maximum score (can be "+inf", a number, or prefixed with "(" for exclusive)
+     * @param min Minimum score (can be "-inf", a number, or prefixed with "(" for exclusive)
+     * @returns Promise that resolves with array of members
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three"]);
+     * const members = await redis.zrevrangebyscore("myzset", 2, 1);
+     * // Returns: ["two", "one"]
+     * ```
+     */
+    zrevrangebyscore(key: RedisClient.KeyLike, max: string | number, min: string | number): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, ordered from high to low, with scores
+     *
+     * @param key The sorted set key
+     * @param max Maximum score
+     * @param min Minimum score
+     * @param withscores The "WITHSCORES" keyword to return scores along with members
+     * @returns Promise that resolves with array of [member, score, member, score, ...]
+     *
+     * @example
+     * ```ts
+     * await redis.send("ZADD", ["myzset", "1", "one", "2", "two", "3", "three"]);
+     * const result = await redis.zrevrangebyscore("myzset", 2, 1, "WITHSCORES");
+     * // Returns: ["two", "2", "one", "1"]
+     * ```
+     */
+    zrevrangebyscore(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      withscores: "WITHSCORES",
+    ): Promise<[string, number][]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, ordered from high to low, with pagination
+     *
+     * @param key The sorted set key
+     * @param max Maximum score
+     * @param min Minimum score
+     * @param limit The "LIMIT" keyword
+     * @param offset The number of elements to skip
+     * @param count The maximum number of elements to return
+     * @returns Promise that resolves with array of members
+     */
+    zrevrangebyscore(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      limit: "LIMIT",
+      offset: number,
+      count: number,
+    ): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set with scores within a given range, ordered from high to low, with options
+     *
+     * @param key The sorted set key
+     * @param max Maximum score
+     * @param min Minimum score
+     * @param options Additional options (WITHSCORES, LIMIT offset count)
+     * @returns Promise that resolves with array of members (and scores if WITHSCORES is used)
+     */
+    zrevrangebyscore(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      ...options: (string | number)[]
+    ): Promise<string[]>;
+
+    /**
+     * Return members in a sorted set within a lexicographical range, ordered from high to low
+     *
+     * All members in a sorted set must have the same score for this command to work correctly.
+     * The max and min arguments have the same meaning as in ZRANGEBYLEX, but in reverse order.
+     *
+     * Use "[" for inclusive bounds and "(" for exclusive bounds. Use "-" for negative infinity and "+" for positive infinity.
+     *
+     * @param key The sorted set key
+     * @param max The maximum lexicographical value (inclusive with "[", exclusive with "(")
+     * @param min The minimum lexicographical value (inclusive with "[", exclusive with "(")
+     * @param options Optional LIMIT clause: ["LIMIT", offset, count]
+     * @returns Promise that resolves with an array of members in reverse lexicographical order
+     *
+     * @example
+     * ```ts
+     * // Add members with same score
+     * await redis.send("ZADD", ["myzset", "0", "a", "0", "b", "0", "c", "0", "d"]);
+     *
+     * // Get range from highest to lowest
+     * const members = await redis.zrevrangebylex("myzset", "[d", "[b");
+     * console.log(members); // ["d", "c", "b"]
+     *
+     * // With LIMIT
+     * const limited = await redis.zrevrangebylex("myzset", "+", "-", "LIMIT", "0", "2");
+     * console.log(limited); // ["d", "c"] (first 2 members)
+     * ```
+     */
+    zrevrangebylex(key: RedisClient.KeyLike, max: string, min: string, ...options: string[]): Promise<string[]>;
+
+    /**
+     * Store a range of members from a sorted set into a destination key
+     *
+     * This command is like ZRANGE but stores the result in a destination key instead of returning it.
+     * Supports all the same options as ZRANGE including BYSCORE, BYLEX, REV, and LIMIT.
+     *
+     * @param destination The destination key to store results
+     * @param source The source sorted set key
+     * @param start The starting index or score
+     * @param stop The ending index or score
+     * @param options Optional flags: ["BYSCORE"], ["BYLEX"], ["REV"], ["LIMIT", offset, count]
+     * @returns Promise that resolves with the number of elements in the resulting sorted set
+     *
+     * @example
+     * ```ts
+     * // Add members to source set
+     * await redis.send("ZADD", ["source", "1", "one", "2", "two", "3", "three"]);
+     *
+     * // Store range by rank
+     * const count1 = await redis.zrangestore("dest1", "source", 0, 1);
+     * console.log(count1); // 2
+     *
+     * // Store range by score
+     * const count2 = await redis.zrangestore("dest2", "source", "1", "2", "BYSCORE");
+     * console.log(count2); // 2
+     *
+     * // Store in reverse order with limit
+     * const count3 = await redis.zrangestore("dest3", "source", "0", "-1", "REV", "LIMIT", "0", "2");
+     * console.log(count3); // 2
+     * ```
+     */
+    zrangestore(
+      destination: RedisClient.KeyLike,
+      source: RedisClient.KeyLike,
+      start: string | number,
+      stop: string | number,
+      ...options: string[]
+    ): Promise<number>;
 
     /**
      * Get the values of all specified keys

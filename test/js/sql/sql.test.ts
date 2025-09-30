@@ -118,6 +118,19 @@ if (isDockerEnabled()) {
       }
     });
 
+    test("can handle multiple savepoints in parallel", async () => {
+      await using sql = postgres(options);
+      // in this case bun will serialize the savepoint so only one will be executed at a time
+      const result = await sql.transaction(async db => {
+        return await Promise.all([
+          db.savepoint(db => db`select 1 as x`),
+          db.savepoint(db => db`select 2 as x`),
+          db.savepoint(db => db`select 3 as x`),
+        ]);
+      });
+      expect(result).toEqual([[{ x: 1 }], [{ x: 2 }], [{ x: 3 }]]);
+    });
+
     test("should handle numeric values with many digits", async () => {
       await using sql = postgres(options);
       // handle numbers big than 10,4 with zeros at the end and start, starting with 0. or not

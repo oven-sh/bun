@@ -474,16 +474,7 @@ pub const Value = union(Tag) {
             .Locked => {
                 var locked = &this.Locked;
                 if (locked.readable.get(globalThis)) |readable| {
-                    const stream_value = readable.value;
-                    // Transfer ownership of the stream by releasing our Strong reference
-                    // This prevents creating duplicate Strong references when the stream
-                    // is passed to another Response/Request constructor
-                    if (!locked.deinit) {
-                        locked.deinit = true;
-                        locked.readable.deinit();
-                        locked.readable = .{};
-                    }
-                    return stream_value;
+                    return readable.value;
                 }
                 if (locked.promise != null or locked.action != .none) {
                     return jsc.WebCore.ReadableStream.used(globalThis);

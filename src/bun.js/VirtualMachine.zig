@@ -189,6 +189,14 @@ has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
 
+extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
+
+pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
+    const jsvalue = try jsc.fromJSHostCall(this.global, @src(), Bake__getAsyncLocalStorage, .{this.global});
+    if (jsvalue.isEmptyOrUndefinedOrNull()) return null;
+    return jsvalue;
+}
+
 pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -834,6 +842,9 @@ extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     bun.assert(this.isShuttingDown());
+    // FIXME: we should be doing this, but we're not, but unfortunately doing it
+    //        causes like 50+ tests to break
+    // this.eventLoop().tick();
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);

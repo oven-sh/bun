@@ -76,11 +76,11 @@ pub const Entry = struct {
     pub fn renderMappings(map: Entry, kind: ChunkKind, arena: Allocator, gpa: Allocator) ![]u8 {
         var j: StringJoiner = .{ .allocator = arena };
         j.pushStatic("AAAA");
-        try joinVLQ(&map, kind, &j, arena);
+        try joinVLQ(&map, kind, &j, arena, .client);
         return j.done(gpa);
     }
 
-    pub fn renderJSON(map: *const Entry, dev: *DevServer, arena: Allocator, kind: ChunkKind, gpa: Allocator) ![]u8 {
+    pub fn renderJSON(map: *const Entry, dev: *DevServer, arena: Allocator, kind: ChunkKind, gpa: Allocator, side: bake.Side) ![]u8 {
         const map_files = map.files.slice();
         const paths = map.paths;
 
@@ -106,13 +106,22 @@ pub const Entry = struct {
 
             if (std.fs.path.isAbsolute(path)) {
                 const is_windows_drive_path = Environment.isWindows and path[0] != '/';
-                try source_map_strings.appendSlice(if (is_windows_drive_path)
-                    "\"file:///"
-                else
-                    "\"file://");
+
+                // On the client we prefix the sourcemap path with "file://" and
+                // percent encode it
+                if (side == .client) {
+                    try source_map_strings.appendSlice(if (is_windows_drive_path)
+                        "\"file:///"
+                    else
+                        "\"file://");
+                } else {
+                    try source_map_strings.append('"');
+                }
+
                 if (Environment.isWindows and !is_windows_drive_path) {
                     // UNC namespace -> file://server/share/path.ext
-                    bun.strings.percentEncodeWrite(
+                    encodeSourceMapPath(
+                        side,
                         if (path.len > 2 and path[0] == '/' and path[1] == '/')
                             path[2..]
                         else
@@ -127,7 +136,7 @@ pub const Entry = struct {
                     // -> file:///path/to/file.js
                     // windows drive letter paths have the extra slash added
                     // -> file:///C:/path/to/file.js
-                    bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| switch (err) {
+                    encodeSourceMapPath(side, path, &source_map_strings) catch |err| switch (err) {
                         error.IncompleteUTF8 => @panic("Unexpected: asset with incomplete UTF-8 as file path"),
                         error.OutOfMemory => |e| return e,
                     };
@@ -175,14 +184,14 @@ pub const Entry = struct {
         j.pushStatic(
             \\],"names":[],"mappings":"AAAA
         );
-        try joinVLQ(map, kind, &j, arena);
+        try joinVLQ(map, kind, &j, arena, side);
 
         const json_bytes = try j.doneWithEnd(gpa, "\"}");
         errdefer @compileError("last try should be the final alloc");
 
         if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |dump_dir| {
-            const rel_path_escaped = "latest_chunk.js.map";
-            dumpBundle(dump_dir, .client, rel_path_escaped, json_bytes, false) catch |err| {
+            const rel_path_escaped = if (side == .client) "latest_chunk.js.map" else "latest_hmr.js.map";
+            dumpBundle(dump_dir, if (side == .client) .client else .server, rel_path_escaped, json_bytes, false) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Output.warn("Could not dump bundle: {}", .{err});
             };
@@ -191,7 +200,22 @@ pub const Entry = struct {
         return json_bytes;
     }
 
-    fn joinVLQ(map: *const Entry, kind: ChunkKind, j: *StringJoiner, arena: Allocator) !void {
+    fn encodeSourceMapPath(
+        side: bake.Side,
+        utf8_input: []const u8,
+        array_list: *std.ArrayList(u8),
+    ) error{ OutOfMemory, IncompleteUTF8 }!void {
+        // On the client, percent encode everything so it works in the browser
+        if (side == .client) {
+            return bun.strings.percentEncodeWrite(utf8_input, array_list);
+        }
+
+        const writer = array_list.writer();
+        try bun.js_printer.writePreQuotedString(utf8_input, @TypeOf(writer), writer, '"', false, true, .utf8);
+    }
+
+    fn joinVLQ(map: *const Entry, kind: ChunkKind, j: *StringJoiner, arena: Allocator, side: bake.Side) !void {
+        _ = side;
         const map_files = map.files.slice();
 
         const runtime: bake.HmrRuntime = switch (kind) {

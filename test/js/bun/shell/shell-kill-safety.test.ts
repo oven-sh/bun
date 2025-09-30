@@ -43,6 +43,11 @@ describe("Shell kill() - Safety and Correctness", () => {
   });
 
   test("killed shell does not leave zombie processes", async () => {
+    // Skip on Windows - ps aux is Unix-only
+    if (process.platform === "win32") {
+      return;
+    }
+
     // Create multiple shells that spawn subprocesses
     const promises = [];
     for (let i = 0; i < 10; i++) {
@@ -114,19 +119,13 @@ describe("Shell kill() - Safety and Correctness", () => {
     expect(r1).toBe(r2); // Should be the same object
   });
 
-  test("kill with invalid signal throws or uses default", async () => {
+  test("kill with invalid signal defaults to SIGKILL", async () => {
     const p = new $.Shell()`sleep 10`;
 
-    // Try various invalid signals - should either throw or default to SIGKILL
-    try {
-      p.kill(-1);
-      const r = await p;
-      // If it didn't throw, it should use a valid exit code
-      expect([129, 137, 143]).toContain(r.exitCode);
-    } catch (err) {
-      // If it throws, that's also acceptable behavior
-      expect(err).toBeDefined();
-    }
+    // Invalid signals (negative, 0, >31) default to SIGKILL (9)
+    p.kill(-1);
+    const r = await p;
+    expect(r.exitCode).toBe(137); // 128 + 9
   });
 
   test("kill during pipeline setup does not leak file descriptors", async () => {

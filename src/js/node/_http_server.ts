@@ -1081,7 +1081,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     } catch (e) {
       err = e;
     }
-    if (err) _callback(err); else _callback();
+    if (err) _callback(err);
+    else _callback();
   }
 
   pause() {

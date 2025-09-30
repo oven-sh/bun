@@ -55,6 +55,7 @@ test/js/node/test/parallel/test-worker-terminate-nested.js
 test/js/node/test/parallel/test-worker-terminate-null-handler.js
 test/js/node/test/parallel/test-worker-terminate-timers.js
 test/js/node/test/parallel/test-worker-type-check.js
+test/js/node/test/parallel/test-worker-uncaught-exception-async.js
 test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
 test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
@@ -71,14 +72,6 @@ test/js/node/test/parallel/test-fs-readfile-eof.js
 test/js/node/test/parallel/test-child-process-promisified.js
 test/js/node/test/parallel/test-child-process-exec-encoding.js
 test/js/node/test/parallel/test-child-process-execfile.js
-test/bake/dev-and-prod.test.ts
-test/bake/dev/bundle.test.ts
-test/bake/dev/css.test.ts
-test/bake/dev/esm.test.ts
-test/bake/dev/hot.test.ts
-test/bake/dev/react-spa.test.ts
-test/bake/dev/sourcemap.test.ts
-test/bake/dev/ssg-pages-router.test.ts
 test/bundler/bundler_compile.test.ts
 test/bundler/bundler_plugin.test.ts
 test/bundler/transpiler/bun-pragma.test.ts
@@ -197,6 +190,7 @@ test/js/bun/util/heap-snapshot.test.ts
 test/regression/issue/02499/02499.test.ts
 test/js/node/test/parallel/test-http-server-stale-close.js
 test/js/third_party/comlink/comlink.test.ts
+test/regression/issue/22635/22635.test.ts
 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData
@@ -411,3 +405,14 @@ test/cli/init/init.test.ts
 test/bake/dev/react-response.test.ts
 test/bake/dev/react-cookies.test.ts
 test/bake/dev/server-sourcemap.test.ts
+
+# Watcher Thread
+test/bake/dev-and-prod.test.ts
+test/bake/dev/bundle.test.ts
+test/bake/dev/css.test.ts
+test/bake/dev/esm.test.ts
+test/bake/dev/hot.test.ts
+test/bake/dev/react-spa.test.ts
+test/bake/dev/sourcemap.test.ts
+test/bake/dev/ssg-pages-router.test.ts
+test/bake/dev/deinitialization.test.ts

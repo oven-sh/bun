@@ -75,17 +75,6 @@ $ bun run dev --watch # ❌ don't do this
 Flags that occur at the end of the command will be ignored and passed through to the `"dev"` script itself.
 {% /callout %}
 
-### `--unhandled-rejections`
-
-Configure how unhandled promise rejections are handled:
-
-```bash
-$ bun --unhandled-rejections=throw script.js  # Throw exception (terminate immediately)
-$ bun --unhandled-rejections=strict script.js # Throw exception (emit rejectionHandled if handled later)
-$ bun --unhandled-rejections=warn script.js   # Print warning to stderr (default in Node.js)
-$ bun --unhandled-rejections=none script.js   # Silently ignore
-```
-
 ## Run a `package.json` script
 
 {% note %}
@@ -233,5 +222,16 @@ When there is a package.json script and a file with the same name, `bun run` pri
 2. Source files, eg `bun run src/main.js`
 3. Binaries from project packages, eg `bun add eslint && bun run eslint`
 4. (`bun run` only) System commands, eg `bun run ls`
+
+### `--unhandled-rejections`
+
+Configure how unhandled promise rejections are handled:
+
+```bash
+$ bun --unhandled-rejections=throw script.js  # Throw exception (terminate immediately)
+$ bun --unhandled-rejections=strict script.js # Throw exception (emit rejectionHandled if handled later)
+$ bun --unhandled-rejections=warn script.js   # Print warning to stderr (default in Node.js)
+$ bun --unhandled-rejections=none script.js   # Silently ignore
+```
 
 {% bunCLIUsage command="run" /%}

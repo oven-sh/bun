@@ -427,7 +427,7 @@ declare module "bun" {
      * @param withValues Literal "WITHVALUES" to include values
      * @returns Promise that resolves with an array of alternating field names and values
      */
-    hrandfield(key: RedisClient.KeyLike, count: number, withValues: "WITHVALUES"): Promise<string[]>;
+    hrandfield(key: RedisClient.KeyLike, count: number, withValues: "WITHVALUES"): Promise<[string, string][]>;
 
     /**
      * Incrementally iterate hash fields and values

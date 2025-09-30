@@ -980,24 +980,22 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("should handle LSET errors", async () => {
         const redis = ctx.redis;
 
-        // Test out of range index on existing list
         await redis.lpush("lset-error-test", "value");
 
-        // Out of range should throw an error
         expect(async () => {
           await redis.lset("lset-error-test", 10, "newvalue");
-        }).toThrow();
+        }).toThrow(/index out of range/i);
 
         // Non-existent key should throw an error
         expect(async () => {
           await redis.lset("nonexistent-list", 0, "value");
-        }).toThrow();
+        }).toThrow(/no such key/i);
 
         // Wrong type (not a list) should throw an error
         await redis.set("string-key", "value");
         expect(async () => {
           await redis.lset("string-key", 0, "value");
-        }).toThrow();
+        }).toThrow(/wrong.*type|WRONGTYPE/i);
       });
 
       test("should handle LRANGE with various ranges", async () => {
@@ -4197,19 +4195,19 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "user:" + randomUUIDv7().substring(0, 8);
 
-        await redis.hset(key, { name: "John", age: "30" });
+        const fullData = { name: "Andy", age: "30", city: "Cupertino" };
+        await redis.hset(key, fullData);
 
-        const result = await redis.hrandfield(key, 1, "WITHVALUES");
+        const result = await redis.hrandfield(key, 2, "WITHVALUES");
         expect(result).toBeInstanceOf(Array);
-        expect(result.length).toBe(2); // [field, value]
+        expect(result.length).toBe(2);
 
-        const fieldName = result[0];
-        const fieldValue = result[1];
-        expect(["name", "age"]).toContain(fieldName);
-        if (fieldName === "name") {
-          expect(fieldValue).toBe("John");
-        } else {
-          expect(fieldValue).toBe("30");
+        const obj = Object.fromEntries(result);
+
+        expect(Object.keys(obj).length).toBe(2);
+
+        for (const [field, value] of Object.entries(obj)) {
+          expect(fullData).toHaveProperty(field, value);
         }
       });
 
@@ -4667,7 +4665,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await subscriber.subscribe(channel, () => {});
 
         // Publishing from the same client should work
-        expect(async () => subscriber.publish(channel, "self-published")).toThrow();
+        expect(async () => subscriber.publish(channel, "self-published")).toThrow(
+          "RedisClient.prototype.publish cannot be called while in subscriber mode.",
+        );
       });
 
       test("complete unsubscribe restores normal command mode", async () => {

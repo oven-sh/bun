@@ -222,6 +222,12 @@ export default [
       zcard: {
         fn: "zcard",
       },
+      zcount: {
+        fn: "zcount",
+      },
+      zlexcount: {
+        fn: "zlexcount",
+      },
       zpopmax: {
         fn: "zpopmax",
       },
@@ -264,6 +270,9 @@ export default [
       zscore: {
         fn: "zscore",
       },
+      zincrby: {
+        fn: "zincrby",
+      },
       mget: {
         fn: "mget",
       },
@@ -282,6 +291,9 @@ export default [
       substr: { fn: "substr" },
       hstrlen: { fn: "hstrlen" },
       zrank: { fn: "zrank" },
+      zremrangebylex: { fn: "zremrangebylex" },
+      zremrangebyrank: { fn: "zremrangebyrank" },
+      zremrangebyscore: { fn: "zremrangebyscore" },
       zrevrank: { fn: "zrevrank" },
       subscribe: { fn: "subscribe" },
       duplicate: { fn: "duplicate" },

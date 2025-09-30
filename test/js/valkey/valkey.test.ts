@@ -876,6 +876,192 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       });
     });
 
+    describe("Sorted Set Operations", () => {
+      test("should increment score with ZINCRBY", async () => {
+        const redis = ctx.redis;
+        const key = "zincrby-test";
+
+        // Add initial members
+        await redis.send("ZADD", [key, "1.0", "member1", "2.0", "member2"]);
+
+        // Increment member1's score by 2.5
+        const newScore1 = await redis.zincrby(key, 2.5, "member1");
+        expect(newScore1).toBe(3.5);
+
+        // Increment member2's score by -1.5
+        const newScore2 = await redis.zincrby(key, -1.5, "member2");
+        expect(newScore2).toBe(0.5);
+
+        // Increment non-existent member (should create it with the increment as score)
+        const newScore3 = await redis.zincrby(key, 5, "member3");
+        expect(newScore3).toBe(5);
+      });
+
+      test("should count members in score range with ZCOUNT", async () => {
+        const redis = ctx.redis;
+        const key = "zcount-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Count all members
+        const count1 = await redis.zcount(key, "-inf", "+inf");
+        expect(count1).toBe(5);
+
+        // Count members with score between 2 and 4 (inclusive)
+        const count2 = await redis.zcount(key, 2, 4);
+        expect(count2).toBe(3); // two, three, four
+
+        // Count with specific range
+        const count3 = await redis.zcount(key, 1, 3);
+        expect(count3).toBe(3); // one, two, three
+
+        // Count with no matches
+        const count4 = await redis.zcount(key, 10, 20);
+        expect(count4).toBe(0);
+      });
+
+      test("should count members in lexicographical range with ZLEXCOUNT", async () => {
+        const redis = ctx.redis;
+        const key = "zlexcount-test";
+
+        // Add members with same score (required for lex operations)
+        await redis.send("ZADD", [key, "0", "apple", "0", "banana", "0", "cherry", "0", "date", "0", "elderberry"]);
+
+        // Count all members
+        const count1 = await redis.zlexcount(key, "-", "+");
+        expect(count1).toBe(5);
+
+        // Count members from "banana" to "date" (inclusive)
+        const count2 = await redis.zlexcount(key, "[banana", "[date");
+        expect(count2).toBe(3); // banana, cherry, date
+
+        // Count with exclusive range
+        const count3 = await redis.zlexcount(key, "(banana", "(date");
+        expect(count3).toBe(1); // only cherry
+
+        // Count with no matches
+        const count4 = await redis.zlexcount(key, "[zebra", "[zoo");
+        expect(count4).toBe(0);
+      });
+
+      test("should remove members by rank with ZREMRANGEBYRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zremrangebyrank-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Remove first 2 members (rank 0 and 1)
+        const removed1 = await redis.zremrangebyrank(key, 0, 1);
+        expect(removed1).toBe(2);
+
+        // Verify remaining members
+        const remaining = await redis.send("ZCARD", [key]);
+        expect(remaining).toBe(3);
+
+        // Remove last member (negative index)
+        const removed2 = await redis.zremrangebyrank(key, -1, -1);
+        expect(removed2).toBe(1);
+
+        // Verify 2 members remain
+        const final = await redis.send("ZCARD", [key]);
+        expect(final).toBe(2);
+      });
+
+      test("should remove members by score range with ZREMRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        const key = "zremrangebyscore-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Remove members with score 2-4 (inclusive)
+        const removed1 = await redis.zremrangebyscore(key, 2, 4);
+        expect(removed1).toBe(3); // two, three, four
+
+        // Verify remaining members
+        const remaining = await redis.send("ZCARD", [key]);
+        expect(remaining).toBe(2); // one and five
+
+        // Remove with infinity
+        const removed2 = await redis.zremrangebyscore(key, "-inf", "+inf");
+        expect(removed2).toBe(2);
+      });
+
+      test("should remove members by lexicographical range with ZREMRANGEBYLEX", async () => {
+        const redis = ctx.redis;
+        const key = "zremrangebylex-test";
+
+        // Add members with same score
+        await redis.send("ZADD", [key, "0", "apple", "0", "banana", "0", "cherry", "0", "date", "0", "elderberry"]);
+
+        // Remove from "banana" to "date" (inclusive)
+        const removed1 = await redis.zremrangebylex(key, "[banana", "[date");
+        expect(removed1).toBe(3); // banana, cherry, date
+
+        // Verify remaining members
+        const remaining = await redis.send("ZCARD", [key]);
+        expect(remaining).toBe(2); // apple and elderberry
+
+        // Remove remaining with open range
+        const removed2 = await redis.zremrangebylex(key, "-", "+");
+        expect(removed2).toBe(2);
+      });
+
+      test("should reject invalid key in ZINCRBY", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zincrby({} as any, 1, "member");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zincrby'."`,
+        );
+      });
+
+      test("should reject invalid key in ZCOUNT", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zcount([] as any, 0, 10);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zcount'."`);
+      });
+
+      test("should reject invalid key in ZLEXCOUNT", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zlexcount(null as any, "[a", "[z");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zlexcount'."`,
+        );
+      });
+
+      test("should reject invalid key in ZREMRANGEBYRANK", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zremrangebyrank({} as any, 0, 10);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zremrangebyrank'."`,
+        );
+      });
+
+      test("should reject invalid key in ZREMRANGEBYSCORE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zremrangebyscore([] as any, 0, 10);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zremrangebyscore'."`,
+        );
+      });
+
+      test("should reject invalid key in ZREMRANGEBYLEX", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.zremrangebylex(null as any, "[a", "[z");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'zremrangebylex'."`,
+        );
+      });
+    });
+
     describe("Connection State", () => {
       test("should have a connected property", () => {
         const redis = ctx.redis;

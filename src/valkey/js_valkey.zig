@@ -1324,12 +1324,18 @@ pub const JSValkeyClient = struct {
     pub const unlink = fns.unlink;
     pub const unsubscribe = fns.unsubscribe;
     pub const zcard = fns.zcard;
+    pub const zcount = fns.zcount;
+    pub const zlexcount = fns.zlexcount;
     pub const zpopmax = fns.zpopmax;
     pub const zpopmin = fns.zpopmin;
     pub const zrandmember = fns.zrandmember;
     pub const zrank = fns.zrank;
+    pub const zremrangebylex = fns.zremrangebylex;
+    pub const zremrangebyrank = fns.zremrangebyrank;
+    pub const zremrangebyscore = fns.zremrangebyscore;
     pub const zrevrank = fns.zrevrank;
     pub const zscore = fns.zscore;
+    pub const zincrby = fns.zincrby;
 
     const fns = @import("./js_valkey_functions.zig");
 };

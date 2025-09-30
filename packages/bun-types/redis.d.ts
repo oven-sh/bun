@@ -656,6 +656,24 @@ declare module "bun" {
     zcard(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Count the members in a sorted set with scores within the given range
+     * @param key The sorted set key
+     * @param min Minimum score (inclusive, use "-inf" for negative infinity)
+     * @param max Maximum score (inclusive, use "+inf" for positive infinity)
+     * @returns Promise that resolves with the count of elements in the specified score range
+     */
+    zcount(key: RedisClient.KeyLike, min: string | number, max: string | number): Promise<number>;
+
+    /**
+     * Count the members in a sorted set within a lexicographical range
+     * @param key The sorted set key
+     * @param min Minimum value (use "[" for inclusive, "(" for exclusive, e.g., "[aaa")
+     * @param max Maximum value (use "[" for inclusive, "(" for exclusive, e.g., "[zzz")
+     * @returns Promise that resolves with the count of elements in the specified range
+     */
+    zlexcount(key: RedisClient.KeyLike, min: string, max: string): Promise<number>;
+
+    /**
      * Remove and return members with the highest scores in a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with the removed member and its score, or
@@ -789,6 +807,42 @@ declare module "bun" {
      * or null if the member or key doesn't exist
      */
     zscore(key: RedisClient.KeyLike, member: string): Promise<string | null>;
+
+    /**
+     * Increment the score of a member in a sorted set
+     * @param key The sorted set key
+     * @param increment The increment value
+     * @param member The member to increment
+     * @returns Promise that resolves with the new score
+     */
+    zincrby(key: RedisClient.KeyLike, increment: number, member: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Remove all members in a sorted set within the given lexicographical range
+     * @param key The sorted set key
+     * @param min Minimum value (use "[" for inclusive, "(" for exclusive, e.g., "[aaa")
+     * @param max Maximum value (use "[" for inclusive, "(" for exclusive, e.g., "[zzz")
+     * @returns Promise that resolves with the number of elements removed
+     */
+    zremrangebylex(key: RedisClient.KeyLike, min: string, max: string): Promise<number>;
+
+    /**
+     * Remove all members in a sorted set within the given rank range
+     * @param key The sorted set key
+     * @param start Start rank (0-based, can be negative to indicate offset from end)
+     * @param stop Stop rank (0-based, can be negative to indicate offset from end)
+     * @returns Promise that resolves with the number of elements removed
+     */
+    zremrangebyrank(key: RedisClient.KeyLike, start: number, stop: number): Promise<number>;
+
+    /**
+     * Remove all members in a sorted set within the given score range
+     * @param key The sorted set key
+     * @param min Minimum score (inclusive, use "-inf" for negative infinity, "(" prefix for exclusive)
+     * @param max Maximum score (inclusive, use "+inf" for positive infinity, "(" prefix for exclusive)
+     * @returns Promise that resolves with the number of elements removed
+     */
+    zremrangebyscore(key: RedisClient.KeyLike, min: string | number, max: string | number): Promise<number>;
 
     /**
      * Get the values of all specified keys

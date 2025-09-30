@@ -389,6 +389,104 @@ declare module "bun" {
     hmget(key: RedisClient.KeyLike, fields: string[]): Promise<Array<string | null>>;
 
     /**
+     * Delete one or more hash fields
+     * @param key The hash key
+     * @param field The field to delete
+     * @param rest Additional fields to delete
+     * @returns Promise that resolves with the number of fields that were removed
+     */
+    hdel(key: RedisClient.KeyLike, field: RedisClient.KeyLike, ...rest: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Determine if a hash field exists
+     * @param key The hash key
+     * @param field The field to check
+     * @returns Promise that resolves with true if the field exists, false otherwise
+     */
+    hexists(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<boolean>;
+
+    /**
+     * Get one or multiple random fields from a hash
+     * @param key The hash key
+     * @returns Promise that resolves with a random field name, or null if the hash doesn't exist
+     */
+    hrandfield(key: RedisClient.KeyLike): Promise<string | null>;
+
+    /**
+     * Get one or multiple random fields from a hash
+     * @param key The hash key
+     * @param count The number of fields to return (positive for unique fields, negative for potentially duplicate fields)
+     * @returns Promise that resolves with an array of random field names
+     */
+    hrandfield(key: RedisClient.KeyLike, count: number): Promise<string[]>;
+
+    /**
+     * Get one or multiple random fields with values from a hash
+     * @param key The hash key
+     * @param count The number of fields to return
+     * @param withValues Literal "WITHVALUES" to include values
+     * @returns Promise that resolves with an array of alternating field names and values
+     */
+    hrandfield(key: RedisClient.KeyLike, count: number, withValues: "WITHVALUES"): Promise<string[]>;
+
+    /**
+     * Incrementally iterate hash fields and values
+     * @param key The hash key
+     * @param cursor The cursor value (0 to start iteration)
+     * @returns Promise that resolves with [next_cursor, [field1, value1, field2, value2, ...]]
+     */
+    hscan(key: RedisClient.KeyLike, cursor: number | string): Promise<[string, string[]]>;
+
+    /**
+     * Incrementally iterate hash fields and values with pattern matching
+     * @param key The hash key
+     * @param cursor The cursor value (0 to start iteration)
+     * @param match Literal "MATCH"
+     * @param pattern Pattern to match field names against
+     * @returns Promise that resolves with [next_cursor, [field1, value1, field2, value2, ...]]
+     */
+    hscan(
+      key: RedisClient.KeyLike,
+      cursor: number | string,
+      match: "MATCH",
+      pattern: string,
+    ): Promise<[string, string[]]>;
+
+    /**
+     * Incrementally iterate hash fields and values with count limit
+     * @param key The hash key
+     * @param cursor The cursor value (0 to start iteration)
+     * @param count Literal "COUNT"
+     * @param limit Maximum number of fields to return per call
+     * @returns Promise that resolves with [next_cursor, [field1, value1, field2, value2, ...]]
+     */
+    hscan(
+      key: RedisClient.KeyLike,
+      cursor: number | string,
+      count: "COUNT",
+      limit: number,
+    ): Promise<[string, string[]]>;
+
+    /**
+     * Incrementally iterate hash fields and values with pattern and count
+     * @param key The hash key
+     * @param cursor The cursor value (0 to start iteration)
+     * @param match Literal "MATCH"
+     * @param pattern Pattern to match field names against
+     * @param count Literal "COUNT"
+     * @param limit Maximum number of fields to return per call
+     * @returns Promise that resolves with [next_cursor, [field1, value1, field2, value2, ...]]
+     */
+    hscan(
+      key: RedisClient.KeyLike,
+      cursor: number | string,
+      match: "MATCH",
+      pattern: string,
+      count: "COUNT",
+      limit: number,
+    ): Promise<[string, string[]]>;
+
+    /**
      * Check if a value is a member of a set
      * @param key The set key
      * @param member The member to check

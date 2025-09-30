@@ -313,17 +313,7 @@ describe("web worker", () => {
       name: "test-worker-with-preload",
       preload: new URL("worker-name-preload-fixture.js", import.meta.url).href,
     });
-    const { resolve, promise, reject } = Promise.withResolvers();
-    worker.onmessage = e => {
-      resolve({
-        ...e.data,
-        preloadHasName: globalThis.preloadHasName,
-        preloadName: globalThis.preloadName,
-      });
-    };
-    worker.onerror = reject;
-    const result = await promise;
-    worker.terminate();
+    const result = await waitForWorkerResult(worker, null);
     expect(result.name).toBe("test-worker-with-preload");
     expect(result.hasName).toBe(true);
     expect(result.preloadHasName).toBe(true);

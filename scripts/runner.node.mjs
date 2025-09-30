@@ -579,8 +579,7 @@ async function runTests() {
           const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
           if (isNodeTest(testPath)) {
             const testContent = readFileSync(absoluteTestPath, "utf-8");
-            const runWithBunTest =
-              title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
+            const runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
             const subcommand = runWithBunTest ? "test" : "run";
             const env = {
               FORCE_COLOR: "0",

@@ -1,4 +1,8 @@
+import { isWindows } from "harness";
 import { createServer } from "http";
+
+if (isWindows) process.exit(0); // Windows doesnt support SIGUSR1
+
 const SIGNAL = process.platform === "linux" ? "SIGUSR2" : "SIGUSR1";
 var server = createServer((req, res) => {
   res.end();

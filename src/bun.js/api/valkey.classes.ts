@@ -273,6 +273,9 @@ export default [
       zincrby: {
         fn: "zincrby",
       },
+      zmscore: {
+        fn: "zmscore",
+      },
       mget: {
         fn: "mget",
       },
@@ -291,6 +294,7 @@ export default [
       substr: { fn: "substr" },
       hstrlen: { fn: "hstrlen" },
       zrank: { fn: "zrank" },
+      zrem: { fn: "zrem" },
       zremrangebylex: { fn: "zremrangebylex" },
       zremrangebyrank: { fn: "zremrangebyrank" },
       zremrangebyscore: { fn: "zremrangebyscore" },

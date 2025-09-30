@@ -1330,12 +1330,14 @@ pub const JSValkeyClient = struct {
     pub const zpopmin = fns.zpopmin;
     pub const zrandmember = fns.zrandmember;
     pub const zrank = fns.zrank;
+    pub const zrem = fns.zrem;
     pub const zremrangebylex = fns.zremrangebylex;
     pub const zremrangebyrank = fns.zremrangebyrank;
     pub const zremrangebyscore = fns.zremrangebyscore;
     pub const zrevrank = fns.zrevrank;
     pub const zscore = fns.zscore;
     pub const zincrby = fns.zincrby;
+    pub const zmscore = fns.zmscore;
 
     const fns = @import("./js_valkey_functions.zig");
 };

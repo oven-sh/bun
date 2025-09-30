@@ -818,6 +818,24 @@ declare module "bun" {
     zincrby(key: RedisClient.KeyLike, increment: number, member: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Returns the scores associated with the specified members in the sorted set
+     * @param key The sorted set key
+     * @param member The first member to get the score for
+     * @param members Additional members to get scores for
+     * @returns Promise that resolves with an array of scores (string for each score, or null if member doesn't exist)
+     */
+    zmscore(key: RedisClient.KeyLike, member: RedisClient.KeyLike, ...members: RedisClient.KeyLike[]): Promise<(string | null)[]>;
+
+    /**
+     * Remove one or more members from a sorted set
+     * @param key The sorted set key
+     * @param member The first member to remove
+     * @param members Additional members to remove
+     * @returns Promise that resolves with the number of members removed (not including non-existing members)
+     */
+    zrem(key: RedisClient.KeyLike, member: RedisClient.KeyLike, ...members: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
      * Remove all members in a sorted set within the given lexicographical range
      * @param key The sorted set key
      * @param min Minimum value (use "[" for inclusive, "(" for exclusive, e.g., "[aaa")

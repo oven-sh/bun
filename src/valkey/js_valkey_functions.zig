@@ -681,6 +681,7 @@ pub const setex = compile.@"(...strings: string[])"("setex", "SETEX", .not_subsc
 pub const psetex = compile.@"(...strings: string[])"("psetex", "PSETEX", .not_subscriber).call;
 pub const zscore = compile.@"(key: RedisKey, value: RedisValue)"("zscore", "ZSCORE", "key", "value", .not_subscriber).call;
 pub const zincrby = compile.@"(...strings: string[])"("zincrby", "ZINCRBY", .not_subscriber).call;
+pub const zmscore = compile.@"(...strings: string[])"("zmscore", "ZMSCORE", .not_subscriber).call;
 
 pub const del = compile.@"(key: RedisKey, ...args: RedisKey[])"("del", "DEL", "key", .not_subscriber).call;
 pub const mget = compile.@"(key: RedisKey, ...args: RedisKey[])"("mget", "MGET", "key", .not_subscriber).call;
@@ -694,6 +695,7 @@ pub const smove = compile.@"(...strings: string[])"("smove", "SMOVE", .not_subsc
 pub const substr = compile.@"(...strings: string[])"("substr", "SUBSTR", .not_subscriber).call;
 pub const hstrlen = compile.@"(...strings: string[])"("hstrlen", "HSTRLEN", .not_subscriber).call;
 pub const zrank = compile.@"(...strings: string[])"("zrank", "ZRANK", .not_subscriber).call;
+pub const zrem = compile.@"(key: RedisKey, ...args: RedisKey[])"("zrem", "ZREM", "key", .not_subscriber).call;
 pub const zremrangebylex = compile.@"(...strings: string[])"("zremrangebylex", "ZREMRANGEBYLEX", .not_subscriber).call;
 pub const zremrangebyrank = compile.@"(...strings: string[])"("zremrangebyrank", "ZREMRANGEBYRANK", .not_subscriber).call;
 pub const zremrangebyscore = compile.@"(...strings: string[])"("zremrangebyscore", "ZREMRANGEBYSCORE", .not_subscriber).call;

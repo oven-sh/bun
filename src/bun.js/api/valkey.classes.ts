@@ -189,14 +189,23 @@ export default [
       pttl: {
         fn: "pttl",
       },
+      randomkey: {
+        fn: "randomkey",
+      },
       rpop: {
         fn: "rpop",
+      },
+      scan: {
+        fn: "scan",
       },
       scard: {
         fn: "scard",
       },
       strlen: {
         fn: "strlen",
+      },
+      type: {
+        fn: "type",
       },
       zcard: {
         fn: "zcard",
@@ -268,6 +277,11 @@ export default [
       unsubscribe: { fn: "unsubscribe" },
       punsubscribe: { fn: "punsubscribe" },
       pubsub: { fn: "pubsub" },
+      copy: { fn: "copy" },
+      unlink: { fn: "unlink" },
+      touch: { fn: "touch" },
+      rename: { fn: "rename" },
+      renamenx: { fn: "renamenx" },
     },
     values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
   }),

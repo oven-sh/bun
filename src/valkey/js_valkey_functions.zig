@@ -649,7 +649,9 @@ pub const lpop = compile.@"(key: RedisKey)"("lpop", "LPOP", "key", .not_subscrib
 pub const persist = compile.@"(key: RedisKey)"("persist", "PERSIST", "key", .not_subscriber).call;
 pub const pexpiretime = compile.@"(key: RedisKey)"("pexpiretime", "PEXPIRETIME", "key", .not_subscriber).call;
 pub const pttl = compile.@"(key: RedisKey)"("pttl", "PTTL", "key", .not_subscriber).call;
+pub const randomkey = compile.@"()"("randomkey", "RANDOMKEY", .not_subscriber).call;
 pub const rpop = compile.@"(key: RedisKey)"("rpop", "RPOP", "key", .not_subscriber).call;
+pub const scan = compile.@"(...strings: string[])"("scan", "SCAN", .not_subscriber).call;
 pub const scard = compile.@"(key: RedisKey)"("scard", "SCARD", "key", .not_subscriber).call;
 pub const strlen = compile.@"(key: RedisKey)"("strlen", "STRLEN", "key", .not_subscriber).call;
 pub const @"type" = compile.@"(key: RedisKey)"("type", "TYPE", "key", .not_subscriber).call;
@@ -690,6 +692,11 @@ pub const zrevrank = compile.@"(...strings: string[])"("zrevrank", "ZREVRANK", .
 pub const psubscribe = compile.@"(...strings: string[])"("psubscribe", "PSUBSCRIBE", .dont_care).call;
 pub const punsubscribe = compile.@"(...strings: string[])"("punsubscribe", "PUNSUBSCRIBE", .dont_care).call;
 pub const pubsub = compile.@"(...strings: string[])"("pubsub", "PUBSUB", .dont_care).call;
+pub const copy = compile.@"(...strings: string[])"("copy", "COPY", .not_subscriber).call;
+pub const unlink = compile.@"(key: RedisKey, ...args: RedisKey[])"("unlink", "UNLINK", "key", .not_subscriber).call;
+pub const touch = compile.@"(key: RedisKey, ...args: RedisKey[])"("touch", "TOUCH", "key", .not_subscriber).call;
+pub const rename = compile.@"(key: RedisKey, value: RedisValue)"("rename", "RENAME", "key", "newkey", .not_subscriber).call;
+pub const renamenx = compile.@"(key: RedisKey, value: RedisValue)"("renamenx", "RENAMENX", "key", "newkey", .not_subscriber).call;
 
 pub fn publish(
     this: *JSValkeyClient,
@@ -1012,6 +1019,30 @@ const compile = struct {
             .subscriber => requireSubscriber(this, js_client_prototype_function_name),
             .not_subscriber => requireNotSubscriber(this, js_client_prototype_function_name),
             .dont_care => {},
+        };
+    }
+
+    pub fn @"()"(
+        comptime name: []const u8,
+        comptime command: []const u8,
+        comptime client_state_requirement: ClientStateRequirement,
+    ) type {
+        return struct {
+            pub fn call(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+                try testCorrectState(this, name, client_state_requirement);
+
+                const promise = this.send(
+                    globalObject,
+                    callframe.this(),
+                    &.{
+                        .command = command,
+                        .args = .{ .args = &.{} },
+                    },
+                ) catch |err| {
+                    return protocol.valkeyErrorToJS(globalObject, "Failed to send " ++ command, err);
+                };
+                return promise.toJS();
+            }
         };
     }
 

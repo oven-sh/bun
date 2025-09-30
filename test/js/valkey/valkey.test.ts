@@ -1,5 +1,6 @@
 import { randomUUIDv7, RedisClient, spawn } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { bunExe } from "harness";
 import {
   ctx as _ctx,
   awaitableCounter,
@@ -16,7 +17,7 @@ import {
 import type { RedisTestStartMessage } from "./valkey.failing-subscriber";
 
 for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
-  const ctx = { ..._ctx, redis: connectionType ? _ctx.redis : _ctx.redisTLS };
+  const ctx = { ..._ctx, redis: connectionType ? _ctx.redis : (_ctx.redisTLS as RedisClient) };
   describe.skipIf(!isEnabled)(`Valkey Redis Client (${connectionType})`, () => {
     beforeAll(async () => {
       // Ensure container is ready before tests run
@@ -148,6 +149,93 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(result3).toBe(-3);
       });
 
+      test("should rename a key with RENAME", async () => {
+        const redis = ctx.redis;
+        const oldKey = "old-key";
+        const newKey = "new-key";
+        const value = "test-value";
+
+        // Set a value on the old key
+        await redis.set(oldKey, value);
+
+        // Rename the key
+        const result = await redis.rename(oldKey, newKey);
+        expect(result).toBe("OK");
+
+        // The new key should have the value
+        const newValue = await redis.get(newKey);
+        expect(newValue).toBe(value);
+
+        // The old key should no longer exist
+        const oldValue = await redis.get(oldKey);
+        expect(oldValue).toBeNull();
+      });
+
+      test("should rename a key with RENAME overwriting existing key", async () => {
+        const redis = ctx.redis;
+        const oldKey = "old-key-overwrite";
+        const newKey = "new-key-overwrite";
+
+        // Set values on both keys
+        await redis.set(oldKey, "old-value");
+        await redis.set(newKey, "existing-value");
+
+        // Rename should overwrite the existing key
+        const result = await redis.rename(oldKey, newKey);
+        expect(result).toBe("OK");
+
+        // The new key should have the old value
+        const newValue = await redis.get(newKey);
+        expect(newValue).toBe("old-value");
+
+        // The old key should no longer exist
+        const oldValue = await redis.get(oldKey);
+        expect(oldValue).toBeNull();
+      });
+
+      test("should rename a key only if new key does not exist with RENAMENX", async () => {
+        const redis = ctx.redis;
+        const oldKey = "old-key-nx";
+        const newKey = "new-key-nx";
+        const value = "test-value";
+
+        // Set a value on the old key
+        await redis.set(oldKey, value);
+
+        // RENAMENX should succeed (newkey doesn't exist)
+        const result1 = await redis.renamenx(oldKey, newKey);
+        expect(result1).toBe(1);
+
+        // The new key should have the value
+        const newValue = await redis.get(newKey);
+        expect(newValue).toBe(value);
+
+        // The old key should no longer exist
+        const oldValue = await redis.get(oldKey);
+        expect(oldValue).toBeNull();
+      });
+
+      test("should not rename if new key exists with RENAMENX", async () => {
+        const redis = ctx.redis;
+        const oldKey = "old-key-nx-fail";
+        const newKey = "new-key-nx-fail";
+
+        // Set values on both keys
+        await redis.set(oldKey, "old-value");
+        await redis.set(newKey, "existing-value");
+
+        // RENAMENX should fail (newkey exists)
+        const result = await redis.renamenx(oldKey, newKey);
+        expect(result).toBe(0);
+
+        // Both keys should retain their original values
+        const oldValue = await redis.get(oldKey);
+        expect(oldValue).toBe("old-value");
+
+        const newValue = await redis.get(newKey);
+        expect(newValue).toBe("existing-value");
+      });
+
       test("should set multiple keys with MSET", async () => {
         const redis = ctx.redis;
 
@@ -244,6 +332,54 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const pttl = await redis.pttl(key);
         expect(pttl).toBeGreaterThan(0);
         expect(pttl).toBeLessThanOrEqual(5000);
+      });
+
+      test("should determine the type of a key with TYPE", async () => {
+        const redis = ctx.redis;
+
+        // String type
+        await redis.set("string-key", "value");
+        const stringType = await redis.type("string-key");
+        expect(stringType).toBe("string");
+
+        // List type
+        await redis.lpush("list-key", "value");
+        const listType = await redis.type("list-key");
+        expect(listType).toBe("list");
+
+        // Set type
+        await redis.sadd("set-key", "value");
+        const setType = await redis.type("set-key");
+        expect(setType).toBe("set");
+
+        // Hash type
+        await redis.send("HSET", ["hash-key", "field", "value"]);
+        const hashType = await redis.type("hash-key");
+        expect(hashType).toBe("hash");
+
+        // Non-existent key
+        const noneType = await redis.type("nonexistent-key");
+        expect(noneType).toBe("none");
+      });
+
+      test("should update last access time with TOUCH", async () => {
+        const redis = ctx.redis;
+
+        // Set some keys
+        await redis.set("touch-key1", "value1");
+        await redis.set("touch-key2", "value2");
+
+        // Touch existing keys
+        const touchedCount = await redis.touch("touch-key1", "touch-key2");
+        expect(touchedCount).toBe(2);
+
+        // Touch mix of existing and non-existing keys
+        const mixedCount = await redis.touch("touch-key1", "nonexistent-key");
+        expect(mixedCount).toBe(1);
+
+        // Touch non-existent key
+        const noneCount = await redis.touch("nonexistent-key1", "nonexistent-key2");
+        expect(noneCount).toBe(0);
       });
 
       test("should get and set bits", async () => {
@@ -359,6 +495,296 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const nonExistentKey = "non-existent-" + randomUUIDv7();
         const noKey = await redis.ttl(nonExistentKey);
         expect(noKey).toMatchInlineSnapshot(`-2`); // -2 indicates key doesn't exist
+      });
+
+      test("should copy a key to a new key with COPY", async () => {
+        const redis = ctx.redis;
+        const sourceKey = "copy-source";
+        const destKey = "copy-dest";
+
+        // Set source key
+        await redis.set(sourceKey, "Hello World");
+
+        // Copy to destination
+        const result = await redis.copy(sourceKey, destKey);
+        expect(result).toBe(1); // 1 indicates successful copy
+
+        // Verify both keys exist with same value
+        const sourceValue = await redis.get(sourceKey);
+        const destValue = await redis.get(destKey);
+        expect(sourceValue).toBe("Hello World");
+        expect(destValue).toBe("Hello World");
+
+        // Trying to copy to an existing key without REPLACE should fail
+        const result2 = await redis.copy(sourceKey, destKey);
+        expect(result2).toBe(0); // 0 indicates copy failed
+      });
+
+      test("should copy a key with REPLACE option", async () => {
+        const redis = ctx.redis;
+        const sourceKey = "copy-replace-source";
+        const destKey = "copy-replace-dest";
+
+        // Set both keys
+        await redis.set(sourceKey, "New Value");
+        await redis.set(destKey, "Old Value");
+
+        // Copy with REPLACE
+        const result = await redis.copy(sourceKey, destKey, "REPLACE");
+        expect(result).toBe(1);
+
+        // Verify destination was replaced
+        const destValue = await redis.get(destKey);
+        expect(destValue).toBe("New Value");
+      });
+
+      test("should unlink one or more keys asynchronously with UNLINK", async () => {
+        const redis = ctx.redis;
+
+        // Set multiple keys
+        await redis.set("unlink-key1", "value1");
+        await redis.set("unlink-key2", "value2");
+        await redis.set("unlink-key3", "value3");
+
+        // Unlink multiple keys
+        const result = await redis.unlink("unlink-key1", "unlink-key2", "unlink-key3");
+        expect(result).toBe(3); // All 3 keys were unlinked
+
+        // Verify keys are gone
+        expect(await redis.get("unlink-key1")).toBeNull();
+        expect(await redis.get("unlink-key2")).toBeNull();
+        expect(await redis.get("unlink-key3")).toBeNull();
+      });
+
+      test("should unlink with non-existent keys", async () => {
+        const redis = ctx.redis;
+
+        // Set one key
+        await redis.set("unlink-exists", "value");
+
+        // Try to unlink mix of existing and non-existing keys
+        const result = await redis.unlink("unlink-exists", "unlink-nonexist1", "unlink-nonexist2");
+        expect(result).toBe(1); // Only 1 key existed and was unlinked
+
+        // Verify key is gone
+        expect(await redis.get("unlink-exists")).toBeNull();
+      });
+
+      test("should return a random key with RANDOMKEY", async () => {
+        const redis = ctx.redis;
+
+        // Empty database should return null
+        const emptyResult = await redis.randomkey();
+        expect(emptyResult).toBeNull();
+
+        // Set multiple keys
+        await redis.set("random-key1", "value1");
+        await redis.set("random-key2", "value2");
+        await redis.set("random-key3", "value3");
+
+        // Get a random key
+        const randomKey = await redis.randomkey();
+        expect(randomKey).toBeDefined();
+        expect(randomKey).not.toBeNull();
+        expect(["random-key1", "random-key2", "random-key3"]).toContain<string | null>(randomKey);
+
+        // Verify the key exists
+        const value = await redis.get(randomKey!);
+        expect(value).toBeDefined();
+      });
+
+      test("should iterate keys with SCAN", async () => {
+        const redis = ctx.redis;
+
+        // Set multiple keys with a pattern
+        const testKeys = ["scan-test:1", "scan-test:2", "scan-test:3", "scan-test:4", "scan-test:5"];
+        for (const key of testKeys) {
+          await redis.set(key, "value");
+        }
+
+        // Scan all keys
+        let cursor = "0";
+        const foundKeys: string[] = [];
+        do {
+          const [nextCursor, keys] = await redis.scan(cursor);
+          foundKeys.push(...keys);
+          cursor = nextCursor;
+        } while (cursor !== "0");
+
+        // Verify all test keys were found
+        for (const testKey of testKeys) {
+          expect(foundKeys).toContain(testKey);
+        }
+      });
+
+      test("should iterate keys with SCAN and MATCH pattern", async () => {
+        const redis = ctx.redis;
+
+        // Set keys with different patterns
+        await redis.set("user:1", "alice");
+        await redis.set("user:2", "bob");
+        await redis.set("post:1", "hello");
+        await redis.set("post:2", "world");
+
+        // Scan with MATCH pattern
+        let cursor = "0";
+        const userKeys: string[] = [];
+        do {
+          const [nextCursor, keys] = await redis.scan(cursor, "MATCH", "user:*");
+          userKeys.push(...keys);
+          cursor = nextCursor;
+        } while (cursor !== "0");
+
+        // Should only find user keys
+        expect(userKeys).toContain("user:1");
+        expect(userKeys).toContain("user:2");
+        expect(userKeys).not.toContain("post:1");
+        expect(userKeys).not.toContain("post:2");
+      });
+
+      test("should reject invalid object argument in SCAN", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.scan({} as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'scan'."`);
+      });
+
+      test("should reject invalid array argument in SCAN", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.scan([] as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'scan'."`);
+      });
+
+      test("should reject invalid null argument in SCAN", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.scan(null as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'scan'."`);
+      });
+
+      test("should reject invalid source key in COPY", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.copy({} as any, "dest");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'copy'."`);
+      });
+
+      test("should reject invalid destination key in COPY", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.copy("source", [] as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'copy'."`);
+      });
+
+      test("should reject invalid option in COPY", async () => {
+        const redis = ctx.redis;
+        await redis.set("copy-invalid-opt-source", "value");
+        expect(async () => {
+          await redis.copy("copy-invalid-opt-source", "copy-invalid-opt-dest", "NOTVALID" as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"ERR syntax error"`);
+      });
+
+      test("should reject invalid old key in RENAME", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.rename({} as any, "newkey");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'rename'."`);
+      });
+
+      test("should reject invalid new key in RENAME", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.rename("oldkey", null as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected newkey to be a string or buffer for 'rename'."`);
+      });
+
+      test("should reject invalid key in GETRANGE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.getrange({} as any, 0, 5);
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'getrange'."`,
+        );
+      });
+
+      test("should reject invalid key in SETRANGE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.setrange(undefined as any, 0, "value");
+        }).toThrowErrorMatchingInlineSnapshot(
+          `"Expected additional arguments to be a string or buffer for 'setrange'."`,
+        );
+      });
+
+      test("should reject invalid key in INCRBY", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.incrby([] as any, 10);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'incrby'."`);
+      });
+
+      test("should reject invalid value in MSET", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.mset("key", {} as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'mset'."`);
+      });
+
+      test("should reject invalid value in MSETNX", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.msetnx("key1", "value1", "key2", [] as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'msetnx'."`);
+      });
+
+      test("should reject invalid key in SETBIT", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.setbit({} as any, 0, 1);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'setbit'."`);
+      });
+
+      test("should reject invalid key in SETEX", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.setex(null as any, 10, "value");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'setex'."`);
+      });
+
+      test("should reject invalid key in PSETEX", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.psetex([] as any, 1000, "value");
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'psetex'."`);
+      });
+
+      test("should reject invalid key in UNLINK", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.unlink({} as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'unlink'."`);
+      });
+
+      test("should reject invalid additional key in UNLINK", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.unlink("valid-key", [] as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'unlink'."`);
+      });
+
+      test("should reject invalid key in TOUCH", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.touch(null as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
+      });
+
+      test("should reject invalid additional key in TOUCH", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.touch("valid-key", {} as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'touch'."`);
       });
     });
 
@@ -810,7 +1236,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         let currentMessage: any = {};
 
         const subscriberProc = spawn({
-          cmd: [self.process.execPath, "run", `${__dirname}/valkey.failing-subscriber.ts`],
+          cmd: [bunExe(), `${__dirname}/valkey.failing-subscriber.ts`],
           stdout: "inherit",
           stderr: "inherit",
           ipc: msg => {

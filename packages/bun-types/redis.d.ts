@@ -34,14 +34,7 @@ declare module "bun" {
      * TLS options
      * Can be a boolean or an object with TLS options
      */
-    tls?:
-      | boolean
-      | {
-          key?: string | Buffer;
-          cert?: string | Buffer;
-          ca?: string | Buffer | Array<string | Buffer>;
-          rejectUnauthorized?: boolean;
-        };
+    tls?: boolean | Bun.TLSOptions;
 
     /**
      * Whether to enable auto-pipelining
@@ -467,11 +460,122 @@ declare module "bun" {
     pttl(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Return a random key from the keyspace
+     *
+     * Returns a random key from the currently selected database.
+     *
+     * @returns Promise that resolves with a random key name, or null if the
+     * database is empty
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "value1");
+     * await redis.set("key2", "value2");
+     * await redis.set("key3", "value3");
+     * const randomKey = await redis.randomkey();
+     * console.log(randomKey); // One of: "key1", "key2", or "key3"
+     * ```
+     */
+    randomkey(): Promise<string | null>;
+
+    /**
      * Remove and get the last element in a list
      * @param key The list key
      * @returns Promise that resolves with the last element, or null if the list is empty
      */
     rpop(key: RedisClient.KeyLike): Promise<string | null>;
+
+    /**
+     * Incrementally iterate the keyspace
+     *
+     * The SCAN command is used to incrementally iterate over a collection of
+     * elements. SCAN iterates the set of keys in the currently selected Redis
+     * database.
+     *
+     * SCAN is a cursor based iterator. This means that at every call of the
+     * command, the server returns an updated cursor that the user needs to use
+     * as the cursor argument in the next call.
+     *
+     * An iteration starts when the cursor is set to "0", and terminates when
+     * the cursor returned by the server is "0".
+     *
+     * @param cursor The cursor value (use "0" to start a new iteration)
+     * @returns Promise that resolves with a tuple [cursor, keys[]] where cursor
+     * is the next cursor to use (or "0" if iteration is complete) and keys is
+     * an array of matching keys
+     *
+     * @example
+     * ```ts
+     * // Basic scan - iterate all keys
+     * let cursor = "0";
+     * const allKeys: string[] = [];
+     * do {
+     *   const [nextCursor, keys] = await redis.scan(cursor);
+     *   allKeys.push(...keys);
+     *   cursor = nextCursor;
+     * } while (cursor !== "0");
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Scan with MATCH pattern
+     * const [cursor, keys] = await redis.scan("0", "MATCH", "user:*");
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Scan with COUNT hint
+     * const [cursor, keys] = await redis.scan("0", "COUNT", "100");
+     * ```
+     */
+    scan(cursor: string | number): Promise<[string, string[]]>;
+
+    /**
+     * Incrementally iterate the keyspace with a pattern match
+     *
+     * @param cursor The cursor value (use "0" to start a new iteration)
+     * @param match The "MATCH" keyword
+     * @param pattern The pattern to match (supports glob-style patterns like "user:*")
+     * @returns Promise that resolves with a tuple [cursor, keys[]]
+     */
+    scan(cursor: string | number, match: "MATCH", pattern: string): Promise<[string, string[]]>;
+
+    /**
+     * Incrementally iterate the keyspace with a count hint
+     *
+     * @param cursor The cursor value (use "0" to start a new iteration)
+     * @param count The "COUNT" keyword
+     * @param hint The number of elements to return per call (hint only, not exact)
+     * @returns Promise that resolves with a tuple [cursor, keys[]]
+     */
+    scan(cursor: string | number, count: "COUNT", hint: number): Promise<[string, string[]]>;
+
+    /**
+     * Incrementally iterate the keyspace with pattern match and count hint
+     *
+     * @param cursor The cursor value (use "0" to start a new iteration)
+     * @param match The "MATCH" keyword
+     * @param pattern The pattern to match
+     * @param count The "COUNT" keyword
+     * @param hint The number of elements to return per call
+     * @returns Promise that resolves with a tuple [cursor, keys[]]
+     */
+    scan(
+      cursor: string | number,
+      match: "MATCH",
+      pattern: string,
+      count: "COUNT",
+      hint: number,
+    ): Promise<[string, string[]]>;
+
+    /**
+     * Incrementally iterate the keyspace with options
+     *
+     * @param cursor The cursor value
+     * @param options Additional SCAN options (MATCH pattern, COUNT hint, etc.)
+     * @returns Promise that resolves with a tuple [cursor, keys[]]
+     */
+    scan(cursor: string | number, ...options: (string | number)[]): Promise<[string, string[]]>;
 
     /**
      * Get the number of members in a set
@@ -488,6 +592,36 @@ declare module "bun" {
      * if the key doesn't exist
      */
     strlen(key: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Determine the type of value stored at key
+     *
+     * The TYPE command returns the string representation of the type of the
+     * value stored at key. The different types that can be returned are:
+     * string, list, set, zset, hash and stream.
+     *
+     * @param key The key to check
+     * @returns Promise that resolves with the type of value stored at key, or
+     * "none" if the key doesn't exist
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "Hello");
+     * console.log(await redis.type("mykey")); // "string"
+     *
+     * await redis.lpush("mylist", "value");
+     * console.log(await redis.type("mylist")); // "list"
+     *
+     * await redis.sadd("myset", "value");
+     * console.log(await redis.type("myset")); // "set"
+     *
+     * await redis.hset("myhash", "field", "value");
+     * console.log(await redis.type("myhash")); // "hash"
+     *
+     * console.log(await redis.type("nonexistent")); // "none"
+     * ```
+     */
+    type(key: RedisClient.KeyLike): Promise<"none" | "string" | "list" | "set" | "zset" | "hash" | "stream">;
 
     /**
      * Get the number of members in a sorted set
@@ -950,6 +1084,131 @@ declare module "bun" {
      * This will open up a new connection to the Redis server.
      */
     duplicate(): Promise<RedisClient>;
+
+    /**
+     * Copy the value stored at the source key to the destination key
+     *
+     * By default, the destination key is created in the logical database used
+     * by the connection. The REPLACE option removes the destination key before
+     * copying the value to it.
+     *
+     * @param source The source key to copy from
+     * @param destination The destination key to copy to
+     * @returns Promise that resolves with 1 if the key was copied, 0 if not
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "Hello");
+     * await redis.copy("mykey", "myotherkey");
+     * console.log(await redis.get("myotherkey")); // "Hello"
+     * ```
+     */
+    copy(source: RedisClient.KeyLike, destination: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Copy the value stored at the source key to the destination key, optionally replacing it
+     *
+     * The REPLACE option removes the destination key before copying the value to it.
+     *
+     * @param source The source key to copy from
+     * @param destination The destination key to copy to
+     * @param replace "REPLACE" - Remove the destination key before copying
+     * @returns Promise that resolves with 1 if the key was copied, 0 if not
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "Hello");
+     * await redis.set("myotherkey", "World");
+     * await redis.copy("mykey", "myotherkey", "REPLACE");
+     * console.log(await redis.get("myotherkey")); // "Hello"
+     * ```
+     */
+    copy(source: RedisClient.KeyLike, destination: RedisClient.KeyLike, replace: "REPLACE"): Promise<number>;
+
+    /**
+     * Asynchronously delete one or more keys
+     *
+     * This command is very similar to DEL: it removes the specified keys.
+     * Just like DEL a key is ignored if it does not exist. However, the
+     * command performs the actual memory reclaiming in a different thread, so
+     * it is not blocking, while DEL is. This is particularly useful when
+     * deleting large values or large numbers of keys.
+     *
+     * @param keys The keys to delete
+     * @returns Promise that resolves with the number of keys that were unlinked
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "Hello");
+     * await redis.set("key2", "World");
+     * const count = await redis.unlink("key1", "key2", "key3");
+     * console.log(count); // 2
+     * ```
+     */
+    unlink(...keys: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Alters the last access time of one or more keys
+     *
+     * A key is ignored if it does not exist. The command returns the number
+     * of keys that were touched.
+     *
+     * This command is useful in conjunction with maxmemory-policy
+     * allkeys-lru / volatile-lru to change the last access time of keys for
+     * eviction purposes.
+     *
+     * @param keys One or more keys to touch
+     * @returns Promise that resolves with the number of keys that were touched
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "Hello");
+     * await redis.set("key2", "World");
+     * const touched = await redis.touch("key1", "key2", "key3");
+     * console.log(touched); // 2 (key3 doesn't exist)
+     * ```
+     */
+    touch(...keys: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Rename a key to a new key
+     *
+     * Renames key to newkey. If newkey already exists, it is overwritten. If
+     * key does not exist, an error is returned.
+     *
+     * @param key The key to rename
+     * @param newkey The new key name
+     * @returns Promise that resolves with "OK" on success
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "Hello");
+     * await redis.rename("mykey", "myotherkey");
+     * const value = await redis.get("myotherkey"); // "Hello"
+     * const oldValue = await redis.get("mykey"); // null
+     * ```
+     */
+    rename(key: RedisClient.KeyLike, newkey: RedisClient.KeyLike): Promise<"OK">;
+
+    /**
+     * Rename a key to a new key only if the new key does not exist
+     *
+     * Renames key to newkey only if newkey does not yet exist. If key does not
+     * exist, an error is returned.
+     *
+     * @param key The key to rename
+     * @param newkey The new key name
+     * @returns Promise that resolves with 1 if the key was renamed, 0 if newkey already exists
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "Hello");
+     * await redis.renamenx("mykey", "myotherkey"); // Returns 1
+     * await redis.set("mykey2", "World");
+     * await redis.renamenx("mykey2", "myotherkey"); // Returns 0 (myotherkey exists)
+     * ```
+     */
+    renamenx(key: RedisClient.KeyLike, newkey: RedisClient.KeyLike): Promise<number>;
   }
 
   /**

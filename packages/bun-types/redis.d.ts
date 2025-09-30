@@ -824,7 +824,11 @@ declare module "bun" {
      * @param members Additional members to get scores for
      * @returns Promise that resolves with an array of scores (string for each score, or null if member doesn't exist)
      */
-    zmscore(key: RedisClient.KeyLike, member: RedisClient.KeyLike, ...members: RedisClient.KeyLike[]): Promise<(string | null)[]>;
+    zmscore(
+      key: RedisClient.KeyLike,
+      member: RedisClient.KeyLike,
+      ...members: RedisClient.KeyLike[]
+    ): Promise<(string | null)[]>;
 
     /**
      * Remove one or more members from a sorted set

@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, tls as COMMON_TLS_CERT, randomPort } from "harness";
+import { bunEnv, bunExe, randomPort } from "harness";
 import { createTest } from "node-harness";
 import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
@@ -15,7 +15,6 @@ import http, {
   createServer,
   get,
   globalAgent,
-  IncomingMessage,
   OutgoingMessage,
   request,
   Server,
@@ -25,12 +24,10 @@ import http, {
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import { connect, createConnection } from "node:net";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import * as stream from "node:stream";
 import { PassThrough } from "node:stream";
-import * as zlib from "node:zlib";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 

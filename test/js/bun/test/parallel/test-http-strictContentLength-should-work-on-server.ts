@@ -40,7 +40,5 @@ await using server = http.createServer((req, res) => {
 
 await once(server.listen(0), "listening");
 const url = `http://localhost:${server.address().port}`;
-await fetch(url, {
-  method: "GET",
-}).catch(() => {});
+await fetch(url, { method: "GET" }).catch(() => {});
 await promise;

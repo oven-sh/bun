@@ -4,7 +4,7 @@ import http from "node:http";
 const { expect } = createTest(import.meta.path);
 
 // Create a local server to receive data from
-const server = http.createServer();
+await using server = http.createServer();
 
 // Listen to the request event
 server.on("request", (request, res) => {
@@ -19,16 +19,12 @@ server.on("request", (request, res) => {
     });
   }, 100);
 });
-try {
-  await once(server.listen(0), "listening");
-  const url = `http://localhost:${server.address().port}`;
-  const payload = "Hello, world!".repeat(10).toString();
-  const res = await fetch(url, {
-    method: "POST",
-    body: payload,
-  });
-  expect(res.status).toBe(200);
-  expect(await res.text()).toBe(payload);
-} finally {
-  server.close();
-}
+await once(server.listen(0), "listening");
+const url = `http://localhost:${server.address().port}`;
+const payload = "Hello, world!".repeat(10).toString();
+const res = await fetch(url, {
+  method: "POST",
+  body: payload,
+});
+expect(res.status).toBe(200);
+expect(await res.text()).toBe(payload);

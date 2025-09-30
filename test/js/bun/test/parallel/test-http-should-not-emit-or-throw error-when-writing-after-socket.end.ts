@@ -5,7 +5,7 @@ const { expect } = createTest(import.meta.path);
 
 const { promise, resolve, reject } = Promise.withResolvers();
 
-const server = http.createServer((req, res) => {
+await using server = http.createServer((req, res) => {
   res.writeHead(200, { "Connection": "close" });
 
   res.socket.end();
@@ -17,18 +17,14 @@ const server = http.createServer((req, res) => {
     reject(err);
   }
 });
-try {
-  await once(server.listen(0), "listening");
-  const url = `http://localhost:${server.address().port}`;
+await once(server.listen(0), "listening");
+const url = `http://localhost:${server.address().port}`;
 
-  await fetch(url, {
-    method: "POST",
-    body: Buffer.allocUnsafe(1024 * 1024 * 10),
-  })
-    .then(res => res.bytes())
-    .catch(err => {});
+await fetch(url, {
+  method: "POST",
+  body: Buffer.allocUnsafe(1024 * 1024 * 10),
+})
+  .then(res => res.bytes())
+  .catch(err => {});
 
-  expect(await promise).toBeTrue();
-} finally {
-  server.close();
-}
+expect(await promise).toBeTrue();

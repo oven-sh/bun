@@ -4,7 +4,7 @@ import https from "node:https";
 import * as path from "node:path";
 const { expect } = createTest(import.meta.path);
 
-const server = https.createServer(
+await using server = https.createServer(
   {
     key: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/http/fixtures", "openssl.key")),
     cert: nodefs.readFileSync(path.join(import.meta.dir, "../../..", "node/http/fixtures", "openssl.crt")),
@@ -29,10 +29,8 @@ try {
     },
   });
   await res.text();
-  expect(true).toBe("unreacheable");
+  expect.unreachable();
 } catch (err) {
   expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   expect(err.message).toBe("unable to verify the first certificate");
 }
-
-server.close();

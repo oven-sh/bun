@@ -503,4 +503,64 @@ describe("production serve", () => {
     const html2 = await response2.text();
     expect(html2).toContain("Hello, <!-- -->john123");
   });
+
+  test("should work with SSR route using Response.render() for SSG route", async () => {
+    const dir = await tempDirWithBakeDeps("production-serve-ssr-render-ssg", {
+      "index.ts": 'export default { app: "react" }',
+      "pages/static-content.tsx": `
+        export default function StaticContent() {
+          return (
+            <div>
+              <h1>Static Page</h1>
+              <p>This is pre-rendered content</p>
+            </div>
+          );
+        }
+      `,
+      "pages/dynamic-renderer.tsx": `
+        export const mode = 'ssr';
+
+        export default async function DynamicRenderer({ request }) {
+          // This SSR route renders a pre-built SSG route
+          return Response.render("/static-content");
+        }
+      `,
+      "serve.ts": `
+        import app from './index.ts';
+
+        const server = Bun.serve({
+          ...app,
+          port: 0,
+        });
+
+        process.send(\`\${server.url}\`);
+      `,
+    });
+
+    // Build the app
+    const { exitCode } = await Bun.$`${bunExe()} build --app ./index.ts`.cwd(dir).throws(false);
+    expect(exitCode).toBe(0);
+
+    // Start the production server
+    const { url, proc } = await startProductionServer(dir);
+    await using _ = proc;
+
+    // Access the SSR route that renders the SSG route
+    const response = await fetch(`${url}/dynamic-renderer`);
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+
+    const html = await response.text();
+    expect(html).toContain("Static Page");
+    expect(html).toContain("This is pre-rendered content");
+
+    // Also verify the static route works directly
+    const staticResponse = await fetch(`${url}/static-content`);
+    expect(staticResponse.ok).toBe(true);
+    expect(staticResponse.status).toBe(200);
+
+    const staticHtml = await staticResponse.text();
+    expect(staticHtml).toContain("Static Page");
+    expect(staticHtml).toContain("This is pre-rendered content");
+  });
 });

@@ -509,7 +509,7 @@ fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log)
                     const styles = try parseStyles(allocator, log, &json_source, entry_obj);
 
                     routes[route_index] = .{
-                        .ssg = .{
+                        .ssg = Route.SSG{
                             .entrypoint = entrypoint,
                             .params = params,
                             .styles = styles,
@@ -543,7 +543,9 @@ fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log)
                         try ssg_map.put(allocator, ssg, {});
                     }
 
-                    routes[route_index] = .{ .ssg_many = ssg_map };
+                    routes[route_index] = .{
+                        .ssg_many = ssg_map,
+                    };
                 }
             },
         }
@@ -667,6 +669,75 @@ pub const Route = union(enum) {
         params: bun.BabyList(ParamEntry),
         styles: Styles,
         store: ?*jsc.WebCore.Blob.Store = null,
+
+        pub fn fromMatchedParams(allocator: Allocator, params: *const bun.bake.FrameworkRouter.MatchedParams) !@This() {
+            const matched_params = params.params.slice();
+            if (matched_params.len == 0) {
+                return .{
+                    .entrypoint = "",
+                    .params = bun.BabyList(ParamEntry){},
+                    .styles = .{},
+                    .store = null,
+                };
+            }
+
+            // Count unique keys to pre-allocate the exact capacity
+            var unique_keys: usize = 0;
+            {
+                var i: usize = 0;
+                while (i < matched_params.len) {
+                    const key = matched_params[i].key;
+                    unique_keys += 1;
+
+                    // Skip over any consecutive entries with the same key
+                    i += 1;
+                    while (i < matched_params.len and bun.strings.eql(matched_params[i].key, key)) {
+                        i += 1;
+                    }
+                }
+            }
+
+            var params_list = try bun.BabyList(ParamEntry).initCapacity(allocator, unique_keys);
+
+            var i: usize = 0;
+            while (i < matched_params.len) {
+                const entry = matched_params[i];
+                const key = entry.key;
+
+                // Check if the next entries have the same key (catch-all param case)
+                var j = i + 1;
+                while (j < matched_params.len and bun.strings.eql(matched_params[j].key, key)) {
+                    j += 1;
+                }
+
+                if (j - i == 1) {
+                    // Single value for this key
+                    try params_list.append(allocator, .{
+                        .key = key,
+                        .value = .{ .single = entry.value },
+                    });
+                } else {
+                    // Multiple values for the same key (catch-all param)
+                    var multiple_values = try bun.BabyList([]const u8).initCapacity(allocator, j - i);
+                    for (matched_params[i..j]) |param_entry| {
+                        try multiple_values.append(allocator, param_entry.value);
+                    }
+                    try params_list.append(allocator, .{
+                        .key = key,
+                        .value = .{ .multiple = multiple_values },
+                    });
+                }
+
+                i = j;
+            }
+
+            return .{
+                .entrypoint = "",
+                .params = params_list,
+                .styles = .{},
+                .store = null,
+            };
+        }
     };
 
     /// A route which has been statically generated and has multiple pages
@@ -713,7 +784,6 @@ pub const Route = union(enum) {
     );
 
     const Index = bun.GenericIndex(u32, Route);
-    const Map = std.AutoHashMapUnmanaged(Route.Index, Route);
 };
 
 const RawManifestEntry = struct {

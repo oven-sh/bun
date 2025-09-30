@@ -1,4 +1,5 @@
-const std = @import("std");
+const log = Output.scoped(.bake_prod, .visible);
+const httplog = log;
 
 const Self = @This();
 
@@ -7,7 +8,9 @@ bake_server_runtime_handler: jsc.Strong,
 /// Pointer is owned by the arena inside Manifest
 manifest: *bun.bake.Manifest,
 
-pub fn router(this: *Self) *bun.bake.FrameworkRouter {
+pub const ProductionFrameworkRouter = @import("./ProductionFrameworkRouter.zig");
+
+pub fn getRouter(this: *Self) *bun.bake.FrameworkRouter {
     return this.manifest.router.get();
 }
 
@@ -86,86 +89,10 @@ pub fn getRouteInfo(this: *Self, global: *JSGlobalObject, index: Route.Index) JS
     return SSRRouteList.getRouteInfo(global, this.route_list.get(), index.get());
 }
 
-const SSRRouteList = struct {
-    extern "C" fn Bun__BakeProductionSSRRouteList__create(globalObject: *JSGlobalObject, route_count: usize) JSValue;
-    extern "C" fn Bun__BakeProductionSSRRouteList__getRouteInfo(globalObject: *JSGlobalObject, route_list_object: JSValue, index: usize) JSValue;
-
-    pub fn create(globalObject: *JSGlobalObject, route_count: usize) JSError!JSValue {
-        return jsc.fromJSHostCall(globalObject, @src(), Bun__BakeProductionSSRRouteList__create, .{ globalObject, route_count });
-    }
-
-    pub fn getRouteInfo(globalObject: *JSGlobalObject, route_list_object: JSValue, index: usize) JSError!JSValue {
-        return jsc.fromJSHostCall(globalObject, @src(), Bun__BakeProductionSSRRouteList__getRouteInfo, .{ globalObject, route_list_object, index });
-    }
-};
-
 fn BakeLoadProductionServerCode(global: *jsc.JSGlobalObject, code: bun.String, path: bun.String) bun.JSError!jsc.JSValue {
     const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.c) jsc.JSValue, .{ .name = "BakeLoadProductionServerCode" }).*;
     return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, path });
 }
-
-/// Context type for FrameworkRouter in production mode
-/// Implements the required methods for route scanning
-pub const ProductionFrameworkRouter = struct {
-    file_id_counter: u32 = 0,
-
-    pub fn init() ProductionFrameworkRouter {
-        return .{};
-    }
-
-    /// Generate a file ID for a route file
-    /// In production, we don't need to track actual files since they're bundled
-    pub fn getFileIdForRouter(
-        this: *ProductionFrameworkRouter,
-        abs_path: []const u8,
-        associated_route: bun.bake.FrameworkRouter.Route.Index,
-        file_kind: bun.bake.FrameworkRouter.Route.FileKind,
-    ) !bun.bake.FrameworkRouter.OpaqueFileId {
-        _ = abs_path;
-        _ = associated_route;
-        _ = file_kind;
-        // In production, we just need unique IDs for the route structure
-        // The actual files are already bundled
-        const id = this.file_id_counter;
-        this.file_id_counter += 1;
-        return bun.bake.FrameworkRouter.OpaqueFileId.init(id);
-    }
-
-    /// Handle route syntax errors
-    pub fn onRouterSyntaxError(
-        this: *ProductionFrameworkRouter,
-        rel_path: []const u8,
-        log: bun.bake.FrameworkRouter.TinyLog,
-    ) !void {
-        _ = this;
-        // In production, log syntax errors to console
-        // These shouldn't happen in production as routes are pre-validated during build
-        bun.Output.prettyErrorln("<r><red>error<r>: route syntax error in {s}", .{rel_path});
-        log.print(rel_path);
-        Output.flush();
-    }
-
-    /// Handle route collision errors
-    pub fn onRouterCollisionError(
-        this: *ProductionFrameworkRouter,
-        rel_path: []const u8,
-        other_id: bun.bake.FrameworkRouter.OpaqueFileId,
-        file_kind: bun.bake.FrameworkRouter.Route.FileKind,
-    ) !void {
-        _ = this;
-        _ = other_id;
-        // In production, log collision errors
-        // These shouldn't happen in production as routes are pre-validated during build
-        Output.errGeneric("Multiple {s} matching the same route pattern is ambiguous", .{
-            switch (file_kind) {
-                .page => "pages",
-                .layout => "layout",
-            },
-        });
-        Output.prettyErrorln("  - <blue>{s}<r>", .{rel_path});
-        Output.flush();
-    }
-};
 
 pub fn routeDataForInitialization(
     globalObject: *JSGlobalObject,
@@ -181,7 +108,7 @@ pub fn routeDataForInitialization(
         return globalObject.throw("Request context is not a production server state", .{});
     };
 
-    const rtr = server.router();
+    const rtr = server.getRouter();
 
     if (router_index >= rtr.routes.items.len) {
         return globalObject.throw("Router index out of bounds", .{});
@@ -240,7 +167,7 @@ export fn Bake__getProdNewRouteParamsJSFunctionImpl(global: *bun.jsc.JSGlobalObj
     return jsc.toJSHostCall(global, @src(), newRouteParamsJS, .{ global, callframe });
 }
 
-fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
+pub fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
     if (callframe.argumentsCount() != 2) {
         return global.throw("Expected 3 arguments", .{});
     }
@@ -260,7 +187,7 @@ fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
 
     const pathname = FrameworkRouter.extractPathnameFromUrl(url_utf8.byteSlice());
     var params: bun.bake.FrameworkRouter.MatchedParams = undefined;
-    const route_index = self.router().matchSlow(pathname, &params) orelse return global.throw("No route found for path: {s}", .{url_utf8.byteSlice()});
+    const route_index = self.getRouter().matchSlow(pathname, &params) orelse return global.throw("No route found for path: {s}", .{url_utf8.byteSlice()});
 
     const route = self.manifest.routes[route_index.get()];
     switch (route) {
@@ -277,13 +204,28 @@ fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
             return jsc.WebCore.Blob.new(blob).toJS(global);
         },
         .ssg_many => {
-            @panic("FIXME: Zack implement this");
+            // FIXME: i don't like allocating just to make the key. We only use the `params` field of SSG when reconstructing the URL path when we setup the routess
+            const lookup_key = try Manifest.Route.SSG.fromMatchedParams(bun.default_allocator, &params);
+            defer lookup_key.deinit();
+
+            const ssg = route.ssg_many.getKeyPtr(lookup_key) orelse
+                return global.throw("No pre-rendered page found for this parameter combination: {s}", .{url_utf8.byteSlice()});
+
+            const html_store = ssg.store orelse return global.throw("No HTML blob found for path: {s}", .{url_utf8.byteSlice()});
+            html_store.ref();
+            const blob = jsc.WebCore.Blob{
+                .size = jsc.WebCore.Blob.max_size,
+                .store = html_store,
+                .content_type = bun.http.MimeType.html.value,
+                .globalThis = global,
+            };
+            return jsc.WebCore.Blob.new(blob).toJS(global);
         },
         .empty => return global.throw("Path points to an invalid route: {s}", .{url_utf8.byteSlice()}),
     }
 
     const route_info = try self.getRouteInfo(global, route_index);
-    const framework_route = self.router().routes.items[route_index.get()];
+    const framework_route = self.getRouter().routes.items[route_index.get()];
     const router_type_index = framework_route.type.get();
 
     var result = try JSValue.createEmptyArray(global, 4);
@@ -310,7 +252,7 @@ pub fn newRouteParams(
     newRouteParams: JSValue,
     setAsyncLocalStorage: JSValue,
 } {
-    const r = self.router();
+    const r = self.getRouter();
 
     // Look up the route to get its router type
     const framework_route = &r.routes.items[route_index.get()];
@@ -339,6 +281,105 @@ pub fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *jsc.JSGlobalO
     return f(global);
 }
 
+pub fn reconstructPathFromParams(
+    this: *Self,
+    allocator: std.mem.Allocator,
+    route_index: u32,
+    params: *const bun.BabyList(bun.bake.Manifest.ParamEntry),
+) ![]const u8 {
+    const router = this.getRouter();
+    if (route_index >= router.routes.items.len) return error.InvalidRouteIndex;
+
+    const target_route = &router.routes.items[route_index];
+    var parts = std.ArrayList(u8).init(allocator);
+    defer parts.deinit();
+
+    // Reconstruct the URL path from the route parts and params
+    var current_route: ?*const bun.bake.FrameworkRouter.Route = target_route;
+    var path_parts = std.ArrayList(bun.bake.FrameworkRouter.Part).init(allocator);
+    defer path_parts.deinit();
+
+    // Collect all parts from parent routes to build the full path
+    while (current_route) |r| {
+        try path_parts.append(r.part);
+        if (r.parent.unwrap()) |parent_idx| {
+            current_route = &router.routes.items[parent_idx.get()];
+        } else {
+            current_route = null;
+        }
+    }
+
+    // Reverse the parts array since we collected from child to parent
+    std.mem.reverse(bun.bake.FrameworkRouter.Part, path_parts.items);
+
+    // Build the URL path
+    for (path_parts.items) |part| {
+        if (part == .text and part.text.len == 0) continue;
+        try parts.append('/');
+        switch (part) {
+            .text => |text| try parts.appendSlice(text),
+            .param => |param_name| {
+                // Find the param value from the params list
+                var found = false;
+                for (params.slice()) |param| {
+                    if (strings.eql(param.key, param_name)) {
+                        switch (param.value) {
+                            .single => |val| try parts.appendSlice(val),
+                            .multiple => |vals| {
+                                // For regular params, just use the first value
+                                if (vals.len > 0) {
+                                    try parts.appendSlice(vals.slice()[0]);
+                                }
+                            },
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    // If param not found, use the param name as placeholder
+                    try parts.append('[');
+                    try parts.appendSlice(param_name);
+                    try parts.append(']');
+                }
+            },
+            .catch_all, .catch_all_optional => |name| {
+                // For catch-all routes, look for the param with multiple values
+                var found = false;
+                for (params.slice()) |param| {
+                    if (strings.eql(param.key, name)) {
+                        switch (param.value) {
+                            .single => |val| try parts.appendSlice(val),
+                            .multiple => |vals| {
+                                // Join all values with slashes for catch-all
+                                for (vals.slice(), 0..) |val, i| {
+                                    if (i > 0) try parts.append('/');
+                                    try parts.appendSlice(val);
+                                }
+                            },
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    // If param not found, use placeholder
+                    try parts.appendSlice("[...");
+                    try parts.appendSlice(name);
+                    try parts.append(']');
+                }
+            },
+            .group => {}, // Groups don't affect URL
+        }
+    }
+
+    if (parts.items.len == 0) {
+        try parts.append('/');
+    }
+
+    return try parts.toOwnedSlice();
+}
+
 const bun = @import("bun");
 const bake = bun.bake;
 const strings = bun.strings;
@@ -346,6 +387,7 @@ const logger = bun.logger;
 const Loc = logger.Loc;
 
 const Route = bun.bake.FrameworkRouter.Route;
+const SSRRouteList = bun.bake.SSRRouteList;
 
 const jsc = bun.jsc;
 const JSError = bun.JSError;
@@ -359,7 +401,17 @@ const Resolver = bun.resolver.Resolver;
 
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const Output = bun.Output;
 const Manifest = bun.bake.Manifest;
 
+const ServerConfig = bun.api.server.ServerConfig;
+const AnyServer = bun.api.server.AnyServer;
+
+const Output = bun.Output;
+const FileRoute = bun.api.server.FileRoute;
+const StaticRoute = bun.api.server.StaticRoute;
+
+const Environment = bun.Environment;
+
 const FrameworkRouter = bun.bake.FrameworkRouter;
+const std = @import("std");
+const uws = bun.uws;

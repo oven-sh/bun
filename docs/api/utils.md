@@ -633,6 +633,7 @@ const decompressedAsync = await Bun.zstdDecompress(compressed);
 const dec = new TextDecoder();
 dec.decode(decompressedSync);
 // => "hellohellohello..."
+```
 
 ## `Bun.inspect()`
 

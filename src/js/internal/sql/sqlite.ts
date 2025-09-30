@@ -635,6 +635,10 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
               for (let i = 0; i < columnCount; i++) {
                 const column = columns[i];
                 const columnValue = item[column];
+                if (typeof columnValue === "undefined") {
+                  // skip undefined values, this is the expected behavior in JS
+                  continue;
+                }
                 // SQLite uses ? for placeholders
                 query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
                 if (typeof columnValue === "undefined") {
@@ -643,7 +647,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
                   binding_values.push(columnValue);
                 }
               }
-              query += " "; // the user can add where clause after this
+              if (query.endsWith(", ")) {
+                // we got an undefined value at the end, lets remove the last comma
+                query = query.substring(0, query.length - 2);
+              }
+              if (query.endsWith("SET ")) {
+                throw new SyntaxError("Update needs to have at least one column");
+              }
+              // the user can add where clause after this
+              query += " ";
             }
           } else {
             // SQLite uses ? for placeholders

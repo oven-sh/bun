@@ -1273,7 +1273,7 @@ describe("SQLite-specific features", () => {
   });
 });
 
-describe.only("SQL helpers", () => {
+describe("SQL helpers", () => {
   let sql: SQL;
 
   beforeAll(async () => {

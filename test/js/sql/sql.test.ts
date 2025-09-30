@@ -140,7 +140,7 @@ if (isDockerEnabled()) {
     });
 
     describe("Array helpers", () => {
-      test("SQL heper should support sql.array", async () => {
+      test("SQL helper should support sql.array", async () => {
         await using sql = postgres(options);
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
         await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (
@@ -1025,7 +1025,7 @@ if (isDockerEnabled()) {
 
     test("Array of Box", async () => {
       const result = await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`;
-      // box type will reorder the values and this is corrects
+      // box type will reorder the values and this is correct
       expect(result[0].x).toEqual(["(3,4),(1,2)", "(6,7),(4,5)"]);
     });
 

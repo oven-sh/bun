@@ -6798,7 +6798,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
-        const values = await redis.hmget(key, ["name", "age", "city"]);
+        const values = await redis.hmget(key, "name", "age", "city");
         expect(values).toEqual(["John", "30", "NYC"]);
       });
 
@@ -6808,7 +6808,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await redis.hset(key, { name: "John" });
 
-        const values = await redis.hmget(key, ["name", "age", "city"]);
+        const values = await redis.hmget(key, "name", "age", "city");
         expect(values).toEqual(["John", null, null]);
       });
 

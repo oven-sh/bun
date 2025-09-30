@@ -125,7 +125,7 @@ pub const SubscriptionCtx = struct {
         defer this.parent().onNewSubscriptionCallbackInsert();
         const map = this.subscriptionCallbackMap();
 
-        var handlers_array: JSValue = undefined;
+        var handlers_array: JSValue = .js_undefined;
         var is_new_channel = false;
         const existing_handler_arr = try map.get(globalObject, channelName);
         if (existing_handler_arr != .js_undefined) {
@@ -600,11 +600,6 @@ pub const JSValkeyClient = struct {
                 this.client.retry_attempts = 0;
                 this.reconnect();
             },
-            .failed => {
-                this.client.flags.is_reconnecting = true;
-                this.client.retry_attempts = 0;
-                this.reconnect();
-            },
             else => {},
         }
 
@@ -714,6 +709,9 @@ pub const JSValkeyClient = struct {
         // Increment ref to ensure 'this' stays alive throughout the function
         this.ref();
         defer this.deref();
+        if (this.client.flags.failed) {
+            return .disarm;
+        }
 
         if (this.client.getTimeoutInterval() == 0) {
             this.resetConnectionTimeout();
@@ -729,9 +727,6 @@ pub const JSValkeyClient = struct {
             .disconnected, .connecting => {
                 const msg = std.fmt.bufPrintZ(&buf, "Connection timeout reached after {d}ms", .{this.client.connection_timeout_ms}) catch unreachable;
                 this.clientFail(msg, protocol.RedisError.ConnectionTimeout);
-            },
-            else => {
-                // No timeout for other states
             },
         }
 
@@ -1041,6 +1036,8 @@ pub const JSValkeyClient = struct {
         this.client.flags.needs_to_open_socket = false;
         const vm = this.client.vm;
 
+        this.ref();
+        defer this.deref();
         const ctx: *uws.SocketContext, const own_ctx: bool =
             switch (this.client.tls) {
                 .none => .{
@@ -1048,6 +1045,7 @@ pub const JSValkeyClient = struct {
                         // TCP socket
                         const ctx_ = uws.SocketContext.createNoSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient)) orelse {
                             this.failWithInvalidSocketContext();
+                            this.client.status = .disconnected;
                             return;
                         };
                         uws.NewSocketHandler(false).configure(ctx_, true, *JSValkeyClient, SocketHandler(false));
@@ -1062,6 +1060,7 @@ pub const JSValkeyClient = struct {
                         var err: uws.create_bun_socket_error_t = .none;
                         const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), uws.SocketContext.BunSocketContextOptions{}, &err) orelse {
                             this.failWithInvalidSocketContext();
+                            this.client.status = .disconnected;
                             return;
                         };
                         uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
@@ -1080,6 +1079,7 @@ pub const JSValkeyClient = struct {
 
                     const ctx_ = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*JSValkeyClient), options, &err) orelse {
                         this.failWithInvalidSocketContext();
+                        this.client.status = .disconnected;
                         return;
                     };
                     uws.NewSocketHandler(true).configure(ctx_, true, *JSValkeyClient, SocketHandler(true));
@@ -1094,6 +1094,11 @@ pub const JSValkeyClient = struct {
         }
         this.client.status = .connecting;
         this.updatePollRef();
+
+        errdefer {
+            this.client.status = .disconnected;
+            this.updatePollRef();
+        }
         this.client.socket = try this.client.address.connect(&this.client, ctx, this.client.tls != .none);
     }
 
@@ -1221,8 +1226,8 @@ pub const JSValkeyClient = struct {
                 debug("upgrading this_value since we are connected/connecting", .{});
                 this.this_value.upgrade(this.globalObject);
             },
-            .disconnected, .failed => {
-                // If we're disconnected or failed, we need to check if we have
+            .disconnected => {
+                // If we're disconnected, we need to check if we have
                 // any pending activity.
                 if (has_activity) {
                     debug("upgrading this_value since there is pending activity", .{});
@@ -1463,23 +1468,35 @@ fn SocketHandler(comptime ssl: bool) type {
             // No need to deref since this.client.onClose() invokes onValkeyClose which does the deref.
 
             debug("Socket closed.", .{});
-
+            this.ref();
             // Ensure the socket pointer is updated.
             this.client.socket = .{ .SocketTCP = .detached };
+            defer {
+                this.client.status = .disconnected;
+                this.updatePollRef();
+                this.deref();
+            }
 
             this.client.onClose();
-            this.updatePollRef();
         }
 
         pub fn onEnd(this: *JSValkeyClient, socket: SocketType) void {
             _ = this;
             _ = socket;
+
             // Half-opened sockets are not allowed.
+            // usockets will always call onClose after onEnd in this case so we don't need to do anything here
         }
 
         pub fn onConnectError(this: *JSValkeyClient, _: SocketType, _: i32) void {
             // Ensure the socket pointer is updated.
             this.client.socket = .{ .SocketTCP = .detached };
+            this.ref();
+            defer {
+                this.client.status = .disconnected;
+                this.updatePollRef();
+                this.deref();
+            }
 
             this.client.onClose();
         }

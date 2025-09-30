@@ -182,7 +182,7 @@ pub const BundleV2 = struct {
         }
     }
 
-    fn initializeClientTranspiler(this: *BundleV2) !*Transpiler {
+    fn initializeClientTranspiler(this: *BundleV2) bun.OOM!*Transpiler {
         @branchHint(.cold);
         const alloc = this.allocator();
 

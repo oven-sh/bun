@@ -861,7 +861,7 @@ pub const CommandLineReporter = struct {
         }
 
         const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
-        bun.handleOom(output_writer.writeAll(output_buf.items[initial_length..]));
+        output_writer.writeAll(output_buf.items[initial_length..]) catch {};
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 

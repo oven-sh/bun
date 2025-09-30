@@ -675,7 +675,7 @@ pub const ValkeyClient = struct {
             },
             .Push => |push| {
                 const p = this.parent();
-                const sub_count = try p._subscription_ctx.channelsSubscribedToCount(globalThis);
+                const subscriptions_count = p._subscription_ctx.channelsSubscribedToCount(globalThis);
 
                 if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
                     switch (msg_type) {
@@ -690,7 +690,7 @@ pub const ValkeyClient = struct {
                             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
                             // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
                             if (pair) |req_pair| {
-                                req_pair.promise.promise.resolve(globalThis, .jsNumber(sub_count));
+                                req_pair.promise.promise.resolve(globalThis, .jsNumber(subscriptions_count));
                             }
                             return .handled;
                         },

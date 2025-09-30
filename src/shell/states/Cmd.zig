@@ -155,6 +155,7 @@ const BufferedIoClosed = struct {
                     if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.redirectsElsewhere(.stdout)) {
                         const the_slice = readable.pipe.slice();
                         bun.handleOom(cmd.base.shell.buffered_stdout().appendSlice(bun.default_allocator, the_slice));
+                        cmd.base.shell.notifyStdoutData();
                     }
 
                     var buffer = readable.pipe.takeBuffer();
@@ -169,6 +170,7 @@ const BufferedIoClosed = struct {
                     if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.redirectsElsewhere(.stderr)) {
                         const the_slice = readable.pipe.slice();
                         bun.handleOom(cmd.base.shell.buffered_stderr().appendSlice(bun.default_allocator, the_slice));
+                        cmd.base.shell.notifyStderrData();
                     }
 
                     var buffer = readable.pipe.takeBuffer();

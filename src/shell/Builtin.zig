@@ -623,6 +623,7 @@ pub fn done(this: *Builtin, exit_code: anytype) Yield {
             bun.default_allocator,
             this.stdout.buf.items[0..],
         ));
+        cmd.base.shell.notifyStdoutData();
     }
     // Aggregate output data if shell state is piped and this cmd is piped
     if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and this.stderr == .buf) {
@@ -630,6 +631,7 @@ pub fn done(this: *Builtin, exit_code: anytype) Yield {
             bun.default_allocator,
             this.stderr.buf.items[0..],
         ));
+        cmd.base.shell.notifyStderrData();
     }
 
     return cmd.parent.childDone(cmd, this.exit_code.?);

@@ -113,6 +113,8 @@ pub const CallstackGuard = enum(u0) { __i_know_what_i_am_doing };
 
 pub const ExitCode = u16;
 
+pub const ShellOutputStream = @import("./ShellOutputStream.zig");
+
 pub const StateKind = enum(u8) {
     script,
     stmt,
@@ -278,6 +280,9 @@ pub const Interpreter = struct {
 
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
 
+    stdout_stream: ?*ShellOutputStream.Source = null,
+    stderr_stream: ?*ShellOutputStream.Source = null,
+
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
     pub const Script = @import("./states/Script.zig");
@@ -351,6 +356,10 @@ pub const Interpreter = struct {
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
 
+        /// Reference to the interpreter for stream notifications
+        /// Only set for the root shell
+        interpreter: ?*ThisInterpreter = null,
+
         __alloc_scope: if (bun.Environment.enableAllocScopes) *bun.AllocationScope else void,
 
         const pid_t = if (bun.Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
@@ -381,6 +390,20 @@ pub const Interpreter = struct {
                 .owned => &this._buffered_stderr.owned,
                 .borrowed => this._buffered_stderr.borrowed,
             };
+        }
+
+        /// Notify streams that new stdout data is available
+        pub fn notifyStdoutData(this: *ShellExecEnv) void {
+            if (this.interpreter) |interp| {
+                interp.notifyStdoutData();
+            }
+        }
+
+        /// Notify streams that new stderr data is available
+        pub fn notifyStderrData(this: *ShellExecEnv) void {
+            if (this.interpreter) |interp| {
+                interp.notifyStderrData();
+            }
         }
 
         pub inline fn cwdZ(this: *ShellExecEnv) [:0]const u8 {
@@ -872,6 +895,7 @@ pub const Interpreter = struct {
         }
 
         interpreter.root_shell.__alloc_scope = if (bun.Environment.enableAllocScopes) &interpreter.__alloc_scope else {};
+        interpreter.root_shell.interpreter = interpreter;
 
         return .{ .result = interpreter };
     }
@@ -1139,6 +1163,9 @@ pub const Interpreter = struct {
         log("Interpreter(0x{x}) finish {d}", .{ @intFromPtr(this), exit_code });
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
+        // Mark streams as done before resolving
+        this.markStreamsDone();
+
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
@@ -1279,6 +1306,72 @@ pub const Interpreter = struct {
 
     pub fn getBufferedStderr(this: *ThisInterpreter, globalThis: *JSGlobalObject) jsc.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stderr());
+    }
+
+    pub fn getStdout(this: *ThisInterpreter, globalThis: *JSGlobalObject) JSValue {
+        if (this.stdout_stream) |stream| {
+            return stream.toReadableStream(globalThis) catch |err| {
+                globalThis.reportActiveExceptionAsUnhandled(err);
+                return .zero;
+            };
+        }
+
+        // Create the stream
+        var source = ShellOutputStream.Source.new(.{
+            .globalThis = globalThis,
+            .context = ShellOutputStream.init(this.root_shell.buffered_stdout()),
+        });
+        this.stdout_stream = source;
+
+        return source.toReadableStream(globalThis) catch |err| {
+            globalThis.reportActiveExceptionAsUnhandled(err);
+            return .zero;
+        };
+    }
+
+    pub fn getStderr(this: *ThisInterpreter, globalThis: *JSGlobalObject) JSValue {
+        if (this.stderr_stream) |stream| {
+            return stream.toReadableStream(globalThis) catch |err| {
+                globalThis.reportActiveExceptionAsUnhandled(err);
+                return .zero;
+            };
+        }
+
+        // Create the stream
+        var source = ShellOutputStream.Source.new(.{
+            .globalThis = globalThis,
+            .context = ShellOutputStream.init(this.root_shell.buffered_stderr()),
+        });
+        this.stderr_stream = source;
+
+        return source.toReadableStream(globalThis) catch |err| {
+            globalThis.reportActiveExceptionAsUnhandled(err);
+            return .zero;
+        };
+    }
+
+    /// Notify stdout stream that new data is available
+    pub fn notifyStdoutData(this: *ThisInterpreter) void {
+        if (this.stdout_stream) |stream| {
+            stream.context.onData();
+        }
+    }
+
+    /// Notify stderr stream that new data is available
+    pub fn notifyStderrData(this: *ThisInterpreter) void {
+        if (this.stderr_stream) |stream| {
+            stream.context.onData();
+        }
+    }
+
+    /// Mark streams as done when shell finishes
+    fn markStreamsDone(this: *ThisInterpreter) void {
+        if (this.stdout_stream) |stream| {
+            stream.context.setDone();
+        }
+        if (this.stderr_stream) |stream| {
+            stream.context.setDone();
+        }
     }
 
     pub fn finalize(this: *ThisInterpreter) void {

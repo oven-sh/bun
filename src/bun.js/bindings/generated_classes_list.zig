@@ -70,6 +70,7 @@ pub const Classes = struct {
     pub const FileInternalReadableStreamSource = webcore.FileReader.Source;
     pub const BlobInternalReadableStreamSource = webcore.ByteBlobLoader.Source;
     pub const BytesInternalReadableStreamSource = webcore.ByteStream.Source;
+    pub const ShellOutputStreamInternalReadableStreamSource = webcore.ShellOutputStream.Source;
     pub const PostgresSQLConnection = api.Postgres.PostgresSQLConnection;
     pub const MySQLConnection = api.MySQL.MySQLConnection;
     pub const PostgresSQLQuery = api.Postgres.PostgresSQLQuery;

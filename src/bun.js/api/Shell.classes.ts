@@ -23,6 +23,14 @@ export default [
         fn: "getStarted",
         length: 0,
       },
+      stdout: {
+        getter: "getStdout",
+        cache: true,
+      },
+      stderr: {
+        getter: "getStderr",
+        cache: true,
+      },
     },
   }),
 ];

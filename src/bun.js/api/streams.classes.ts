@@ -40,9 +40,9 @@ function source(name) {
       isClosed: {
         getter: "getIsClosedFromJS",
       },
-      ...(name !== "File"
+      ...(name !== "File" && name !== "ShellOutputStream"
         ? // Buffered versions
-          // not implemented in File, yet.
+          // not implemented in File and ShellOutputStream yet.
           {
             text: {
               fn: "textFromJS",
@@ -80,6 +80,6 @@ function source(name) {
   });
 }
 
-const sources = ["Blob", "File", "Bytes"];
+const sources = ["Blob", "File", "Bytes", "ShellOutputStream"];
 
 export default sources.map(source);

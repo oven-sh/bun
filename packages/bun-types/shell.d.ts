@@ -88,6 +88,38 @@ declare module "bun" {
      * ```
      */
     class ShellPromise extends Promise<ShellOutput> {
+      /**
+       * Get a ReadableStream for stdout that streams data as the shell executes.
+       *
+       * This allows you to consume stdout incrementally rather than waiting for
+       * the command to complete. The stream will emit chunks as they're written.
+       *
+       * @example
+       * ```ts
+       * const shell = $`long-running-command`;
+       * for await (const chunk of shell.stdout) {
+       *   console.log('Received:', new TextDecoder().decode(chunk));
+       * }
+       * ```
+       */
+      get stdout(): ReadableStream<Uint8Array>;
+
+      /**
+       * Get a ReadableStream for stderr that streams data as the shell executes.
+       *
+       * This allows you to consume stderr incrementally rather than waiting for
+       * the command to complete. The stream will emit chunks as they're written.
+       *
+       * @example
+       * ```ts
+       * const shell = $`long-running-command`;
+       * for await (const chunk of shell.stderr) {
+       *   console.error('Error:', new TextDecoder().decode(chunk));
+       * }
+       * ```
+       */
+      get stderr(): ReadableStream<Uint8Array>;
+
       get stdin(): WritableStream;
 
       /**

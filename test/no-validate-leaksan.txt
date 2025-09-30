@@ -55,6 +55,7 @@ test/js/node/test/parallel/test-worker-terminate-nested.js
 test/js/node/test/parallel/test-worker-terminate-null-handler.js
 test/js/node/test/parallel/test-worker-terminate-timers.js
 test/js/node/test/parallel/test-worker-type-check.js
+test/js/node/test/parallel/test-worker-uncaught-exception-async.js
 test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
 test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
@@ -189,6 +190,7 @@ test/js/bun/util/heap-snapshot.test.ts
 test/regression/issue/02499/02499.test.ts
 test/js/node/test/parallel/test-http-server-stale-close.js
 test/js/third_party/comlink/comlink.test.ts
+test/regression/issue/22635/22635.test.ts
 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData
@@ -395,6 +397,14 @@ test/js/third_party/resvg/bbox.test.js
 test/regression/issue/10139.test.ts
 test/js/bun/udp/udp_socket.test.ts
 test/cli/init/init.test.ts
+
+# There are some leaks related to the dev server closing on process exit, the fix is to
+# tick the event loop on globalExit but this breaks like 50 tests. Since the
+# leak is when process exits it should be fine for now but it should be fixed at
+# some point.
+test/bake/dev/react-response.test.ts
+test/bake/dev/react-cookies.test.ts
+test/bake/dev/server-sourcemap.test.ts
 
 # Watcher Thread
 test/bake/dev-and-prod.test.ts

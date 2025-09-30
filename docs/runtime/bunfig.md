@@ -478,26 +478,6 @@ ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 cafile = "path/to/cafile"
 ```
 
-### SSL/TLS Configuration
-
-#### `--use-system-ca` flag
-
-Use the system's CA certificate store in addition to Bun's bundled Mozilla CA certificate bundle for all TLS connections during `bun install`:
-
-```bash
-bun install --use-system-ca
-```
-
-You can also set the `NODE_USE_SYSTEM_CA` environment variable:
-
-```bash
-NODE_USE_SYSTEM_CA=1 bun install
-```
-
-**Note**: The system CA certificate store is used in addition to (not instead of) the bundled Mozilla CA certificates. The system CA takes precedence when both contain certificates for the same authority.
-
-This is useful in enterprise environments or when using custom CA certificates that are installed system-wide.
-
 ### `install.cache`
 
 To configure the cache behavior:

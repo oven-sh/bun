@@ -85,6 +85,11 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope, cfg: Config)
 const EntryList = struct {
     first: ?*ExecutionEntry = null,
     last: ?*ExecutionEntry = null,
+    pub fn prepend(this: *EntryList, current: *ExecutionEntry) void {
+        current.next = this.first;
+        this.first = current;
+        if (this.last == null) this.last = current;
+    }
     pub fn append(this: *EntryList, current: *ExecutionEntry) void {
         if (bun.Environment.ci_assert and current.added_in_phase != .preload) bun.assert(current.next == null);
         current.next = null;
@@ -98,6 +103,7 @@ const EntryList = struct {
         }
     }
 };
+
 pub fn generateOrderTest(this: *Order, current: *ExecutionEntry, _: Config) bun.JSError!void {
     bun.assert(current.base.has_callback == (current.callback != null));
     const use_each_hooks = current.base.has_callback;
@@ -108,8 +114,10 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry, _: Config) bun.
     if (use_each_hooks) {
         var parent: ?*DescribeScope = current.base.parent;
         while (parent) |p| : (parent = p.base.parent) {
-            for (p.beforeEach.items) |entry| {
-                list.append(bun.create(this.arena, ExecutionEntry, entry.*));
+            // prepend in reverse so they end up in forwards order
+            var i: usize = p.beforeEach.items.len;
+            while (i > 0) : (i -= 1) {
+                list.prepend(bun.create(this.arena, ExecutionEntry, p.beforeEach.items[i - 1].*));
             }
         }
     }
@@ -132,7 +140,7 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry, _: Config) bun.
     var skip_to = current.next;
     while (index) |entry| : (index = entry.next) {
         if (entry == skip_to) skip_to = null;
-        entry.skip_to = skip_to;
+        entry.skip_to = skip_to; // we should consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
     }
 
     // add these as a single sequence

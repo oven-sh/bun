@@ -42,6 +42,7 @@ describe("Metadata", () => {
   let metadata: TestMetadata;
 
   beforeEach(() => {
+    console.log("create testmetadata");
     metadata = new TestMetadata();
   });
 

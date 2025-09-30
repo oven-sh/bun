@@ -321,33 +321,25 @@ pub const QuicSocket = struct {
 
         // No streams available, create one and buffer the write
         log("No streams available, creating default stream for write", .{});
-        if (this.socket) |socket| {
-            // Create a default QuicStream for this write
-            const stream_id = this.createStreamImpl() catch {
-                return error.NoSocket;
-            };
-            
-            const quic_stream = QuicStream.init(bun.default_allocator, this, stream_id, .zero) catch {
-                return error.NoSocket;
-            };
-            
-            // Buffer the write data in the QuicStream until the lsquic stream is connected
-            quic_stream.bufferWrite(data) catch {
-                quic_stream.deref();
-                return error.NoSocket;
-            };
-            
-            // Add to pending streams queue - will be connected in onStreamOpen
-            this.addPendingStream(quic_stream);
-            
-            // Trigger stream creation
-            socket.createStream(0);
-            
-            log("Buffered {} bytes in new stream, will be sent when stream opens", .{data.len});
-            return data.len; // Report successful write (data is buffered)
-        }
+        const stream_id = this.createStreamImpl() catch {
+            return error.NoSocket;
+        };
 
-        return error.NoSocket;
+        const quic_stream = QuicStream.init(bun.default_allocator, this, stream_id, .zero) catch {
+            return error.NoSocket;
+        };
+
+        // Buffer the write data in the QuicStream until the lsquic stream is connected
+        quic_stream.bufferWrite(data) catch {
+            quic_stream.deref();
+            return error.NoSocket;
+        };
+
+        // Add to pending streams queue - will be connected in onStreamOpen
+        this.addPendingStream(quic_stream);
+
+        log("Buffered {} bytes in new stream, will be sent when stream opens", .{data.len});
+        return data.len; // Report successful write (data is buffered)
     }
 
     // Read data from the QUIC connection
@@ -365,23 +357,21 @@ pub const QuicSocket = struct {
     // Create a new QUIC stream with proper per-socket ID management
     pub fn createStreamImpl(this: *This) !u64 {
         if (this.flags.is_closed) return error.SocketClosed;
-        
+
         // Generate unique stream ID for this socket
         const stream_id = this.next_stream_id.fetchAdd(1, .monotonic);
-        
+
         if (this.socket) |socket| {
-            log("Creating new QUIC stream with ID {}", .{stream_id});
-            socket.createStream(0); // Let lsquic manage the actual stream creation
-            
+            log("Triggering QUIC stream creation with ID {}", .{stream_id});
+            socket.createStream(0); // Triggers async on_new_stream callback
+
             // Update the global counter for compatibility
             _ = this.stream_counter.fetchAdd(1, .monotonic);
-            
+
             log("QUIC stream creation initiated, returning ID {}", .{stream_id});
             return stream_id;
         } else {
-            // For client connections that aren't connected yet, still allow stream creation
-            // The stream will be connected when the socket connects
-            log("Creating QUIC stream ID {} for unconnected socket (will connect later)", .{stream_id});
+            log("Creating QUIC stream ID {} for unconnected socket", .{stream_id});
             return stream_id;
         }
     }
@@ -586,33 +576,32 @@ pub const QuicSocket = struct {
     // Create a new QuicStream with optional data
     pub fn jsStream(this: *This, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const arguments = callframe.arguments_old(1);
-        
+
         // Get optional data parameter
         var data_value: jsc.JSValue = .zero;
         if (arguments.len > 0) {
             data_value = arguments.ptr[0];
         }
-        
-        // Since lsquic stream creation is asynchronous, we create a placeholder QuicStream first
-        // The actual lsquic stream will be connected in the onStreamOpen callback
+
+        // Trigger lsquic stream creation (async - will call on_new_stream)
         const stream_id = this.createStreamImpl() catch {
             return globalThis.throw("Failed to create stream", .{});
         };
-        
+
         // Create the QuicStream object with the optional data
         const quic_stream = QuicStream.init(bun.default_allocator, this, stream_id, data_value) catch {
             return globalThis.throw("Failed to allocate QuicStream", .{});
         };
-        
+
         log("Created QuicStream {*} with ID {} (will be connected when lsquic stream opens)", .{ quic_stream, stream_id });
-        
+
         // Add to pending streams queue
-        // The lsquic stream was already created in createStreamImpl()
-        // It will trigger onStreamOpen callback asynchronously
+        // The lsquic stream creation was triggered in createStreamImpl()
+        // It will call on_new_stream callback asynchronously
         this.addPendingStream(quic_stream);
-        
-        log("QuicStream added to pending queue, waiting for lsquic onStreamOpen callback", .{});
-        
+
+        log("QuicStream added to pending queue, waiting for lsquic on_new_stream callback", .{});
+
         // Return the QuicStream as a JS object
         return quic_stream.toJS(globalThis);
     }
@@ -1091,6 +1080,8 @@ pub const QuicSocket = struct {
             log("Calling JavaScript onStreamOpen handler with QuicStream", .{});
             vm.eventLoop().runCallback(callback, globalObject, this.this_value, &.{js_stream});
             log("JavaScript onStreamOpen handler called successfully", .{});
+        } else {
+            log("WARNING: No onStreamOpen callback registered on {*}", .{this});
         }
     }
 
@@ -1263,7 +1254,7 @@ const jsc = bun.jsc;
 const SocketAddress = @import("./socket/SocketAddress.zig");
 const Handlers = @import("./socket/Handlers.zig");
 const uws = @import("../../../deps/uws.zig");
-const log = bun.Output.scoped(.QuicSocket, false);
+const log = bun.Output.scoped(.QuicSocket, .hidden);
 const SSLConfig = @import("../server/SSLConfig.zig");
 const QuicStream = @import("quic_stream.zig").QuicStream;
 
@@ -1376,33 +1367,37 @@ fn findQuicSocketForStream(stream: *uws.quic.Stream) ?*QuicSocket {
         log("ERROR: Stream {*} has no associated socket", .{stream});
         return null;
     };
-    
+
     // Try to get the socket's context
     const context = socket.context() orelse {
         log("ERROR: Socket {*} has no context", .{socket});
         return null;
     };
-    
+
+    log("Looking up: socket={*}, context={*}", .{ socket, context });
+
     // Use global socket map with socket as key - safer than direct pointer access
     if (!global_socket_map_init) return null;
     global_socket_mutex.lock();
     defer global_socket_mutex.unlock();
-    
+
     if (global_socket_map) |*map| {
         const socket_key = @intFromPtr(socket);
+        log("Trying socket key: {x}", .{socket_key});
         if (map.get(socket_key)) |quic_socket| {
             log("Found QuicSocket {*} from global map for stream {*}", .{ quic_socket, stream });
             return quic_socket;
         }
-        
+
         // Try with context as key (for older entries)
         const context_key = @intFromPtr(context);
+        log("Trying context key: {x}", .{context_key});
         if (map.get(context_key)) |quic_socket| {
             log("Found QuicSocket {*} from global map (context key) for stream {*}", .{ quic_socket, stream });
             return quic_socket;
         }
     }
-    
+
     log("ERROR: Could not find QuicSocket for stream {*}", .{stream});
     return null;
 }

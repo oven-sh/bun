@@ -5,7 +5,7 @@ const uws = bun.uws;
 const Environment = bun.Environment;
 const Async = bun.Async;
 
-const log = bun.Output.scoped(.QuicStream, false);
+const log = bun.Output.scoped(.QuicStream, .hidden);
 
 pub const QuicStream = struct {
     const This = @This();

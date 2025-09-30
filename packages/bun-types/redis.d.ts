@@ -310,12 +310,67 @@ declare module "bun" {
     ttl(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Set the value of a hash field or multiple fields
+     * @param key The hash key
+     * @param fields Object/Record with field-value pairs
+     * @returns Promise that resolves with the number of fields that were added
+     */
+    hset(key: RedisClient.KeyLike, fields: Record<string | number, RedisClient.KeyLike>): Promise<number>;
+
+    /**
+     * Set the value of a hash field or multiple fields (variadic)
+     * @param key The hash key
+     * @param field The field name
+     * @param value The value to set
+     * @param rest Additional field-value pairs
+     * @returns Promise that resolves with the number of fields that were added
+     */
+    hset(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      value: RedisClient.KeyLike,
+      ...rest: RedisClient.KeyLike[]
+    ): Promise<number>;
+
+    /**
      * Set multiple hash fields to multiple values
+     *
+     * @deprecated Use {@link hset} instead. Since Redis 4.0.0, `HSET` supports multiple field-value pairs.
+     *
+     * @param key The hash key
+     * @param fields Object/Record with field-value pairs
+     * @returns Promise that resolves with "OK"
+     */
+    hmset(key: RedisClient.KeyLike, fields: Record<string | number, RedisClient.KeyLike>): Promise<"OK">;
+
+    /**
+     * Set multiple hash fields to multiple values (variadic)
+     *
+     * @deprecated Use {@link hset} instead. Since Redis 4.0.0, `HSET` supports multiple field-value pairs.
+     *
+     * @param key The hash key
+     * @param field The field name
+     * @param value The value to set
+     * @param rest Additional field-value pairs
+     * @returns Promise that resolves with "OK"
+     */
+    hmset(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      value: RedisClient.KeyLike,
+      ...rest: RedisClient.KeyLike[]
+    ): Promise<"OK">;
+
+    /**
+     * Set multiple hash fields to multiple values (array syntax, backward compat)
+     *
+     * @deprecated Use {@link hset} instead. Since Redis 4.0.0, `HSET` supports multiple field-value pairs.
+     *
      * @param key The hash key
      * @param fieldValues An array of alternating field names and values
-     * @returns Promise that resolves with "OK" on success
+     * @returns Promise that resolves with "OK"
      */
-    hmset(key: RedisClient.KeyLike, fieldValues: string[]): Promise<string>;
+    hmset(key: RedisClient.KeyLike, fieldValues: RedisClient.KeyLike[]): Promise<"OK">;
 
     /**
      * Get the value of a hash field
@@ -390,7 +445,11 @@ declare module "bun" {
      * @param keys Additional set keys to subtract from the first set
      * @returns Promise that resolves with the number of elements in the resulting set
      */
-    sdiffstore(destination: RedisClient.KeyLike, key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<number>;
+    sdiffstore(
+      destination: RedisClient.KeyLike,
+      key: RedisClient.KeyLike,
+      ...keys: RedisClient.KeyLike[]
+    ): Promise<number>;
 
     /**
      * Check if multiple members are members of a set
@@ -399,7 +458,11 @@ declare module "bun" {
      * @param members Additional members to check
      * @returns Promise that resolves with an array of 1s and 0s indicating membership
      */
-    smismember(key: RedisClient.KeyLike, member: RedisClient.KeyLike, ...members: RedisClient.KeyLike[]): Promise<number[]>;
+    smismember(
+      key: RedisClient.KeyLike,
+      member: RedisClient.KeyLike,
+      ...members: RedisClient.KeyLike[]
+    ): Promise<number[]>;
 
     /**
      * Incrementally iterate over a set
@@ -956,7 +1019,11 @@ declare module "bun" {
      * @param keys Additional set keys to intersect
      * @returns Promise that resolves with the number of elements in the resulting set
      */
-    sinterstore(destination: RedisClient.KeyLike, key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<number>;
+    sinterstore(
+      destination: RedisClient.KeyLike,
+      key: RedisClient.KeyLike,
+      ...keys: RedisClient.KeyLike[]
+    ): Promise<number>;
 
     /**
      * Get the cardinality of the intersection of multiple sets
@@ -965,7 +1032,11 @@ declare module "bun" {
      * @param args Additional set keys and optional LIMIT argument
      * @returns Promise that resolves with the number of elements in the intersection
      */
-    sintercard(numkeys: number, key: RedisClient.KeyLike, ...args: (RedisClient.KeyLike | "LIMIT" | number)[]): Promise<number>;
+    sintercard(
+      numkeys: number,
+      key: RedisClient.KeyLike,
+      ...args: (RedisClient.KeyLike | "LIMIT" | number)[]
+    ): Promise<number>;
 
     /**
      * Get the length of the value stored in a key
@@ -990,7 +1061,11 @@ declare module "bun" {
      * @param keys Additional set keys to union
      * @returns Promise that resolves with the number of elements in the resulting set
      */
-    sunionstore(destination: RedisClient.KeyLike, key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<number>;
+    sunionstore(
+      destination: RedisClient.KeyLike,
+      key: RedisClient.KeyLike,
+      ...keys: RedisClient.KeyLike[]
+    ): Promise<number>;
 
     /**
      * Determine the type of value stored at key

@@ -188,6 +188,11 @@ test.serial("second serial test", () => {
 test("independent test", () => {
   expect(true).toBe(true);
 });
+
+// Chaining test qualifiers
+test.failing.each([1, 2, 3])("chained qualifiers %d", input => {
+  expect(input).toBe(0); // This test is expected to fail for each input
+});
 ```
 
 ## Rerun tests

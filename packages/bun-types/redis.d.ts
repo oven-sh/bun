@@ -1094,7 +1094,7 @@ declare module "bun" {
      */
     lpos(
       key: RedisClient.KeyLike,
-      element: RedisClient.ValueLike,
+      element: RedisClient.KeyLike,
       ...options: (string | number)[]
     ): Promise<number | number[] | null>;
 

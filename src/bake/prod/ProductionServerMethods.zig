@@ -112,18 +112,22 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
             const url_path =
                 server.bake_prod.get().?.reconstructPathFromParams(bun.default_allocator, @intCast(route_index), &ssg.params) catch "/";
 
+            const url_path_without_leading_slash = std.mem.trimLeft(u8, url_path, "/");
+
             log("Setting URL path: {s}\n", .{url_path});
 
             // Build the filesystem path to the pre-rendered files
             // SSG files are stored in dist/{route}/index.html and dist/{route}/index.rsc
-            var dist_path_buf: [4096]u8 = undefined;
-            const dist_path = std.fmt.bufPrint(&dist_path_buf, "dist{s}", .{url_path}) catch bun.outOfMemory();
+            const pathbuf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(pathbuf);
 
             // Create file routes for the HTML and RSC files
             // Serve index.html for the main route
-            const html_path = bun.default_allocator.alloc(u8, dist_path.len + "/index.html".len) catch bun.outOfMemory();
-            @memcpy(html_path[0..dist_path.len], dist_path);
-            @memcpy(html_path[dist_path.len..], "/index.html");
+            const html_path = bun.handleOom(bun.default_allocator.dupe(u8, bun.path.joinStringBuf(
+                pathbuf,
+                &[_][]const u8{ "dist", url_path_without_leading_slash, "index.html" },
+                .auto,
+            )));
 
             // Create a file blob for the HTML file
             const html_store = jsc.WebCore.Blob.Store.initFile(
@@ -151,13 +155,18 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
             ServerConfig.applyStaticRoute(any_server, Server.ssl_enabled, app, *FileRoute, html_route, url_path, .{ .method = bun.http.Method.Set.init(.{ .GET = true }) });
 
             // Also serve the .rsc file at the same path with .rsc extension
-            const rsc_url_path = bun.default_allocator.alloc(u8, url_path.len + ".rsc".len) catch bun.outOfMemory();
-            @memcpy(rsc_url_path[0..url_path.len], url_path);
-            @memcpy(rsc_url_path[url_path.len..], ".rsc");
+            const rsc_url_path = bun.strings.concat(bun.default_allocator, &.{ url_path_without_leading_slash, ".rsc" }) catch |e| bun.handleOom(e);
 
-            const rsc_path = bun.default_allocator.alloc(u8, dist_path.len + "/index.rsc".len) catch bun.outOfMemory();
-            @memcpy(rsc_path[0..dist_path.len], dist_path);
-            @memcpy(rsc_path[dist_path.len..], "/index.rsc");
+            const rsc_path = bun.handleOom(
+                bun.default_allocator.dupe(
+                    u8,
+                    bun.path.joinStringBuf(
+                        pathbuf,
+                        &[_][]const u8{ "dist", url_path_without_leading_slash, "index.rsc" },
+                        .auto,
+                    ),
+                ),
+            );
 
             // Create a file blob for the RSC file
             const rsc_store = jsc.WebCore.Blob.Store.initFile(
@@ -187,10 +196,13 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                 if (!result.found_existing) {
                     // Serve the client JS file (e.g., /_bun/2eeb5qyr.js)
                     // The file is in dist/_bun/xxx.js
-                    var client_file_path_buf: [4096]u8 = undefined;
-                    const client_file_path = std.fmt.bufPrint(&client_file_path_buf, "dist{s}", .{ssg.entrypoint}) catch bun.outOfMemory();
-
-                    const client_path = bun.default_allocator.dupe(u8, client_file_path) catch bun.outOfMemory();
+                    const client_path = bun.handleOom(
+                        bun.default_allocator.dupe(u8, bun.path.joinStringBuf(
+                            pathbuf,
+                            &[_][]const u8{ "dist", std.mem.trimLeft(u8, ssg.entrypoint, "/") },
+                            .auto,
+                        )),
+                    );
 
                     // Create a file blob for the client JS file
                     const client_store = jsc.WebCore.Blob.Store.initFile(

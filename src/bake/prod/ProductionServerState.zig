@@ -205,8 +205,8 @@ pub fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFra
         },
         .ssg_many => {
             // FIXME: i don't like allocating just to make the key. We only use the `params` field of SSG when reconstructing the URL path when we setup the routess
-            const lookup_key = try Manifest.Route.SSG.fromMatchedParams(bun.default_allocator, &params);
-            defer lookup_key.deinit();
+            var lookup_key = try Manifest.Route.SSG.fromMatchedParams(bun.default_allocator, &params);
+            defer lookup_key.params.deinit(bun.default_allocator);
 
             const ssg = route.ssg_many.getKeyPtr(lookup_key) orelse
                 return global.throw("No pre-rendered page found for this parameter combination: {s}", .{url_utf8.byteSlice()});

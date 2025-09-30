@@ -579,7 +579,11 @@ async function runTests() {
           const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
           if (isNodeTest(testPath)) {
             const testContent = readFileSync(absoluteTestPath, "utf-8");
-            const runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
+            let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
+            // don't wanna have a filter for includes("bun:test") but these need our mocks
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
             const subcommand = runWithBunTest ? "test" : "run";
             const env = {
               FORCE_COLOR: "0",

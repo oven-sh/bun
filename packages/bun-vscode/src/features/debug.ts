@@ -349,9 +349,10 @@ class FileDebugSession extends DebugSession {
   async initialize(url?: string) {
     const uniqueId = this.sessionId ?? Math.random().toString(36).slice(2);
     url =
-      url || process.platform === "win32"
+      url ??
+      (process.platform === "win32"
         ? `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`
-        : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+        : `ws+unix://${tmpdir()}/${uniqueId}.sock`);
 
     const { untitledDocPath, bunEvalPath } = this;
     this.adapter = new WebSocketDebugAdapter(url, untitledDocPath, bunEvalPath);

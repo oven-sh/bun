@@ -1311,7 +1311,7 @@ describe("SQL helpers", () => {
     expect(results[0].value).toBe("test");
   });
 
-  test("insert select helper with IN", async () => {
+  test("insert into with select helper using where IN", async () => {
     const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
     await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
     {

@@ -11549,7 +11549,7 @@ CREATE TABLE ${table_name} (
         expect(result[0].age).toBe(30);
       });
 
-      test("insert select helper with IN", async () => {
+      test("insert into with select helper using where IN", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
         {

@@ -49,8 +49,7 @@ You can also pass glob patterns to filter by workspace names:
 `bun outdated` supports checking catalog dependencies defined in `package.json`:
 
 ```sh
-$ bun outdated -r  
-bun outdated v1.2.24-canary.6 (9c75db45)
+$ bun outdated -r
 ┌────────────────────┬─────────┬─────────┬─────────┬────────────────────────────────┐
 │ Package            │ Current │ Update  │ Latest  │ Workspace                      │
 ├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤

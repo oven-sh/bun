@@ -200,12 +200,6 @@ Bun implements the following globals.
 
 ---
 
-- `Math.sumPrecise`
-- Web
-- TC39 Stage 4 proposal for high-precision summation
-
----
-
 - [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
 - Web
 - &nbsp;
@@ -392,12 +386,3 @@ Bun implements the following globals.
 
 {% /table %}
 
-## `Math.sumPrecise`
-
-TC39 Stage 4 proposal for high-precision floating-point summation:
-
-```ts
-Math.sumPrecise([0.1, 0.2, 0.3, -0.5, 0.1]); // => 0.2
-// Regular addition would lose precision
-(0.1 + 0.2 + 0.3 - 0.5 + 0.1); // => 0.20000000000000007
-```

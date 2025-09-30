@@ -151,6 +151,14 @@ By default, Bun respects this shebang and executes the script with `node`. Howev
 $ bun run --bun vite
 ```
 
+### `--no-addons`
+
+Disable native addons and use the `node-addons` export condition.
+
+```bash
+$ bun --no-addons run server.js
+```
+
 ### Filtering
 
 In monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.

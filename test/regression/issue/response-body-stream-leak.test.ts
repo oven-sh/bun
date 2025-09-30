@@ -1,7 +1,7 @@
 // Regression test for https://github.com/TanStack/router/issues/5289
 // Memory leak when creating a new Response with another Response's body
-import { test, expect } from "bun:test";
 import { heapStats } from "bun:jsc";
+import { expect, test } from "bun:test";
 
 test("Response body ReadableStream should not create duplicate Strong references", () => {
   // Get baseline stream count

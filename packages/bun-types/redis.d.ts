@@ -286,6 +286,22 @@ declare module "bun" {
     expire(key: RedisClient.KeyLike, seconds: number): Promise<number>;
 
     /**
+     * Set the expiration for a key as a Unix timestamp (in seconds)
+     * @param key The key to set expiration on
+     * @param timestamp Unix timestamp in seconds when the key should expire
+     * @returns Promise that resolves with 1 if timeout was set, 0 if key does not exist
+     */
+    expireat(key: RedisClient.KeyLike, timestamp: number): Promise<number>;
+
+    /**
+     * Set a key's time to live in milliseconds
+     * @param key The key to set the expiration for
+     * @param milliseconds The number of milliseconds until expiration
+     * @returns Promise that resolves with 1 if the timeout was set, 0 if the key does not exist
+     */
+    pexpire(key: RedisClient.KeyLike, milliseconds: number): Promise<number>;
+
+    /**
      * Get the time to live for a key in seconds
      * @param key The key to get the TTL for
      * @returns Promise that resolves with the TTL, -1 if no expiry, or -2 if
@@ -442,6 +458,14 @@ declare module "bun" {
      * the key doesn't exist or has no timeout
      */
     persist(key: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Set the expiration for a key as a Unix timestamp in milliseconds
+     * @param key The key to set expiration on
+     * @param millisecondsTimestamp Unix timestamp in milliseconds when the key should expire
+     * @returns Promise that resolves with 1 if timeout was set, 0 if key does not exist
+     */
+    pexpireat(key: RedisClient.KeyLike, millisecondsTimestamp: number): Promise<number>;
 
     /**
      * Get the expiration time of a key as a UNIX timestamp in milliseconds

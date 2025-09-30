@@ -72,6 +72,14 @@ export default [
         fn: "expire",
         length: 2,
       },
+      expireat: {
+        fn: "expireat",
+        length: 2,
+      },
+      pexpire: {
+        fn: "pexpire",
+        length: 2,
+      },
       connect: {
         fn: "jsConnect",
         length: 0,
@@ -182,6 +190,10 @@ export default [
       },
       persist: {
         fn: "persist",
+      },
+      pexpireat: {
+        fn: "pexpireat",
+        length: 2,
       },
       pexpiretime: {
         fn: "pexpiretime",

@@ -334,6 +334,73 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(pttl).toBeLessThanOrEqual(5000);
       });
 
+      test("should set expiration with EXPIREAT using Unix timestamp", async () => {
+        const redis = ctx.redis;
+        const key = "expireat-test-key";
+        await redis.set(key, "test-value");
+
+        // Set expiration to 60 seconds from now using Unix timestamp
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 60;
+        const result = await redis.expireat(key, futureTimestamp);
+        expect(result).toBe(1); // 1 indicates success
+
+        // Verify TTL is set (should be around 60 seconds)
+        const ttl = await redis.ttl(key);
+        expect(ttl).toBeGreaterThan(0);
+        expect(ttl).toBeLessThanOrEqual(60);
+      });
+
+      test("should return 0 for EXPIREAT on non-existent key", async () => {
+        const redis = ctx.redis;
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 60;
+        const result = await redis.expireat("nonexistent-expireat-key", futureTimestamp);
+        expect(result).toBe(0); // 0 indicates key does not exist
+      });
+
+      test("should set expiration with PEXPIRE in milliseconds", async () => {
+        const redis = ctx.redis;
+        const key = "pexpire-test-key";
+        await redis.set(key, "test-value");
+
+        // Set expiration to 5000 milliseconds (5 seconds)
+        const result = await redis.pexpire(key, 5000);
+        expect(result).toBe(1); // 1 indicates success
+
+        // Verify TTL is set using PTTL (should be around 5000 ms)
+        const pttl = await redis.pttl(key);
+        expect(pttl).toBeGreaterThan(0);
+        expect(pttl).toBeLessThanOrEqual(5000);
+      });
+
+      test("should return 0 for PEXPIRE on non-existent key", async () => {
+        const redis = ctx.redis;
+        const result = await redis.pexpire("nonexistent-pexpire-key", 5000);
+        expect(result).toBe(0); // 0 indicates key does not exist
+      });
+
+      test("should set expiration with PEXPIREAT using Unix timestamp in milliseconds", async () => {
+        const redis = ctx.redis;
+        const key = "pexpireat-test-key";
+        await redis.set(key, "test-value");
+
+        // Set expiration to 5000 ms from now using Unix timestamp in milliseconds
+        const futureTimestampMs = Date.now() + 5000;
+        const result = await redis.pexpireat(key, futureTimestampMs);
+        expect(result).toBe(1); // 1 indicates success
+
+        // Verify TTL is set using PTTL (should be around 5000 ms)
+        const pttl = await redis.pttl(key);
+        expect(pttl).toBeGreaterThan(0);
+        expect(pttl).toBeLessThanOrEqual(5000);
+      });
+
+      test("should return 0 for PEXPIREAT on non-existent key", async () => {
+        const redis = ctx.redis;
+        const futureTimestampMs = Date.now() + 5000;
+        const result = await redis.pexpireat("nonexistent-pexpireat-key", futureTimestampMs);
+        expect(result).toBe(0); // 0 indicates key does not exist
+      });
+
       test("should determine the type of a key with TYPE", async () => {
         const redis = ctx.redis;
 
@@ -785,6 +852,27 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(async () => {
           await redis.touch("valid-key", {} as any);
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'touch'."`);
+      });
+
+      test("should reject invalid key in EXPIREAT", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.expireat({} as any, 1234567890);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'expireat'."`);
+      });
+
+      test("should reject invalid key in PEXPIRE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.pexpire([] as any, 5000);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'pexpire'."`);
+      });
+
+      test("should reject invalid key in PEXPIREAT", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.pexpireat(null as any, 1234567890000);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'pexpireat'."`);
       });
     });
 

@@ -1059,7 +1059,37 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
 
-            globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), jsString(vm, options.name), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+            if (!options.name.isEmpty()) {
+                auto nameString = jsString(vm, options.name);
+                globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "__workerName"_s), nameString, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+            }
+
+            auto nameGetter = JSNativeStdFunction::create(vm, globalObject, 0, "get name"_s,
+                [](JSGlobalObject* globalObject, CallFrame*) -> JSC::EncodedJSValue {
+                    auto& vm = JSC::getVM(globalObject);
+                    JSValue nameValue = globalObject->getDirect(vm, JSC::Identifier::fromString(vm, "__workerName"_s));
+                    return JSValue::encode(nameValue ? nameValue : jsEmptyString(vm));
+                });
+
+            auto nameSetter = JSNativeStdFunction::create(vm, globalObject, 1, "set name"_s,
+                [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+                    auto& vm = JSC::getVM(globalObject);
+                    JSValue thisValue = callFrame->thisValue();
+                    JSValue newValue = callFrame->argument(0);
+
+                    if (thisValue.isObject()) {
+                        auto* thisObject = asObject(thisValue);
+                        thisObject->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), newValue, 0);
+                    }
+
+                    return JSValue::encode(jsUndefined());
+                });
+
+            globalObject->putDirectAccessor(
+                globalObject,
+                JSC::Identifier::fromString(vm, "name"_s),
+                GetterSetter::create(vm, globalObject, nameGetter, nameSetter),
+                JSC::PropertyAttribute::Accessor | 0);
 
             // Ensure that the TerminationException singleton is constructed. Workers need this so
             // that we can request their termination from another thread. For the main thread, we

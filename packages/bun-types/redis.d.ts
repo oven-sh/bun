@@ -1263,6 +1263,13 @@ declare module "bun" {
     rpop(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Remove and get the last element in a list
+     * @param key The list key
+     * @returns Promise that resolves with the last element, or null if the list is empty
+     */
+    rpop(key: RedisClient.KeyLike, count: number): Promise<string[]>;
+
+    /**
      * Atomically pop the last element from a source list and push it to the head of a destination list
      *
      * This is equivalent to LMOVE with "RIGHT" "LEFT". It's an atomic operation that removes
@@ -1875,7 +1882,7 @@ declare module "bun" {
      * @returns Promise that resolves with the length of the list after the push
      * operation
      */
-    rpush(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
+    rpush(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...rest: RedisClient.KeyLike[]): Promise<number>;
 
     /**
      * Append a value to a list, only if the list exists

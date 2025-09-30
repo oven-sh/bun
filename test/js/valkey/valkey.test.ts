@@ -1491,18 +1491,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "rpop-test";
 
-        // Add elements
         await redis.rpush(key, "one", "two", "three");
 
-        // Pop one element
         const elem1 = await redis.rpop(key);
         expect(elem1).toBe("three");
 
-        // Pop with count
         const elem2 = await redis.rpop(key, 2);
         expect(elem2).toEqual(["two", "one"]);
 
-        // Pop from empty list
         const empty = await redis.rpop(key);
         expect(empty).toBeNull();
       });

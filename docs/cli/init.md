@@ -32,6 +32,7 @@ It creates:
 - a `tsconfig.json` file or a `jsconfig.json` file, depending if the entry point is a TypeScript file or not
 - an entry point which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
 - a `README.md` file
+- a `.cursor/rules/*.mdc` file to guide [Cursor AI](https://cursor.sh) to use Bun instead of Node.js/npm when Cursor is detected
 
 If you pass `-y` or `--yes`, it will assume you want to continue without asking questions.
 

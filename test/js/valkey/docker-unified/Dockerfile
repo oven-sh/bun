@@ -1,5 +1,5 @@
 # Unified Dockerfile for Valkey/Redis with TCP, TLS, Unix socket, and authentication support
-FROM redis:7-alpine
+FROM redis:8-alpine
 
 # Set user to root
 USER root

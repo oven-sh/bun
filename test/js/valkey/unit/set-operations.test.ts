@@ -295,6 +295,153 @@ describe.skipIf(!isEnabled)("Valkey: Set Data Type Operations", () => {
       expect(destMembers).toContain("a");
       expect(destMembers).toContain("b");
     });
+
+    test("SUNION command", async () => {
+      const set1 = ctx.generateKey("sunion-1");
+      const set2 = ctx.generateKey("sunion-2");
+      const set3 = ctx.generateKey("sunion-3");
+
+      // Set up test sets with overlapping values
+      await ctx.redis.send("SADD", [set1, "a", "b", "c"]);
+      await ctx.redis.send("SADD", [set2, "c", "d", "e"]);
+      await ctx.redis.send("SADD", [set3, "e", "f", "g"]);
+
+      // Get union of all three sets
+      const unionResult = await ctx.redis.send("SUNION", [set1, set2, set3]);
+      expect(Array.isArray(unionResult)).toBe(true);
+      expect(unionResult.length).toBe(7); // 7 unique elements across all sets
+
+      // Verify all unique elements are present
+      expect(unionResult).toContain("a");
+      expect(unionResult).toContain("b");
+      expect(unionResult).toContain("c");
+      expect(unionResult).toContain("d");
+      expect(unionResult).toContain("e");
+      expect(unionResult).toContain("f");
+      expect(unionResult).toContain("g");
+    });
+
+    test("SUNION with non-existent keys", async () => {
+      const existingSet = ctx.generateKey("sunion-existing");
+      const nonExistentSet = ctx.generateKey("sunion-nonexistent");
+
+      await ctx.redis.send("SADD", [existingSet, "a", "b"]);
+
+      // Union with non-existent key should treat it as empty set
+      const unionResult = await ctx.redis.send("SUNION", [existingSet, nonExistentSet]);
+      expect(Array.isArray(unionResult)).toBe(true);
+      expect(unionResult.length).toBe(2);
+      expect(unionResult).toContain("a");
+      expect(unionResult).toContain("b");
+    });
+
+    test("SUNIONSTORE command", async () => {
+      const set1 = ctx.generateKey("sunionstore-1");
+      const set2 = ctx.generateKey("sunionstore-2");
+      const destSet = ctx.generateKey("sunionstore-dest");
+
+      // Set up test sets
+      await ctx.redis.send("SADD", [set1, "a", "b", "c"]);
+      await ctx.redis.send("SADD", [set2, "c", "d", "e"]);
+
+      // Store union result
+      const storeResult = await ctx.redis.send("SUNIONSTORE", [destSet, set1, set2]);
+      expectType<number>(storeResult, "number");
+      expect(storeResult).toBe(5); // 5 unique members
+
+      // Verify destination set
+      const destMembers = await ctx.redis.smembers(destSet);
+      expect(Array.isArray(destMembers)).toBe(true);
+      expect(destMembers.length).toBe(5);
+      expect(destMembers).toContain("a");
+      expect(destMembers).toContain("b");
+      expect(destMembers).toContain("c");
+      expect(destMembers).toContain("d");
+      expect(destMembers).toContain("e");
+    });
+
+    test("SUNIONSTORE overwrites destination key", async () => {
+      const set1 = ctx.generateKey("sunionstore-overwrite-1");
+      const destSet = ctx.generateKey("sunionstore-overwrite-dest");
+
+      // Pre-populate destination with different values
+      await ctx.redis.send("SADD", [destSet, "old1", "old2"]);
+      await ctx.redis.send("SADD", [set1, "new1", "new2"]);
+
+      // Store union (should overwrite)
+      const storeResult = await ctx.redis.send("SUNIONSTORE", [destSet, set1]);
+      expect(storeResult).toBe(2);
+
+      // Verify destination was overwritten
+      const destMembers = await ctx.redis.smembers(destSet);
+      expect(destMembers.length).toBe(2);
+      expect(destMembers).toContain("new1");
+      expect(destMembers).toContain("new2");
+      expect(destMembers).not.toContain("old1");
+      expect(destMembers).not.toContain("old2");
+    });
+
+    test("SDIFF command", async () => {
+      const set1 = ctx.generateKey("sdiff-1");
+      const set2 = ctx.generateKey("sdiff-2");
+      const set3 = ctx.generateKey("sdiff-3");
+
+      // Set up test sets
+      await ctx.redis.send("SADD", [set1, "a", "b", "c", "d"]);
+      await ctx.redis.send("SADD", [set2, "c", "d"]);
+      await ctx.redis.send("SADD", [set3, "d", "e"]);
+
+      // Get difference (elements in set1 not in set2 and set3)
+      const diffResult = await ctx.redis.send("SDIFF", [set1, set2, set3]);
+      expect(Array.isArray(diffResult)).toBe(true);
+      expect(diffResult.length).toBe(2);
+      expect(diffResult).toContain("a");
+      expect(diffResult).toContain("b");
+      // c and d should not be present as they exist in set2/set3
+      expect(diffResult).not.toContain("c");
+      expect(diffResult).not.toContain("d");
+    });
+
+    test("SDIFF with single set", async () => {
+      const set1 = ctx.generateKey("sdiff-single");
+
+      await ctx.redis.send("SADD", [set1, "a", "b", "c"]);
+
+      // Difference with no other sets should return all elements
+      const diffResult = await ctx.redis.send("SDIFF", [set1]);
+      expect(Array.isArray(diffResult)).toBe(true);
+      expect(diffResult.length).toBe(3);
+      expect(diffResult).toContain("a");
+      expect(diffResult).toContain("b");
+      expect(diffResult).toContain("c");
+    });
+
+    test("SDIFF with non-existent keys", async () => {
+      const set1 = ctx.generateKey("sdiff-existing");
+      const nonExistentSet = ctx.generateKey("sdiff-nonexistent");
+
+      await ctx.redis.send("SADD", [set1, "a", "b", "c"]);
+
+      // Difference with non-existent key (treated as empty set)
+      const diffResult = await ctx.redis.send("SDIFF", [set1, nonExistentSet]);
+      expect(Array.isArray(diffResult)).toBe(true);
+      expect(diffResult.length).toBe(3);
+      expect(diffResult).toContain("a");
+      expect(diffResult).toContain("b");
+      expect(diffResult).toContain("c");
+    });
+
+    test("SDIFF error handling - wrong type", async () => {
+      const stringKey = ctx.generateKey("sdiff-string");
+      const setKey = ctx.generateKey("sdiff-set");
+
+      // Set up a string key (not a set)
+      await ctx.redis.set(stringKey, "not a set");
+      await ctx.redis.send("SADD", [setKey, "a", "b"]);
+
+      // Should throw error for wrong type
+      await expect(ctx.redis.send("SDIFF", [stringKey, setKey])).rejects.toThrowErrorMatchingInlineSnapshot();
+    });
   });
 
   describe("Scanning Operations", () => {

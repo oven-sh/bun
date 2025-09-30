@@ -273,8 +273,44 @@ export default [
       scard: {
         fn: "scard",
       },
+      sdiff: {
+        fn: "sdiff",
+        length: 1,
+      },
+      sdiffstore: {
+        fn: "sdiffstore",
+        length: 2,
+      },
+      sinter: {
+        fn: "sinter",
+        length: 1,
+      },
+      sintercard: {
+        fn: "sintercard",
+        length: 1,
+      },
+      sinterstore: {
+        fn: "sinterstore",
+        length: 2,
+      },
+      smismember: {
+        fn: "smismember",
+        length: 2,
+      },
+      sscan: {
+        fn: "sscan",
+        length: 2,
+      },
       strlen: {
         fn: "strlen",
+      },
+      sunion: {
+        fn: "sunion",
+        length: 1,
+      },
+      sunionstore: {
+        fn: "sunionstore",
+        length: 2,
       },
       type: {
         fn: "type",

@@ -384,6 +384,33 @@ declare module "bun" {
     spop(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
+     * Store the difference of multiple sets in a key
+     * @param destination The destination key to store the result
+     * @param key The first set key
+     * @param keys Additional set keys to subtract from the first set
+     * @returns Promise that resolves with the number of elements in the resulting set
+     */
+    sdiffstore(destination: RedisClient.KeyLike, key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Check if multiple members are members of a set
+     * @param key The set key
+     * @param member The first member to check
+     * @param members Additional members to check
+     * @returns Promise that resolves with an array of 1s and 0s indicating membership
+     */
+    smismember(key: RedisClient.KeyLike, member: RedisClient.KeyLike, ...members: RedisClient.KeyLike[]): Promise<number[]>;
+
+    /**
+     * Incrementally iterate over a set
+     * @param key The set key
+     * @param cursor The cursor value
+     * @param args Additional SSCAN options (MATCH pattern, COUNT hint)
+     * @returns Promise that resolves with a tuple [cursor, members[]]
+     */
+    sscan(key: RedisClient.KeyLike, cursor: number | string, ...args: (string | number)[]): Promise<[string, string[]]>;
+
+    /**
      * Increment the integer value of a hash field by the given number
      * @param key The hash key
      * @param field The field to increment
@@ -907,12 +934,63 @@ declare module "bun" {
     scard(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Get the difference of multiple sets
+     * @param key The first set key
+     * @param keys Additional set keys to subtract from the first set
+     * @returns Promise that resolves with an array of members in the difference
+     */
+    sdiff(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
+
+    /**
+     * Get the intersection of multiple sets
+     * @param key The first set key
+     * @param keys Additional set keys to intersect
+     * @returns Promise that resolves with an array of members in the intersection
+     */
+    sinter(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
+
+    /**
+     * Store the intersection of multiple sets in a key
+     * @param destination The destination key to store the result
+     * @param key The first set key
+     * @param keys Additional set keys to intersect
+     * @returns Promise that resolves with the number of elements in the resulting set
+     */
+    sinterstore(destination: RedisClient.KeyLike, key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Get the cardinality of the intersection of multiple sets
+     * @param numkeys The number of keys to intersect
+     * @param key The first set key
+     * @param args Additional set keys and optional LIMIT argument
+     * @returns Promise that resolves with the number of elements in the intersection
+     */
+    sintercard(numkeys: number, key: RedisClient.KeyLike, ...args: (RedisClient.KeyLike | "LIMIT" | number)[]): Promise<number>;
+
+    /**
      * Get the length of the value stored in a key
      * @param key The key to check
      * @returns Promise that resolves with the length of the string value, or 0
      * if the key doesn't exist
      */
     strlen(key: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Get the union of multiple sets
+     * @param key The first set key
+     * @param keys Additional set keys to union
+     * @returns Promise that resolves with an array of members in the union
+     */
+    sunion(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
+
+    /**
+     * Store the union of multiple sets in a key
+     * @param destination The destination key to store the result
+     * @param key The first set key
+     * @param keys Additional set keys to union
+     * @returns Promise that resolves with the number of elements in the resulting set
+     */
+    sunionstore(destination: RedisClient.KeyLike, key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<number>;
 
     /**
      * Determine the type of value stored at key

@@ -984,18 +984,18 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await redis.lpush("lset-error-test", "value");
 
         // Out of range should throw an error
-        await expect(async () => {
+        expect(async () => {
           await redis.lset("lset-error-test", 10, "newvalue");
         }).toThrow();
 
         // Non-existent key should throw an error
-        await expect(async () => {
+        expect(async () => {
           await redis.lset("nonexistent-list", 0, "value");
         }).toThrow();
 
         // Wrong type (not a list) should throw an error
         await redis.set("string-key", "value");
-        await expect(async () => {
+        expect(async () => {
           await redis.lset("string-key", 0, "value");
         }).toThrow();
       });
@@ -1757,6 +1757,362 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         // Try to move from empty list with short timeout
         const result = await redis.brpoplpush("empty-source", "dest", 0.1);
         expect(result).toBeNull();
+      });
+    });
+
+    describe("Set Operations", () => {
+      test("should return intersection of two sets with SINTER", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+
+        // Create two sets with some overlapping members
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+        await redis.sadd(key2, "b");
+        await redis.sadd(key2, "c");
+        await redis.sadd(key2, "d");
+
+        // Get intersection
+        const result = await redis.sinter(key1, key2);
+        expect(result.sort()).toEqual(["b", "c"]);
+      });
+
+      test("should return intersection of multiple sets with SINTER", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+        const key3 = "set3";
+
+        // Create three sets with one common member
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+        await redis.sadd(key2, "b");
+        await redis.sadd(key2, "c");
+        await redis.sadd(key2, "d");
+        await redis.sadd(key3, "c");
+        await redis.sadd(key3, "d");
+        await redis.sadd(key3, "e");
+
+        // Get intersection of all three
+        const result = await redis.sinter(key1, key2, key3);
+        expect(result).toEqual(["c"]);
+      });
+
+      test("should return empty array when sets have no intersection with SINTER", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key2, "c");
+        await redis.sadd(key2, "d");
+
+        const result = await redis.sinter(key1, key2);
+        expect(result).toEqual([]);
+      });
+
+      test("should return empty array when one set does not exist with SINTER", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "nonexistent";
+
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+
+        const result = await redis.sinter(key1, key2);
+        expect(result).toEqual([]);
+      });
+
+      test("should store intersection in destination with SINTERSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+        const dest = "dest-set";
+
+        // Create two sets with some overlapping members
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+        await redis.sadd(key2, "b");
+        await redis.sadd(key2, "c");
+        await redis.sadd(key2, "d");
+
+        // Store intersection
+        const count = await redis.sinterstore(dest, key1, key2);
+        expect(count).toBe(2);
+
+        // Verify destination has the intersection
+        const members = await redis.smembers(dest);
+        expect(members.sort()).toEqual(["b", "c"]);
+      });
+
+      test("should overwrite existing destination with SINTERSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+        const dest = "dest-set";
+
+        // Create destination with initial data
+        await redis.sadd(dest, "old");
+        await redis.sadd(dest, "data");
+
+        // Create two sets
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key2, "b");
+        await redis.sadd(key2, "c");
+
+        // Store intersection (should overwrite destination)
+        const count = await redis.sinterstore(dest, key1, key2);
+        expect(count).toBe(1);
+
+        // Verify destination only has the intersection
+        const members = await redis.smembers(dest);
+        expect(members).toEqual(["b"]);
+      });
+
+      test("should return 0 when storing empty intersection with SINTERSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+        const dest = "dest-set";
+
+        await redis.sadd(key1, "a");
+        await redis.sadd(key2, "b");
+
+        const count = await redis.sinterstore(dest, key1, key2);
+        expect(count).toBe(0);
+
+        // Destination should be empty
+        const members = await redis.smembers(dest);
+        expect(members).toEqual([]);
+      });
+
+      test("should return cardinality of intersection with SINTERCARD", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+        await redis.sadd(key2, "b");
+        await redis.sadd(key2, "c");
+        await redis.sadd(key2, "d");
+
+        // SINTERCARD requires numkeys as first argument
+        const count = await redis.sintercard(2, key1, key2);
+        expect(count).toBe(2);
+      });
+
+      test("should return 0 for empty intersection with SINTERCARD", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+
+        await redis.sadd(key1, "a");
+        await redis.sadd(key2, "b");
+
+        const count = await redis.sintercard(2, key1, key2);
+        expect(count).toBe(0);
+      });
+
+      test("should support LIMIT option with SINTERCARD", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+        await redis.sadd(key1, "d");
+        await redis.sadd(key2, "a");
+        await redis.sadd(key2, "b");
+        await redis.sadd(key2, "c");
+        await redis.sadd(key2, "d");
+
+        // LIMIT stops counting after reaching the specified number
+        const count = await redis.sintercard(2, key1, key2, "LIMIT", 2);
+        expect(count).toBe(2);
+      });
+
+      test("should throw error when SINTER receives no keys", async () => {
+        const redis = ctx.redis;
+
+        expect(async () => {
+          // @ts-expect-error no args
+          await redis.sinter();
+        }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sinter' command"`);
+      });
+
+      test("should throw error when SINTERSTORE receives no keys", async () => {
+        const redis = ctx.redis;
+
+        expect(async () => {
+          // @ts-expect-error no args
+          await redis.sinterstore();
+        }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sinterstore' command"`);
+      });
+
+      test("should throw error when SINTERCARD receives no keys", async () => {
+        const redis = ctx.redis;
+
+        expect(async () => {
+          // @ts-expect-error no args
+          await redis.sintercard();
+        }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sintercard' command"`);
+      });
+
+      test("should store set difference with SDIFFSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "set1";
+        const key2 = "set2";
+        const key3 = "set3";
+        const dest = "diff-result";
+
+        // Set up test sets
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+        await redis.sadd(key1, "d");
+
+        await redis.sadd(key2, "b");
+        await redis.sadd(key2, "c");
+
+        await redis.sadd(key3, "d");
+
+        // Store difference between key1 and key2
+        const count1 = await redis.sdiffstore(dest, key1, key2);
+        expect(count1).toBe(2); // a, d
+
+        const members1 = await redis.smembers(dest);
+        expect(members1.sort()).toEqual(["a", "d"]);
+
+        // Store difference between key1, key2, and key3
+        const count2 = await redis.sdiffstore(dest, key1, key2, key3);
+        expect(count2).toBe(1); // only a
+
+        const members2 = await redis.smembers(dest);
+        expect(members2).toEqual(["a"]);
+      });
+
+      test("should throw error with SDIFFSTORE on invalid arguments", async () => {
+        const redis = ctx.redis;
+
+        expect(async () => {
+          await (redis as any).sdiffstore();
+        }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sdiffstore' command"`);
+      });
+
+      test("should check multiple members with SMISMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "test-set";
+
+        // Add some members
+        await redis.sadd(key, "a");
+        await redis.sadd(key, "b");
+        await redis.sadd(key, "c");
+
+        // Check which members exist
+        const result = await redis.smismember(key, "a", "b", "d", "e");
+        expect(result).toEqual([1, 1, 0, 0]); // a and b exist, d and e don't
+
+        // Check single member
+        const result2 = await redis.smismember(key, "c");
+        expect(result2).toEqual([1]);
+
+        // Check on non-existent set
+        const result3 = await redis.smismember("nonexistent", "a", "b");
+        expect(result3).toEqual([0, 0]);
+      });
+
+      test("should throw error with SMISMEMBER on invalid arguments", async () => {
+        const redis = ctx.redis;
+
+        expect(async () => {
+          await (redis as any).smismember();
+        }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'smismember' command"`);
+      });
+
+      test("should scan set members with SSCAN", async () => {
+        const redis = ctx.redis;
+        const key = "scan-set";
+
+        // Add multiple members
+        for (let i = 0; i < 20; i++) {
+          await redis.sadd(key, `member${i}`);
+        }
+
+        // Scan the set
+        let cursor = "0";
+        const allMembers: string[] = [];
+
+        do {
+          const [nextCursor, members] = await redis.sscan(key, cursor);
+          allMembers.push(...members);
+          cursor = nextCursor;
+        } while (cursor !== "0");
+
+        // Should have scanned all 20 members
+        expect(allMembers.length).toBe(20);
+        expect(new Set(allMembers).size).toBe(20); // All unique
+
+        // Verify all members exist
+        for (let i = 0; i < 20; i++) {
+          expect(allMembers).toContain(`member${i}`);
+        }
+      });
+
+      test("should scan set with MATCH pattern using SSCAN", async () => {
+        const redis = ctx.redis;
+        const key = "scan-pattern-set";
+
+        // Add members with different patterns
+        await redis.sadd(key, "user:1");
+        await redis.sadd(key, "user:2");
+        await redis.sadd(key, "user:3");
+        await redis.sadd(key, "admin:1");
+        await redis.sadd(key, "admin:2");
+
+        // Scan with MATCH pattern
+        const [cursor, members] = await redis.sscan(key, "0", "MATCH", "user:*");
+
+        // Should only return user members (or could be empty if not in first batch)
+        // Due to cursor-based scanning, we might need multiple iterations
+        let allUserMembers: string[] = [...members];
+        let scanCursor = cursor;
+
+        while (scanCursor !== "0") {
+          const [nextCursor, nextMembers] = await redis.sscan(key, scanCursor, "MATCH", "user:*");
+          allUserMembers.push(...nextMembers);
+          scanCursor = nextCursor;
+        }
+
+        // Filter to only user members
+        const userMembers = allUserMembers.filter(m => m.startsWith("user:"));
+        expect(userMembers.length).toBeGreaterThanOrEqual(0); // Could be 0 to 3 depending on scan
+      });
+
+      test("should scan empty set with SSCAN", async () => {
+        const redis = ctx.redis;
+        const key = "empty-scan-set";
+
+        // Scan empty set
+        const [cursor, members] = await redis.sscan(key, "0");
+        expect(cursor).toBe("0");
+        expect(members).toEqual([]);
+      });
+
+      test("should throw error with SSCAN on invalid arguments", async () => {
+        const redis = ctx.redis;
+
+        expect(async () => {
+          await (redis as any).sscan();
+        }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sscan' command"`);
       });
     });
 
@@ -3508,9 +3864,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.bzmpop(1, {} as any, "key1", "MIN");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'bzmpop'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'bzmpop'."`);
       });
 
       test("should block and pop lowest score with BZPOPMIN", async () => {

@@ -193,7 +193,6 @@ extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv
 
 pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
     const jsvalue = try jsc.fromJSHostCall(this.global, @src(), Bake__getAsyncLocalStorage, .{this.global});
-
     if (jsvalue.isEmptyOrUndefinedOrNull()) return null;
     return jsvalue;
 }

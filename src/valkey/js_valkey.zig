@@ -1004,7 +1004,6 @@ pub const JSValkeyClient = struct {
         defer this.deref();
 
         this.stopTimers();
-        bun.assert(this.this_value != .finalized);
         this.this_value.finalize();
         this.client.flags.finalized = true;
         this.closeSocketNextTick();

@@ -448,6 +448,7 @@ pub const ValkeyClient = struct {
     }
 
     pub fn failWithJSValue(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
+        if (this.flags.failed) return;
         this.flags.failed = true;
         rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
 
@@ -584,7 +585,7 @@ pub const ValkeyClient = struct {
                     return;
                 };
 
-                if (this.status == .disconnected) {
+                if (this.status == .disconnected or this.flags.failed) {
                     return;
                 }
                 this.sendNextCommand();
@@ -635,7 +636,7 @@ pub const ValkeyClient = struct {
             };
 
             // Check connection status after handling
-            if (this.status == .disconnected) {
+            if (this.status == .disconnected or this.flags.failed) {
                 return;
             }
 

@@ -342,6 +342,137 @@ declare module "bun" {
     hsetnx(key: RedisClient.KeyLike, field: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<boolean>;
 
     /**
+     * Get the value of a hash field and delete the field
+     * @param key The hash key
+     * @param field The field to get and delete
+     * @returns Promise that resolves with the field value or null if the field doesn't exist
+     */
+    hgetdel(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<string | null>;
+
+    /**
+     * Get the value of a hash field with expiration options
+     * @param key The hash key
+     * @param field The field to get
+     * @param ex Literal "EX"
+     * @param seconds Expiration time in seconds
+     * @returns Promise that resolves with the field value or null if the field doesn't exist
+     */
+    hgetex(key: RedisClient.KeyLike, field: RedisClient.KeyLike, ex: "EX", seconds: number): Promise<string | null>;
+
+    /**
+     * Get the value of a hash field with expiration options
+     * @param key The hash key
+     * @param field The field to get
+     * @param exat Literal "EXAT"
+     * @param timestamp Unix timestamp for expiration
+     * @returns Promise that resolves with the field value or null if the field doesn't exist
+     */
+    hgetex(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      exat: "EXAT",
+      timestamp: number,
+    ): Promise<string | null>;
+
+    /**
+     * Get the value of a hash field with expiration options
+     * @param key The hash key
+     * @param field The field to get
+     * @param px Literal "PX"
+     * @param milliseconds Expiration time in milliseconds
+     * @returns Promise that resolves with the field value or null if the field doesn't exist
+     */
+    hgetex(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      px: "PX",
+      milliseconds: number,
+    ): Promise<string | null>;
+
+    /**
+     * Get the value of a hash field with expiration options
+     * @param key The hash key
+     * @param field The field to get
+     * @param pxat Literal "PXAT"
+     * @param timestamp Unix timestamp in milliseconds for expiration
+     * @returns Promise that resolves with the field value or null if the field doesn't exist
+     */
+    hgetex(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      pxat: "PXAT",
+      timestamp: number,
+    ): Promise<string | null>;
+
+    /**
+     * Set the value of a hash field with expiration
+     * @param key The hash key
+     * @param field The field to set
+     * @param value The value to set
+     * @param ex Literal "EX"
+     * @param seconds Expiration time in seconds
+     * @returns Promise that resolves with "OK"
+     */
+    hsetex(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      value: RedisClient.KeyLike,
+      ex: "EX",
+      seconds: number,
+    ): Promise<"OK">;
+
+    /**
+     * Set the value of a hash field with expiration
+     * @param key The hash key
+     * @param field The field to set
+     * @param value The value to set
+     * @param exat Literal "EXAT"
+     * @param timestamp Unix timestamp for expiration
+     * @returns Promise that resolves with "OK"
+     */
+    hsetex(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      value: RedisClient.KeyLike,
+      exat: "EXAT",
+      timestamp: number,
+    ): Promise<"OK">;
+
+    /**
+     * Set the value of a hash field with expiration
+     * @param key The hash key
+     * @param field The field to set
+     * @param value The value to set
+     * @param px Literal "PX"
+     * @param milliseconds Expiration time in milliseconds
+     * @returns Promise that resolves with "OK"
+     */
+    hsetex(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      value: RedisClient.KeyLike,
+      px: "PX",
+      milliseconds: number,
+    ): Promise<"OK">;
+
+    /**
+     * Set the value of a hash field with expiration
+     * @param key The hash key
+     * @param field The field to set
+     * @param value The value to set
+     * @param pxat Literal "PXAT"
+     * @param timestamp Unix timestamp in milliseconds for expiration
+     * @returns Promise that resolves with "OK"
+     */
+    hsetex(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      value: RedisClient.KeyLike,
+      pxat: "PXAT",
+      timestamp: number,
+    ): Promise<"OK">;
+
+    /**
      * Set multiple hash fields to multiple values
      *
      * @deprecated Use {@link hset} instead. Since Redis 4.0.0, `HSET` supports multiple field-value pairs.

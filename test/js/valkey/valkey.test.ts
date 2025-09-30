@@ -4142,6 +4142,54 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(result3).toBe(true);
       });
 
+      test("should get and delete hash field using hgetdel", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const value = await redis.hgetdel(key, "name");
+        expect(value).toBe("John");
+
+        const check = await redis.hget(key, "name");
+        expect(check).toBeNull();
+
+        const age = await redis.hget(key, "age");
+        expect(age).toBe("30");
+      });
+
+      test("should get hash field with expiration using hgetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const value = await redis.hgetex(key, "name", "EX", 10);
+        expect(value).toBe("John");
+
+        const check = await redis.hget(key, "name");
+        expect(check).toBe("John");
+
+        const ttl = await redis.ttl(key);
+        expect(ttl).toBeGreaterThan(0);
+        expect(ttl).toBeLessThanOrEqual(10);
+      });
+
+      test("should set hash field with expiration using hsetex", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        const result = await redis.hsetex(key, "name", "John", "EX", 10);
+        expect(result).toBe("OK");
+
+        const value = await redis.hget(key, "name");
+        expect(value).toBe("John");
+
+        const ttl = await redis.ttl(key);
+        expect(ttl).toBeGreaterThan(0);
+        expect(ttl).toBeLessThanOrEqual(10);
+      });
+
       test("should delete hash fields using hdel", async () => {
         const redis = ctx.redis;
         const key = "user:" + randomUUIDv7().substring(0, 8);

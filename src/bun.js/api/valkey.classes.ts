@@ -132,6 +132,18 @@ export default [
         fn: "hscan",
         length: 2,
       },
+      hgetdel: {
+        fn: "hgetdel",
+        length: 2,
+      },
+      hgetex: {
+        fn: "hgetex",
+        length: 2,
+      },
+      hsetex: {
+        fn: "hsetex",
+        length: 3,
+      },
       sismember: {
         fn: "sismember",
         length: 2,

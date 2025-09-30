@@ -647,6 +647,9 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
 pub const hdel = compile.@"(key: RedisKey, ...args: RedisKey[])"("hdel", "HDEL", "key", .not_subscriber).call;
 pub const hrandfield = compile.@"(key: RedisKey, ...args: RedisKey[])"("hrandfield", "HRANDFIELD", "key", .not_subscriber).call;
 pub const hscan = compile.@"(key: RedisKey, ...args: RedisKey[])"("hscan", "HSCAN", "key", .not_subscriber).call;
+pub const hgetdel = compile.@"(key: RedisKey, value: RedisValue)"("hgetdel", "HGETDEL", "key", "field", .not_subscriber).call;
+pub const hgetex = compile.@"(...strings: string[])"("hgetex", "HGETEX", .not_subscriber).call;
+pub const hsetex = compile.@"(...strings: string[])"("hsetex", "HSETEX", .not_subscriber).call;
 
 pub fn hsetnx(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, "hsetnx");

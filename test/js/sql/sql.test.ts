@@ -11613,6 +11613,64 @@ CREATE TABLE ${table_name} (
         expect(result[1].age).toBe(18);
       });
 
+      test("update helper with undefined values", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        const users = [
+          { id: 1, name: "John", age: 30 },
+          { id: 2, name: "Jane", age: 25 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+        const result =
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: undefined })} WHERE id IN ${sql([1, 2])} RETURNING *`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("Mary");
+        expect(result[0].age).toBe(30);
+        expect(result[1].id).toBe(2);
+        expect(result[1].name).toBe("Mary");
+        expect(result[1].age).toBe(25);
+      });
+      test("update helper that starts with undefined values", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        const users = [
+          { id: 1, name: "John", age: 30 },
+          { id: 2, name: "Jane", age: 25 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+        const result =
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: 19 })} WHERE id IN ${sql([1, 2])} RETURNING *`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("John");
+        expect(result[0].age).toBe(19);
+        expect(result[1].id).toBe(2);
+        expect(result[1].name).toBe("Jane");
+        expect(result[1].age).toBe(19);
+      });
+
+      test("update helper with undefined values and no columns", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        const users = [
+          { id: 1, name: "John", age: 30 },
+          { id: 2, name: "Jane", age: 25 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+        try {
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])} RETURNING *`;
+          expect.unreachable();
+        } catch (e) {
+          expect(e).toBeInstanceOf(SyntaxError);
+          expect(e.message).toBe("Update needs to have at least one column");
+        }
+      });
+
       test("update helper with AND IN", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");

@@ -1130,11 +1130,18 @@ class MySQLAdapter
                 const column = columns[i];
                 const columnValue = item[column];
                 if (typeof columnValue === "undefined") {
-                  // skip undefined values this is the expected behavior
+                  // skip undefined values, this is the expected behavior in JS
                   continue;
                 }
                 query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
                 binding_values.push(columnValue);
+              }
+              if (query.endsWith(", ")) {
+                // we got an undefined value at the end, lets remove the last comma
+                query = query.substring(0, query.length - 2);
+              }
+              if (query.endsWith("SET ")) {
+                throw new SyntaxError("Update needs to have at least one column");
               }
               query += " "; // the user can add where clause after this
             }

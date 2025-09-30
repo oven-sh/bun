@@ -1,9 +1,8 @@
 import { $ } from "bun";
-import { expect, test, describe } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
+import { join } from "path";
 
 describe("Shell kill() - State Node Coverage", () => {
   test("kill If statement with active condition", async () => {
@@ -158,8 +157,8 @@ describe("Shell kill() - Race Conditions", () => {
   test("rapid sequential kills with different signals", async () => {
     const p = new $.Shell()`sleep 10`;
     p.kill(15); // SIGTERM (first kill wins)
-    p.kill(2);  // SIGINT (should be ignored - already killed)
-    p.kill(9);  // SIGKILL (should be ignored - already killed)
+    p.kill(2); // SIGINT (should be ignored - already killed)
+    p.kill(9); // SIGKILL (should be ignored - already killed)
     const r = await p;
     // Should use the first signal (SIGTERM)
     expect(r.exitCode).toBe(143);

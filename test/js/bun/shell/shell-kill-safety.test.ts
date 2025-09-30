@@ -1,8 +1,8 @@
 import { $ } from "bun";
-import { expect, test, describe } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
+import { join } from "path";
 
 describe("Shell kill() - Safety and Correctness", () => {
   test("killed shell does not execute subsequent commands", async () => {

@@ -173,24 +173,16 @@ function detectCommand(query: string): SQLCommand {
       case "\v": {
         switch (token) {
           case "insert": {
-            command = SQLCommand.insert;
-            token = "";
-            return command;
+            return SQLCommand.insert;
           }
           case "update": {
-            command = SQLCommand.update;
-            token = "";
-            return command;
+            return SQLCommand.update;
           }
           case "where": {
-            command = SQLCommand.where;
-            token = "";
-            return command;
+            return SQLCommand.where;
           }
           case "set": {
-            command = SQLCommand.updateSet;
-            token = "";
-            return command;
+            return SQLCommand.updateSet;
           }
           case "in": {
             return SQLCommand.in;

@@ -733,6 +733,10 @@ Whether to enable minification. Default `false`.
 When targeting `bun`, identifiers will be minified by default.
 {% /callout %}
 
+{% callout %}
+When `minify.syntax` is enabled, unused function and class expression names are removed unless `minify.keepNames` is set to `true` or `--keep-names` flag is used.
+{% /callout %}
+
 To enable all minification options:
 
 {% codetabs group="a" %}
@@ -763,12 +767,16 @@ await Bun.build({
     whitespace: true,
     identifiers: true,
     syntax: true,
+    keepNames: false, // default
   },
 })
 ```
 
 ```bash#CLI
 $ bun build ./index.tsx --outdir ./out --minify-whitespace --minify-identifiers --minify-syntax
+
+# To preserve function and class names during minification:
+$ bun build ./index.tsx --outdir ./out --minify --keep-names
 ```
 
 {% /codetabs %}
@@ -1259,6 +1267,33 @@ $ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=any
 
 {% /codetabs %}
 
+### `throw`
+
+Controls error handling behavior when the build fails. When set to `true` (default), the returned promise rejects with an `AggregateError`. When set to `false`, the promise resolves with a `BuildOutput` object where `success` is `false`.
+
+```ts#JavaScript
+// Default behavior: throws on error
+try {
+  await Bun.build({
+    entrypoints: ['./index.tsx'],
+    throw: true, // default
+  });
+} catch (error) {
+  // Handle AggregateError
+  console.error("Build failed:", error);
+}
+
+// Alternative: handle errors via success property
+const result = await Bun.build({
+  entrypoints: ['./index.tsx'],
+  throw: false,
+});
+
+if (!result.success) {
+  console.error("Build failed with errors:", result.logs);
+}
+```
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:
@@ -1526,6 +1561,7 @@ interface BuildConfig {
         whitespace?: boolean;
         syntax?: boolean;
         identifiers?: boolean;
+        keepNames?: boolean;
       };
   /**
    * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
@@ -1569,8 +1605,7 @@ interface BuildConfig {
    * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
    * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
    *
-   * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
-   * as most usage of `Bun.build` forgets to check for errors.
+   * This defaults to `true`.
    */
   throw?: boolean;
 }

@@ -91,8 +91,7 @@ static const WTF::String toString(ZigString str)
 
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
-            : WTF::String(WTF::ExternalStringImpl::create(
-                  { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+            : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
@@ -181,6 +180,24 @@ static const WTF::String toStringCopy(ZigString str)
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(LChar));
         return WTF::String(WTFMove(impl));
     }
+}
+
+static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
+{
+    if (str.len == 0 || str.ptr == nullptr) {
+        return;
+    }
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        WTF::String converted = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        builder.append(converted);
+        return;
+    }
+    if (isTaggedUTF16Ptr(str.ptr)) {
+        builder.append({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len });
+        return;
+    }
+
+    builder.append({ untag(str.ptr), str.len });
 }
 
 static WTF::String toStringNotConst(ZigString str) { return toString(str); }

@@ -39,7 +39,8 @@ magic: if (Environment.isDebug)
     enum(u128) { valid = 0x1ffd363f121f5c12 }
 else
     enum { valid } = .valid,
-allocation_scope: if (AllocationScope.enabled) AllocationScope else void,
+/// No overhead in release builds.
+allocation_scope: AllocationScope,
 /// Absolute path to project root directory. For the HMR
 /// runtime, its module IDs are strings relative to this.
 root: []const u8,
@@ -267,8 +268,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
     const dev = bun.new(DevServer, .{
-        .allocation_scope = if (comptime AllocationScope.enabled)
-            AllocationScope.init(bun.default_allocator),
+        .allocation_scope = .initDefault(),
         .root = options.root,
         .vm = options.vm,
         .server = null,
@@ -679,15 +679,17 @@ pub fn deinit(dev: *DevServer) void {
     bun.destroy(dev);
 }
 
+const AllocationScope = bun.allocators.AllocationScopeIn(bun.DefaultAllocator);
+pub const DevAllocator = AllocationScope.Borrowed;
+
 pub fn allocator(dev: *const DevServer) Allocator {
-    return dev.dev_allocator().get();
+    return dev.allocation_scope.allocator();
 }
 
 pub fn dev_allocator(dev: *const DevServer) DevAllocator {
-    return .{ .maybe_scope = dev.allocation_scope };
+    return dev.allocation_scope.borrow();
 }
 
-pub const DevAllocator = @import("./DevServer/DevAllocator.zig");
 pub const MemoryCost = @import("./DevServer/memory_cost.zig");
 pub const memoryCost = MemoryCost.memoryCost;
 pub const memoryCostDetailed = MemoryCost.memoryCostDetailed;
@@ -841,7 +843,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             arena.allocator(),
             source_id.kind,
             dev.allocator(),
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
         const response = StaticRoute.initFromAnyBlob(&.fromOwnedSlice(dev.allocator(), json_bytes), .{
             .server = dev.server,
             .mime_type = &.json,
@@ -1035,7 +1037,7 @@ fn ensureRouteIsBundled(
                     entry_points,
                     false,
                     std.time.Timer.start() catch @panic("timers unsupported"),
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
 
             dev.routeBundlePtr(route_bundle_index).server_state = .bundling;
@@ -1168,7 +1170,7 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
         for (map.keys()) |abs_path| {
             const file = (dev.client_graph.bundled_files.get(abs_path) orelse continue).unpack();
             if (file.kind() == .css)
-                entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
+                bun.handleOom(entry_points.appendCss(alloc, abs_path));
         }
     }
 }
@@ -1298,7 +1300,7 @@ fn onFrameworkRequestWithBundle(
                 const str = bun.String.createFormat(client_prefix ++ "/route-{}{}.js", .{
                     std.fmt.fmtSliceHexLower(std.mem.asBytes(&bundle_index)),
                     std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation)),
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
                 defer str.deref();
                 const js = str.toJS(dev.vm.global);
                 bundle.cached_client_bundle_url = .create(js, dev.vm.global);
@@ -1306,7 +1308,7 @@ fn onFrameworkRequestWithBundle(
             },
             // styles
             bundle.cached_css_file_array.get() orelse arr: {
-                const js = dev.generateCssJSArray(route_bundle) catch bun.outOfMemory();
+                const js = try dev.generateCssJSArray(route_bundle);
                 bundle.cached_css_file_array = .create(js, dev.vm.global);
                 break :arr js;
             },
@@ -1322,7 +1324,7 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     const html = &route_bundle.data.html;
 
     const blob = html.cached_response orelse generate: {
-        const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
+        const payload = bun.handleOom(generateHTMLPayload(dev, route_bundle_index, route_bundle, html));
         errdefer dev.allocator().free(payload);
 
         html.cached_response = StaticRoute.initFromAnyBlob(
@@ -1436,7 +1438,7 @@ fn generateJavaScriptCodeForHTMLFile(
 ) bun.OOM![]const u8 {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator());
     const sfa = sfa_state.get();
-    var array = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch bun.outOfMemory();
+    var array = bun.handleOom(std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536));
     defer array.deinit(sfa);
     const w = array.writer(sfa);
 
@@ -1477,7 +1479,7 @@ fn generateJavaScriptCodeForHTMLFile(
 pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method) void {
     const route_bundle = dev.routeBundlePtr(bundle_index);
     const blob = route_bundle.client_bundle orelse generate: {
-        const payload = dev.generateClientBundle(route_bundle) catch bun.outOfMemory();
+        const payload = bun.handleOom(dev.generateClientBundle(route_bundle));
         errdefer dev.allocator().free(payload);
         route_bundle.client_bundle = StaticRoute.initFromAnyBlob(
             &.fromOwnedSlice(dev.allocator(), payload),
@@ -2492,7 +2494,7 @@ pub fn finalizeBundle(
                 while (it.next()) |socket_ptr_ptr| {
                     const socket: *HmrSocket = socket_ptr_ptr.*;
                     if (socket.subscriptions.hot_update) {
-                        const entry = socket.referenced_source_maps.getOrPut(dev.allocator(), script_id) catch bun.outOfMemory();
+                        const entry = bun.handleOom(socket.referenced_source_maps.getOrPut(dev.allocator(), script_id));
                         if (!entry.found_existing) {
                             sockets += 1;
                         } else {
@@ -2692,11 +2694,11 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
         for (dev.next_bundle.route_queue.keys()) |route_bundle_index| {
             const rb = dev.routeBundlePtr(route_bundle_index);
             rb.server_state = .bundling;
-            dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch bun.outOfMemory();
+            bun.handleOom(dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index));
         }
 
         if (entry_points.set.count() > 0) {
-            dev.startAsyncBundle(entry_points, is_reload, timer) catch bun.outOfMemory();
+            bun.handleOom(dev.startAsyncBundle(entry_points, is_reload, timer));
         }
 
         dev.next_bundle.route_queue.clearRetainingCapacity();
@@ -2817,11 +2819,14 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(req.url(), &params)) |route_index| {
         dev.ensureRouteIsBundled(
-            dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory(),
+            bun.handleOom(dev.getOrPutRouteBundle(.{ .framework = route_index })),
             .server_handler,
             req,
             AnyResponse.init(resp),
-        ) catch bun.outOfMemory();
+        ) catch |err| switch (err) {
+            error.JSError => dev.vm.global.reportActiveExceptionAsUnhandled(err),
+            error.OutOfMemory => bun.outOfMemory(),
+        };
         return;
     }
 
@@ -2833,8 +2838,16 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
     sendBuiltInNotFound(resp);
 }
 
-pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, req: *uws.Request, resp: AnyResponse) !void {
-    try dev.ensureRouteIsBundled(try dev.getOrPutRouteBundle(.{ .html = html }), .bundled_html_page, req, resp);
+pub fn respondForHTMLBundle(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute, req: *uws.Request, resp: AnyResponse) bun.OOM!void {
+    dev.ensureRouteIsBundled(
+        try dev.getOrPutRouteBundle(.{ .html = html }),
+        .bundled_html_page,
+        req,
+        resp,
+    ) catch |err| switch (err) {
+        error.JSError => dev.vm.global.reportActiveExceptionAsUnhandled(err),
+        else => |other| return other,
+    };
 }
 
 fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !RouteBundle.Index {
@@ -2990,10 +3003,11 @@ fn printMemoryLine(dev: *DevServer) void {
         return;
     }
     if (!debug.isVisible()) return;
+    const stats = dev.allocation_scope.stats();
     Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
         bun.fmt.size(dev.memoryCost(), .{}),
-        dev.allocation_scope.numAllocations(),
-        bun.fmt.size(dev.allocation_scope.total(), .{}),
+        stats.num_allocations,
+        bun.fmt.size(stats.total_memory_allocated, .{}),
         bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
     });
 }
@@ -3285,7 +3299,7 @@ pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)
         .assets = @truncate(cost.assets),
         .other = @truncate(cost.other),
         .devserver_tracked = if (comptime AllocationScope.enabled)
-            @truncate(dev.allocation_scope.total())
+            @truncate(dev.allocation_scope.stats().total_memory_allocated)
         else
             0,
         .process_used = @truncate(bun.sys.selfProcessMemoryUsage() orelse 0),
@@ -3374,7 +3388,7 @@ pub fn onWebSocketUpgrade(
     assert(id == 0);
 
     const dw = HmrSocket.new(dev, res);
-    dev.active_websocket_connections.put(dev.allocator(), dw, {}) catch bun.outOfMemory();
+    bun.handleOom(dev.active_websocket_connections.put(dev.allocator(), dw, {}));
     _ = res.upgrade(
         *HmrSocket,
         dw,
@@ -3577,10 +3591,10 @@ pub const HmrSocket = @import("./DevServer/HmrSocket.zig");
 pub fn routeToBundleIndexSlow(dev: *DevServer, pattern: []const u8) ?RouteBundle.Index {
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(pattern, &params)) |route_index| {
-        return dev.getOrPutRouteBundle(.{ .framework = route_index }) catch bun.outOfMemory();
+        return bun.handleOom(dev.getOrPutRouteBundle(.{ .framework = route_index }));
     }
     if (dev.html_router.get(pattern)) |html| {
-        return dev.getOrPutRouteBundle(.{ .html = html }) catch bun.outOfMemory();
+        return bun.handleOom(dev.getOrPutRouteBundle(.{ .html = html }));
     }
     return null;
 }
@@ -4057,7 +4071,6 @@ pub fn getDeinitCountForTesting() usize {
 }
 
 const bun = @import("bun");
-const AllocationScope = bun.AllocationScope;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const SourceMap = bun.sourcemap;

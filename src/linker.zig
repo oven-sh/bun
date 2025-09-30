@@ -112,14 +112,10 @@ pub const Linker = struct {
 
         const is_deferred = result.pending_imports.len > 0;
 
-        const import_records = result.ast.import_records.listManaged(linker.allocator);
-        defer {
-            result.ast.import_records = ImportRecord.List.fromList(import_records);
-        }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
-                for (import_records.items, 0..) |*import_record, record_i| {
+                for (result.ast.import_records.slice(), 0..) |*import_record, record_i| {
                     if (import_record.is_unused or
                         (is_bun and is_deferred and !result.isPendingImport(@intCast(record_i)))) continue;
 

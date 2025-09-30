@@ -51,7 +51,6 @@ pub const Tag = if (Environment.isWindows) enum {
     TimerCallback,
     TimeoutObject,
     ImmediateObject,
-    TestRunner,
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
@@ -68,13 +67,14 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
     DateHeaderTimer,
+    BunTest,
+    EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
             .TimerCallback => TimerCallback,
             .TimeoutObject => TimeoutObject,
             .ImmediateObject => ImmediateObject,
-            .TestRunner => jsc.Jest.TestRunner,
             .StatWatcherScheduler => StatWatcherScheduler,
             .UpgradedDuplex => uws.UpgradedDuplex,
             .DNSResolver => DNSResolver,
@@ -92,13 +92,14 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
+            .BunTest => jsc.Jest.bun_test.BunTest,
+            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 } else enum {
     TimerCallback,
     TimeoutObject,
     ImmediateObject,
-    TestRunner,
     StatWatcherScheduler,
     UpgradedDuplex,
     WTFTimer,
@@ -114,13 +115,14 @@ pub const Tag = if (Environment.isWindows) enum {
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
     DateHeaderTimer,
+    BunTest,
+    EventLoopDelayMonitor,
 
     pub fn Type(comptime T: Tag) type {
         return switch (T) {
             .TimerCallback => TimerCallback,
             .TimeoutObject => TimeoutObject,
             .ImmediateObject => ImmediateObject,
-            .TestRunner => jsc.Jest.TestRunner,
             .StatWatcherScheduler => StatWatcherScheduler,
             .UpgradedDuplex => uws.UpgradedDuplex,
             .WTFTimer => WTFTimer,
@@ -137,6 +139,8 @@ pub const Tag = if (Environment.isWindows) enum {
             => bun.bake.DevServer,
             .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
+            .BunTest => jsc.Jest.bun_test.BunTest,
+            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
 };
@@ -213,6 +217,16 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
             date_header_timer.run(vm);
             return .disarm;
         },
+        .BunTest => {
+            var container_strong = jsc.Jest.bun_test.BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self));
+            defer container_strong.deinit();
+            return jsc.Jest.bun_test.BunTest.bunTestTimeoutCallback(container_strong, now, vm);
+        },
+        .EventLoopDelayMonitor => {
+            const monitor = @as(*jsc.API.Timer.EventLoopDelayMonitor, @fieldParentPtr("event_loop_timer", self));
+            monitor.onFire(vm, now);
+            return .disarm;
+        },
         inline else => |t| {
             if (@FieldType(t.Type(), "event_loop_timer") != Self) {
                 @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");
@@ -238,11 +252,6 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
                 }
             }
 
-            if (comptime t.Type() == jsc.Jest.TestRunner) {
-                container.onTestTimeout(now, vm);
-                return .disarm;
-            }
-
             if (comptime t.Type() == DNSResolver) {
                 return container.checkTimeouts(now, vm);
             }
@@ -255,8 +264,6 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) Arm {
         },
     }
 }
-
-pub fn deinit(_: *Self) void {}
 
 /// A timer created by WTF code and invoked by Bun's event loop
 const WTFTimer = bun.api.Timer.WTFTimer;

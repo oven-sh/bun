@@ -53,7 +53,8 @@ pub const Snapshots = struct {
         return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
     }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
-        switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
+        const bunTest = expect.bunTest() orelse return error.SnapshotFailed;
+        switch (try this.getSnapshotFile(bunTest.file_id)) {
             .result => {},
             .err => |err| {
                 return switch (err.syscall) {
@@ -81,6 +82,15 @@ pub const Snapshots = struct {
         }
 
         // doesn't exist. append to file bytes and add to hashmap.
+        // Prevent snapshot creation in CI environments unless --update-snapshots is used
+        if (bun.FeatureFlags.breaking_changes_1_3) {
+            if (bun.detectCI()) |_| {
+                if (!this.update_snapshots) {
+                    return error.SnapshotCreationNotAllowedInCI;
+                }
+            }
+        }
+
         const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
         try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
         try this.file_buf.writer().print(

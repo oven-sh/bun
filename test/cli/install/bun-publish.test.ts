@@ -356,7 +356,7 @@ for (const info of [
   { user: "bin3", directories: { bin: "bins" } },
 ]) {
   test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
-    const { packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false });
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
     const publishDir = tmpdirSync();
     const bunfig = await registry.authBunfig("binaries-" + info.user);
 

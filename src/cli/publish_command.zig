@@ -993,7 +993,7 @@ pub const PublishCommand = struct {
 
         try json.set(allocator, "dist", Expr.init(
             E.Object,
-            .{ .properties = G.Property.List.init(dist_props) },
+            .{ .properties = G.Property.List.fromOwnedSlice(dist_props) },
             logger.Loc.Empty,
         ));
 
@@ -1081,7 +1081,7 @@ pub const PublishCommand = struct {
                     json.data.e_object.properties.ptr[bin_query.i].value = Expr.init(
                         E.Object,
                         .{
-                            .properties = G.Property.List.fromList(bin_props),
+                            .properties = G.Property.List.moveFromList(&bin_props),
                         },
                         logger.Loc.Empty,
                     );
@@ -1157,7 +1157,7 @@ pub const PublishCommand = struct {
 
                     json.data.e_object.properties.ptr[bin_query.i].value = Expr.init(
                         E.Object,
-                        .{ .properties = G.Property.List.fromList(bin_props) },
+                        .{ .properties = G.Property.List.moveFromList(&bin_props) },
                         logger.Loc.Empty,
                     );
                 },
@@ -1246,7 +1246,11 @@ pub const PublishCommand = struct {
                     }
                 }
 
-                try json.set(allocator, "bin", Expr.init(E.Object, .{ .properties = G.Property.List.fromList(bin_props) }, logger.Loc.Empty));
+                try json.set(allocator, "bin", Expr.init(
+                    E.Object,
+                    .{ .properties = G.Property.List.moveFromList(&bin_props) },
+                    logger.Loc.Empty,
+                ));
             }
         }
 

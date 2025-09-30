@@ -78,7 +78,7 @@ pub const Scripts = extern struct {
             inline for (this.items, 0..) |maybe_script, i| {
                 if (maybe_script) |script| {
                     debug("enqueue({s}, {s}) in {s}", .{ "prepare", this.package_name, this.cwd });
-                    @field(lockfile.scripts, Lockfile.Scripts.names[i]).append(lockfile.allocator, script) catch bun.outOfMemory();
+                    bun.handleOom(@field(lockfile.scripts, Lockfile.Scripts.names[i]).append(lockfile.allocator, script));
                 }
             }
         }
@@ -214,8 +214,8 @@ pub const Scripts = extern struct {
                 .items = scripts,
                 .first_index = @intCast(first_index),
                 .total = total,
-                .cwd = allocator.dupeZ(u8, cwd) catch bun.outOfMemory(),
-                .package_name = lockfile.allocator.dupe(u8, package_name) catch bun.outOfMemory(),
+                .cwd = bun.handleOom(allocator.dupeZ(u8, cwd)),
+                .package_name = bun.handleOom(lockfile.allocator.dupe(u8, package_name)),
             };
         }
 

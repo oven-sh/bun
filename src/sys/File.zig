@@ -275,9 +275,9 @@ pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
     return .{ .result = buf[0..read_amount] };
 }
 
-pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_small: bool) Maybe(usize) {
-    if (probably_small) {
-        list.ensureUnusedCapacity(64) catch bun.outOfMemory();
+pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), size_guess: enum { probably_small, unknown_size }) Maybe(usize) {
+    if (size_guess == .probably_small) {
+        bun.handleOom(list.ensureUnusedCapacity(64));
     } else {
         list.ensureTotalCapacityPrecise(
             switch (this.getEndPos()) {
@@ -286,13 +286,13 @@ pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_sma
                 },
                 .result => |s| s,
             } + 16,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
     }
 
     var total: i64 = 0;
     while (true) {
         if (list.unusedCapacitySlice().len == 0) {
-            list.ensureUnusedCapacity(16) catch bun.outOfMemory();
+            bun.handleOom(list.ensureUnusedCapacity(16));
         }
 
         switch (if (comptime Environment.isPosix)
@@ -320,7 +320,7 @@ pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_sma
 /// Calls fstat() on the file to get the size of the file and avoids reallocations + extra read() calls.
 pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
     var list = std.ArrayList(u8).init(allocator);
-    return switch (readToEndWithArrayList(this, &list, false)) {
+    return switch (readToEndWithArrayList(this, &list, .unknown_size)) {
         .err => |err| .{ .err = err, .bytes = list },
         .result => .{ .err = null, .bytes = list },
     };
@@ -330,7 +330,7 @@ pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
 /// File will skip the fstat() call, preallocating 64 bytes instead of the file's size.
 pub fn readToEndSmall(this: File, allocator: std.mem.Allocator) ReadToEndResult {
     var list = std.ArrayList(u8).init(allocator);
-    return switch (readToEndWithArrayList(this, &list, true)) {
+    return switch (readToEndWithArrayList(this, &list, .probably_small)) {
         .err => |err| .{ .err = err, .bytes = list },
         .result => .{ .err = null, .bytes = list },
     };
@@ -421,7 +421,7 @@ pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator, 
 
     if (opts.convert_bom) {
         if (bun.strings.BOM.detect(bytes)) |bom| {
-            bytes = bom.removeAndConvertToUTF8AndFree(allocator, bytes) catch bun.outOfMemory();
+            bytes = bun.handleOom(bom.removeAndConvertToUTF8AndFree(allocator, bytes));
         }
     }
 

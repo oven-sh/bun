@@ -1,6 +1,6 @@
 import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query, SQLQueryResultMode } from "./query";
-import type { DatabaseAdapter, OnConnected, SQLHelper, SQLResultArray } from "./shared";
+import type { ArrayType, DatabaseAdapter, OnConnected, SQLArrayParameter, SQLHelper, SQLResultArray } from "./shared";
 
 const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
 const {
@@ -293,7 +293,7 @@ function parseSQLQuery(query: string): SQLParsedInfo {
   return { command, firstKeyword, hasReturning };
 }
 
-export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
+class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   private mode = SQLQueryResultMode.objects;
 
   private readonly sql: string;
@@ -380,9 +380,7 @@ export class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Databa
   }
 }
 
-export class SQLiteAdapter
-  implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle>
-{
+class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
@@ -737,7 +735,9 @@ export class SQLiteAdapter
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
     return connection;
   }
-
+  array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {
+    throw new Error("SQLite doesn't support arrays");
+  }
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
     let BEGIN = "BEGIN";
 
@@ -807,4 +807,5 @@ export default {
   SQLCommand,
   commandToString,
   parseSQLQuery,
+  SQLiteQueryHandle,
 };

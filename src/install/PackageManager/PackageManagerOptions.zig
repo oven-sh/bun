@@ -74,6 +74,12 @@ node_linker: NodeLinker = .auto,
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
 
+/// Override CPU architecture for optional dependencies filtering
+cpu: Npm.Architecture = Npm.Architecture.current,
+
+/// Override OS for optional dependencies filtering
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
@@ -579,6 +585,10 @@ pub fn load(
         if (cli.backend) |backend| {
             PackageInstall.supported_method = backend;
         }
+
+        // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+        this.cpu = cli.cpu;
+        this.os = cli.os;
 
         this.do.update_to_latest = cli.latest;
         this.do.recursive = cli.recursive;

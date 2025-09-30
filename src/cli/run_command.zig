@@ -246,7 +246,7 @@ pub const RunCommand = struct {
         }
 
         if (!use_system_shell) {
-            const mini = bun.jsc.MiniEventLoop.initGlobal(env);
+            const mini = bun.jsc.MiniEventLoop.initGlobal(env, cwd);
             const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items, cwd) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
@@ -294,7 +294,7 @@ pub const RunCommand = struct {
             .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
-                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env, null)),
             },
         }) catch |err| {
             if (!silent) {
@@ -321,6 +321,10 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
 
+                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        bun.crash_handler.suppressReporting();
+                    }
+
                     Global.raiseIgnoringPanicHandler(exit_code.signal);
                 }
 
@@ -339,6 +343,11 @@ pub const RunCommand = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
+
+                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    bun.crash_handler.suppressReporting();
+                }
+
                 Global.raiseIgnoringPanicHandler(signal);
             },
 
@@ -458,7 +467,7 @@ pub const RunCommand = struct {
             .use_execve_on_macos = silent,
 
             .windows = if (Environment.isWindows) .{
-                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env, null)),
             },
         }) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -512,6 +521,10 @@ pub const RunCommand = struct {
                             });
                         }
 
+                        if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                            bun.crash_handler.suppressReporting();
+                        }
+
                         Global.raiseIgnoringPanicHandler(signal);
                     },
 
@@ -523,6 +536,10 @@ pub const RunCommand = struct {
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });
+                            }
+
+                            if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                                bun.crash_handler.suppressReporting();
                             }
 
                             Global.raiseIgnoringPanicHandler(exit_code.signal);
@@ -622,7 +639,10 @@ pub const RunCommand = struct {
         return try allocator.dupeZ(u8, target_path_buffer[0 .. converted.len + file_name.len :0]);
     }
 
-    pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
+    pub fn createFakeTemporaryNodeExecutable(
+        PATH: *std.ArrayList(u8),
+        optional_bun_path: *string,
+    ) (OOM || std.fs.SelfExePathError)!void {
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 
@@ -890,11 +910,21 @@ pub const RunCommand = struct {
         var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
 
         if (needs_to_force_bun) {
-            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch bun.outOfMemory();
+            createFakeTemporaryNodeExecutable(
+                &new_path,
+                &optional_bun_self_path,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+                else => |other| std.debug.panic(
+                    "unexpected error from createFakeTemporaryNodeExecutable: {}",
+                    .{other},
+                ),
+            };
+
             if (!force_using_bun) {
-                this_transpiler.env.map.put("NODE", bun_node_exe) catch bun.outOfMemory();
-                this_transpiler.env.map.put("npm_node_execpath", bun_node_exe) catch bun.outOfMemory();
-                this_transpiler.env.map.put("npm_execpath", optional_bun_self_path) catch bun.outOfMemory();
+                bun.handleOom(this_transpiler.env.map.put("NODE", bun_node_exe));
+                bun.handleOom(this_transpiler.env.map.put("npm_node_execpath", bun_node_exe));
+                bun.handleOom(this_transpiler.env.map.put("npm_execpath", optional_bun_self_path));
             }
 
             needs_to_force_bun = false;
@@ -943,7 +973,7 @@ pub const RunCommand = struct {
         }
 
         const new_path = try configurePathForRunWithPackageJsonDir(ctx, package_json_dir, this_transpiler, ORIGINAL_PATH, cwd, force_using_bun);
-        this_transpiler.env.map.put("PATH", new_path) catch bun.outOfMemory();
+        bun.handleOom(this_transpiler.env.map.put("PATH", new_path));
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -1573,6 +1603,12 @@ pub const RunCommand = struct {
             return true;
         }
 
+        if (ctx.filters.len == 0 and !ctx.workspaces and CLI.Cli.cmd != null and CLI.Cli.cmd.? == .AutoCommand) {
+            if (bun.strings.eqlComptime(target_name, "feedback")) {
+                try @"bun feedback"(ctx);
+            }
+        }
+
         if (log_errors) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
@@ -1634,6 +1670,19 @@ pub const RunCommand = struct {
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
             Global.exit(1);
         };
+    }
+
+    fn @"bun feedback"(ctx: Command.Context) !noreturn {
+        const trigger = bun.pathLiteral("/[eval]");
+        var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+        const cwd = try std.posix.getcwd(&entry_point_buf);
+        @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+        ctx.runtime_options.eval.script = if (bun.Environment.codegen_embed)
+            @embedFile("eval/feedback.ts")
+        else
+            bun.runtimeEmbedFile(.codegen, "eval/feedback.ts");
+        try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+        Global.exit(0);
     }
 };
 

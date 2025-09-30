@@ -19,13 +19,13 @@ pub const YAML = struct {
 
                 // multi-document yaml streams are converted into arrays
 
-                var items: std.ArrayList(Expr) = try .initCapacity(allocator, stream.docs.items.len);
+                var items: bun.BabyList(Expr) = try .initCapacity(allocator, stream.docs.items.len);
 
                 for (stream.docs.items) |doc| {
                     items.appendAssumeCapacity(doc.root);
                 }
 
-                return .init(E.Array, .{ .items = .fromList(items) }, .Empty);
+                return .init(E.Array, .{ .items = items }, .Empty);
             },
         };
     }
@@ -756,7 +756,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
             try self.scan(.{});
 
-            return .init(E.Array, .{ .items = .fromList(seq) }, sequence_start.loc());
+            return .init(E.Array, .{ .items = .moveFromList(&seq) }, sequence_start.loc());
         }
 
         fn parseFlowMapping(self: *@This()) ParseError!Expr {
@@ -866,7 +866,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
             try self.scan(.{});
 
-            return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+            return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
         }
 
         fn parseBlockSequence(self: *@This()) ParseError!Expr {
@@ -941,7 +941,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
             }
 
-            return .init(E.Array, .{ .items = .fromList(seq) }, sequence_start.loc());
+            return .init(E.Array, .{ .items = .moveFromList(&seq) }, sequence_start.loc());
         }
 
         fn parseBlockMapping(
@@ -1022,7 +1022,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             if (self.context.get() == .flow_in) {
-                return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+                return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
             }
 
             try self.context.set(.block_in);
@@ -1126,7 +1126,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 }
             }
 
-            return .init(E.Object, .{ .properties = .fromList(props) }, mapping_start.loc());
+            return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
         }
 
         const NodeProperties = struct {
@@ -1921,8 +1921,10 @@ pub fn Parser(comptime enc: Encoding) type {
                     var decimal = parser.next() == '.';
                     var x = false;
                     var o = false;
+                    var e = false;
                     var @"+" = false;
                     var @"-" = false;
+                    var hex = false;
 
                     parser.inc(1);
 
@@ -1982,9 +1984,30 @@ pub fn Parser(comptime enc: Encoding) type {
                         },
 
                         '1'...'9',
-                        'a'...'f',
-                        'A'...'F',
+                        => {
+                            first = false;
+                            parser.inc(1);
+                            continue :end parser.next();
+                        },
+
+                        'e',
+                        'E',
+                        => {
+                            if (e) {
+                                hex = true;
+                            }
+                            e = true;
+                            parser.inc(1);
+                            continue :end parser.next();
+                        },
+
+                        'a'...'d',
+                        'f',
+                        'A'...'D',
+                        'F',
                         => |c| {
+                            hex = true;
+
                             defer first = false;
                             if (first) {
                                 if (c == 'b' or c == 'B') {
@@ -1993,7 +2016,6 @@ pub fn Parser(comptime enc: Encoding) type {
                             }
 
                             parser.inc(1);
-
                             continue :end parser.next();
                         },
 
@@ -2061,7 +2083,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     var scalar: NodeScalar = scalar: {
-                        if (x or o) {
+                        if (x or o or hex) {
                             const unsigned = std.fmt.parseUnsigned(u64, parser.slice(start, end), 0) catch {
                                 return;
                             };

@@ -26,6 +26,7 @@ pub const PackageJSON = struct {
     };
 
     pub const new = bun.TrivialNew(@This());
+    pub const deinit = bun.TrivialDeinit(@This());
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
 
@@ -611,7 +612,7 @@ pub const PackageJSON = struct {
 
         // DirInfo cache is reused globally
         // So we cannot free these
-        const allocator = bun.fs_allocator;
+        const allocator = bun.default_allocator;
 
         var entry = r.caches.fs.readFileWithAllocator(
             allocator,

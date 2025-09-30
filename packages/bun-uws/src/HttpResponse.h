@@ -50,6 +50,11 @@ public:
     HttpResponseData<SSL> *getHttpResponseData() {
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
+
+    static HttpResponseData<SSL> *getHttpResponseDataS(us_socket_t *s) {
+        return (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
+    }
+
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
@@ -132,7 +137,7 @@ public:
 
             /* Terminating 0 chunk */
             Super::write("0\r\n\r\n", 5);
-            httpResponseData->markDone();
+            httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
             if (!Super::isCorked()) {
@@ -198,7 +203,7 @@ public:
 
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
-                httpResponseData->markDone();
+                httpResponseData->markDone(this);
 
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {
@@ -238,7 +243,7 @@ public:
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
     template <typename UserData>
-    us_socket_t *upgrade(UserData &&userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
+    us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             struct us_socket_context_t *webSocketContext) {
 
@@ -345,7 +350,8 @@ public:
         us_socket_timeout(SSL, (us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
 
         /* Move construct the UserData right before calling open handler */
-        new (webSocket->getUserData()) UserData(std::move(userData));
+        new (webSocket->getUserData()) UserData(std::forward<UserData>(userData));
+        
 
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {
@@ -735,6 +741,10 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return httpResponseData->socketData;
+    }
+    bool isConnectRequest() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        return httpResponseData->isConnectRequest;
     }
 
     void setWriteOffset(uint64_t offset) {

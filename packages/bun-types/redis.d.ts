@@ -887,6 +887,14 @@ declare module "bun" {
     hlen(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Get the string length of the value stored in a hash field
+     * @param key The hash key
+     * @param field The field name
+     * @returns Promise that resolves with the length of the string value, or 0 if the field doesn't exist
+     */
+    hstrlen(key: RedisClient.KeyLike, field: string): Promise<number>;
+
+    /**
      * Get all values in a hash
      * @param key The hash key
      * @returns Promise that resolves with an array of values

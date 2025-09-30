@@ -537,6 +537,312 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(newLength2).toBeGreaterThanOrEqual(10);
       });
 
+      test("should append to string with APPEND", async () => {
+        const redis = ctx.redis;
+        const key = "append-test";
+
+        // Append to non-existent key (creates new key)
+        const len1 = await redis.append(key, "Hello");
+        expect(len1).toBe(5);
+
+        // Append to existing key
+        const len2 = await redis.append(key, " World");
+        expect(len2).toBe(11);
+
+        // Verify final value
+        const value = await redis.get(key);
+        expect(value).toBe("Hello World");
+      });
+
+      test("should delete keys with DEL", async () => {
+        const redis = ctx.redis;
+
+        // Set up test keys
+        await redis.set("del-key1", "value1");
+        await redis.set("del-key2", "value2");
+        await redis.set("del-key3", "value3");
+
+        // Delete single key
+        const count1 = await redis.del("del-key1");
+        expect(count1).toBe(1);
+
+        // Verify key is deleted
+        const value1 = await redis.get("del-key1");
+        expect(value1).toBeNull();
+
+        // Delete multiple keys
+        const count2 = await redis.del("del-key2", "del-key3");
+        expect(count2).toBe(2);
+
+        // Delete non-existent key
+        const count3 = await redis.del("nonexistent");
+        expect(count3).toBe(0);
+      });
+
+      test("should serialize key with DUMP", async () => {
+        const redis = ctx.redis;
+        const key = "dump-test";
+
+        // Set a value
+        await redis.set(key, "test-value");
+
+        // Dump the key
+        const serialized = await redis.dump(key);
+        expect(serialized).toBeDefined();
+        expect(serialized).not.toBeNull();
+
+        // Dump non-existent key
+        const empty = await redis.dump("nonexistent");
+        expect(empty).toBeNull();
+      });
+
+      test("should get value as Buffer with getBuffer", async () => {
+        const redis = ctx.redis;
+        const key = "getbuffer-test";
+
+        // Set a value
+        await redis.set(key, "test-value");
+
+        // Get as Buffer
+        const buffer = await redis.getBuffer(key);
+        expect(buffer).toBeInstanceOf(Buffer);
+        expect(buffer?.toString()).toBe("test-value");
+
+        // Non-existent key
+        const empty = await redis.getBuffer("nonexistent");
+        expect(empty).toBeNull();
+      });
+
+      test("should get and delete with GETDEL", async () => {
+        const redis = ctx.redis;
+        const key = "getdel-test";
+
+        // Set a value
+        await redis.set(key, "test-value");
+
+        // Get and delete
+        const value = await redis.getdel(key);
+        expect(value).toBe("test-value");
+
+        // Verify key is deleted
+        const deleted = await redis.get(key);
+        expect(deleted).toBeNull();
+
+        // Non-existent key
+        const empty = await redis.getdel("nonexistent");
+        expect(empty).toBeNull();
+      });
+
+      test("should get and set expiration with GETEX", async () => {
+        const redis = ctx.redis;
+        const key = "getex-test";
+
+        // Set a value
+        await redis.set(key, "test-value");
+
+        // Get with EX (seconds)
+        const value1 = await redis.getex(key, "EX", 60);
+        expect(value1).toBe("test-value");
+        const ttl1 = await redis.ttl(key);
+        expect(ttl1).toBeGreaterThan(0);
+        expect(ttl1).toBeLessThanOrEqual(60);
+
+        // Get with PX (milliseconds)
+        const value2 = await redis.getex(key, "PX", 5000);
+        expect(value2).toBe("test-value");
+        const pttl = await redis.pttl(key);
+        expect(pttl).toBeGreaterThan(0);
+        expect(pttl).toBeLessThanOrEqual(5000);
+
+        // Non-existent key
+        const empty = await redis.getex("nonexistent", "EX", 60);
+        expect(empty).toBeNull();
+      });
+
+      test("should get old value and set new with GETSET", async () => {
+        const redis = ctx.redis;
+        const key = "getset-test";
+
+        // GETSET on non-existent key returns null
+        const old1 = await redis.getset(key, "value1");
+        expect(old1).toBeNull();
+
+        // GETSET on existing key returns old value
+        const old2 = await redis.getset(key, "value2");
+        expect(old2).toBe("value1");
+
+        // Verify new value is set
+        const current = await redis.get(key);
+        expect(current).toBe("value2");
+      });
+
+      test("should get string length with STRLEN", async () => {
+        const redis = ctx.redis;
+        const key = "strlen-test";
+
+        // Non-existent key returns 0
+        const len1 = await redis.strlen(key);
+        expect(len1).toBe(0);
+
+        // Set values and check lengths
+        await redis.set(key, "Hello");
+        const len2 = await redis.strlen(key);
+        expect(len2).toBe(5);
+
+        await redis.set(key, "Hello World");
+        const len3 = await redis.strlen(key);
+        expect(len3).toBe(11);
+      });
+
+      test("should get substring with SUBSTR", async () => {
+        const redis = ctx.redis;
+        const key = "substr-test";
+
+        await redis.set(key, "Hello World");
+
+        // SUBSTR is deprecated alias for GETRANGE
+        const result = await redis.substr(key, 0, 4);
+        expect(result).toBe("Hello");
+      });
+
+      test("should get expiration time with EXPIRETIME", async () => {
+        const redis = ctx.redis;
+        const key = "expiretime-test";
+
+        await redis.set(key, "value");
+
+        // Set expiration
+        const futureTs = Math.floor(Date.now() / 1000) + 60;
+        await redis.expireat(key, futureTs);
+
+        // Get expiration time
+        const expireTime = await redis.expiretime(key);
+        expect(expireTime).toBeGreaterThan(0);
+        expect(expireTime).toBeLessThanOrEqual(futureTs);
+
+        // Key with no expiration returns -1
+        const key2 = "no-expire";
+        await redis.set(key2, "value");
+        const noExpire = await redis.expiretime(key2);
+        expect(noExpire).toBe(-1);
+
+        // Non-existent key returns -2
+        const nonExist = await redis.expiretime("nonexistent");
+        expect(nonExist).toBe(-2);
+      });
+
+      test("should get expiration time in ms with PEXPIRETIME", async () => {
+        const redis = ctx.redis;
+        const key = "pexpiretime-test";
+
+        await redis.set(key, "value");
+
+        // Set expiration
+        const futureTs = Date.now() + 5000;
+        await redis.pexpireat(key, futureTs);
+
+        // Get expiration time
+        const pexpireTime = await redis.pexpiretime(key);
+        expect(pexpireTime).toBeGreaterThan(0);
+        expect(pexpireTime).toBeLessThanOrEqual(futureTs);
+
+        // Key with no expiration returns -1
+        const key2 = "no-expire";
+        await redis.set(key2, "value");
+        const noExpire = await redis.pexpiretime(key2);
+        expect(noExpire).toBe(-1);
+
+        // Non-existent key returns -2
+        const nonExist = await redis.pexpiretime("nonexistent");
+        expect(nonExist).toBe(-2);
+      });
+
+      test("should remove expiration with PERSIST", async () => {
+        const redis = ctx.redis;
+        const key = "persist-test";
+
+        await redis.set(key, "value");
+        await redis.expire(key, 60);
+
+        // Verify expiration is set
+        const ttlBefore = await redis.ttl(key);
+        expect(ttlBefore).toBeGreaterThan(0);
+
+        // Remove expiration
+        const result = await redis.persist(key);
+        expect(result).toBe(1);
+
+        // Verify no expiration
+        const ttlAfter = await redis.ttl(key);
+        expect(ttlAfter).toBe(-1);
+
+        // Persist on key without expiration returns 0
+        const result2 = await redis.persist(key);
+        expect(result2).toBe(0);
+
+        // Persist on non-existent key returns 0
+        const result3 = await redis.persist("nonexistent");
+        expect(result3).toBe(0);
+      });
+
+      test("should get multiple values with MGET", async () => {
+        const redis = ctx.redis;
+
+        // Set multiple keys
+        await redis.set("mget-key1", "value1");
+        await redis.set("mget-key2", "value2");
+        await redis.set("mget-key3", "value3");
+
+        // Get multiple keys
+        const values = await redis.mget("mget-key1", "mget-key2", "mget-key3");
+        expect(values).toEqual(["value1", "value2", "value3"]);
+
+        // Mix of existing and non-existing keys
+        const mixed = await redis.mget("mget-key1", "nonexistent", "mget-key2");
+        expect(mixed).toEqual(["value1", null, "value2"]);
+
+        // All non-existent
+        const allNull = await redis.mget("none1", "none2", "none3");
+        expect(allNull).toEqual([null, null, null]);
+      });
+
+      test("should set only if not exists with SETNX", async () => {
+        const redis = ctx.redis;
+        const key = "setnx-test";
+
+        // First SETNX succeeds
+        const result1 = await redis.setnx(key, "value1");
+        expect(result1).toBe(1);
+
+        const value1 = await redis.get(key);
+        expect(value1).toBe("value1");
+
+        // Second SETNX fails
+        const result2 = await redis.setnx(key, "value2");
+        expect(result2).toBe(0);
+
+        // Value unchanged
+        const value2 = await redis.get(key);
+        expect(value2).toBe("value1");
+      });
+
+      test("should add to HyperLogLog with PFADD", async () => {
+        const redis = ctx.redis;
+        const key = "pfadd-test";
+
+        // Add first element
+        const result1 = await redis.pfadd(key, "element1");
+        expect(result1).toBe(1);
+
+        // Add different element
+        const result2 = await redis.pfadd(key, "element2");
+        expect(result2).toBe(1);
+
+        // Add same element (HLL not modified)
+        const result3 = await redis.pfadd(key, "element1");
+        expect(result3).toBe(0);
+      });
+
       test("should implement TTL command correctly for different cases", async () => {
         const redis = ctx.redis;
         // 1. Key with expiration
@@ -768,18 +1074,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.getrange({} as any, 0, 5);
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'getrange'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'getrange'."`);
       });
 
       test("should reject invalid key in SETRANGE", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.setrange(undefined as any, 0, "value");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'setrange'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'setrange'."`);
       });
 
       test("should reject invalid key in INCRBY", async () => {
@@ -807,21 +1109,21 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.setbit({} as any, 0, 1);
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'setbit'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'setbit'."`);
       });
 
       test("should reject invalid key in SETEX", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.setex(null as any, 10, "value");
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'setex'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'setex'."`);
       });
 
       test("should reject invalid key in PSETEX", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.psetex([] as any, 1000, "value");
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'psetex'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'psetex'."`);
       });
 
       test("should reject invalid key in UNLINK", async () => {
@@ -874,7 +1176,357 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       });
     });
 
+    describe("String commands", () => {
+      test("should append value to key with APPEND", async () => {
+        const redis = ctx.redis;
+        const key = "append-test";
+
+        // Append to non-existent key (should create it)
+        const length1 = await redis.append(key, "Hello");
+        expect(length1).toBe(5);
+
+        const value1 = await redis.get(key);
+        expect(value1).toBe("Hello");
+
+        // Append to existing key
+        const length2 = await redis.append(key, " World");
+        expect(length2).toBe(11);
+
+        const value2 = await redis.get(key);
+        expect(value2).toBe("Hello World");
+      });
+
+      test("should delete one or more keys with DEL", async () => {
+        const redis = ctx.redis;
+
+        // Set multiple keys
+        await redis.set("del-test-1", "value1");
+        await redis.set("del-test-2", "value2");
+        await redis.set("del-test-3", "value3");
+
+        // Delete single key
+        const result1 = await redis.del("del-test-1");
+        expect(result1).toBe(1);
+
+        // Verify key was deleted
+        expect(await redis.get("del-test-1")).toBeNull();
+
+        // Delete multiple keys
+        const result2 = await redis.del("del-test-2", "del-test-3");
+        expect(result2).toBe(2);
+
+        // Verify keys were deleted
+        expect(await redis.get("del-test-2")).toBeNull();
+        expect(await redis.get("del-test-3")).toBeNull();
+
+        // Delete non-existent key
+        const result3 = await redis.del("del-test-nonexistent");
+        expect(result3).toBe(0);
+      });
+
+      test("should serialize key with DUMP", async () => {
+        const redis = ctx.redis;
+        const key = "dump-test";
+
+        // Set a value
+        await redis.set(key, "Hello World");
+
+        // Dump the key
+        const serialized = await redis.dump(key);
+        expect(serialized).toBeDefined();
+        expect(serialized).not.toBeNull();
+
+        // DUMP returns binary data, so it should be a Buffer or string
+        expect(typeof serialized === "string" || Buffer.isBuffer(serialized)).toBe(true);
+
+        // Dump non-existent key should return null
+        const nonExistent = await redis.dump("dump-test-nonexistent");
+        expect(nonExistent).toBeNull();
+      });
+
+      test("should get value as Buffer with getBuffer", async () => {
+        const redis = ctx.redis;
+        const key = "getbuffer-test";
+
+        // Set a value
+        await redis.set(key, "Hello Buffer");
+
+        // Get as Buffer
+        const buffer = await redis.getBuffer(key);
+        expect(buffer).toBeDefined();
+        expect(buffer).not.toBeNull();
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(buffer!.toString()).toBe("Hello Buffer");
+
+        // Get non-existent key
+        const nonExistent = await redis.getBuffer("getbuffer-nonexistent");
+        expect(nonExistent).toBeNull();
+      });
+
+      test("should get and delete key with GETDEL", async () => {
+        const redis = ctx.redis;
+        const key = "getdel-test";
+
+        // Set a value
+        await redis.set(key, "Delete me");
+
+        // Get and delete
+        const value = await redis.getdel(key);
+        expect(value).toBe("Delete me");
+
+        // Verify key was deleted
+        const check = await redis.get(key);
+        expect(check).toBeNull();
+
+        // GETDEL on non-existent key
+        const nonExistent = await redis.getdel("getdel-nonexistent");
+        expect(nonExistent).toBeNull();
+      });
+
+      test("should get key with expiration using GETEX with EX", async () => {
+        const redis = ctx.redis;
+        const key = "getex-ex-test";
+
+        // Set a value
+        await redis.set(key, "Expire me");
+
+        // Get with EX option (seconds)
+        const value = await redis.getex(key, "EX", 10);
+        expect(value).toBe("Expire me");
+
+        // Verify key still exists
+        const check = await redis.get(key);
+        expect(check).toBe("Expire me");
+
+        // Verify TTL was set
+        const ttl = await redis.ttl(key);
+        expect(ttl).toBeGreaterThan(0);
+        expect(ttl).toBeLessThanOrEqual(10);
+      });
+
+      test("should get key with expiration using GETEX with PX", async () => {
+        const redis = ctx.redis;
+        const key = "getex-px-test";
+
+        // Set a value
+        await redis.set(key, "Expire me");
+
+        // Get with PX option (milliseconds)
+        const value = await redis.getex(key, "PX", 5000);
+        expect(value).toBe("Expire me");
+
+        // Verify TTL was set (in seconds)
+        const ttl = await redis.ttl(key);
+        expect(ttl).toBeGreaterThan(0);
+        expect(ttl).toBeLessThanOrEqual(5);
+      });
+
+      test("should get key with expiration using GETEX with EXAT", async () => {
+        const redis = ctx.redis;
+        const key = "getex-exat-test";
+
+        // Set a value
+        await redis.set(key, "Expire at timestamp");
+
+        // Get with EXAT option (unix timestamp in seconds)
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 60;
+        const value = await redis.getex(key, "EXAT", futureTimestamp);
+        expect(value).toBe("Expire at timestamp");
+
+        // Verify TTL was set
+        const ttl = await redis.ttl(key);
+        expect(ttl).toBeGreaterThan(0);
+        expect(ttl).toBeLessThanOrEqual(60);
+      });
+
+      test("should get key with expiration using GETEX with PXAT", async () => {
+        const redis = ctx.redis;
+        const key = "getex-pxat-test";
+
+        // Set a value
+        await redis.set(key, "Expire at timestamp");
+
+        // Get with PXAT option (unix timestamp in milliseconds)
+        const futureTimestamp = Date.now() + 60000;
+        const value = await redis.getex(key, "PXAT", futureTimestamp);
+        expect(value).toBe("Expire at timestamp");
+
+        // Verify TTL was set
+        const ttl = await redis.ttl(key);
+        expect(ttl).toBeGreaterThan(0);
+        expect(ttl).toBeLessThanOrEqual(60);
+      });
+
+      test("should persist key expiration using GETEX with PERSIST", async () => {
+        const redis = ctx.redis;
+        const key = "getex-persist-test";
+
+        // Set a value with expiration
+        await redis.set(key, "Remove expiration", "EX", 100);
+
+        // Verify it has expiration
+        const ttlBefore = await redis.ttl(key);
+        expect(ttlBefore).toBeGreaterThan(0);
+
+        // Get with PERSIST option
+        const value = await redis.getex(key, "PERSIST");
+        expect(value).toBe("Remove expiration");
+
+        // Verify expiration was removed
+        const ttlAfter = await redis.ttl(key);
+        expect(ttlAfter).toBe(-1); // -1 means no expiration
+      });
+
+      test("should get non-existent key with GETEX", async () => {
+        const redis = ctx.redis;
+
+        const value = await redis.getex("getex-nonexistent", "EX", 10);
+        expect(value).toBeNull();
+      });
+
+      test("should get and set in one operation with GETSET", async () => {
+        const redis = ctx.redis;
+        const key = "getset-test";
+
+        // GETSET on non-existent key returns null
+        const oldValue1 = await redis.getset(key, "new value");
+        expect(oldValue1).toBeNull();
+
+        // Verify new value was set
+        const check1 = await redis.get(key);
+        expect(check1).toBe("new value");
+
+        // GETSET on existing key returns old value
+        const oldValue2 = await redis.getset(key, "newer value");
+        expect(oldValue2).toBe("new value");
+
+        // Verify new value was set
+        const check2 = await redis.get(key);
+        expect(check2).toBe("newer value");
+      });
+
+      test("should get string length with STRLEN", async () => {
+        const redis = ctx.redis;
+        const key = "strlen-test";
+
+        // STRLEN on non-existent key
+        const length1 = await redis.strlen("strlen-nonexistent");
+        expect(length1).toBe(0);
+
+        // Set a value and get its length
+        await redis.set(key, "Hello World");
+        const length2 = await redis.strlen(key);
+        expect(length2).toBe(11);
+
+        // Test with different value
+        await redis.set(key, "Hi");
+        const length3 = await redis.strlen(key);
+        expect(length3).toBe(2);
+      });
+    });
+
     describe("List Operations", () => {
+      test("should get list length with LLEN", async () => {
+        const redis = ctx.redis;
+        const key = "llen-test";
+
+        // Empty list should return 0
+        const len1 = await redis.llen(key);
+        expect(len1).toBe(0);
+
+        // Add elements
+        await redis.lpush(key, "one", "two", "three");
+
+        // Get length
+        const len2 = await redis.llen(key);
+        expect(len2).toBe(3);
+
+        // Pop one element
+        await redis.lpop(key);
+        const len3 = await redis.llen(key);
+        expect(len3).toBe(2);
+      });
+
+      test("should pop left with LPOP", async () => {
+        const redis = ctx.redis;
+        const key = "lpop-test";
+
+        // Add elements
+        await redis.lpush(key, "three", "two", "one");
+
+        // Pop one element
+        const elem1 = await redis.lpop(key);
+        expect(elem1).toBe("one");
+
+        // Pop with count
+        const elem2 = await redis.lpop(key, 2);
+        expect(elem2).toEqual(["two", "three"]);
+
+        // Pop from empty list
+        const empty = await redis.lpop(key);
+        expect(empty).toBeNull();
+      });
+
+      test("should push to existing list with LPUSHX", async () => {
+        const redis = ctx.redis;
+        const key = "lpushx-test";
+
+        // LPUSHX on non-existent key should return 0
+        const len1 = await redis.lpushx(key, "value");
+        expect(len1).toBe(0);
+
+        // Create the list first
+        await redis.lpush(key, "one");
+
+        // Now LPUSHX should work
+        const len2 = await redis.lpushx(key, "two");
+        expect(len2).toBe(2);
+
+        // Verify order
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["two", "one"]);
+      });
+
+      test("should pop right with RPOP", async () => {
+        const redis = ctx.redis;
+        const key = "rpop-test";
+
+        // Add elements
+        await redis.rpush(key, "one", "two", "three");
+
+        // Pop one element
+        const elem1 = await redis.rpop(key);
+        expect(elem1).toBe("three");
+
+        // Pop with count
+        const elem2 = await redis.rpop(key, 2);
+        expect(elem2).toEqual(["two", "one"]);
+
+        // Pop from empty list
+        const empty = await redis.rpop(key);
+        expect(empty).toBeNull();
+      });
+
+      test("should push to existing list with RPUSHX", async () => {
+        const redis = ctx.redis;
+        const key = "rpushx-test";
+
+        // RPUSHX on non-existent key should return 0
+        const len1 = await redis.rpushx(key, "value");
+        expect(len1).toBe(0);
+
+        // Create the list first
+        await redis.rpush(key, "one");
+
+        // Now RPUSHX should work
+        const len2 = await redis.rpushx(key, "two");
+        expect(len2).toBe(2);
+
+        // Verify order
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["one", "two"]);
+      });
+
       test("should get range of elements with LRANGE", async () => {
         const redis = ctx.redis;
         const key = "lrange-test";
@@ -1756,9 +2408,365 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const result = await redis.brpoplpush("empty-source", "dest", 0.1);
         expect(result).toBeNull();
       });
+
+      test("should get list length with LLEN", async () => {
+        const redis = ctx.redis;
+        const key = "llen-test";
+
+        // Empty list should return 0
+        const empty = await redis.llen(key);
+        expect(empty).toBe(0);
+
+        // Add elements
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Should return correct length
+        const length = await redis.llen(key);
+        expect(length).toBe(3);
+
+        // Non-existent key should return 0
+        const nonExistent = await redis.llen("nonexistent-list");
+        expect(nonExistent).toBe(0);
+      });
+
+      test("should pop element from head with LPOP", async () => {
+        const redis = ctx.redis;
+        const key = "lpop-test";
+
+        // Push elements
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Pop from head (left side)
+        const first = await redis.lpop(key);
+        expect(first).toBe("one");
+
+        // Pop again
+        const second = await redis.lpop(key);
+        expect(second).toBe("two");
+
+        // Verify remaining element
+        const remaining = await redis.lrange(key, 0, -1);
+        expect(remaining).toEqual(["three"]);
+
+        // Pop last element
+        const last = await redis.lpop(key);
+        expect(last).toBe("three");
+
+        // Pop from empty list should return null
+        const empty = await redis.lpop(key);
+        expect(empty).toBeNull();
+
+        // Non-existent key should return null
+        const nonExistent = await redis.lpop("nonexistent-list");
+        expect(nonExistent).toBeNull();
+      });
+
+      test("should pop element from tail with RPOP", async () => {
+        const redis = ctx.redis;
+        const key = "rpop-test";
+
+        // Push elements
+        await redis.lpush(key, "three");
+        await redis.lpush(key, "two");
+        await redis.lpush(key, "one");
+
+        // Pop from tail (right side)
+        const first = await redis.rpop(key);
+        expect(first).toBe("three");
+
+        // Pop again
+        const second = await redis.rpop(key);
+        expect(second).toBe("two");
+
+        // Verify remaining element
+        const remaining = await redis.lrange(key, 0, -1);
+        expect(remaining).toEqual(["one"]);
+
+        // Pop last element
+        const last = await redis.rpop(key);
+        expect(last).toBe("one");
+
+        // Pop from empty list should return null
+        const empty = await redis.rpop(key);
+        expect(empty).toBeNull();
+
+        // Non-existent key should return null
+        const nonExistent = await redis.rpop("nonexistent-list");
+        expect(nonExistent).toBeNull();
+      });
+
+      test("should push element to head only if key exists with LPUSHX", async () => {
+        const redis = ctx.redis;
+        const key = "lpushx-test";
+
+        // LPUSHX on non-existent key should return 0 and not create the key
+        const nonExistent = await redis.lpushx(key, "value");
+        expect(nonExistent).toBe(0);
+
+        // Verify key was not created
+        const exists = await redis.exists(key);
+        expect(exists).toBe(false);
+
+        // Create the list first
+        await redis.lpush(key, "initial");
+
+        // LPUSHX should now work
+        const result = await redis.lpushx(key, "new");
+        expect(result).toBe(2); // New length
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["new", "initial"]);
+
+        // Push multiple elements
+        const result2 = await redis.lpushx(key, "newer");
+        expect(result2).toBe(3);
+
+        const finalList = await redis.lrange(key, 0, -1);
+        expect(finalList).toEqual(["newer", "new", "initial"]);
+      });
+
+      test("should push element to tail only if key exists with RPUSHX", async () => {
+        const redis = ctx.redis;
+        const key = "rpushx-test";
+
+        // RPUSHX on non-existent key should return 0 and not create the key
+        const nonExistent = await redis.rpushx(key, "value");
+        expect(nonExistent).toBe(0);
+
+        // Verify key was not created
+        const exists = await redis.exists(key);
+        expect(exists).toBe(false);
+
+        // Create the list first
+        await redis.lpush(key, "initial");
+
+        // RPUSHX should now work
+        const result = await redis.rpushx(key, "new");
+        expect(result).toBe(2); // New length
+
+        // Verify the list
+        const list = await redis.lrange(key, 0, -1);
+        expect(list).toEqual(["initial", "new"]);
+
+        // Push multiple elements
+        const result2 = await redis.rpushx(key, "newer");
+        expect(result2).toBe(3);
+
+        const finalList = await redis.lrange(key, 0, -1);
+        expect(finalList).toEqual(["initial", "new", "newer"]);
+      });
     });
 
     describe("Set Operations", () => {
+      test("should get set cardinality with SCARD", async () => {
+        const redis = ctx.redis;
+        const key = "scard-test";
+
+        // Empty set
+        const count1 = await redis.scard(key);
+        expect(count1).toBe(0);
+
+        // Add members
+        await redis.sadd(key, "one", "two", "three");
+        const count2 = await redis.scard(key);
+        expect(count2).toBe(3);
+
+        // Adding duplicate doesn't change count
+        await redis.sadd(key, "two");
+        const count3 = await redis.scard(key);
+        expect(count3).toBe(3);
+      });
+
+      test("should get set difference with SDIFF", async () => {
+        const redis = ctx.redis;
+        const key1 = "sdiff-test1";
+        const key2 = "sdiff-test2";
+
+        await redis.sadd(key1, "a", "b", "c", "d");
+        await redis.sadd(key2, "c", "d", "e");
+
+        const diff = await redis.sdiff(key1, key2);
+        expect(diff.sort()).toEqual(["a", "b"]);
+
+        // Non-existent key
+        const diff2 = await redis.sdiff(key1, "nonexistent");
+        expect(diff2.sort()).toEqual(["a", "b", "c", "d"]);
+      });
+
+      test("should check set membership with SISMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "sismember-test";
+
+        await redis.sadd(key, "one", "two", "three");
+
+        const result1 = await redis.sismember(key, "one");
+        expect(result1).toBe(true);
+
+        const result2 = await redis.sismember(key, "nonexistent");
+        expect(result2).toBe(false);
+
+        const result3 = await redis.sismember("nonexistent", "member");
+        expect(result3).toBe(false);
+      });
+
+      test("should move member between sets with SMOVE", async () => {
+        const redis = ctx.redis;
+        const source = "smove-source";
+        const dest = "smove-dest";
+
+        await redis.sadd(source, "one", "two", "three");
+        await redis.sadd(dest, "four");
+
+        // Move existing member
+        const result1 = await redis.smove(source, dest, "one");
+        expect(result1).toBe(true);
+
+        // Verify move
+        const sourceMembers = await redis.smembers(source);
+        expect(sourceMembers.sort()).toEqual(["three", "two"]);
+
+        const destMembers = await redis.smembers(dest);
+        expect(destMembers.sort()).toEqual(["four", "one"]);
+
+        // Move non-existent member
+        const result2 = await redis.smove(source, dest, "nonexistent");
+        expect(result2).toBe(false);
+      });
+
+      test("should pop random member with SPOP", async () => {
+        const redis = ctx.redis;
+        const key = "spop-test";
+
+        await redis.sadd(key, "one", "two", "three", "four");
+
+        // Pop one member
+        const popped1 = await redis.spop(key);
+        expect(["one", "two", "three", "four"]).toContain<string | null>(popped1);
+
+        // Verify it was removed
+        const remaining1 = await redis.scard(key);
+        expect(remaining1).toBe(3);
+
+        // Pop multiple members
+        const popped2 = await redis.spop(key, 2);
+        expect(Array.isArray(popped2)).toBe(true);
+        expect(popped2).toBeDefined();
+        expect(popped2!.length).toBe(2);
+
+        // Verify removed
+        const remaining2 = await redis.scard(key);
+        expect(remaining2).toBe(1);
+
+        // Pop from empty set
+        await redis.spop(key);
+        const empty = await redis.spop(key);
+        expect(empty).toBeNull();
+      });
+
+      test("should publish to sharded channel with SPUBLISH", async () => {
+        const redis = ctx.redis;
+
+        // SPUBLISH returns number of subscribers (0 if no one listening)
+        const result = await redis.spublish("test-channel", "test-message");
+        expect(typeof result).toBe("number");
+        expect(result).toBeGreaterThanOrEqual(0);
+      });
+
+      test("should get random member with SRANDMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "srandmember-test";
+
+        await redis.sadd(key, "one", "two", "three");
+
+        // Get one random member
+        const member1 = await redis.srandmember(key);
+        expect(["one", "two", "three"]).toContain<string | null>(member1);
+
+        // Get multiple random members
+        const members = await redis.srandmember(key, 2);
+        expect(Array.isArray(members)).toBe(true);
+        expect(members!.length).toBeLessThanOrEqual(2);
+
+        // Verify NOT removed (unlike SPOP)
+        const count = await redis.scard(key);
+        expect(count).toBe(3);
+
+        // Empty set
+        const empty = await redis.srandmember("nonexistent");
+        expect(empty).toBeNull();
+      });
+
+      test("should remove members with SREM", async () => {
+        const redis = ctx.redis;
+        const key = "srem-test";
+
+        await redis.sadd(key, "one", "two", "three", "four");
+
+        // Remove one member
+        const count1 = await redis.srem(key, "one");
+        expect(count1).toBe(1);
+
+        // Remove multiple members
+        const count2 = await redis.srem(key, "two", "three");
+        expect(count2).toBe(2);
+
+        // Verify remaining
+        const remaining = await redis.smembers(key);
+        expect(remaining).toEqual(["four"]);
+
+        // Remove non-existent member
+        const count3 = await redis.srem(key, "nonexistent");
+        expect(count3).toBe(0);
+      });
+
+      test("should get set union with SUNION", async () => {
+        const redis = ctx.redis;
+        const key1 = "sunion-test1";
+        const key2 = "sunion-test2";
+
+        await redis.sadd(key1, "a", "b", "c");
+        await redis.sadd(key2, "c", "d", "e");
+
+        const union = await redis.sunion(key1, key2);
+        expect(union.sort()).toEqual(["a", "b", "c", "d", "e"]);
+
+        // With non-existent set
+        const union2 = await redis.sunion(key1, "nonexistent");
+        expect(union2.sort()).toEqual(["a", "b", "c"]);
+      });
+
+      test("should store set union with SUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "sunionstore-test1";
+        const key2 = "sunionstore-test2";
+        const dest = "sunionstore-dest";
+
+        await redis.sadd(key1, "a", "b", "c");
+        await redis.sadd(key2, "c", "d", "e");
+
+        // Store union
+        const count = await redis.sunionstore(dest, key1, key2);
+        expect(count).toBe(5);
+
+        // Verify stored
+        const stored = await redis.smembers(dest);
+        expect(stored.sort()).toEqual(["a", "b", "c", "d", "e"]);
+
+        // Overwrite existing destination
+        await redis.sadd(dest, "z");
+        const count2 = await redis.sunionstore(dest, key1, key2);
+        expect(count2).toBe(5);
+
+        const stored2 = await redis.smembers(dest);
+        expect(stored2.sort()).toEqual(["a", "b", "c", "d", "e"]);
+        expect(stored2).not.toContain("z");
+      });
+
       test("should return intersection of two sets with SINTER", async () => {
         const redis = ctx.redis;
         const key1 = "set1";
@@ -2112,9 +3120,501 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           await (redis as any).sscan();
         }).toThrowErrorMatchingInlineSnapshot(`"ERR wrong number of arguments for 'sscan' command"`);
       });
+
+      test("should get cardinality of set with SCARD", async () => {
+        const redis = ctx.redis;
+        const key = "scard-test";
+
+        // Empty set should have cardinality 0
+        const emptyCount = await redis.scard(key);
+        expect(emptyCount).toBe(0);
+
+        // Add members
+        await redis.sadd(key, "a");
+        await redis.sadd(key, "b");
+        await redis.sadd(key, "c");
+
+        // Should have 3 members
+        const count = await redis.scard(key);
+        expect(count).toBe(3);
+
+        // Adding duplicate should not change cardinality
+        await redis.sadd(key, "a");
+        const sameCount = await redis.scard(key);
+        expect(sameCount).toBe(3);
+      });
+
+      test("should get difference of sets with SDIFF", async () => {
+        const redis = ctx.redis;
+        const key1 = "sdiff-test1";
+        const key2 = "sdiff-test2";
+        const key3 = "sdiff-test3";
+
+        // Set up test sets
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+        await redis.sadd(key1, "d");
+
+        await redis.sadd(key2, "b");
+        await redis.sadd(key2, "c");
+
+        await redis.sadd(key3, "d");
+
+        // Difference between key1 and key2
+        const diff1 = await redis.sdiff(key1, key2);
+        expect(diff1.sort()).toEqual(["a", "d"]);
+
+        // Difference with multiple sets
+        const diff2 = await redis.sdiff(key1, key2, key3);
+        expect(diff2.sort()).toEqual(["a"]);
+
+        // Difference with non-existent set (should return all from first set)
+        const diff3 = await redis.sdiff(key1, "nonexistent");
+        expect(diff3.sort()).toEqual(["a", "b", "c", "d"]);
+
+        // Empty result
+        const diff4 = await redis.sdiff(key2, key1);
+        expect(diff4).toEqual([]);
+      });
+
+      test("should check if member exists in set with SISMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "sismember-test";
+
+        // Add members
+        await redis.sadd(key, "a");
+        await redis.sadd(key, "b");
+        await redis.sadd(key, "c");
+
+        // Check existing members
+        const exists1 = await redis.sismember(key, "a");
+        expect(exists1).toBe(true);
+
+        const exists2 = await redis.sismember(key, "b");
+        expect(exists2).toBe(true);
+
+        // Check non-existent member
+        const notExists = await redis.sismember(key, "z");
+        expect(notExists).toBe(false);
+
+        // Check on non-existent set
+        const notExistsSet = await redis.sismember("nonexistent", "a");
+        expect(notExistsSet).toBe(false);
+      });
+
+      test("should move member between sets with SMOVE", async () => {
+        const redis = ctx.redis;
+        const source = "smove-source";
+        const dest = "smove-dest";
+
+        // Set up source set
+        await redis.sadd(source, "a");
+        await redis.sadd(source, "b");
+        await redis.sadd(source, "c");
+
+        // Set up destination set
+        await redis.sadd(dest, "x");
+        await redis.sadd(dest, "y");
+
+        // Move member from source to dest
+        const moved = await redis.smove(source, dest, "b");
+        expect(moved).toBe(true);
+
+        // Verify source no longer has the member
+        const sourceMembers = await redis.smembers(source);
+        expect(sourceMembers.sort()).toEqual(["a", "c"]);
+
+        // Verify dest has the member
+        const destMembers = await redis.smembers(dest);
+        expect(destMembers.sort()).toEqual(["b", "x", "y"]);
+
+        // Try to move non-existent member
+        const notMoved = await redis.smove(source, dest, "z");
+        expect(notMoved).toBe(false);
+
+        // Try to move from non-existent set
+        const notMoved2 = await redis.smove("nonexistent", dest, "a");
+        expect(notMoved2).toBe(false);
+      });
+
+      test("should remove and return random member with SPOP", async () => {
+        const redis = ctx.redis;
+        const key = "spop-test";
+
+        // Add members
+        await redis.sadd(key, "a");
+        await redis.sadd(key, "b");
+        await redis.sadd(key, "c");
+        await redis.sadd(key, "d");
+        await redis.sadd(key, "e");
+
+        // Pop single member
+        const popped = await redis.spop(key);
+        expect(popped).toBeDefined();
+        expect(["a", "b", "c", "d", "e"]).toContain<string | null>(popped);
+
+        // Verify member was removed
+        const remaining = await redis.scard(key);
+        expect(remaining).toBe(4);
+
+        // Pop multiple members
+        const poppedMultiple = await redis.spop(key, 2);
+        expect(Array.isArray(poppedMultiple)).toBe(true);
+        expect(poppedMultiple!.length).toBe(2);
+        poppedMultiple!.forEach(member => {
+          expect(["a", "b", "c", "d", "e"]).toContain(member);
+        });
+
+        // Verify members were removed
+        const remainingAfter = await redis.scard(key);
+        expect(remainingAfter).toBe(2);
+
+        // Pop from empty set
+        await redis.spop(key, 10); // Pop all remaining
+        const emptyPop = await redis.spop(key);
+        expect(emptyPop).toBeNull();
+      });
+
+      test("should publish to sharded channel with SPUBLISH", async () => {
+        const redis = ctx.redis;
+        const channel = "spublish-channel";
+
+        // SPUBLISH returns number of subscribers
+        // With no subscribers, should return 0
+        const count = await redis.spublish(channel, "test message");
+        expect(typeof count).toBe("number");
+        expect(count).toBe(0);
+      });
+
+      test("should get random member without removing with SRANDMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "srandmember-test";
+
+        // Add members
+        await redis.sadd(key, "a");
+        await redis.sadd(key, "b");
+        await redis.sadd(key, "c");
+        await redis.sadd(key, "d");
+        await redis.sadd(key, "e");
+
+        // Get single random member
+        const random = await redis.srandmember(key);
+        expect(random).toBeDefined();
+        expect(["a", "b", "c", "d", "e"]).toContain<string | null>(random);
+
+        // Verify member was NOT removed
+        const count = await redis.scard(key);
+        expect(count).toBe(5);
+
+        // Get multiple random members
+        const randomMultiple = await redis.srandmember(key, 3);
+        expect(Array.isArray(randomMultiple)).toBe(true);
+        expect(randomMultiple!.length).toBe(3);
+        randomMultiple!.forEach(member => {
+          expect(["a", "b", "c", "d", "e"]).toContain(member);
+        });
+
+        // Verify members were NOT removed
+        const countAfter = await redis.scard(key);
+        expect(countAfter).toBe(5);
+
+        // Get with count larger than set size (no duplicates)
+        const tooMany = await redis.srandmember(key, 10);
+        expect(Array.isArray(tooMany)).toBe(true);
+        expect(tooMany!.length).toBe(5);
+
+        // Get with negative count (allows duplicates)
+        const withDuplicates = await redis.srandmember(key, -10);
+        expect(withDuplicates!.length).toBe(10);
+        withDuplicates!.forEach(member => {
+          expect(["a", "b", "c", "d", "e"]).toContain(member);
+        });
+
+        // Get from empty set
+        const emptyRandom = await redis.srandmember("nonexistent");
+        expect(emptyRandom).toBeNull();
+      });
+
+      test("should remove members from set with SREM", async () => {
+        const redis = ctx.redis;
+        const key = "srem-test";
+
+        // Add members
+        await redis.sadd(key, "a");
+        await redis.sadd(key, "b");
+        await redis.sadd(key, "c");
+        await redis.sadd(key, "d");
+        await redis.sadd(key, "e");
+
+        // Remove single member
+        const removed1 = await redis.srem(key, "a");
+        expect(removed1).toBe(1);
+
+        // Verify member was removed
+        const members1 = await redis.smembers(key);
+        expect(members1.sort()).toEqual(["b", "c", "d", "e"]);
+
+        // Remove multiple members
+        const removed2 = await redis.srem(key, "b", "c", "z");
+        expect(removed2).toBe(2); // "z" doesn't exist, so only 2 removed
+
+        // Verify members were removed
+        const members2 = await redis.smembers(key);
+        expect(members2.sort()).toEqual(["d", "e"]);
+
+        // Remove non-existent member
+        const removed3 = await redis.srem(key, "nonexistent");
+        expect(removed3).toBe(0);
+
+        // Remove from non-existent set
+        const removed4 = await redis.srem("nonexistent", "a");
+        expect(removed4).toBe(0);
+      });
+
+      test("should get union of sets with SUNION", async () => {
+        const redis = ctx.redis;
+        const key1 = "sunion-test1";
+        const key2 = "sunion-test2";
+        const key3 = "sunion-test3";
+
+        // Set up test sets
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+
+        await redis.sadd(key2, "c");
+        await redis.sadd(key2, "d");
+        await redis.sadd(key2, "e");
+
+        await redis.sadd(key3, "e");
+        await redis.sadd(key3, "f");
+        await redis.sadd(key3, "g");
+
+        // Union of two sets
+        const union1 = await redis.sunion(key1, key2);
+        expect(union1.sort()).toEqual(["a", "b", "c", "d", "e"]);
+
+        // Union of three sets
+        const union2 = await redis.sunion(key1, key2, key3);
+        expect(union2.sort()).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
+
+        // Union with non-existent set
+        const union3 = await redis.sunion(key1, "nonexistent");
+        expect(union3.sort()).toEqual(["a", "b", "c"]);
+
+        // Union with empty set
+        const union4 = await redis.sunion("nonexistent1", "nonexistent2");
+        expect(union4).toEqual([]);
+      });
+
+      test("should store union of sets with SUNIONSTORE", async () => {
+        const redis = ctx.redis;
+        const key1 = "sunionstore-test1";
+        const key2 = "sunionstore-test2";
+        const key3 = "sunionstore-test3";
+        const dest = "sunionstore-dest";
+
+        // Set up test sets
+        await redis.sadd(key1, "a");
+        await redis.sadd(key1, "b");
+        await redis.sadd(key1, "c");
+
+        await redis.sadd(key2, "c");
+        await redis.sadd(key2, "d");
+        await redis.sadd(key2, "e");
+
+        await redis.sadd(key3, "e");
+        await redis.sadd(key3, "f");
+
+        // Store union of two sets
+        const count1 = await redis.sunionstore(dest, key1, key2);
+        expect(count1).toBe(5);
+
+        // Verify destination has the union
+        const members1 = await redis.smembers(dest);
+        expect(members1.sort()).toEqual(["a", "b", "c", "d", "e"]);
+
+        // Store union of three sets (should overwrite destination)
+        const count2 = await redis.sunionstore(dest, key1, key2, key3);
+        expect(count2).toBe(6);
+
+        // Verify destination was overwritten
+        const members2 = await redis.smembers(dest);
+        expect(members2.sort()).toEqual(["a", "b", "c", "d", "e", "f"]);
+
+        // Store union with non-existent set
+        const count3 = await redis.sunionstore(dest, key1, "nonexistent");
+        expect(count3).toBe(3);
+
+        // Verify destination has only key1 members
+        const members3 = await redis.smembers(dest);
+        expect(members3.sort()).toEqual(["a", "b", "c"]);
+
+        // Store empty union
+        const count4 = await redis.sunionstore(dest, "nonexistent1", "nonexistent2");
+        expect(count4).toBe(0);
+
+        // Verify destination is empty
+        const members4 = await redis.smembers(dest);
+        expect(members4).toEqual([]);
+      });
     });
 
     describe("Sorted Set Operations", () => {
+      test("should get cardinality with ZCARD", async () => {
+        const redis = ctx.redis;
+        const key = "zcard-test";
+
+        // Empty set should return 0
+        const count1 = await redis.zcard(key);
+        expect(count1).toBe(0);
+
+        // Add members
+        await redis.zadd(key, 1, "one", 2, "two", 3, "three");
+
+        // Get cardinality
+        const count2 = await redis.zcard(key);
+        expect(count2).toBe(3);
+
+        // Add duplicate (updates score, doesn't increase count)
+        await redis.zadd(key, 4, "one");
+        const count3 = await redis.zcard(key);
+        expect(count3).toBe(3);
+      });
+
+      test("should pop max with ZPOPMAX", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmax-test";
+
+        // Add members with scores
+        await redis.zadd(key, 1, "one", 2, "two", 3, "three", 4, "four");
+
+        // Pop one max member
+        const result1 = await redis.zpopmax(key);
+        expect(result1).toEqual(["four", 4]);
+
+        // Pop two max members
+        const result2 = await redis.zpopmax(key, 2);
+        expect(result2).toEqual([
+          ["three", 3],
+          ["two", 2],
+        ]);
+
+        // Verify remaining member
+        const remaining = await redis.zcard(key);
+        expect(remaining).toBe(1);
+
+        // Pop from empty set
+        await redis.zpopmax(key);
+        const empty = await redis.zpopmax(key);
+        expect(empty).toEqual([]);
+      });
+
+      test("should pop min with ZPOPMIN", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmin-test";
+
+        // Add members with scores
+        await redis.zadd(key, 1, "one", 2, "two", 3, "three", 4, "four");
+
+        // Pop one min member
+        const result1 = await redis.zpopmin(key);
+        expect(result1).toEqual(["one", 1]);
+
+        // Pop two min members
+        const result2 = await redis.zpopmin(key, 2);
+        expect(result2).toEqual([
+          ["two", 2],
+          ["three", 3],
+        ]);
+
+        // Verify remaining member
+        const remaining = await redis.zcard(key);
+        expect(remaining).toBe(1);
+
+        // Pop from empty set
+        await redis.zpopmin(key);
+        const empty = await redis.zpopmin(key);
+        expect(empty).toEqual([]);
+      });
+
+      test("should get random member with ZRANDMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "zrandmember-test";
+
+        // Add members
+        await redis.zadd(key, 1, "one", 2, "two", 3, "three");
+
+        // Get one random member
+        const result1 = await redis.zrandmember(key);
+        expect(result1).toBeDefined();
+        expect(["one", "two", "three"]).toContain<string | null>(result1);
+
+        // Get multiple random members (without scores)
+        const result2 = await redis.zrandmember(key, 2);
+        expect(Array.isArray(result2)).toBe(true);
+        expect(result2!.length).toBeLessThanOrEqual(2);
+
+        result2!.forEach((member: string) => {
+          expect(["one", "two", "three"]).toContain(member);
+        });
+
+        // Get with scores
+        const result3 = await redis.zrandmember(key, 1, "WITHSCORES");
+
+        expect<([string, number][] | null)[]>([[["one", 1]], [["two", 2]], [["three", 3]]]).toContainEqual(result3);
+
+        // Empty set
+        const emptyKey = "zrandmember-empty-" + randomUUIDv7();
+        const empty = await redis.zrandmember(emptyKey);
+        expect(empty).toBeNull();
+      });
+
+      test("should get rank with ZRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zrank-test";
+
+        // Add members with scores
+        await redis.zadd(key, 1, "one", 2, "two", 3, "three");
+
+        // Get ranks (0-indexed, ascending)
+        const rank1 = await redis.zrank(key, "one");
+        expect(rank1).toBe(0);
+
+        const rank2 = await redis.zrank(key, "two");
+        expect(rank2).toBe(1);
+
+        const rank3 = await redis.zrank(key, "three");
+        expect(rank3).toBe(2);
+
+        // Non-existent member
+        const rank4 = await redis.zrank(key, "nonexistent");
+        expect(rank4).toBeNull();
+      });
+
+      test("should get reverse rank with ZREVRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrank-test";
+
+        // Add members with scores
+        await redis.zadd(key, 1, "one", 2, "two", 3, "three");
+
+        // Get reverse ranks (0-indexed, descending)
+        const rank1 = await redis.zrevrank(key, "three");
+        expect(rank1).toBe(0);
+
+        const rank2 = await redis.zrevrank(key, "two");
+        expect(rank2).toBe(1);
+
+        const rank3 = await redis.zrevrank(key, "one");
+        expect(rank3).toBe(2);
+
+        // Non-existent member
+        const rank4 = await redis.zrevrank(key, "nonexistent");
+        expect(rank4).toBeNull();
+      });
+
       test("should increment score with ZINCRBY", async () => {
         const redis = ctx.redis;
         const key = "zincrby-test";
@@ -2378,52 +3878,42 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zincrby({} as any, 1, "member");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zincrby'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zincrby'."`);
       });
 
       test("should reject invalid key in ZCOUNT", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zcount([] as any, 0, 10);
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zcount'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zcount'."`);
       });
 
       test("should reject invalid key in ZLEXCOUNT", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zlexcount(null as any, "[a", "[z");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zlexcount'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zlexcount'."`);
       });
 
       test("should reject invalid key in ZREMRANGEBYRANK", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zremrangebyrank({} as any, 0, 10);
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zremrangebyrank'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zremrangebyrank'."`);
       });
 
       test("should reject invalid key in ZREMRANGEBYSCORE", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zremrangebyscore([] as any, 0, 10);
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zremrangebyscore'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zremrangebyscore'."`);
       });
 
       test("should reject invalid key in ZREMRANGEBYLEX", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zremrangebylex(null as any, "[a", "[z");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zremrangebylex'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zremrangebylex'."`);
       });
 
       test("should remove one or more members with ZREM", async () => {
@@ -2699,19 +4189,35 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         }
         await Promise.all(promises);
 
-        // Scan with COUNT hint
-        const [cursor, elements] = await redis.zscan(key, "0", "COUNT", "10");
+        // Scan with COUNT hint - loop until cursor returns to "0"
+        let cursor = "0";
+        const allElements: string[] = [];
+        do {
+          const [nextCursor, elements] = await redis.zscan(key, cursor, "COUNT", "10");
+          allElements.push(...elements);
+          cursor = nextCursor;
+        } while (cursor !== "0");
 
-        expect(cursor).toBe("0"); // Should complete in one scan since we know the size
-        // COUNT is a hint, so we might get more or fewer elements
-        // Just verify we got some elements back
-        expect(elements.length).toBeGreaterThan(0);
-        expect(Array.isArray(elements)).toBe(true);
+        // Should have member-score pairs (200 elements total: 100 members + 100 scores)
+        expect(allElements.length).toBe(200);
 
-        const [cursor2, elements2] = await redis.zscan(key, 0, "COUNT", "10");
-        expect(cursor2).toBe("0");
-        expect(elements2.length).toBeGreaterThan(0);
-        expect(Array.isArray(elements2)).toBe(true);
+        // Verify we got all members (check every other element for member names)
+        const members = allElements.filter((_, index) => index % 2 === 0);
+        expect(members.length).toBe(100);
+        for (let i = 0; i < 100; i++) {
+          expect(members).toContain(`member:${i}`);
+        }
+
+        // Test with numeric cursor
+        cursor = 0 as any;
+        const allElements2: string[] = [];
+        do {
+          const [nextCursor, elements] = await redis.zscan(key, cursor, "COUNT", "10");
+          allElements2.push(...elements);
+          cursor = nextCursor;
+        } while (cursor !== "0");
+
+        expect(allElements2.length).toBe(200);
       });
 
       test("should reject invalid key in ZADD", async () => {
@@ -3097,6 +4603,364 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(limited3).toEqual(["f", "g"]);
       });
 
+      test("should get cardinality of sorted set with ZCARD", async () => {
+        const redis = ctx.redis;
+        const key = "zcard-test";
+
+        // Check cardinality of non-existent key
+        const count0 = await redis.zcard(key);
+        expect(count0).toBe(0);
+
+        // Add members to sorted set
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three"]);
+
+        // Check cardinality
+        const count1 = await redis.zcard(key);
+        expect(count1).toBe(3);
+
+        // Add more members
+        await redis.send("ZADD", [key, "4", "four", "5", "five"]);
+
+        // Check updated cardinality
+        const count2 = await redis.zcard(key);
+        expect(count2).toBe(5);
+      });
+
+      test("should pop member with lowest score using ZPOPMIN", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmin-test";
+
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        const result1 = await redis.zpopmin(key);
+        expect(result1).toEqual(["one", 1]);
+
+        const result2 = await redis.zpopmin(key);
+        expect(result2).toEqual(["two", 2]);
+
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(3);
+      });
+
+      test("should pop multiple members with ZPOPMIN using COUNT", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmin-count-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Pop 3 members with lowest scores
+        const result = await redis.zpopmin(key, 3);
+        expect(result).toEqual([
+          ["one", 1],
+          ["two", 2],
+          ["three", 3],
+        ]);
+
+        // Verify remaining count
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(2);
+      });
+
+      test("should return empty array when ZPOPMIN on empty set", async () => {
+        const redis = ctx.redis;
+        const emptyKey = "zpopmin-empty-test";
+
+        // Try to pop from empty set
+        const result = await redis.zpopmin(emptyKey);
+        expect(result).toEqual([]);
+      });
+
+      test("should handle ties in score with ZPOPMIN", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmin-tie-test";
+
+        // Add members with same scores
+        await redis.send("ZADD", [key, "1", "a", "1", "b", "1", "c", "2", "d"]);
+
+        // Pop 2 members (should get lexicographically first members with same score)
+        const result = await redis.zpopmin(key, 2);
+        expect(result).toEqual([
+          ["a", 1],
+          ["b", 1],
+        ]);
+
+        // Verify remaining count
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(2);
+      });
+
+      test("should pop member with highest score using ZPOPMAX", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmax-test";
+
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        const result1 = await redis.zpopmax(key);
+        expect(result1).toEqual(["five", 5]);
+
+        const result2 = await redis.zpopmax(key);
+        expect(result2).toEqual(["four", 4]);
+
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(3);
+      });
+
+      test("should pop multiple members with ZPOPMAX using COUNT", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmax-count-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Pop 3 members with highest scores
+        const result = await redis.zpopmax(key, 3);
+        expect(result).toEqual([
+          ["five", 5],
+          ["four", 4],
+          ["three", 3],
+        ]);
+
+        // Verify remaining count
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(2);
+      });
+
+      test("should return empty array when ZPOPMAX on empty set", async () => {
+        const redis = ctx.redis;
+        const emptyKey = "zpopmax-empty-test";
+
+        // Try to pop from empty set
+        const result = await redis.zpopmax(emptyKey);
+        expect(result).toEqual([]);
+      });
+
+      test("should handle ties in score with ZPOPMAX", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmax-tie-test";
+
+        // Add members with same scores
+        await redis.send("ZADD", [key, "1", "a", "2", "b", "2", "c", "2", "d"]);
+
+        // Pop 2 members (should get lexicographically last members with same score)
+        const result = await redis.zpopmax(key, 2);
+        expect(result).toEqual([
+          ["d", 2],
+          ["c", 2],
+        ]);
+
+        // Verify remaining count
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(2);
+      });
+
+      test("should get random member with ZRANDMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "zrandmember-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get single random member
+        const result = await redis.zrandmember(key);
+        expect(result).toBeDefined();
+        expect(typeof result).toBe("string");
+        expect(["one", "two", "three", "four", "five"]).toContain<string | null>(result);
+      });
+
+      test("should return null when ZRANDMEMBER on empty set", async () => {
+        const redis = ctx.redis;
+        const emptyKey = "zrandmember-empty-test";
+
+        // Try to get random member from empty set
+        const result = await redis.zrandmember(emptyKey);
+        expect(result).toBeNull();
+      });
+
+      test("should get multiple random members with ZRANDMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "zrandmember-count-test";
+
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three"]);
+
+        const result = await redis.zrandmember(key, 2);
+        expect(result).toBeDefined();
+        expect(Array.isArray(result)).toBe(true);
+        expect(result!.length).toBe(2);
+
+        for (const member of result!) {
+          expect(["one", "two", "three"]).toContain(member);
+        }
+
+        const count = await redis.send("ZCARD", [key]);
+        expect(count).toBe(3);
+      });
+
+      test("should get random members with scores using WITHSCORES in ZRANDMEMBER", async () => {
+        const redis = ctx.redis;
+        const key = "zrandmember-withscores-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1.5", "one", "2.7", "two", "3.9", "three"]);
+
+        // Get 2 random members with scores
+        const result = await redis.zrandmember(key, 2, "WITHSCORES");
+        expect(result).toBeDefined();
+        expect(Array.isArray(result)).toBe(true);
+        expect(result!.length).toBe(2);
+
+        for (const item of result!) {
+          expect(Array.isArray(item)).toBe(true);
+          expect(item.length).toBe(2);
+          expect(typeof item[0]).toBe("string");
+          expect(typeof item[1]).toBe("number");
+          expect(["one", "two", "three"]).toContain(item[0]);
+        }
+      });
+
+      test("should allow negative count for ZRANDMEMBER to allow duplicates", async () => {
+        const redis = ctx.redis;
+        const key = "zrandmember-negative-test";
+
+        // Add members
+        await redis.send("ZADD", [key, "1", "one", "2", "two"]);
+
+        // Get 5 random members with negative count (allows duplicates)
+        const result = await redis.zrandmember(key, -5);
+        expect(result).toBeDefined();
+        expect(Array.isArray(result)).toBe(true);
+        expect(result!.length).toBe(5);
+
+        for (const member of result!) {
+          expect(["one", "two"]).toContain(member);
+        }
+      });
+
+      test("should get rank of member with ZRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zrank-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get rank of members (0-indexed, lowest score has rank 0)
+        const rank1 = await redis.zrank(key, "one");
+        expect(rank1).toBe(0);
+
+        const rank2 = await redis.zrank(key, "three");
+        expect(rank2).toBe(2);
+
+        const rank3 = await redis.zrank(key, "five");
+        expect(rank3).toBe(4);
+
+        // Non-existent member should return null
+        const rank4 = await redis.zrank(key, "nonexistent");
+        expect(rank4).toBeNull();
+      });
+
+      test("should get rank with score using WITHSCORE in ZRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zrank-withscore-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1.5", "one", "2.7", "two", "3.9", "three"]);
+
+        // Get rank with score
+        const result = await redis.zrank(key, "two", "WITHSCORE");
+        expect(result).toEqual([1, 2.7]);
+
+        // First member
+        const result2 = await redis.zrank(key, "one", "WITHSCORE");
+        expect(result2).toEqual([0, 1.5]);
+
+        // Non-existent member should return null
+        const result3 = await redis.zrank(key, "nonexistent", "WITHSCORE");
+        expect(result3).toBeNull();
+      });
+
+      test("should handle ties in score with ZRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zrank-tie-test";
+
+        // Add members with same scores
+        await redis.send("ZADD", [key, "1", "a", "1", "b", "1", "c", "2", "d"]);
+
+        // Members with same score are ordered lexicographically
+        const rankA = await redis.zrank(key, "a");
+        expect(rankA).toBe(0);
+
+        const rankB = await redis.zrank(key, "b");
+        expect(rankB).toBe(1);
+
+        const rankC = await redis.zrank(key, "c");
+        expect(rankC).toBe(2);
+
+        const rankD = await redis.zrank(key, "d");
+        expect(rankD).toBe(3);
+      });
+
+      test("should get reverse rank of member with ZREVRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrank-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
+
+        // Get reverse rank (0-indexed from highest score)
+        const rank1 = await redis.zrevrank(key, "five");
+        expect(rank1).toBe(0);
+
+        const rank2 = await redis.zrevrank(key, "three");
+        expect(rank2).toBe(2);
+
+        const rank3 = await redis.zrevrank(key, "one");
+        expect(rank3).toBe(4);
+
+        // Non-existent member should return null
+        const rank4 = await redis.zrevrank(key, "nonexistent");
+        expect(rank4).toBeNull();
+      });
+
+      test("should get reverse rank with score using WITHSCORE in ZREVRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrank-withscore-test";
+
+        // Add members with scores
+        await redis.send("ZADD", [key, "1.5", "one", "2.7", "two", "3.9", "three"]);
+
+        // Get reverse rank with score
+        const result = await redis.zrevrank(key, "two", "WITHSCORE");
+        expect(result).toEqual([1, 2.7]);
+
+        // Highest score member (reverse rank 0)
+        const result2 = await redis.zrevrank(key, "three", "WITHSCORE");
+        expect(result2).toEqual([0, 3.9]);
+
+        // Non-existent member should return null
+        const result3 = await redis.zrevrank(key, "nonexistent", "WITHSCORE");
+        expect(result3).toBeNull();
+      });
+
+      test("should handle ties in score with ZREVRANK", async () => {
+        const redis = ctx.redis;
+        const key = "zrevrank-tie-test";
+
+        // Add members with same scores
+        await redis.send("ZADD", [key, "1", "a", "2", "b", "2", "c", "2", "d"]);
+
+        // Members with same score are ordered lexicographically (reverse)
+        const rankD = await redis.zrevrank(key, "d");
+        expect(rankD).toBe(0);
+
+        const rankC = await redis.zrevrank(key, "c");
+        expect(rankC).toBe(1);
+
+        const rankB = await redis.zrevrank(key, "b");
+        expect(rankB).toBe(2);
+
+        const rankA = await redis.zrevrank(key, "a");
+        expect(rankA).toBe(3);
+      });
       test("should reject invalid key in ZRANGEBYSCORE", async () => {
         const redis = ctx.redis;
         expect(async () => {
@@ -3119,9 +4983,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrangebylex(null as any, "-", "+");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zrangebylex'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
       });
 
       test("should return members in reverse lexicographical order with ZREVRANGEBYLEX", async () => {
@@ -3718,17 +5580,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "zmpop-min-test";
 
-        // Add members with scores
         await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
 
-        // Pop member with lowest score
         const result1 = await redis.zmpop(1, key, "MIN");
-        expect(result1).toBeDefined();
-        expect(result1).not.toBeNull();
-        expect(result1![0]).toBe(key);
-        expect(result1![1]).toEqual([["one", 1]]);
+        expect(result1).toEqual([key, [["one", 1]]]);
 
-        // Verify remaining count
         const count = await redis.send("ZCARD", [key]);
         expect(count).toBe(4);
       });
@@ -3737,17 +5593,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "zmpop-max-test";
 
-        // Add members with scores
         await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
 
-        // Pop member with highest score
         const result1 = await redis.zmpop(1, key, "MAX");
-        expect(result1).toBeDefined();
-        expect(result1).not.toBeNull();
-        expect(result1![0]).toBe(key);
-        expect(result1![1]).toEqual([["five", 5]]);
+        expect(result1).toEqual([key, [["five", 5]]]);
 
-        // Verify remaining count
         const count = await redis.send("ZCARD", [key]);
         expect(count).toBe(4);
       });
@@ -3756,10 +5606,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "zmpop-count-test";
 
-        // Add members with scores
         await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three", "4", "four", "5", "five"]);
 
-        // Pop 3 members with lowest scores
         const result = await redis.zmpop(1, key, "MIN", "COUNT", 3);
         expect(result).toBeDefined();
         expect(result).not.toBeNull();
@@ -3795,10 +5643,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         // Pop from multiple keys (should get from key2)
         const result = await redis.zmpop(3, key1, key2, key3, "MIN");
-        expect(result).toBeDefined();
-        expect(result).not.toBeNull();
-        expect(result![0]).toBe(key2);
-        expect(result![1]).toEqual([["one", 1]]);
+        expect(result).toEqual([key2, [["one", 1]]]);
       });
 
       test("should block and pop with BZMPOP", async () => {
@@ -3810,12 +5655,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         // Use short timeout for testing
         const result = await redis.bzmpop(0.1, 1, key, "MIN");
-        expect(result).toBeDefined();
-        expect(result).not.toBeNull();
-        expect(result![0]).toBe(key);
-        expect(result![1]).toEqual([["one", 1]]);
+        expect(result).toEqual([key, [["one", 1]]]);
 
-        // Verify member was removed
         const count = await redis.send("ZCARD", [key]);
         expect(count).toBe(1);
       });
@@ -3824,7 +5665,6 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const emptyKey = "bzmpop-timeout-test";
 
-        // Try to pop from empty set with short timeout
         const result = await redis.bzmpop(0.1, 1, emptyKey, "MIN");
         expect(result).toBeNull();
       });
@@ -3833,10 +5673,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         const key = "bzmpop-count-test";
 
-        // Add members to the set
         await redis.send("ZADD", [key, "1", "one", "2", "two", "3", "three"]);
 
-        // Pop 2 members with short timeout
         const result = await redis.bzmpop(0.5, 1, key, "MAX", "COUNT", 2);
         expect(result).toBeDefined();
         expect(result).not.toBeNull();
@@ -3863,6 +5701,64 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(async () => {
           await redis.bzmpop(1, {} as any, "key1", "MIN");
         }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'bzmpop'."`);
+      });
+
+      test("should pop member with highest score using ZPOPMAX", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmax-test";
+
+        // Add members to sorted set
+        await redis.zadd(key, 1.0, "one", 2.0, "two", 3.0, "three");
+
+        // Pop highest score
+        const result = await redis.zpopmax(key);
+        expect(result).toBeDefined();
+        expect(result).not.toBeNull();
+        expect(Array.isArray(result)).toBe(true);
+        expect(result).toHaveLength(2);
+        expect(result![0]).toBe("three");
+        expect(result![1]).toBe(3);
+
+        // Verify member was removed
+        const count = await redis.zcard(key);
+        expect(count).toBe(2);
+      });
+
+      test("should pop member with lowest score using ZPOPMIN", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmin-test";
+
+        // Add members to sorted set
+        await redis.zadd(key, 1.0, "one", 2.0, "two", 3.0, "three");
+
+        // Pop lowest score
+        const result = await redis.zpopmin(key);
+        expect(result).toBeDefined();
+        expect(result).not.toBeNull();
+        expect(Array.isArray(result)).toBe(true);
+        expect(result).toHaveLength(2);
+        expect(result![0]).toBe("one");
+        expect(result![1]).toBe(1);
+
+        // Verify member was removed
+        const count = await redis.zcard(key);
+        expect(count).toBe(2);
+      });
+
+      test("should return empty array for ZPOPMAX on empty set", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmax-empty-test";
+
+        const result = await redis.zpopmax(key);
+        expect(result).toEqual([]);
+      });
+
+      test("should return empty array for ZPOPMIN on empty set", async () => {
+        const redis = ctx.redis;
+        const key = "zpopmin-empty-test";
+
+        const result = await redis.zpopmin(key);
+        expect(result).toEqual([]);
       });
 
       test("should block and pop lowest score with BZPOPMIN", async () => {
@@ -3975,6 +5871,210 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
     });
 
     describe("Hash Operations", () => {
+      test("should increment hash field by integer with HINCRBY", async () => {
+        const redis = ctx.redis;
+        const key = "hincrby-test";
+
+        // Increment non-existent field (creates it)
+        const val1 = await redis.hincrby(key, "field1", 5);
+        expect(val1).toBe(5);
+
+        // Increment existing field
+        const val2 = await redis.hincrby(key, "field1", 3);
+        expect(val2).toBe(8);
+
+        // Decrement
+        const val3 = await redis.hincrby(key, "field1", -2);
+        expect(val3).toBe(6);
+      });
+
+      test("should increment hash field by float with HINCRBYFLOAT", async () => {
+        const redis = ctx.redis;
+        const key = "hincrbyfloat-test";
+
+        const val1 = await redis.hincrbyfloat(key, "field1", 2.5);
+        expect(val1).toBe("2.5");
+
+        const val2 = await redis.hincrbyfloat(key, "field1", 1.3);
+        expect(Number.parseFloat(val2)).toBeCloseTo(3.8);
+
+        const val3 = await redis.hincrbyfloat(key, "field1", -0.8);
+        expect(Number.parseFloat(val3)).toBeCloseTo(3.0);
+      });
+
+      test("should get all hash keys with HKEYS", async () => {
+        const redis = ctx.redis;
+        const key = "hkeys-test";
+
+        // Empty hash
+        const keys1 = await redis.hkeys(key);
+        expect(keys1).toEqual([]);
+
+        // Add fields
+        await redis.hset(key, "field1", "value1", "field2", "value2", "field3", "value3");
+
+        const keys2 = await redis.hkeys(key);
+        expect(keys2.sort()).toEqual(["field1", "field2", "field3"]);
+      });
+
+      test("should get hash length with HLEN", async () => {
+        const redis = ctx.redis;
+        const key = "hlen-test";
+
+        // Empty hash
+        const len1 = await redis.hlen(key);
+        expect(len1).toBe(0);
+
+        // Add fields
+        await redis.hset(key, "field1", "value1", "field2", "value2");
+        const len2 = await redis.hlen(key);
+        expect(len2).toBe(2);
+
+        // Add more
+        await redis.hset(key, "field3", "value3");
+        const len3 = await redis.hlen(key);
+        expect(len3).toBe(3);
+      });
+
+      test("should get multiple hash values with HMGET", async () => {
+        const redis = ctx.redis;
+        const key = "hmget-test";
+
+        await redis.hset(key, "field1", "value1", "field2", "value2", "field3", "value3");
+
+        // Get multiple fields
+        const values = await redis.hmget(key, "field1", "field2", "field3");
+        expect(values).toEqual(["value1", "value2", "value3"]);
+
+        // Mix existing and non-existing
+        const mixed = await redis.hmget(key, "field1", "nonexistent", "field2");
+        expect(mixed).toEqual(["value1", null, "value2"]);
+      });
+
+      test("should get all hash values with HVALS", async () => {
+        const redis = ctx.redis;
+        const key = "hvals-test";
+
+        // Empty hash
+        const vals1 = await redis.hvals(key);
+        expect(vals1).toEqual([]);
+
+        // Add fields
+        await redis.hset(key, "field1", "value1", "field2", "value2", "field3", "value3");
+
+        const vals2 = await redis.hvals(key);
+        expect(vals2.sort()).toEqual(["value1", "value2", "value3"]);
+      });
+
+      test("should get hash field string length with HSTRLEN", async () => {
+        const redis = ctx.redis;
+        const key = "hstrlen-test";
+
+        await redis.hset(key, "field1", "Hello", "field2", "World!");
+
+        const len1 = await redis.hstrlen(key, "field1");
+        expect(len1).toBe(5);
+
+        const len2 = await redis.hstrlen(key, "field2");
+        expect(len2).toBe(6);
+
+        // Non-existent field
+        const len3 = await redis.hstrlen(key, "nonexistent");
+        expect(len3).toBe(0);
+      });
+
+      test("should set hash field expiration with HEXPIRE", async () => {
+        const redis = ctx.redis;
+        const key = "hexpire-test";
+
+        await redis.hset(key, "field1", "value1", "field2", "value2");
+
+        // Set expiration on field1
+        const result = await redis.hexpire(key, 60, "FIELDS", 1, "field1");
+        expect(result).toEqual([1]);
+
+        // Verify TTL is set
+        const ttl = await redis.httl(key, "FIELDS", 1, "field1");
+        expect(ttl[0]).toBeGreaterThan(0);
+        expect(ttl[0]).toBeLessThanOrEqual(60);
+      });
+
+      test("should set hash field expiration at timestamp with HEXPIREAT", async () => {
+        const redis = ctx.redis;
+        const key = "hexpireat-test";
+
+        await redis.hset(key, "field1", "value1");
+
+        const futureTs = Math.floor(Date.now() / 1000) + 60;
+        const result = await redis.hexpireat(key, futureTs, "FIELDS", 1, "field1");
+        expect(result).toEqual([1]);
+
+        const ttl = await redis.httl(key, "FIELDS", 1, "field1");
+        expect(ttl[0]).toBeGreaterThan(0);
+      });
+
+      test("should get hash field expiration time with HEXPIRETIME", async () => {
+        const redis = ctx.redis;
+        const key = "hexpiretime-test";
+
+        await redis.hset(key, "field1", "value1");
+
+        const futureTs = Math.floor(Date.now() / 1000) + 60;
+        await redis.hexpireat(key, futureTs, "FIELDS", 1, "field1");
+
+        const expireTime = await redis.hexpiretime(key, "FIELDS", 1, "field1");
+        expect(expireTime[0]).toBeGreaterThan(0);
+        expect(expireTime[0]).toBeLessThanOrEqual(futureTs);
+      });
+
+      test("should remove hash field expiration with HPERSIST", async () => {
+        const redis = ctx.redis;
+        const key = "hpersist-test";
+
+        await redis.hset(key, "field1", "value1");
+        await redis.hexpire(key, 60, "FIELDS", 1, "field1");
+
+        // Verify expiration is set
+        const ttlBefore = await redis.httl(key, "FIELDS", 1, "field1");
+        expect(ttlBefore[0]).toBeGreaterThan(0);
+
+        // Remove expiration
+        const result = await redis.hpersist(key, "FIELDS", 1, "field1");
+        expect(result).toEqual([1]);
+
+        // Verify no expiration
+        const ttlAfter = await redis.httl(key, "FIELDS", 1, "field1");
+        expect(ttlAfter[0]).toBe(-1);
+      });
+
+      test("should set hash field expiration at timestamp in ms with HPEXPIREAT", async () => {
+        const redis = ctx.redis;
+        const key = "hpexpireat-test";
+
+        await redis.hset(key, "field1", "value1");
+
+        const futureTs = Date.now() + 5000;
+        const result = await redis.hpexpireat(key, futureTs, "FIELDS", 1, "field1");
+        expect(result).toEqual([1]);
+
+        const pttl = await redis.hpttl(key, "FIELDS", 1, "field1");
+        expect(pttl[0]).toBeGreaterThan(0);
+      });
+
+      test("should get hash field expiration time in ms with HPEXPIRETIME", async () => {
+        const redis = ctx.redis;
+        const key = "hpexpiretime-test";
+
+        await redis.hset(key, "field1", "value1");
+
+        const futureTs = Date.now() + 5000;
+        await redis.hpexpireat(key, futureTs, "FIELDS", 1, "field1");
+
+        const pexpireTime = await redis.hpexpiretime(key, "FIELDS", 1, "field1");
+        expect(pexpireTime[0]).toBeGreaterThan(0);
+        expect(pexpireTime[0]).toBeLessThanOrEqual(futureTs);
+      });
+
       test("should set hash fields using object syntax", async () => {
         const redis = ctx.redis;
         const key = "hash-object-test";
@@ -4592,6 +6692,286 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(result).toBeInstanceOf(Array);
         // COUNT is a hint, so we just check we got some results
         expect(result.length).toBeGreaterThan(0);
+      });
+
+      test("should increment hash field by integer using hincrby", async () => {
+        const redis = ctx.redis;
+        const key = "hincrby-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { counter: "10" });
+
+        const result1 = await redis.hincrby(key, "counter", 5);
+        expect(result1).toBe(15);
+
+        const result2 = await redis.hincrby(key, "counter", -3);
+        expect(result2).toBe(12);
+
+        const value = await redis.hget(key, "counter");
+        expect(value).toBe("12");
+      });
+
+      test("should increment hash field from zero using hincrby", async () => {
+        const redis = ctx.redis;
+        const key = "hincrby-zero-test:" + randomUUIDv7().substring(0, 8);
+
+        const result = await redis.hincrby(key, "newfield", 42);
+        expect(result).toBe(42);
+
+        const value = await redis.hget(key, "newfield");
+        expect(value).toBe("42");
+      });
+
+      test("should increment hash field by float using hincrbyfloat", async () => {
+        const redis = ctx.redis;
+        const key = "hincrbyfloat-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { price: "10.5" });
+
+        const result1 = await redis.hincrbyfloat(key, "price", 2.3);
+        expect(result1).toBe("12.8");
+
+        const result2 = await redis.hincrbyfloat(key, "price", -0.8);
+        expect(result2).toBe("12");
+
+        const value = await redis.hget(key, "price");
+        expect(value).toBe("12");
+      });
+
+      test("should increment hash field from zero using hincrbyfloat", async () => {
+        const redis = ctx.redis;
+        const key = "hincrbyfloat-zero-test:" + randomUUIDv7().substring(0, 8);
+
+        const result = await redis.hincrbyfloat(key, "newfield", 3.14);
+        expect(result).toBe("3.14");
+
+        const value = await redis.hget(key, "newfield");
+        expect(value).toBe("3.14");
+      });
+
+      test("should get all hash keys using hkeys", async () => {
+        const redis = ctx.redis;
+        const key = "hkeys-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const keys = await redis.hkeys(key);
+        expect(keys).toBeInstanceOf(Array);
+        expect(keys.length).toBe(3);
+        expect(keys).toContain("name");
+        expect(keys).toContain("age");
+        expect(keys).toContain("city");
+      });
+
+      test("should return empty array for non-existent key using hkeys", async () => {
+        const redis = ctx.redis;
+        const key = "hkeys-nonexistent:" + randomUUIDv7().substring(0, 8);
+
+        const keys = await redis.hkeys(key);
+        expect(keys).toEqual([]);
+      });
+
+      test("should get hash length using hlen", async () => {
+        const redis = ctx.redis;
+        const key = "hlen-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const length = await redis.hlen(key);
+        expect(length).toBe(3);
+
+        await redis.hset(key, { country: "USA" });
+        const newLength = await redis.hlen(key);
+        expect(newLength).toBe(4);
+      });
+
+      test("should return 0 for non-existent key using hlen", async () => {
+        const redis = ctx.redis;
+        const key = "hlen-nonexistent:" + randomUUIDv7().substring(0, 8);
+
+        const length = await redis.hlen(key);
+        expect(length).toBe(0);
+      });
+
+      test("should get multiple hash values using hmget", async () => {
+        const redis = ctx.redis;
+        const key = "hmget-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const values = await redis.hmget(key, ["name", "age", "city"]);
+        expect(values).toEqual(["John", "30", "NYC"]);
+      });
+
+      test("should return null for missing fields using hmget", async () => {
+        const redis = ctx.redis;
+        const key = "hmget-missing-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const values = await redis.hmget(key, ["name", "age", "city"]);
+        expect(values).toEqual(["John", null, null]);
+      });
+
+      test("should get all hash values using hvals", async () => {
+        const redis = ctx.redis;
+        const key = "hvals-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const values = await redis.hvals(key);
+        expect(values).toBeInstanceOf(Array);
+        expect(values.length).toBe(3);
+        expect(values).toContain("John");
+        expect(values).toContain("30");
+        expect(values).toContain("NYC");
+      });
+
+      test("should return empty array for non-existent key using hvals", async () => {
+        const redis = ctx.redis;
+        const key = "hvals-nonexistent:" + randomUUIDv7().substring(0, 8);
+
+        const values = await redis.hvals(key);
+        expect(values).toEqual([]);
+      });
+
+      test("should get hash field string length using hstrlen", async () => {
+        const redis = ctx.redis;
+        const key = "hstrlen-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", description: "Software Engineer" });
+
+        const nameLen = await redis.hstrlen(key, "name");
+        expect(nameLen).toBe(4); // "John" has 4 characters
+
+        const descLen = await redis.hstrlen(key, "description");
+        expect(descLen).toBe(17); // "Software Engineer" has 17 characters
+      });
+
+      test("should return 0 for non-existent field using hstrlen", async () => {
+        const redis = ctx.redis;
+        const key = "hstrlen-nonexistent:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John" });
+
+        const length = await redis.hstrlen(key, "age");
+        expect(length).toBe(0);
+      });
+
+      test("should expire hash fields using hexpire", async () => {
+        const redis = ctx.redis;
+        const key = "hexpire-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const result = await redis.hexpire(key, 10, "FIELDS", 2, "name", "age");
+        expect(result).toEqual([1, 1]);
+
+        const ttls = await redis.httl(key, "FIELDS", 3, "name", "age", "city");
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(10);
+        expect(ttls[1]).toBeGreaterThan(0);
+        expect(ttls[1]).toBeLessThanOrEqual(10);
+        expect(ttls[2]).toBe(-1); // city has no expiration
+      });
+
+      test("should expire hash fields with NX flag using hexpire", async () => {
+        const redis = ctx.redis;
+        const key = "hexpire-nx-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hsetex(key, "EX", 100, "FIELDS", 1, "name", "John");
+        await redis.hset(key, { age: "30" });
+
+        const result = await redis.hexpire(key, 10, "NX", "FIELDS", 2, "name", "age");
+        expect(result).toEqual([0, 1]); // name already has TTL (NX fails), age doesn't (NX succeeds)
+      });
+
+      test("should expire hash fields at specific time using hexpireat", async () => {
+        const redis = ctx.redis;
+        const key = "hexpireat-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 60; // 60 seconds from now
+        const result = await redis.hexpireat(key, futureTimestamp, "FIELDS", 2, "name", "age");
+        expect(result).toEqual([1, 1]);
+
+        const ttls = await redis.httl(key, "FIELDS", 2, "name", "age");
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(60);
+        expect(ttls[1]).toBeGreaterThan(0);
+        expect(ttls[1]).toBeLessThanOrEqual(60);
+      });
+
+      test("should get hash field expiration time using hexpiretime", async () => {
+        const redis = ctx.redis;
+        const key = "hexpiretime-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 100;
+        await redis.hexpireat(key, futureTimestamp, "FIELDS", 1, "name");
+
+        const expiretimes = await redis.hexpiretime(key, "FIELDS", 2, "name", "age");
+        expect(expiretimes).toHaveLength(2);
+        expect(expiretimes[0]).toBeGreaterThan(0);
+        expect(expiretimes[0]).toBeLessThanOrEqual(futureTimestamp);
+        expect(expiretimes[1]).toBe(-1); // age has no expiration
+      });
+
+      test("should expire hash fields at specific time in milliseconds using hpexpireat", async () => {
+        const redis = ctx.redis;
+        const key = "hpexpireat-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const futureTimestamp = Date.now() + 60000; // 60 seconds from now
+        const result = await redis.hpexpireat(key, futureTimestamp, "FIELDS", 2, "name", "age");
+        expect(result).toEqual([1, 1]);
+
+        const ttls = await redis.hpttl(key, "FIELDS", 2, "name", "age");
+        expect(ttls[0]).toBeGreaterThan(0);
+        expect(ttls[0]).toBeLessThanOrEqual(60000);
+        expect(ttls[1]).toBeGreaterThan(0);
+        expect(ttls[1]).toBeLessThanOrEqual(60000);
+      });
+
+      test("should get hash field expiration time in milliseconds using hpexpiretime", async () => {
+        const redis = ctx.redis;
+        const key = "hpexpiretime-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const futureTimestamp = Date.now() + 100000;
+        await redis.hpexpireat(key, futureTimestamp, "FIELDS", 1, "name");
+
+        const expiretimes = await redis.hpexpiretime(key, "FIELDS", 2, "name", "age");
+        expect(expiretimes).toHaveLength(2);
+        expect(expiretimes[0]).toBeGreaterThan(0);
+        expect(expiretimes[0]).toBeLessThanOrEqual(futureTimestamp);
+        expect(expiretimes[1]).toBe(-1); // age has no expiration
+      });
+
+      test("should persist hash fields using hpersist", async () => {
+        const redis = ctx.redis;
+        const key = "hpersist-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hsetex(key, "EX", 100, "FIELDS", 2, "name", "John", "age", "30");
+
+        const result = await redis.hpersist(key, "FIELDS", 2, "name", "age");
+        expect(result).toEqual([1, 1]); // Both fields had TTL and were persisted
+
+        const ttls = await redis.httl(key, "FIELDS", 2, "name", "age");
+        expect(ttls).toEqual([-1, -1]); // Both fields now have no expiration
+      });
+
+      test("should return 0 for fields without expiration using hpersist", async () => {
+        const redis = ctx.redis;
+        const key = "hpersist-noexpire-test:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const result = await redis.hpersist(key, "FIELDS", 2, "name", "age");
+        expect(result).toEqual([-1, -1]); // Neither field had TTL (returns -1 for no TTL)
       });
     });
 

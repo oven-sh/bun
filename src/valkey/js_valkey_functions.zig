@@ -274,14 +274,34 @@ pub fn ttl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: 
 pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
 
+    const args_view = callframe.arguments();
+    if (args_view.len < 2) {
+        return globalObject.throw("SREM requires at least a key and one member", .{});
+    }
+
+    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    defer {
+        for (args.items) |*item| {
+            item.deinit();
+        }
+        args.deinit();
+    }
+
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("srem", "key", "string or buffer");
     };
-    defer key.deinit();
-    const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
-        return globalObject.throwInvalidArgumentType("srem", "value", "string or buffer");
-    };
-    defer value.deinit();
+    args.appendAssumeCapacity(key);
+
+    for (args_view[1..]) |arg| {
+        if (arg.isUndefinedOrNull()) {
+            break;
+        }
+        const value = (try fromJS(globalObject, arg)) orelse {
+            return globalObject.throwInvalidArgumentType("srem", "member", "string or buffer");
+        };
+        args.appendAssumeCapacity(value);
+    }
 
     // Send SREM command
     const promise = this.send(
@@ -289,7 +309,7 @@ pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         callframe.this(),
         &.{
             .command = "SREM",
-            .args = .{ .args = &.{ key, value } },
+            .args = .{ .args = args.items },
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SREM command", err);
@@ -301,10 +321,36 @@ pub fn srem(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
 
+    const args_view = callframe.arguments();
+    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    defer {
+        for (args.items) |*item| {
+            item.deinit();
+        }
+        args.deinit();
+    }
+
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("srandmember", "key", "string or buffer");
     };
-    defer key.deinit();
+    args.appendAssumeCapacity(key);
+
+    // Optional count argument
+    if (args_view.len > 1 and !callframe.argument(1).isUndefinedOrNull()) {
+        const count_arg = try fromJS(globalObject, callframe.argument(1)) orelse {
+            return globalObject.throwInvalidArgumentType("srandmember", "count", "number or string");
+        };
+        args.appendAssumeCapacity(count_arg);
+
+        // Optional WITHSCORES argument
+        if (args_view.len > 2 and !callframe.argument(2).isUndefinedOrNull()) {
+            const withscores_arg = try fromJS(globalObject, callframe.argument(2)) orelse {
+                return globalObject.throwInvalidArgumentType("srandmember", "withscores", "string");
+            };
+            args.appendAssumeCapacity(withscores_arg);
+        }
+    }
 
     // Send SRANDMEMBER command
     const promise = this.send(
@@ -312,7 +358,7 @@ pub fn srandmember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, cal
         callframe.this(),
         &.{
             .command = "SRANDMEMBER",
-            .args = .{ .args = &.{key} },
+            .args = .{ .args = args.items },
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SRANDMEMBER command", err);
@@ -347,10 +393,28 @@ pub fn smembers(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callfr
 pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
 
+    const args_view = callframe.arguments();
+    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    defer {
+        for (args.items) |*item| {
+            item.deinit();
+        }
+        args.deinit();
+    }
+
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("spop", "key", "string or buffer");
     };
-    defer key.deinit();
+    args.appendAssumeCapacity(key);
+
+    // Optional count argument
+    if (args_view.len > 1 and !callframe.argument(1).isUndefinedOrNull()) {
+        const count_arg = try fromJS(globalObject, callframe.argument(1)) orelse {
+            return globalObject.throwInvalidArgumentType("spop", "count", "number or string");
+        };
+        args.appendAssumeCapacity(count_arg);
+    }
 
     // Send SPOP command
     const promise = this.send(
@@ -358,7 +422,7 @@ pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         callframe.this(),
         &.{
             .command = "SPOP",
-            .args = .{ .args = &.{key} },
+            .args = .{ .args = args.items },
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SPOP command", err);
@@ -370,14 +434,34 @@ pub fn spop(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 pub fn sadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
 
+    const args_view = callframe.arguments();
+    if (args_view.len < 2) {
+        return globalObject.throw("SADD requires at least a key and one member", .{});
+    }
+
+    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+    defer {
+        for (args.items) |*item| {
+            item.deinit();
+        }
+        args.deinit();
+    }
+
     const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
         return globalObject.throwInvalidArgumentType("sadd", "key", "string or buffer");
     };
-    defer key.deinit();
-    const value = (try fromJS(globalObject, callframe.argument(1))) orelse {
-        return globalObject.throwInvalidArgumentType("sadd", "value", "string or buffer");
-    };
-    defer value.deinit();
+    args.appendAssumeCapacity(key);
+
+    for (args_view[1..]) |arg| {
+        if (arg.isUndefinedOrNull()) {
+            break;
+        }
+        const value = (try fromJS(globalObject, arg)) orelse {
+            return globalObject.throwInvalidArgumentType("sadd", "member", "string or buffer");
+        };
+        args.appendAssumeCapacity(value);
+    }
 
     // Send SADD command
     const promise = this.send(
@@ -385,7 +469,7 @@ pub fn sadd(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
         callframe.this(),
         &.{
             .command = "SADD",
-            .args = .{ .args = &.{ key, value } },
+            .args = .{ .args = args.items },
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send SADD command", err);
@@ -425,35 +509,33 @@ pub fn sismember(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callf
 pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     try requireNotSubscriber(this, @src().fn_name);
 
-    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
-        return globalObject.throwInvalidArgumentType("hmget", "key", "string or buffer");
-    };
-    defer key.deinit();
-
-    // Get field array argument
-    const fields_array = callframe.argument(1);
-    if (!fields_array.isObject() or !fields_array.isArray()) {
-        return globalObject.throw("Fields must be an array", .{});
+    const args_view = callframe.arguments();
+    if (args_view.len < 2) {
+        return globalObject.throw("HMGET requires at least a key and one field", .{});
     }
 
-    var iter = try fields_array.arrayIterator(globalObject);
-    var args = try std.ArrayList(jsc.ZigString.Slice).initCapacity(bun.default_allocator, iter.len + 1);
+    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+    var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
     defer {
-        for (args.items) |item| {
+        for (args.items) |*item| {
             item.deinit();
         }
         args.deinit();
     }
 
-    args.appendAssumeCapacity(jsc.ZigString.Slice.fromUTF8NeverFree(key.slice()));
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("hmget", "key", "string or buffer");
+    };
+    args.appendAssumeCapacity(key);
 
-    // Add field names as arguments
-    while (try iter.next()) |field_js| {
-        const field_str = try field_js.toBunString(globalObject);
-        defer field_str.deref();
-
-        const field_slice = field_str.toUTF8WithoutRef(bun.default_allocator);
-        args.appendAssumeCapacity(field_slice);
+    for (args_view[1..]) |arg| {
+        if (arg.isUndefinedOrNull()) {
+            break;
+        }
+        const field = (try fromJS(globalObject, arg)) orelse {
+            return globalObject.throwInvalidArgumentType("hmget", "field", "string or buffer");
+        };
+        args.appendAssumeCapacity(field);
     }
 
     // Send HMGET command
@@ -462,7 +544,7 @@ pub fn hmget(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
         callframe.this(),
         &.{
             .command = "HMGET",
-            .args = .{ .slices = args.items },
+            .args = .{ .args = args.items },
         },
     ) catch |err| {
         return protocol.valkeyErrorToJS(globalObject, "Failed to send HMGET command", err);
@@ -772,7 +854,7 @@ pub const linsert = compile.@"(...strings: string[])"("linsert", "LINSERT", .not
 pub const llen = compile.@"(key: RedisKey)"("llen", "LLEN", "key", .not_subscriber).call;
 pub const lmove = compile.@"(...strings: string[])"("lmove", "LMOVE", .not_subscriber).call;
 pub const lmpop = compile.@"(...strings: string[])"("lmpop", "LMPOP", .not_subscriber).call;
-pub const lpop = compile.@"(key: RedisKey)"("lpop", "LPOP", "key", .not_subscriber).call;
+pub const lpop = compile.@"(key: RedisKey, ...args: RedisKey[])"("lpop", "LPOP", "key", .not_subscriber).call;
 pub const lpos = compile.@"(...strings: string[])"("lpos", "LPOS", .not_subscriber).call;
 pub const lrange = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("lrange", "LRANGE", "key", "start", "stop", .not_subscriber).call;
 pub const lrem = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("lrem", "LREM", "key", "count", "element", .not_subscriber).call;
@@ -784,7 +866,7 @@ pub const pexpireat = compile.@"(key: RedisKey, value: RedisValue)"("pexpireat",
 pub const pexpiretime = compile.@"(key: RedisKey)"("pexpiretime", "PEXPIRETIME", "key", .not_subscriber).call;
 pub const pttl = compile.@"(key: RedisKey)"("pttl", "PTTL", "key", .not_subscriber).call;
 pub const randomkey = compile.@"()"("randomkey", "RANDOMKEY", .not_subscriber).call;
-pub const rpop = compile.@"(key: RedisKey)"("rpop", "RPOP", "key", .not_subscriber).call;
+pub const rpop = compile.@"(key: RedisKey, ...args: RedisKey[])"("rpop", "RPOP", "key", .not_subscriber).call;
 pub const rpoplpush = compile.@"(key: RedisKey, value: RedisValue)"("rpoplpush", "RPOPLPUSH", "source", "destination", .not_subscriber).call;
 pub const scan = compile.@"(...strings: string[])"("scan", "SCAN", .not_subscriber).call;
 pub const scard = compile.@"(key: RedisKey)"("scard", "SCARD", "key", .not_subscriber).call;
@@ -802,15 +884,15 @@ pub const @"type" = compile.@"(key: RedisKey)"("type", "TYPE", "key", .not_subsc
 pub const zcard = compile.@"(key: RedisKey)"("zcard", "ZCARD", "key", .not_subscriber).call;
 pub const zcount = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("zcount", "ZCOUNT", "key", "min", "max", .not_subscriber).call;
 pub const zlexcount = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("zlexcount", "ZLEXCOUNT", "key", "min", "max", .not_subscriber).call;
-pub const zpopmax = compile.@"(key: RedisKey)"("zpopmax", "ZPOPMAX", "key", .not_subscriber).call;
-pub const zpopmin = compile.@"(key: RedisKey)"("zpopmin", "ZPOPMIN", "key", .not_subscriber).call;
-pub const zrandmember = compile.@"(key: RedisKey)"("zrandmember", "ZRANDMEMBER", "key", .not_subscriber).call;
+pub const zpopmax = compile.@"(key: RedisKey, ...args: RedisKey[])"("zpopmax", "ZPOPMAX", "key", .not_subscriber).call;
+pub const zpopmin = compile.@"(key: RedisKey, ...args: RedisKey[])"("zpopmin", "ZPOPMIN", "key", .not_subscriber).call;
+pub const zrandmember = compile.@"(key: RedisKey, ...args: RedisKey[])"("zrandmember", "ZRANDMEMBER", "key", .not_subscriber).call;
 pub const zrange = compile.@"(...strings: string[])"("zrange", "ZRANGE", .not_subscriber).call;
 pub const zrevrange = compile.@"(...strings: string[])"("zrevrange", "ZREVRANGE", .not_subscriber).call;
 pub const zrangebyscore = compile.@"(...strings: string[])"("zrangebyscore", "ZRANGEBYSCORE", .not_subscriber).call;
 pub const zrevrangebyscore = compile.@"(...strings: string[])"("zrevrangebyscore", "ZREVRANGEBYSCORE", .not_subscriber).call;
-pub const zrangebylex = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("zrangebylex", "ZRANGEBYLEX", "key", "min", "max", .not_subscriber).call;
-pub const zrevrangebylex = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("zrevrangebylex", "ZREVRANGEBYLEX", "key", "max", "min", .not_subscriber).call;
+pub const zrangebylex = compile.@"(key: RedisKey, ...args: RedisKey[])"("zrangebylex", "ZRANGEBYLEX", "key", .not_subscriber).call;
+pub const zrevrangebylex = compile.@"(key: RedisKey, ...args: RedisKey[])"("zrevrangebylex", "ZREVRANGEBYLEX", "key", .not_subscriber).call;
 pub const append = compile.@"(key: RedisKey, value: RedisValue)"("append", "APPEND", "key", "value", .not_subscriber).call;
 pub const getset = compile.@"(key: RedisKey, value: RedisValue)"("getset", "GETSET", "key", "value", .not_subscriber).call;
 pub const hget = compile.@"(key: RedisKey, value: RedisValue)"("hget", "HGET", "key", "field", .not_subscriber).call;
@@ -848,16 +930,44 @@ pub const msetnx = compile.@"(...strings: string[])"("msetnx", "MSETNX", .not_su
 pub const script = compile.@"(...strings: string[])"("script", "SCRIPT", .not_subscriber).call;
 pub const select = compile.@"(...strings: string[])"("select", "SELECT", .not_subscriber).call;
 pub const spublish = compile.@"(key: RedisKey, value: RedisValue)"("spublish", "SPUBLISH", "channel", "message", .not_subscriber).call;
-pub const smove = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("smove", "SMOVE", "source", "destination", "member", .not_subscriber).call;
+pub fn smove(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    try requireNotSubscriber(this, @src().fn_name);
+
+    const source = (try fromJS(globalObject, callframe.argument(0))) orelse {
+        return globalObject.throwInvalidArgumentType("smove", "source", "string or buffer");
+    };
+    defer source.deinit();
+    const destination = (try fromJS(globalObject, callframe.argument(1))) orelse {
+        return globalObject.throwInvalidArgumentType("smove", "destination", "string or buffer");
+    };
+    defer destination.deinit();
+    const member = (try fromJS(globalObject, callframe.argument(2))) orelse {
+        return globalObject.throwInvalidArgumentType("smove", "member", "string or buffer");
+    };
+    defer member.deinit();
+
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "SMOVE",
+            .args = .{ .args = &.{ source, destination, member } },
+            .meta = .{ .return_as_bool = true },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send SMOVE command", err);
+    };
+    return promise.toJS();
+}
 pub const substr = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("substr", "SUBSTR", "key", "start", "end", .not_subscriber).call;
 pub const hstrlen = compile.@"(key: RedisKey, value: RedisValue)"("hstrlen", "HSTRLEN", "key", "field", .not_subscriber).call;
-pub const zrank = compile.@"(key: RedisKey, value: RedisValue)"("zrank", "ZRANK", "key", "member", .not_subscriber).call;
+pub const zrank = compile.@"(key: RedisKey, ...args: RedisKey[])"("zrank", "ZRANK", "key", .not_subscriber).call;
 pub const zrangestore = compile.@"(...strings: string[])"("zrangestore", "ZRANGESTORE", .not_subscriber).call;
 pub const zrem = compile.@"(key: RedisKey, ...args: RedisKey[])"("zrem", "ZREM", "key", .not_subscriber).call;
 pub const zremrangebylex = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("zremrangebylex", "ZREMRANGEBYLEX", "key", "min", "max", .not_subscriber).call;
 pub const zremrangebyrank = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("zremrangebyrank", "ZREMRANGEBYRANK", "key", "start", "stop", .not_subscriber).call;
 pub const zremrangebyscore = compile.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("zremrangebyscore", "ZREMRANGEBYSCORE", "key", "min", "max", .not_subscriber).call;
-pub const zrevrank = compile.@"(key: RedisKey, value: RedisValue)"("zrevrank", "ZREVRANK", "key", "member", .not_subscriber).call;
+pub const zrevrank = compile.@"(key: RedisKey, ...args: RedisKey[])"("zrevrank", "ZREVRANK", "key", .not_subscriber).call;
 pub const psubscribe = compile.@"(...strings: string[])"("psubscribe", "PSUBSCRIBE", .dont_care).call;
 pub const punsubscribe = compile.@"(...strings: string[])"("punsubscribe", "PUNSUBSCRIBE", .dont_care).call;
 pub const pubsub = compile.@"(...strings: string[])"("pubsub", "PUBSUB", .dont_care).call;

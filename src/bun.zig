@@ -823,6 +823,10 @@ pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) boo
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
         pub fn get() bool {
+            // .monotonic is okay because there are no side effects we need to observe from a thread that has
+            // written to this variable. This variable is simply a cache, and if its value is not ready yet, we
+            // compute it below. There are no correctness issues if multiple threads perform this computation
+            // simultaneously, as they will all store the same value.
             return switch (is_enabled.load(.monotonic)) {
                 .enabled => true,
                 .disabled => false,

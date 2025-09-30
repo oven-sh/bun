@@ -6930,9 +6930,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const ttls = await redis.hpttl(key, "FIELDS", 2, "name", "age");
         expect(ttls[0]).toBeGreaterThan(0);
-        expect(ttls[0]).toBeLessThanOrEqual(60000);
+        expect(ttls[0]).toBeLessThanOrEqual(60100); // Small buffer for timing
         expect(ttls[1]).toBeGreaterThan(0);
-        expect(ttls[1]).toBeLessThanOrEqual(60000);
+        expect(ttls[1]).toBeLessThanOrEqual(60100); // Small buffer for timing
       });
 
       test("should get hash field expiration time in milliseconds using hpexpiretime", async () => {

@@ -23,6 +23,12 @@ pub fn count(this: *StringBuilder, slice: []const u8) void {
     this.cap += slice.len;
 }
 
+pub fn countMany(this: *StringBuilder, slices: []const []const u8) void {
+    inline for (slices) |slice| {
+        this.count(slice);
+    }
+}
+
 pub fn allocate(this: *StringBuilder, allocator: Allocator) Allocator.Error!void {
     const slice = try allocator.alloc(u8, this.cap);
     this.ptr = slice.ptr;
@@ -100,6 +106,17 @@ pub fn append(this: *StringBuilder, slice: []const u8) []const u8 {
     if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
     return result;
+}
+
+/// Append many slices at once, returning a tuple of slices.
+pub fn appendMany(this: *StringBuilder, comptime slices: []const u8) std.meta.Tuple([]const u8, slices.len) {
+    comptime var result_tuple: std.meta.Tuple([]const u8, slices.len) = undefined;
+
+    inline for (slices, 0..) |slice, idx| {
+        result_tuple[idx] = this.append(slice);
+    }
+
+    return result_tuple;
 }
 
 pub fn addConcat(this: *StringBuilder, slices: []const []const u8) bun.StringPointer {

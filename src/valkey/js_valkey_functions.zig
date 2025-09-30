@@ -644,6 +644,35 @@ pub fn hmset(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe
     return hsetImpl(this, globalObject, callframe, "HMSET");
 }
 
+pub const hdel = compile.@"(key: RedisKey, ...args: RedisKey[])"("hdel", "HDEL", "key", .not_subscriber).call;
+pub const hrandfield = compile.@"(key: RedisKey, ...args: RedisKey[])"("hrandfield", "HRANDFIELD", "key", .not_subscriber).call;
+pub const hscan = compile.@"(key: RedisKey, ...args: RedisKey[])"("hscan", "HSCAN", "key", .not_subscriber).call;
+
+pub fn hexists(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    try requireNotSubscriber(this, "hexists");
+
+    const key = (try fromJS(globalObject, callframe.argument(0))) orelse
+        return globalObject.throwInvalidArgumentType("hexists", "key", "string or buffer");
+    defer key.deinit();
+
+    const field = (try fromJS(globalObject, callframe.argument(1))) orelse
+        return globalObject.throwInvalidArgumentType("hexists", "field", "string or buffer");
+    defer field.deinit();
+
+    const promise = this.send(
+        globalObject,
+        callframe.this(),
+        &.{
+            .command = "HEXISTS",
+            .args = .{ .args = &.{ key, field } },
+            .meta = .{ .return_as_bool = true },
+        },
+    ) catch |err| {
+        return protocol.valkeyErrorToJS(globalObject, "Failed to send HEXISTS command", err);
+    };
+    return promise.toJS();
+}
+
 // Implement ping (send a PING command with an optional message)
 pub fn ping(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     var message_buf: [1]JSArgument = undefined;

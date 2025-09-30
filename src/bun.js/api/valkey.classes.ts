@@ -112,6 +112,22 @@ export default [
         fn: "hmget",
         length: 2,
       },
+      hdel: {
+        fn: "hdel",
+        length: 2,
+      },
+      hexists: {
+        fn: "hexists",
+        length: 2,
+      },
+      hrandfield: {
+        fn: "hrandfield",
+        length: 1,
+      },
+      hscan: {
+        fn: "hscan",
+        length: 2,
+      },
       sismember: {
         fn: "sismember",
         length: 2,

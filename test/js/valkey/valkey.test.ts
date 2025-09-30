@@ -4088,7 +4088,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         expect(async () => {
           await redis.hset(key, "field1", "value1", "field2");
-        }).toThrow();
+        }).toThrow("HSET requires field-value pairs (even number of arguments after key)");
       });
 
       test("should throw error for empty object", async () => {
@@ -4097,7 +4097,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         expect(async () => {
           await redis.hset(key, {});
-        }).toThrow();
+        }).toThrow("HSET requires at least one field-value pair");
       });
 
       test("should throw error for array with odd number of elements", async () => {
@@ -4106,7 +4106,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         expect(async () => {
           await redis.hmset(key, ["field1", "value1", "field2"]);
-        }).toThrow();
+        }).toThrow("Array must have an even number of elements (field-value pairs)");
       });
 
       test("should handle large number of fields", async () => {
@@ -4125,6 +4125,151 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(value0).toBe("value0");
         const value99 = await redis.hget(key, "field99");
         expect(value99).toBe("value99");
+      });
+
+      test("should delete hash fields using hdel", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const deleted = await redis.hdel(key, "age");
+        expect(deleted).toBe(1);
+
+        const age = await redis.hget(key, "age");
+        expect(age).toBeNull();
+
+        const name = await redis.hget(key, "name");
+        expect(name).toBe("John");
+      });
+
+      test("should delete multiple hash fields using hdel", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC", country: "USA" });
+
+        const deleted = await redis.hdel(key, "age", "city");
+        expect(deleted).toBe(2);
+
+        const remaining = await redis.hgetall(key);
+        expect(remaining).toEqual({ name: "John", country: "USA" });
+      });
+
+      test("should check if hash field exists using hexists", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const nameExists = await redis.hexists(key, "name");
+        expect(nameExists).toBe(true);
+
+        const emailExists = await redis.hexists(key, "email");
+        expect(emailExists).toBe(false);
+      });
+
+      test("should get random field using hrandfield", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const field = await redis.hrandfield(key);
+        expect(["name", "age", "city"]).toContain<string | null>(field);
+      });
+
+      test("should get multiple random fields using hrandfield with count", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const fields = await redis.hrandfield(key, 2);
+        expect(fields).toBeInstanceOf(Array);
+        expect(fields.length).toBe(2);
+        fields.forEach(field => {
+          expect(["name", "age", "city"]).toContain(field);
+        });
+      });
+
+      test("should get random fields with values using hrandfield WITHVALUES", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30" });
+
+        const result = await redis.hrandfield(key, 1, "WITHVALUES");
+        expect(result).toBeInstanceOf(Array);
+        expect(result.length).toBe(2); // [field, value]
+
+        const fieldName = result[0];
+        const fieldValue = result[1];
+        expect(["name", "age"]).toContain(fieldName);
+        if (fieldName === "name") {
+          expect(fieldValue).toBe("John");
+        } else {
+          expect(fieldValue).toBe("30");
+        }
+      });
+
+      test("should scan hash using hscan", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { name: "John", age: "30", city: "NYC" });
+
+        const [cursor, fields] = await redis.hscan(key, 0);
+        expect(typeof cursor).toBe("string");
+        expect(fields).toBeInstanceOf(Array);
+        expect(fields.length).toBe(6); // [field1, value1, field2, value2, field3, value3]
+
+        // Convert to object for easier testing
+        const obj: Record<string, string> = {};
+        for (let i = 0; i < fields.length; i += 2) {
+          obj[fields[i]] = fields[i + 1];
+        }
+        expect(obj).toEqual({ name: "John", age: "30", city: "NYC" });
+      });
+
+      test("should scan hash with pattern using hscan MATCH", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        await redis.hset(key, { field1: "val1", field2: "val2", other: "val3" });
+
+        const [cursor, fields] = await redis.hscan(key, 0, "MATCH", "field*");
+        expect(typeof cursor).toBe("string");
+        expect(fields).toBeInstanceOf(Array);
+
+        // Convert to object
+        const obj: Record<string, string> = {};
+        for (let i = 0; i < fields.length; i += 2) {
+          obj[fields[i]] = fields[i + 1];
+        }
+
+        // Should only contain fields matching "field*"
+        expect(obj.field1).toBe("val1");
+        expect(obj.field2).toBe("val2");
+        expect(obj.other).toBeUndefined();
+      });
+
+      test("should scan hash with count using hscan COUNT", async () => {
+        const redis = ctx.redis;
+        const key = "user:" + randomUUIDv7().substring(0, 8);
+
+        // Add many fields
+        const fields: Record<string, string> = {};
+        for (let i = 0; i < 20; i++) {
+          fields[`field${i}`] = `value${i}`;
+        }
+        await redis.hset(key, fields);
+
+        const [cursor, result] = await redis.hscan(key, 0, "COUNT", 5);
+        expect(typeof cursor).toBe("string");
+        expect(result).toBeInstanceOf(Array);
+        // COUNT is a hint, so we just check we got some results
+        expect(result.length).toBeGreaterThan(0);
       });
     });
 

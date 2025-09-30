@@ -252,10 +252,10 @@ pub fn scan(
                             };
 
                             // Also record these automatically-generated top-level namespace alias symbols
-                            p.declared_symbols.append(p.allocator, .{
+                            bun.handleOom(p.declared_symbols.append(p.allocator, .{
                                 .ref = name_ref,
                                 .is_top_level = true,
-                            }) catch unreachable;
+                            }));
                         }
                     }
 
@@ -464,7 +464,7 @@ pub fn scan(
             },
             .s_export_from => |st| {
                 try p.import_records_for_current_part.append(allocator, st.import_record_index);
-                p.named_imports.ensureUnusedCapacity(p.allocator, st.items.len) catch unreachable;
+                bun.handleOom(p.named_imports.ensureUnusedCapacity(p.allocator, st.items.len));
                 for (st.items) |item| {
                     const ref = item.name.ref orelse p.panic("Expected export from item to have a name {any}", .{st});
                     // Note that the imported alias is not item.Alias, which is the

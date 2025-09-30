@@ -1019,7 +1019,7 @@ pub const String = struct {
 
     pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) ![]const u8 {
         if (str.isUTF8()) {
-            return allocator.dupe(u8, str.string(allocator) catch unreachable);
+            return bun.handleOom(allocator.dupe(u8, bun.handleOom(str.string(allocator))));
         }
 
         return str.string(allocator);
@@ -1274,7 +1274,7 @@ pub const Template = struct {
             return Expr.init(E.String, this.head.cooked, loc);
         }
 
-        var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
+        var parts = bun.handleOom(std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len));
         var head = Expr.init(E.String, this.head.cooked, loc);
         for (this.parts) |part_src| {
             var part = part_src;

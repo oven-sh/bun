@@ -23,7 +23,7 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) bun.OOM
     }
 
     {
-        const cross_chunk_dependencies = c.allocator().create(CrossChunkDependencies) catch unreachable;
+        const cross_chunk_dependencies = bun.handleOom(c.allocator().create(CrossChunkDependencies));
         defer c.allocator().destroy(cross_chunk_dependencies);
 
         cross_chunk_dependencies.* = .{
@@ -41,12 +41,12 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) bun.OOM
             .symbols = &c.graph.symbols,
         };
 
-        c.parse_graph.pool.worker_pool.eachPtr(
+        bun.handleOom(c.parse_graph.pool.worker_pool.eachPtr(
             c.allocator(),
             cross_chunk_dependencies,
             CrossChunkDependencies.walk,
             chunks,
-        ) catch unreachable;
+        ));
     }
 
     try computeCrossChunkDependenciesWithChunkMetas(c, chunks, chunk_metas);
@@ -104,7 +104,7 @@ const CrossChunkDependencies = struct {
                         // include its hash when we're calculating the hashes of all
                         // dependencies of this chunk.
                         if (other_chunk_index != chunk_index)
-                            chunk_meta.dynamic_imports.put(other_chunk_index, {}) catch unreachable;
+                            bun.handleOom(chunk_meta.dynamic_imports.put(other_chunk_index, {}));
                     }
                 }
 
@@ -162,7 +162,7 @@ const CrossChunkDependencies = struct {
                     // be moved to a separate chunk than the use of a symbol even if
                     // the definition and use of that symbol are originally from the
                     // same source file.
-                    imports.put(ref_to_use, {}) catch unreachable;
+                    bun.handleOom(imports.put(ref_to_use, {}));
                 }
             }
         }
@@ -193,18 +193,18 @@ const CrossChunkDependencies = struct {
                         if (comptime Environment.allow_assert)
                             debug("Cross-chunk export: {s}", .{deps.symbols.get(target_ref).?.original_name});
 
-                        imports.put(target_ref, {}) catch unreachable;
+                        bun.handleOom(imports.put(target_ref, {}));
                     }
                 }
 
                 // Ensure "exports" is included if the current output format needs it
                 if (flags.force_include_exports_for_entry_point) {
-                    imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
+                    bun.handleOom(imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}));
                 }
 
                 // Include the wrapper if present
                 if (flags.wrap != .none) {
-                    imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
+                    bun.handleOom(imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}));
                 }
             }
         }
@@ -241,7 +241,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             .ref = import_ref,
                         });
                     }
-                    _ = chunk_metas[other_chunk_index].exports.getOrPut(import_ref) catch unreachable;
+                    _ = bun.handleOom(chunk_metas[other_chunk_index].exports.getOrPut(import_ref));
                 } else {
                     debug("{s} imports from itself (chunk {d})", .{ symbol.original_name, chunk_index });
                 }
@@ -256,11 +256,11 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                 if (other_chunk_index == chunk_index or other_chunk.content != .javascript) continue;
 
                 if (other_chunk.entry_bits.isSet(chunk.entry_point.entry_point_id)) {
-                    _ = js.imports_from_other_chunks.getOrPutValue(
+                    _ = bun.handleOom(js.imports_from_other_chunks.getOrPutValue(
                         c.allocator(),
                         @as(u32, @truncate(other_chunk_index)),
                         CrossChunkImport.Item.List{},
-                    ) catch unreachable;
+                    ));
                 }
             }
         }
@@ -307,9 +307,9 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         chunk_meta.exports,
                         &stable_ref_list,
                     );
-                    var clause_items = BabyList(js_ast.ClauseItem).initCapacity(c.allocator(), stable_ref_list.items.len) catch unreachable;
+                    var clause_items = bun.handleOom(BabyList(js_ast.ClauseItem).initCapacity(c.allocator(), stable_ref_list.items.len));
                     clause_items.len = @as(u32, @truncate(stable_ref_list.items.len));
-                    repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator(), stable_ref_list.items.len) catch unreachable;
+                    bun.handleOom(repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator(), stable_ref_list.items.len));
                     r.clearRetainingCapacity();
 
                     for (stable_ref_list.items, clause_items.slice()) |stable_ref, *clause_item| {
@@ -333,8 +333,8 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     }
 
                     if (clause_items.len > 0) {
-                        var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator(), 1) catch unreachable;
-                        const export_clause = c.allocator().create(js_ast.S.ExportClause) catch unreachable;
+                        var stmts = bun.handleOom(BabyList(js_ast.Stmt).initCapacity(c.allocator(), 1));
+                        const export_clause = bun.handleOom(c.allocator().create(js_ast.S.ExportClause));
                         export_clause.* = .{
                             .items = clause_items.slice(),
                             .is_single_line = true,
@@ -365,7 +365,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
             var repr = &chunk.content.javascript;
             var cross_chunk_prefix_stmts = BabyList(js_ast.Stmt){};
 
-            CrossChunkImport.sortedCrossChunkImports(&list, chunks, &repr.imports_from_other_chunks) catch unreachable;
+            bun.handleOom(CrossChunkImport.sortedCrossChunkImports(&list, chunks, &repr.imports_from_other_chunks));
             const cross_chunk_imports_input: []CrossChunkImport = list.items;
             var cross_chunk_imports = chunk.cross_chunk_imports;
             for (cross_chunk_imports_input) |cross_chunk_import| {
@@ -373,7 +373,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     .esm => {
                         const import_record_index = @as(u32, @intCast(cross_chunk_imports.len));
 
-                        var clauses = std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator(), cross_chunk_import.sorted_import_items.len) catch unreachable;
+                        var clauses = bun.handleOom(std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator(), cross_chunk_import.sorted_import_items.len));
                         for (cross_chunk_import.sorted_import_items.slice()) |item| {
                             clauses.appendAssumeCapacity(.{
                                 .name = .{
@@ -385,17 +385,17 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             });
                         }
 
-                        cross_chunk_imports.append(c.allocator(), .{
+                        bun.handleOom(cross_chunk_imports.append(c.allocator(), .{
                             .import_kind = .stmt,
                             .chunk_index = cross_chunk_import.chunk_index,
-                        }) catch unreachable;
-                        const import = c.allocator().create(js_ast.S.Import) catch unreachable;
+                        }));
+                        const import = bun.handleOom(c.allocator().create(js_ast.S.Import));
                         import.* = .{
                             .items = clauses.items,
                             .import_record_index = import_record_index,
                             .namespace_ref = Ref.None,
                         };
-                        cross_chunk_prefix_stmts.append(
+                        bun.handleOom(cross_chunk_prefix_stmts.append(
                             c.allocator(),
                             .{
                                 .data = .{
@@ -403,7 +403,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                                 },
                                 .loc = Logger.Loc.Empty,
                             },
-                        ) catch unreachable;
+                        ));
                     },
                     else => {},
                 }

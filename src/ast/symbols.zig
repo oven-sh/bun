@@ -77,7 +77,7 @@ pub fn Symbols(
                     };
                 }
 
-                const gpe = p.module_scope.getOrPutMemberWithHash(allocator, name, hash) catch unreachable;
+                const gpe = bun.handleOom(p.module_scope.getOrPutMemberWithHash(allocator, name, hash));
 
                 // I don't think this happens?
                 if (gpe.found_existing) {
@@ -86,7 +86,7 @@ pub fn Symbols(
                     break :brk existing.ref;
                 }
 
-                const _ref = p.newSymbol(.unbound, name) catch unreachable;
+                const _ref = bun.handleOom(p.newSymbol(.unbound, name));
 
                 gpe.key_ptr.* = name;
                 gpe.value_ptr.* = js_ast.Scope.Member{ .ref = _ref, .loc = loc };

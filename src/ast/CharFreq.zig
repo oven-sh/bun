@@ -111,14 +111,14 @@ pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier
     };
 
     var minifier = NameMinifier.init(allocator);
-    minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
-    minifier.tail.ensureTotalCapacityPrecise(NameMinifier.default_tail.len) catch unreachable;
+    bun.handleOom(minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len));
+    bun.handleOom(minifier.tail.ensureTotalCapacityPrecise(NameMinifier.default_tail.len));
     // TODO: investigate counting number of < 0 and > 0 and pre-allocating
     for (array) |item| {
         if (item.char < '0' or item.char > '9') {
-            minifier.head.append(item.char) catch unreachable;
+            bun.handleOom(minifier.head.append(item.char));
         }
-        minifier.tail.append(item.char) catch unreachable;
+        bun.handleOom(minifier.tail.append(item.char));
     }
 
     return minifier;

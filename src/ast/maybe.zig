@@ -70,8 +70,8 @@ pub fn AstMaybe(
                                 };
                                 bun.handleOom(p.module_scope.generated.append(p.allocator, new_item.ref.?));
 
-                                import_items.put(name, new_item) catch unreachable;
-                                p.is_import_item.put(p.allocator, new_item.ref.?, {}) catch unreachable;
+                                bun.handleOom(import_items.put(name, new_item));
+                                bun.handleOom(p.is_import_item.put(p.allocator, new_item.ref.?, {}));
 
                                 var symbol = &p.symbols.items[new_item.ref.?.innerIndex()];
 
@@ -197,9 +197,9 @@ pub fn AstMaybe(
                                     return null;
                                 }
 
-                                var stmts = std.ArrayList(Stmt).initCapacity(p.allocator, props.len * 2) catch unreachable;
-                                var decls = p.allocator.alloc(Decl, props.len) catch unreachable;
-                                var clause_items = p.allocator.alloc(js_ast.ClauseItem, props.len) catch unreachable;
+                                var stmts = bun.handleOom(std.ArrayList(Stmt).initCapacity(p.allocator, props.len * 2));
+                                var decls = bun.handleOom(p.allocator.alloc(Decl, props.len));
+                                var clause_items = bun.handleOom(p.allocator.alloc(js_ast.ClauseItem, props.len));
 
                                 for (props) |prop| {
                                     const key = prop.key.?.data.e_string.string(p.allocator) catch unreachable;
@@ -208,7 +208,7 @@ pub fn AstMaybe(
 
                                     // We are doing `module.exports = { ... }`
                                     // lets rewrite it to a series of what will become export assignments
-                                    const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, key) catch unreachable;
+                                    const named_export_entry = bun.handleOom(p.commonjs_named_exports.getOrPut(p.allocator, key));
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,
@@ -314,7 +314,7 @@ pub fn AstMaybe(
                                     return null;
                                 }
 
-                                const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                                const named_export_entry = bun.handleOom(p.commonjs_named_exports.getOrPut(p.allocator, name));
                                 if (!named_export_entry.found_existing) {
                                     const new_ref = p.newSymbol(
                                         .other,
@@ -487,7 +487,7 @@ pub fn AstMaybe(
                                         return null;
                                     }
 
-                                    const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                                    const named_export_entry = bun.handleOom(p.commonjs_named_exports.getOrPut(p.allocator, name));
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,

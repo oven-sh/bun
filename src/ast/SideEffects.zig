@@ -393,7 +393,7 @@ pub const SideEffects = enum(u1) {
     fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
         switch (binding.data) {
             .b_identifier => {
-                decls.append(.{ .binding = binding }) catch unreachable;
+                bun.handleOom(decls.append(.{ .binding = binding }));
             },
             .b_array => |array| {
                 for (array.items) |item| {
@@ -451,7 +451,7 @@ pub const SideEffects = enum(u1) {
                     return true;
                 }
 
-                var decls = std.ArrayList(G.Decl).initCapacity(allocator, local.decls.len) catch unreachable;
+                var decls = bun.handleOom(std.ArrayList(G.Decl).initCapacity(allocator, local.decls.len));
                 for (local.decls.slice()) |decl| {
                     findIdentifiers(decl.binding, &decls);
                 }

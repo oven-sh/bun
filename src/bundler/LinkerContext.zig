@@ -261,8 +261,8 @@ pub const LinkerContext = struct {
         bun.assert(this.options.source_maps != .none);
         this.source_maps.line_offset_wait_group = .initWithCount(reachable.len);
         this.source_maps.quoted_contents_wait_group = .initWithCount(reachable.len);
-        this.source_maps.line_offset_tasks = this.allocator().alloc(SourceMapData.Task, reachable.len) catch unreachable;
-        this.source_maps.quoted_contents_tasks = this.allocator().alloc(SourceMapData.Task, reachable.len) catch unreachable;
+        this.source_maps.line_offset_tasks = bun.handleOom(this.allocator().alloc(SourceMapData.Task, reachable.len));
+        this.source_maps.quoted_contents_tasks = bun.handleOom(this.allocator().alloc(SourceMapData.Task, reachable.len));
 
         var batch = ThreadPoolLib.Batch{};
         var second_batch = ThreadPoolLib.Batch{};
@@ -2029,7 +2029,7 @@ pub const LinkerContext = struct {
                         // If this is a re-export of another import, follow the import
                         if (named_imports[ambiguous_tracker.data.source_index.get()].contains(ambiguous_tracker.data.import_ref)) {
                             const ambig = c.matchImportWithExport(ambiguous_tracker.data, re_exports);
-                            ambiguous_results.append(ambig) catch unreachable;
+                            bun.handleOom(ambiguous_results.append(ambig));
                         } else {
                             ambiguous_results.append(.{
                                 .kind = .normal,
@@ -2233,7 +2233,7 @@ pub const LinkerContext = struct {
                     &.{};
 
                 // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len + promise_all_parts.len) catch unreachable;
+                const dependencies = bun.handleOom(c.allocator().alloc(js_ast.Dependency, esm_parts.len + promise_all_parts.len));
                 var dep_index: usize = 0;
                 for (esm_parts) |part| {
                     dependencies[dep_index] = .{

@@ -108,7 +108,7 @@ fn OverflowGroup(comptime Block: type) type {
             }
 
             if (this.allocated <= this.used) {
-                this.ptrs[this.allocated] = default_allocator.create(Block) catch unreachable;
+                this.ptrs[this.allocated] = bun.handleOom(default_allocator.create(Block));
                 this.ptrs[this.allocated].zero();
                 this.allocated +%= 1;
             }
@@ -598,7 +598,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.index.put(self.allocator, result.hash, NotFound) catch unreachable;
+            bun.handleOom(self.index.put(self.allocator, result.hash, NotFound));
         }
 
         pub fn atIndex(self: *Self, index: IndexType) ?*ValueType {

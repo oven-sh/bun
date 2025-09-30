@@ -153,10 +153,10 @@ pub fn generateCodeForFileInChunkJS(
 
         switch (flags.wrap) {
             .esm => {
-                stmts.appendSlice(.outside_wrapper_prefix, stmts.inside_wrapper_suffix.items) catch unreachable;
+                bun.handleOom(stmts.appendSlice(.outside_wrapper_prefix, stmts.inside_wrapper_suffix.items));
             },
             else => {
-                stmts.inside_wrapper_prefix.appendNonDependencySlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                bun.handleOom(stmts.inside_wrapper_prefix.appendNonDependencySlice(stmts.inside_wrapper_suffix.items));
             },
         }
 
@@ -225,7 +225,7 @@ pub fn generateCodeForFileInChunkJS(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if (default_expr.data == .e_object) {
-                var new_properties = default_expr.data.e_object.properties.clone(temp_allocator) catch unreachable;
+                var new_properties = bun.handleOom(default_expr.data.e_object.properties.clone(temp_allocator));
 
                 var resolved_exports = c.graph.meta.items(.resolved_exports)[part_range.source_index.get()];
 
@@ -291,7 +291,7 @@ pub fn generateCodeForFileInChunkJS(
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    stmts.all_stmts.ensureUnusedCapacity(stmts.allocator, stmts.inside_wrapper_prefix.stmts.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
+    bun.handleOom(stmts.all_stmts.ensureUnusedCapacity(stmts.allocator, stmts.inside_wrapper_prefix.stmts.items.len + stmts.inside_wrapper_suffix.items.len));
     stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.stmts.items);
     stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
     stmts.inside_wrapper_prefix.reset();
@@ -342,7 +342,7 @@ pub fn generateCodeForFileInChunkJS(
                 }
 
                 // TODO: variants of the runtime functions
-                var cjs_args = temp_allocator.alloc(Expr, 1) catch unreachable;
+                var cjs_args = bun.handleOom(temp_allocator.alloc(Expr, 1));
                 cjs_args[0] = Expr.init(
                     E.Arrow,
                     E.Arrow{
@@ -372,7 +372,7 @@ pub fn generateCodeForFileInChunkJS(
 
                 // "var require_foo = __commonJS(...);"
                 {
-                    var decls = temp_allocator.alloc(G.Decl, 1) catch unreachable;
+                    var decls = bun.handleOom(temp_allocator.alloc(G.Decl, 1));
                     decls[0] = G.Decl{
                         .binding = Binding.alloc(
                             temp_allocator,
@@ -646,12 +646,12 @@ fn mergeAdjacentLocalStmts(stmts: *std.ArrayListUnmanaged(Stmt), allocator: std.
                     if (did_merge_with_previous_local) {
                         // Avoid O(n^2) behavior for repeated variable declarations
                         // Appending to this decls list is safe because did_merge_with_previous_local is true
-                        before.decls.appendSlice(allocator, after.decls.slice()) catch unreachable;
+                        bun.handleOom(before.decls.appendSlice(allocator, after.decls.slice()));
                     } else {
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
-                        var clone = bun.BabyList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
+                        var clone = bun.handleOom(bun.BabyList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len));
                         clone.appendSliceAssumeCapacity(before.decls.slice());
                         clone.appendSliceAssumeCapacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads

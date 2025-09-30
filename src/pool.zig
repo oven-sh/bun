@@ -157,7 +157,7 @@ pub fn ObjectPool(
             if (comptime @import("./env.zig").allow_assert)
                 bun.assert(!full());
 
-            const new_node = allocator.create(LinkedList.Node) catch unreachable;
+            const new_node = bun.handleOom(allocator.create(LinkedList.Node));
             new_node.* = LinkedList.Node{
                 .allocator = allocator,
                 .data = pooled,
@@ -192,7 +192,7 @@ pub fn ObjectPool(
 
             if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Allocate {s} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
 
-            const new_node = allocator.create(LinkedList.Node) catch unreachable;
+            const new_node = bun.handleOom(allocator.create(LinkedList.Node));
             new_node.* = LinkedList.Node{
                 .allocator = allocator,
                 .data = if (comptime Init) |init_|

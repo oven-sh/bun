@@ -238,10 +238,10 @@ pub fn init(
                 const username = username_buffer[0..username_len];
 
                 // concat user and password
-                const auth = std.fmt.allocPrint(allocator, "{s}:{s}", .{ username, password }) catch unreachable;
+                const auth = bun.handleOom(std.fmt.allocPrint(allocator, "{s}:{s}", .{ username, password }));
                 defer allocator.free(auth);
                 const size = std.base64.standard.Encoder.calcSize(auth.len);
-                var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
+                var buf = bun.handleOom(this.allocator.alloc(u8, size + "Basic ".len));
                 const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], auth);
                 buf[0.."Basic ".len].* = "Basic ".*;
                 this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
@@ -259,7 +259,7 @@ pub fn init(
 
                 // only use user
                 const size = std.base64.standard.Encoder.calcSize(username_len);
-                var buf = allocator.alloc(u8, size + "Basic ".len) catch unreachable;
+                var buf = bun.handleOom(allocator.alloc(u8, size + "Basic ".len));
                 const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
                 buf[0.."Basic ".len].* = "Basic ".*;
                 this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
@@ -334,10 +334,10 @@ fn reset(this: *AsyncHTTP) !void {
                 const username = username_buffer[0..username_len];
 
                 // concat user and password
-                const auth = std.fmt.allocPrint(this.allocator, "{s}:{s}", .{ username, password }) catch unreachable;
+                const auth = bun.handleOom(std.fmt.allocPrint(this.allocator, "{s}:{s}", .{ username, password }));
                 defer this.allocator.free(auth);
                 const size = std.base64.standard.Encoder.calcSize(auth.len);
-                var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
+                var buf = bun.handleOom(this.allocator.alloc(u8, size + "Basic ".len));
                 const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], auth);
                 buf[0.."Basic ".len].* = "Basic ".*;
                 this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
@@ -355,7 +355,7 @@ fn reset(this: *AsyncHTTP) !void {
 
                 // only use user
                 const size = std.base64.standard.Encoder.calcSize(username_len);
-                var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
+                var buf = bun.handleOom(this.allocator.alloc(u8, size + "Basic ".len));
                 const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
                 buf[0.."Basic ".len].* = "Basic ".*;
                 this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];

@@ -94,7 +94,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                     if (from_this_file) {
                         visitor.inner_visited.set(ref.innerIndex());
                     } else {
-                        visitor.composes_visited.put(ref.toRealRef(idx), {}) catch unreachable;
+                        bun.handleOom(visitor.composes_visited.put(ref.toRealRef(idx), {}));
                     }
                 }
 
@@ -363,14 +363,14 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 const generated = try this.generateNamedExportInFile(
                     source_index,
                     module_ref,
-                    try std.fmt.allocPrint(
+                    bun.handleOom(std.fmt.allocPrint(
                         this.allocator(),
                         "{}_default",
                         .{this.parse_graph.input_files.items(.source)[source_index].fmtIdentifier()},
-                    ),
+                    )),
                     "default",
                 );
-                parts.ptr[generated[1]].stmts = try this.allocator().alloc(Stmt, 1);
+                parts.ptr[generated[1]].stmts = bun.handleOom(this.allocator().alloc(Stmt, 1));
                 parts.ptr[generated[1]].stmts[0] = Stmt.alloc(
                     S.ExportDefault,
                     S.ExportDefault{

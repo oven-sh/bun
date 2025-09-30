@@ -429,7 +429,7 @@ pub fn asPropertyStringMap(expr: *const Expr, name: string, allocator: std.mem.A
         map.putAssumeCapacity(key, value);
     }
 
-    const ptr = allocator.create(bun.StringArrayHashMap(string)) catch unreachable;
+    const ptr = bun.handleOom(allocator.create(bun.StringArrayHashMap(string)));
     ptr.* = map;
     return ptr;
 }
@@ -714,7 +714,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_array = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -726,7 +726,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_class = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -738,7 +738,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_unary = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -750,7 +750,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_binary = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -802,7 +802,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_new = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -822,7 +822,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_function = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -842,7 +842,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_call = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -854,7 +854,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_dot = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -866,7 +866,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_index = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -878,7 +878,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_arrow = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -933,7 +933,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_jsx_element = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -956,7 +956,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_big_int = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -968,7 +968,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_object = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -980,7 +980,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_spread = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -998,7 +998,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_string = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -1011,7 +1011,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_template = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -1023,7 +1023,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_reg_exp = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -1035,7 +1035,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_await = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -1047,7 +1047,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_yield = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -1059,7 +1059,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_if = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -1079,7 +1079,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_import = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st;
                         break :brk item;
                     },
@@ -1099,7 +1099,7 @@ pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc
                 .loc = loc,
                 .data = Data{
                     .e_string = brk: {
-                        const item = allocator.create(Type) catch unreachable;
+                        const item = bun.handleOom(allocator.create(Type));
                         item.* = st.*;
                         break :brk item;
                     },

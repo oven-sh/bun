@@ -9,7 +9,7 @@ pub const GetAddrInfo = struct {
 
     pub fn clone(this: GetAddrInfo) GetAddrInfo {
         return GetAddrInfo{
-            .name = bun.default_allocator.dupe(u8, this.name) catch unreachable,
+            .name = bun.handleOom(bun.default_allocator.dupe(u8, this.name)),
             .port = this.port,
             .options = this.options,
         };

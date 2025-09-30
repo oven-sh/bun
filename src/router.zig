@@ -225,16 +225,16 @@ const RouteLoader = struct {
     pub fn appendRoute(this: *RouteLoader, route: Route) void {
         // /index.js
         if (route.full_hash == index_route_hash) {
-            const new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = bun.handleOom(this.allocator.create(Route));
             this.index = new_route;
             new_route.* = route;
-            this.all_routes.append(this.allocator, new_route) catch unreachable;
+            bun.handleOom(this.all_routes.append(this.allocator, new_route));
             return;
         }
 
         // static route
         if (route.param_count == 0) {
-            const entry = this.static_list.getOrPut(route.match_name.slice()) catch unreachable;
+            const entry = bun.handleOom(this.static_list.getOrPut(route.match_name.slice()));
 
             if (entry.found_existing) {
                 const source = Logger.Source.initEmptyFile(route.abs_path.slice());
@@ -248,7 +248,7 @@ const RouteLoader = struct {
                 return;
             }
 
-            const new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = bun.handleOom(this.allocator.create(Route));
             new_route.* = route;
 
             // Handle static routes with uppercase characters by ensuring exact case still matches
@@ -259,7 +259,7 @@ const RouteLoader = struct {
             // This hack is below the engineering quality bar I'm happy with.
             // It will cause unexpected behavior.
             if (route.has_uppercase) {
-                const static_entry = this.static_list.getOrPut(route.name[1..]) catch unreachable;
+                const static_entry = bun.handleOom(this.static_list.getOrPut(route.name[1..]));
                 if (static_entry.found_existing) {
                     const source = Logger.Source.initEmptyFile(route.abs_path.slice());
                     this.log.addErrorFmt(
@@ -277,13 +277,13 @@ const RouteLoader = struct {
             }
 
             entry.value_ptr.* = new_route;
-            this.all_routes.append(this.allocator, new_route) catch unreachable;
+            bun.handleOom(this.all_routes.append(this.allocator, new_route));
 
             return;
         }
 
         {
-            const entry = this.dedupe_dynamic.getOrPutValue(route.full_hash, route.abs_path.slice()) catch unreachable;
+            const entry = bun.handleOom(this.dedupe_dynamic.getOrPutValue(route.full_hash, route.abs_path.slice()));
             if (entry.found_existing) {
                 const source = Logger.Source.initEmptyFile(route.abs_path.slice());
                 this.log.addErrorFmt(
@@ -298,9 +298,9 @@ const RouteLoader = struct {
         }
 
         {
-            const new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = bun.handleOom(this.allocator.create(Route));
             new_route.* = route;
-            this.all_routes.append(this.allocator, new_route) catch unreachable;
+            bun.handleOom(this.all_routes.append(this.allocator, new_route));
         }
     }
 
@@ -711,11 +711,11 @@ pub const Route = struct {
             const name_offset = @intFromPtr(name.ptr) - @intFromPtr(public_path.ptr);
 
             if (has_uppercase) {
-                public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
+                public_path = bun.handleOom(FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path));
                 name = public_path[name_offset..][0..name.len];
-                match_name = FileSystem.DirnameStore.instance.appendLowerCase(@TypeOf(name[1..]), name[1..]) catch unreachable;
+                match_name = bun.handleOom(FileSystem.DirnameStore.instance.appendLowerCase(@TypeOf(name[1..]), name[1..]));
             } else {
-                public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
+                public_path = bun.handleOom(FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path));
                 name = public_path[name_offset..][0..name.len];
                 match_name = name[1..];
             }
@@ -726,7 +726,7 @@ pub const Route = struct {
             name = Route.index_route_name;
             match_name = Route.index_route_name;
 
-            public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
+            public_path = bun.handleOom(FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path));
         }
 
         if (abs_path_str.len == 0) {
@@ -755,7 +755,7 @@ pub const Route = struct {
                 return null;
             };
 
-            abs_path_str = FileSystem.DirnameStore.instance.append(@TypeOf(_abs), _abs) catch unreachable;
+            abs_path_str = bun.handleOom(FileSystem.DirnameStore.instance.append(@TypeOf(_abs), _abs));
             entry.abs_path = PathString.init(abs_path_str);
         }
 

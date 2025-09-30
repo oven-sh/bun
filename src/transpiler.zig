@@ -173,13 +173,13 @@ pub const PluginRunner = struct {
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
-                std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
+                bun.handleOom(std.fmt.allocPrint(this.allocator, "{any}", .{file_path})),
                 user_namespace.byteSlice(),
             );
         } else {
             return Fs.Path.initWithNamespace(
-                std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
-                std.fmt.allocPrint(this.allocator, "{any}", .{user_namespace}) catch unreachable,
+                bun.handleOom(std.fmt.allocPrint(this.allocator, "{any}", .{file_path})),
+                bun.handleOom(std.fmt.allocPrint(this.allocator, "{any}", .{user_namespace})),
             );
         }
     }
@@ -264,7 +264,7 @@ pub const PluginRunner = struct {
         defer user_namespace.deref();
 
         // Our super slow way of cloning the string into memory owned by jsc
-        const combined_string = std.fmt.allocPrint(this.allocator, "{any}:{any}", .{ user_namespace, file_path }) catch unreachable;
+        const combined_string = bun.handleOom(std.fmt.allocPrint(this.allocator, "{any}:{any}", .{ user_namespace, file_path }));
         var out_ = bun.String.init(combined_string);
         const jsval = out_.toJS(this.global_object);
         const out = jsval.toBunString(this.global_object) catch @panic("unreachable");
@@ -606,7 +606,7 @@ pub const Transpiler = struct {
             file_path = client_entry_point.source.path;
         }
 
-        file_path.pretty = Linker.relative_paths_list.append(string, transpiler.fs.relativeTo(file_path.text)) catch unreachable;
+        file_path.pretty = bun.handleOom(Linker.relative_paths_list.append(string, transpiler.fs.relativeTo(file_path.text)));
 
         var output_file = options.OutputFile{
             .src_path = file_path,
@@ -745,7 +745,7 @@ pub const Transpiler = struct {
 
             .html, .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
                 const hashed_name = try transpiler.linker.getHashedFilename(file_path, null);
-                var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
+                var pathname = bun.handleOom(transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len));
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
 
@@ -1195,9 +1195,9 @@ pub const Transpiler = struct {
 
                 const parts = brk: {
                     if (this_parse.keep_json_and_toml_as_one_statement) {
-                        var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                        var stmts = bun.handleOom(allocator.alloc(js_ast.Stmt, 1));
                         stmts[0] = js_ast.Stmt.allocate(allocator, js_ast.S.SExpr, js_ast.S.SExpr{ .value = expr }, logger.Loc{ .start = 0 });
-                        var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                        var parts_ = bun.handleOom(allocator.alloc(js_ast.Part, 1));
                         parts_[0] = js_ast.Part{ .stmts = stmts };
                         break :brk parts_;
                     }
@@ -1205,15 +1205,15 @@ pub const Transpiler = struct {
                     if (expr.data == .e_object) {
                         const properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
                         if (properties.len > 0) {
-                            var stmts = allocator.alloc(js_ast.Stmt, 3) catch return null;
+                            var stmts = bun.handleOom(allocator.alloc(js_ast.Stmt, 3));
                             var decls = std.ArrayListUnmanaged(js_ast.G.Decl).initCapacity(
                                 allocator,
                                 properties.len,
                             ) catch |err| bun.handleOom(err);
                             decls.expandToCapacity();
 
-                            symbols = allocator.alloc(js_ast.Symbol, properties.len) catch return null;
-                            var export_clauses = allocator.alloc(js_ast.ClauseItem, properties.len) catch return null;
+                            symbols = bun.handleOom(allocator.alloc(js_ast.Symbol, properties.len));
+                            var export_clauses = bun.handleOom(allocator.alloc(js_ast.ClauseItem, properties.len));
                             var duplicate_key_checker = bun.StringHashMap(u32).init(allocator);
                             defer duplicate_key_checker.deinit();
                             var count: usize = 0;
@@ -1288,14 +1288,14 @@ pub const Transpiler = struct {
                                 },
                             );
 
-                            var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                            var parts_ = bun.handleOom(allocator.alloc(js_ast.Part, 1));
                             parts_[0] = js_ast.Part{ .stmts = stmts };
                             break :brk parts_;
                         }
                     }
 
                     {
-                        var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                        var stmts = bun.handleOom(allocator.alloc(js_ast.Stmt, 1));
                         stmts[0] = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                             .value = js_ast.StmtOrExpr{ .expr = expr },
                             .default_name = js_ast.LocRef{
@@ -1304,7 +1304,7 @@ pub const Transpiler = struct {
                             },
                         }, logger.Loc{ .start = 0 });
 
-                        var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                        var parts_ = bun.handleOom(allocator.alloc(js_ast.Part, 1));
                         parts_[0] = js_ast.Part{ .stmts = stmts };
                         break :brk parts_;
                     }
@@ -1331,9 +1331,9 @@ pub const Transpiler = struct {
                         .ref = Ref.None,
                     },
                 }, logger.Loc{ .start = 0 });
-                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                var stmts = bun.handleOom(allocator.alloc(js_ast.Stmt, 1));
                 stmts[0] = stmt;
-                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                var parts = bun.handleOom(allocator.alloc(js_ast.Part, 1));
                 parts[0] = js_ast.Part{ .stmts = stmts };
 
                 return ParseResult{
@@ -1393,7 +1393,7 @@ pub const Transpiler = struct {
             // a leading "./" because the path may not be a file system path. For
             // example, it may be a URL. So only insert a leading "./" when the path
             // is an exact match for an existing file.
-            var __entry = transpiler.allocator.alloc(u8, "./".len + entry.len) catch unreachable;
+            var __entry = bun.handleOom(transpiler.allocator.alloc(u8, "./".len + entry.len));
             __entry[0] = '.';
             __entry[1] = '/';
             bun.copy(u8, __entry[2..__entry.len], entry);
@@ -1520,7 +1520,7 @@ pub const Transpiler = struct {
                         outstream,
                         client_entry_point,
                     ) catch continue orelse continue;
-                    transpiler.output_files.append(entry_point_output_file) catch unreachable;
+                    bun.handleOom(transpiler.output_files.append(entry_point_output_file));
 
                     js_ast.Expr.Data.Store.reset();
                     js_ast.Stmt.Data.Store.reset();
@@ -1536,7 +1536,7 @@ pub const Transpiler = struct {
                         outstream,
                         null,
                     ) catch continue orelse continue;
-                    transpiler.output_files.append(original_output_file) catch unreachable;
+                    bun.handleOom(transpiler.output_files.append(original_output_file));
 
                     continue;
                 }
@@ -1549,7 +1549,7 @@ pub const Transpiler = struct {
                 outstream,
                 null,
             ) catch continue orelse continue;
-            transpiler.output_files.append(output_file) catch unreachable;
+            bun.handleOom(transpiler.output_files.append(output_file));
         }
     }
 };

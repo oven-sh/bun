@@ -653,8 +653,8 @@ pub const Parser = struct {
         if (p.options.bundle or !p.options.features.commonjs_at_runtime) {
             if (uses_dirname or uses_filename) {
                 const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
-                var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
-                var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+                var declared_symbols = bun.handleOom(DeclaredSymbol.List.initCapacity(p.allocator, count));
+                var decls = bun.handleOom(p.allocator.alloc(G.Decl, count));
                 if (uses_dirname) {
                     decls[0] = .{
                         .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
@@ -680,7 +680,7 @@ pub const Parser = struct {
                     declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
                 }
 
-                var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                var part_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
                 part_stmts[0] = p.s(S.Local{
                     .kind = .k_var,
                     .decls = Decl.List.fromOwnedSlice(decls),
@@ -701,7 +701,7 @@ pub const Parser = struct {
 
         if (p.shouldUnwrapCommonJSToESM()) {
             if (p.imports_to_convert_from_require.items.len > 0) {
-                const all_stmts = p.allocator.alloc(Stmt, p.imports_to_convert_from_require.items.len) catch unreachable;
+                const all_stmts = bun.handleOom(p.allocator.alloc(Stmt, p.imports_to_convert_from_require.items.len));
                 before.ensureUnusedCapacity(p.imports_to_convert_from_require.items.len) catch unreachable;
 
                 var remaining_stmts = all_stmts;
@@ -721,7 +721,7 @@ pub const Parser = struct {
                         },
                         deferred_import.namespace.loc,
                     );
-                    var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
+                    var declared_symbols = bun.handleOom(DeclaredSymbol.List.initCapacity(p.allocator, 1));
                     declared_symbols.appendAssumeCapacity(.{ .ref = deferred_import.namespace.ref.?, .is_top_level = true });
                     before.appendAssumeCapacity(.{
                         .stmts = import_part_stmts,
@@ -1129,8 +1129,8 @@ pub const Parser = struct {
         if (exports_kind == .esm and (uses_dirname or uses_filename)) {
             bun.assert(!p.options.bundle);
             const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
-            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
-            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+            var declared_symbols = bun.handleOom(DeclaredSymbol.List.initCapacity(p.allocator, count));
+            var decls = bun.handleOom(p.allocator.alloc(G.Decl, count));
             if (uses_dirname) {
                 // var __dirname = import.meta
                 decls[0] = .{
@@ -1162,7 +1162,7 @@ pub const Parser = struct {
                 declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
             }
 
-            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+            var part_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
             part_stmts[0] = p.s(S.Local{
                 .kind = .k_var,
                 .decls = Decl.List.fromOwnedSlice(decls),
@@ -1214,7 +1214,7 @@ pub const Parser = struct {
 
             var declared_symbols = js_ast.DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(p.allocator, items_count);
-            var clauses: []js_ast.ClauseItem = p.allocator.alloc(js_ast.ClauseItem, items_count) catch unreachable;
+            var clauses: []js_ast.ClauseItem = bun.handleOom(p.allocator.alloc(js_ast.ClauseItem, items_count));
             var clause_i: usize = 0;
             inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
                 if (p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0) {

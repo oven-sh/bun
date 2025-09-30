@@ -19,7 +19,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
 
     // Now that all exports have been resolved, sort and filter them to create
     // something we can iterate over later.
-    var aliases = std.ArrayList(string).initCapacity(allocator, resolved_exports.count()) catch unreachable;
+    var aliases = bun.handleOom(std.ArrayList(string).initCapacity(allocator, resolved_exports.count()));
     var alias_iter = resolved_exports.iterator();
     const imports_to_bind = c.graph.meta.items(.imports_to_bind);
     const probably_typescript_type = c.graph.meta.items(.probably_typescript_type);
@@ -63,7 +63,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
     // if yes, we could just move all the hidden exports to the end of the array
     // and only store a count instead of an array
     strings.sortDesc(aliases.items);
-    const export_aliases = aliases.toOwnedSlice() catch unreachable;
+    const export_aliases = bun.handleOom(aliases.toOwnedSlice());
     c.graph.meta.items(.sorted_and_filtered_export_aliases)[id] = export_aliases;
 
     // Export creation uses "sortedAndFilteredExportAliases" so this must
@@ -188,7 +188,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
             const other_parts = c.topLevelSymbolsToParts(id, ref);
 
             for (other_parts) |other_part_index| {
-                const local = local_dependencies.getOrPut(other_part_index) catch unreachable;
+                const local = bun.handleOom(local_dependencies.getOrPut(other_part_index));
                 if (!local.found_existing or local.value_ptr.* != part_index) {
                     local.value_ptr.* = @as(u32, @intCast(part_index));
                     // note: if we crash on append, it is due to threadlocal heaps in mimalloc
@@ -326,7 +326,7 @@ pub fn createExportsForFile(
 
         // Make sure the part that declares the export is included
         const parts = c.topLevelSymbolsToParts(exp.data.source_index.get(), exp.data.import_ref);
-        ns_export_dependencies.ensureUnusedCapacity(parts.len) catch unreachable;
+        bun.handleOom(ns_export_dependencies.ensureUnusedCapacity(parts.len));
         for (parts, ns_export_dependencies.unusedCapacitySlice()[0..parts.len]) |part_id, *dest| {
             // Use a non-local dependency since this is likely from a different
             // file if it came in through an export star
@@ -349,7 +349,7 @@ pub fn createExportsForFile(
 
     // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
     if (needs_exports_variable) {
-        var decls = allocator.alloc(js_ast.G.Decl, 1) catch unreachable;
+        var decls = bun.handleOom(allocator.alloc(js_ast.G.Decl, 1));
         decls[0] = .{
             .binding = js_ast.Binding.alloc(
                 allocator,
@@ -369,14 +369,14 @@ pub fn createExportsForFile(
             loc,
         );
         remaining_stmts = remaining_stmts[1..];
-        declared_symbols.append(allocator, .{ .ref = exports_ref, .is_top_level = true }) catch unreachable;
+        bun.handleOom(declared_symbols.append(allocator, .{ .ref = exports_ref, .is_top_level = true }));
     }
 
     // "__export(exports, { foo: () => foo })"
     var export_ref = Ref.None;
     if (properties.items.len > 0) {
         export_ref = c.runtimeFunction("__export");
-        var args = allocator.alloc(js_ast.Expr, 2) catch unreachable;
+        var args = bun.handleOom(allocator.alloc(js_ast.Expr, 2));
         args[0..2].* = [_]js_ast.Expr{
             js_ast.Expr.initIdentifier(exports_ref, loc),
             js_ast.Expr.allocate(
@@ -405,7 +405,7 @@ pub fn createExportsForFile(
         remaining_stmts = remaining_stmts[1..];
         // Make sure this file depends on the "__export" symbol
         const parts = c.topLevelSymbolsToPartsForRuntime(export_ref);
-        ns_export_dependencies.ensureUnusedCapacity(parts.len) catch unreachable;
+        bun.handleOom(ns_export_dependencies.ensureUnusedCapacity(parts.len));
         for (parts) |part_index| {
             ns_export_dependencies.appendAssumeCapacity(
                 .{ .source_index = Index.runtime, .part_index = part_index },
@@ -424,7 +424,7 @@ pub fn createExportsForFile(
     if (force_include_exports_for_entry_point) {
         const toCommonJSRef = c.runtimeFunction("__toCommonJS");
 
-        var call_args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
+        var call_args = bun.handleOom(allocator.alloc(js_ast.Expr, 1));
         call_args[0] = Expr.initIdentifier(exports_ref, Loc.Empty);
         remaining_stmts[0] = js_ast.Stmt.assign(
             Expr.allocate(

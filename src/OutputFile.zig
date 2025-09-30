@@ -169,7 +169,7 @@ pub const SavedFile = struct {
             bun.default_allocator,
         ) catch unreachable;
 
-        var blob = bun.default_allocator.create(jsc.WebCore.Blob) catch unreachable;
+        var blob = bun.handleOom(bun.default_allocator.create(jsc.WebCore.Blob));
         blob.* = jsc.WebCore.Blob.initWithStore(store, globalThis);
         if (mime_type) |mime| {
             blob.content_type = mime.value;
@@ -357,7 +357,7 @@ pub fn toJS(
                     }
                 else
                     jsc.Node.PathOrFileDescriptor{
-                        .path = jsc.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, copy.pathname) catch unreachable) },
+                        .path = jsc.Node.PathLike{ .string = bun.PathString.init(bun.handleOom(globalObject.allocator().dupe(u8, copy.pathname))) },
                     },
                 this.loader.toMimeType(&.{owned_pathname orelse ""}),
                 globalObject.allocator(),
@@ -388,7 +388,7 @@ pub fn toJS(
 
             const file_blob = jsc.WebCore.Blob.Store.initFile(
                 jsc.Node.PathOrFileDescriptor{
-                    .path = jsc.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
+                    .path = jsc.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse bun.handleOom(bun.default_allocator.dupe(u8, this.src_path.text))) },
                 },
                 this.loader.toMimeType(&.{owned_pathname orelse ""}),
                 globalObject.allocator(),
@@ -430,7 +430,7 @@ pub fn toJS(
                 .hash = this.hash,
                 .loader = this.input_loader,
                 .output_kind = this.output_kind,
-                .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
+                .path = owned_pathname orelse bun.handleOom(bun.default_allocator.dupe(u8, this.src_path.text)),
             };
 
             this.value = .{
@@ -461,7 +461,7 @@ pub fn toBlob(
                     }
                 else
                     jsc.Node.PathOrFileDescriptor{
-                        .path = jsc.Node.PathLike{ .string = bun.PathString.init(allocator.dupe(u8, copy.pathname) catch unreachable) },
+                        .path = jsc.Node.PathLike{ .string = bun.PathString.init(bun.handleOom(allocator.dupe(u8, copy.pathname))) },
                     },
                 this.loader.toMimeType(&.{ this.dest_path, this.src_path.text }),
                 allocator,
@@ -479,7 +479,7 @@ pub fn toBlob(
         .saved => brk: {
             const file_blob = try jsc.WebCore.Blob.Store.initFile(
                 jsc.Node.PathOrFileDescriptor{
-                    .path = jsc.Node.PathLike{ .string = bun.PathString.init(allocator.dupe(u8, this.src_path.text) catch unreachable) },
+                    .path = jsc.Node.PathLike{ .string = bun.PathString.init(bun.handleOom(allocator.dupe(u8, this.src_path.text))) },
                 },
                 this.loader.toMimeType(&.{ this.dest_path, this.src_path.text }),
                 allocator,

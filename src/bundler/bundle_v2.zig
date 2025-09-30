@@ -290,7 +290,7 @@ pub const BundleV2 = struct {
             if (v.visited.isSet(source_index.get())) {
                 if (comptime check_dynamic_imports) {
                     if (was_dynamic_import) {
-                        v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
+                        bun.handleOom(v.dynamic_import_entry_points.put(source_index.get(), {}));
                     }
                 }
                 return;
@@ -356,10 +356,10 @@ pub const BundleV2 = struct {
             }
 
             // Each file must come after its dependencies
-            v.reachable.append(source_index) catch unreachable;
+            bun.handleOom(v.reachable.append(source_index));
             if (comptime check_dynamic_imports) {
                 if (was_dynamic_import) {
-                    v.dynamic_import_entry_points.put(source_index.get(), {}) catch unreachable;
+                    bun.handleOom(v.dynamic_import_entry_points.put(source_index.get(), {}));
                 }
             }
         }
@@ -1301,7 +1301,7 @@ pub const BundleV2 = struct {
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
-        this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
+        bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
 
         this.graph.input_files.append(this.allocator(), .{
             .source = source.*,
@@ -1341,7 +1341,7 @@ pub const BundleV2 = struct {
         known_target: options.Target,
     ) OOM!Index.Int {
         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
-        this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
+        bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
 
         this.graph.input_files.append(this.allocator(), .{
             .source = source.*,
@@ -2306,7 +2306,7 @@ pub const BundleV2 = struct {
                 this.graph.input_files.items(.is_plugin_file)[load.source_index.get()] = true;
                 var parse_task = load.parse_task;
                 parse_task.loader = code.loader;
-                if (!should_copy_for_bundling) this.free_list.append(code.source_code) catch unreachable;
+                if (!should_copy_for_bundling) bun.handleOom(this.free_list.append(code.source_code));
                 parse_task.contents_or_fd = .{
                     .contents = code.source_code,
                 };
@@ -2458,7 +2458,7 @@ pub const BundleV2 = struct {
                         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
-                        this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
+                        bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
                         const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
 
                         this.graph.input_files.append(this.allocator(), .{
@@ -2470,7 +2470,7 @@ pub const BundleV2 = struct {
                             .loader = loader,
                             .side_effects = .has_side_effects,
                         }) catch unreachable;
-                        var task = bun.default_allocator.create(ParseTask) catch unreachable;
+                        var task = bun.handleOom(bun.default_allocator.create(ParseTask));
                         task.* = ParseTask{
                             .ctx = this,
                             .path = path,
@@ -2546,7 +2546,7 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 const log = this.logForResolutionFailures(resolve.import_record.source_file, resolve.import_record.original_target.bakeGraph());
-                log.msgs.append(err) catch unreachable;
+                bun.handleOom(log.msgs.append(err));
                 log.errors += @as(u32, @intFromBool(err.kind == .err));
                 log.warnings += @as(u32, @intFromBool(err.kind == .warn));
             },
@@ -2929,7 +2929,7 @@ pub const BundleV2 = struct {
         if (this.plugins) |plugins| {
             if (plugins.hasAnyMatches(&import_record.path, false)) {
                 // This is where onResolve plugins are enqueued
-                var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;
+                var resolve: *jsc.API.JSBundler.Resolve = bun.handleOom(bun.default_allocator.create(jsc.API.JSBundler.Resolve));
                 debug("enqueue onResolve: {s}:{s}", .{
                     import_record.path.namespace,
                     import_record.path.text,
@@ -2966,7 +2966,7 @@ pub const BundleV2 = struct {
             if (plugins.hasAnyMatches(&temp_path, false)) {
                 debug("Entry point '{s}' plugin match", .{entry_point});
 
-                var resolve: *jsc.API.JSBundler.Resolve = bun.default_allocator.create(jsc.API.JSBundler.Resolve) catch unreachable;
+                var resolve: *jsc.API.JSBundler.Resolve = bun.handleOom(bun.default_allocator.create(jsc.API.JSBundler.Resolve));
                 this.incrementScanCounter();
 
                 resolve.* = jsc.API.JSBundler.Resolve.init(this, .{
@@ -3700,7 +3700,7 @@ pub const BundleV2 = struct {
                     const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
                     const is_html_entrypoint = loader == .html and original_target.isServerSide() and this.transpiler.options.dev_server == null;
                     const map: *PathToSourceIndexMap = if (is_html_entrypoint) this.pathToSourceIndexMap(.browser) else path_to_source_index_map;
-                    const existing = map.getOrPut(this.allocator(), entry.key_ptr.*) catch unreachable;
+                    const existing = bun.handleOom(map.getOrPut(this.allocator(), entry.key_ptr.*));
 
                     // Originally, we attempted to avoid the "dual package
                     // hazard" right here by checking if pathToSourceIndexMap
@@ -3736,12 +3736,12 @@ pub const BundleV2 = struct {
 
                         diff += 1;
 
-                        graph.input_files.append(this.allocator(), new_input_file) catch unreachable;
-                        graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
+                        bun.handleOom(graph.input_files.append(this.allocator(), new_input_file));
+                        bun.handleOom(graph.ast.append(this.allocator(), JSAst.empty));
 
                         if (is_html_entrypoint) {
                             this.ensureClientTranspiler();
-                            this.graph.entry_points.append(this.allocator(), new_input_file.source.index) catch unreachable;
+                            bun.handleOom(this.graph.entry_points.append(this.allocator(), new_input_file.source.index));
                         }
 
                         if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
@@ -3767,7 +3767,7 @@ pub const BundleV2 = struct {
                     }
                 }
 
-                var import_records = result.ast.import_records.clone(this.allocator()) catch unreachable;
+                var import_records = bun.handleOom(result.ast.import_records.clone(this.allocator()));
 
                 const input_file_loaders = graph.input_files.items(.loader);
                 const save_import_record_source_index = this.transpiler.options.dev_server == null or

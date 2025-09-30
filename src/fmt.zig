@@ -248,7 +248,7 @@ pub fn formatJSONStringUTF8(text: []const u8, opts: JSONFormatterUTF8.Options) J
 const SharedTempBuffer = [32 * 1024]u8;
 fn getSharedBuffer() []u8 {
     return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
-        shared_temp_buffer_ptr = bun.default_allocator.create(SharedTempBuffer) catch unreachable;
+        shared_temp_buffer_ptr = bun.handleOom(bun.default_allocator.create(SharedTempBuffer));
         break :brk shared_temp_buffer_ptr.?;
     });
 }

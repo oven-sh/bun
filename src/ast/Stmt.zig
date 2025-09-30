@@ -106,7 +106,7 @@ inline fn comptime_alloc(comptime tag_name: string, comptime typename: type, ori
 }
 
 fn allocateData(allocator: std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
-    const value = allocator.create(@TypeOf(origData)) catch unreachable;
+    const value = bun.handleOom(allocator.create(@TypeOf(origData)));
     value.* = origData;
 
     return comptime_init(tag_name, *typename, value, loc);

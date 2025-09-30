@@ -42,7 +42,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             // .const_values = c.graph.const_values,
         };
 
-        var cross_chunk_import_records = ImportRecord.List.initCapacity(worker.allocator, chunk.cross_chunk_imports.len) catch unreachable;
+        var cross_chunk_import_records = bun.handleOom(ImportRecord.List.initCapacity(worker.allocator, chunk.cross_chunk_imports.len));
         defer cross_chunk_import_records.deinit(worker.allocator);
         for (chunk.cross_chunk_imports.slice()) |import_record| {
             cross_chunk_import_records.appendAssumeCapacity(
@@ -687,8 +687,8 @@ pub fn generateEntryPointTailJS(
                         ) catch unreachable;
 
                         if (flags.needs_synthetic_default_export and !had_default_export) {
-                            var properties = G.Property.List.initCapacity(allocator, items.items.len) catch unreachable;
-                            const getter_fn_body = allocator.alloc(Stmt, items.items.len) catch unreachable;
+                            var properties = bun.handleOom(G.Property.List.initCapacity(allocator, items.items.len));
+                            const getter_fn_body = bun.handleOom(allocator.alloc(Stmt, items.items.len));
                             var remain_getter_fn_body = getter_fn_body;
                             for (items.items) |export_item| {
                                 var fn_body = remain_getter_fn_body[0..1];

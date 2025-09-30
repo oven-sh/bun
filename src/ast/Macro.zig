@@ -93,7 +93,7 @@ pub const MacroContext = struct {
             &specifier_buf_len,
         );
 
-        const macro_entry = this.macros.getOrPut(hash) catch unreachable;
+        const macro_entry = bun.handleOom(this.macros.getOrPut(hash));
         if (!macro_entry.found_existing) {
             macro_entry.value_ptr.* = Macro.init(
                 default_allocator,
@@ -320,7 +320,7 @@ pub const Runner = struct {
                 .Null => return Expr.init(E.Null, E.Null{}, this.caller.loc),
                 .Private => {
                     this.is_top_level = false;
-                    const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                    const _entry = bun.handleOom(this.visited.getOrPut(this.allocator, value));
                     if (_entry.found_existing) {
                         return _entry.value_ptr.*;
                     }
@@ -362,7 +362,7 @@ pub const Runner = struct {
                 jsc.ConsoleObject.Formatter.Tag.Array => {
                     this.is_top_level = false;
 
-                    const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                    const _entry = bun.handleOom(this.visited.getOrPut(this.allocator, value));
                     if (_entry.found_existing) {
                         return _entry.value_ptr.*;
                     }
@@ -370,7 +370,7 @@ pub const Runner = struct {
                     var iter = try jsc.JSArrayIterator.init(value, this.global);
 
                     // Process all array items
-                    var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
+                    var array = bun.handleOom(this.allocator.alloc(Expr, iter.len));
                     errdefer this.allocator.free(array);
                     const expr = Expr.init(
                         E.Array,
@@ -393,7 +393,7 @@ pub const Runner = struct {
                 // TODO: optimize this
                 jsc.ConsoleObject.Formatter.Tag.Object => {
                     this.is_top_level = false;
-                    const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                    const _entry = bun.handleOom(this.visited.getOrPut(this.allocator, value));
                     if (_entry.found_existing) {
                         return _entry.value_ptr.*;
                     }
@@ -465,12 +465,12 @@ pub const Runner = struct {
                     defer bun_str.deref();
 
                     // encode into utf16 so the printer escapes the string correctly
-                    var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
+                    var utf16_bytes = bun.handleOom(this.allocator.alloc(u16, bun_str.length()));
                     const out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
                     return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);
                 },
                 .Promise => {
-                    const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
+                    const _entry = bun.handleOom(this.visited.getOrPut(this.allocator, value));
                     if (_entry.found_existing) {
                         return _entry.value_ptr.*;
                     }

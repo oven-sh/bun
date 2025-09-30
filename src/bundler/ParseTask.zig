@@ -382,7 +382,7 @@ fn getAST(
             const path_to_use = brk: {
                 // Implements embedded sqlite
                 if (loader == .sqlite_embedded) {
-                    const embedded_path = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    const embedded_path = bun.handleOom(std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }));
                     unique_key_for_additional_file.* = .{
                         .key = embedded_path,
                         .content_hash = ContentHasher.run(source.contents),
@@ -407,9 +407,9 @@ fn getAST(
                 .name_loc = Logger.Loc.Empty,
                 .name = "require",
             }, Logger.Loc{ .start = 0 });
-            const require_args = allocator.alloc(Expr, 2) catch unreachable;
+            const require_args = bun.handleOom(allocator.alloc(Expr, 2));
             require_args[0] = import_path;
-            const object_properties = allocator.alloc(G.Property, 1) catch unreachable;
+            const object_properties = bun.handleOom(allocator.alloc(G.Property, 1));
             object_properties[0] = G.Property{
                 .key = Expr.init(E.String, E.String{
                     .data = "type",
@@ -446,7 +446,7 @@ fn getAST(
                 return error.ParserError;
             }
 
-            const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+            const unique_key = bun.handleOom(std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }));
             // This injects the following code:
             //
             // require(unique_key)
@@ -455,7 +455,7 @@ fn getAST(
                 .data = unique_key,
             }, Logger.Loc{ .start = 0 });
 
-            const require_args = allocator.alloc(Expr, 1) catch unreachable;
+            const require_args = bun.handleOom(allocator.alloc(Expr, 1));
             require_args[0] = import_path;
 
             const root = Expr.init(E.Call, E.Call{
@@ -668,7 +668,7 @@ fn getCodeForParseTaskWithoutPlugins(
                 false,
                 contents.file.unwrapValid(),
             ) catch |err| {
-                const source = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
+                const source = &Logger.Source.initEmptyFile(bun.handleOom(log.msgs.allocator.dupe(u8, file_path.text)));
                 switch (err) {
                     error.ENOENT, error.FileNotFound => {
                         log.addErrorFmt(

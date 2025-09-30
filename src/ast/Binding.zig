@@ -40,7 +40,7 @@ pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
             return wrapper.wrapIdentifier(loc, b.ref);
         },
         .b_array => |b| {
-            var exprs = wrapper.allocator.alloc(Expr, b.items.len) catch unreachable;
+            var exprs = bun.handleOom(wrapper.allocator.alloc(Expr, b.items.len));
             var i: usize = 0;
             while (i < exprs.len) : (i += 1) {
                 const item = b.items[i];
@@ -66,9 +66,9 @@ pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
             );
         },
         .b_object => |b| {
-            const properties = wrapper
+            const properties = bun.handleOom(wrapper
                 .allocator
-                .alloc(G.Property, b.properties.len) catch unreachable;
+                .alloc(G.Property, b.properties.len));
             for (properties, b.properties) |*property, item| {
                 property.* = .{
                     .flags = item.flags,
@@ -131,17 +131,17 @@ pub fn alloc(allocator: std.mem.Allocator, t: anytype, loc: logger.Loc) Binding 
     icount += 1;
     switch (@TypeOf(t)) {
         B.Identifier => {
-            const data = allocator.create(B.Identifier) catch unreachable;
+            const data = bun.handleOom(allocator.create(B.Identifier));
             data.* = t;
             return Binding{ .loc = loc, .data = B{ .b_identifier = data } };
         },
         B.Array => {
-            const data = allocator.create(B.Array) catch unreachable;
+            const data = bun.handleOom(allocator.create(B.Array));
             data.* = t;
             return Binding{ .loc = loc, .data = B{ .b_array = data } };
         },
         B.Object => {
-            const data = allocator.create(B.Object) catch unreachable;
+            const data = bun.handleOom(allocator.create(B.Object));
             data.* = t;
             return Binding{ .loc = loc, .data = B{ .b_object = data } };
         },

@@ -7,8 +7,8 @@ pub const Set = struct {
         return Set{
             .js = JavaScript.init(allocator),
             .fs = Fs{
-                .shared_buffer = MutableString.init(allocator, 0) catch unreachable,
-                .macro_shared_buffer = MutableString.init(allocator, 0) catch unreachable,
+                .shared_buffer = bun.handleOom(MutableString.init(allocator, 0)),
+                .macro_shared_buffer = bun.handleOom(MutableString.init(allocator, 0)),
             },
             .json = Json{},
         };

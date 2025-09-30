@@ -182,12 +182,12 @@ pub const ThreadPool = struct {
         {
             this.workers_assignments_lock.lock();
             defer this.workers_assignments_lock.unlock();
-            const entry = this.workers_assignments.getOrPut(id) catch unreachable;
+            const entry = bun.handleOom(this.workers_assignments.getOrPut(id));
             if (entry.found_existing) {
                 return entry.value_ptr.*;
             }
 
-            worker = bun.default_allocator.create(Worker) catch unreachable;
+            worker = bun.handleOom(bun.default_allocator.create(Worker));
             entry.value_ptr.* = worker;
         }
 

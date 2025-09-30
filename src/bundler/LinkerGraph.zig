@@ -120,11 +120,11 @@ pub fn addPartToFile(
                 break :brk out;
             };
 
-            var entry = overlay.getOrPut(self.graph.allocator, ref) catch unreachable;
+            var entry = bun.handleOom(overlay.getOrPut(self.graph.allocator, ref));
             if (!entry.found_existing) {
                 if (self.graph.ast.items(.top_level_symbols_to_parts)[self.id].get(ref)) |original_parts| {
                     var list = std.ArrayList(u32).init(self.graph.allocator);
-                    list.ensureTotalCapacityPrecise(original_parts.len + 1) catch unreachable;
+                    bun.handleOom(list.ensureTotalCapacityPrecise(original_parts.len + 1));
                     list.appendSliceAssumeCapacity(original_parts.slice());
                     list.appendAssumeCapacity(self.part_id);
 
@@ -299,7 +299,7 @@ pub fn load(
         this.meta.zero();
 
         if (scb.list.len > 0) {
-            this.is_scb_bitset = BitSet.initEmpty(this.allocator, this.files.len) catch unreachable;
+            this.is_scb_bitset = bun.handleOom(BitSet.initEmpty(this.allocator, this.files.len));
 
             // Index all SCBs into the bitset. This is needed so chunking
             // can track the chunks that SCBs belong to.
@@ -403,7 +403,7 @@ pub fn load(
     const dest_resolved_exports: []ResolvedExports = this.meta.items(.resolved_exports);
     for (src_named_exports, dest_resolved_exports, 0..) |src, *dest, source_index| {
         var resolved = ResolvedExports{};
-        resolved.ensureTotalCapacity(this.allocator, src.count()) catch unreachable;
+        bun.handleOom(resolved.ensureTotalCapacity(this.allocator, src.count()));
         for (src.keys(), src.values()) |key, value| {
             resolved.putAssumeCapacityNoClobber(key, .{ .data = .{
                 .import_ref = value.ref,

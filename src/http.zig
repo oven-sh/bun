@@ -108,8 +108,8 @@ pub fn registerAbortTracker(
 ) void {
     if (client.signals.aborted != null) {
         switch (is_ssl) {
-            true => socket_async_http_abort_tracker.put(client.async_http_id, .{ .SocketTLS = socket }) catch unreachable,
-            false => socket_async_http_abort_tracker.put(client.async_http_id, .{ .SocketTCP = socket }) catch unreachable,
+            true => bun.handleOom(socket_async_http_abort_tracker.put(client.async_http_id, .{ .SocketTLS = socket })),
+            false => bun.handleOom(socket_async_http_abort_tracker.put(client.async_http_id, .{ .SocketTCP = socket })),
         }
     }
 }
@@ -161,7 +161,7 @@ pub fn onOpen(
                     temp_hostname[_hostname.len] = 0;
                     hostname = temp_hostname[0.._hostname.len :0];
                 } else {
-                    hostname = bun.default_allocator.dupeZ(u8, _hostname) catch unreachable;
+                    hostname = bun.handleOom(bun.default_allocator.dupeZ(u8, _hostname));
                     hostname_needs_free = true;
                 }
             }
@@ -1652,9 +1652,9 @@ fn cloneMetadata(this: *HTTPClient) void {
         var builder = &builder_;
         response.count(builder);
         builder.count(this.url.href);
-        builder.allocate(this.allocator) catch unreachable;
+        bun.handleOom(builder.allocate(this.allocator));
         // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-        const headers_buf = this.allocator.alloc(picohttp.Header, response.headers.list.len) catch unreachable;
+        const headers_buf = bun.handleOom(this.allocator.alloc(picohttp.Header, response.headers.list.len));
         const cloned_response = response.clone(headers_buf, builder);
 
         // we clean the temporary response since cloned_metadata is now the owner

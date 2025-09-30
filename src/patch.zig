@@ -866,7 +866,7 @@ const PatchLinesParser = struct {
                                 return ParseErr.hunk_lines_encountered_before_hunk_header;
                             }
                             if (this.current_hunk_mutation_part != null and @intFromEnum(this.current_hunk_mutation_part.?.type) != @intFromEnum(hunk_line_type)) {
-                                this.current_hunk.?.parts.append(bun.default_allocator, this.current_hunk_mutation_part.?) catch unreachable;
+                                bun.handleOom(this.current_hunk.?.parts.append(bun.default_allocator, this.current_hunk_mutation_part.?));
                                 this.current_hunk_mutation_part = null;
                             }
 
@@ -876,7 +876,7 @@ const PatchLinesParser = struct {
                                 };
                             }
 
-                            this.current_hunk_mutation_part.?.lines.append(bun.default_allocator, line[@min(1, line.len)..]) catch unreachable;
+                            bun.handleOom(this.current_hunk_mutation_part.?.lines.append(bun.default_allocator, line[@min(1, line.len)..]));
                         },
                     }
                 },
@@ -897,10 +897,10 @@ const PatchLinesParser = struct {
     fn commitHunk(this: *PatchLinesParser) void {
         if (this.current_hunk) |*hunk| {
             if (this.current_hunk_mutation_part) |mutation_part| {
-                hunk.parts.append(bun.default_allocator, mutation_part) catch unreachable;
+                bun.handleOom(hunk.parts.append(bun.default_allocator, mutation_part));
                 this.current_hunk_mutation_part = null;
             }
-            this.current_file_patch.hunks.append(bun.default_allocator, hunk.*) catch unreachable;
+            bun.handleOom(this.current_file_patch.hunks.append(bun.default_allocator, hunk.*));
             this.current_hunk = null;
         }
     }
@@ -908,7 +908,7 @@ const PatchLinesParser = struct {
     fn commitFilePatch(this: *PatchLinesParser) void {
         this.commitHunk();
         this.current_file_patch.nullifyEmptyStrings();
-        this.result.append(bun.default_allocator, this.current_file_patch) catch unreachable;
+        bun.handleOom(this.result.append(bun.default_allocator, this.current_file_patch));
         this.current_file_patch = .{};
     }
 

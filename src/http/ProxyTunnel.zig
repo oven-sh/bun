@@ -36,7 +36,7 @@ fn onOpen(this: *HTTPClient) void {
                     bun.http.temp_hostname[_hostname.len] = 0;
                     hostname = bun.http.temp_hostname[0.._hostname.len :0];
                 } else {
-                    hostname = bun.default_allocator.dupeZ(u8, _hostname) catch unreachable;
+                    hostname = bun.handleOom(bun.default_allocator.dupeZ(u8, _hostname));
                     hostname_needs_free = true;
                 }
             }

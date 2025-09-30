@@ -1004,7 +1004,7 @@ pub const StringHashMapContext = struct {
         value: u64,
         input: []const u8,
         pub fn init(allocator: std.mem.Allocator, input: []const u8) PrehashedCaseInsensitive {
-            const out = allocator.alloc(u8, input.len) catch unreachable;
+            const out = bun.handleOom(allocator.alloc(u8, input.len));
             _ = strings.copyLowercase(input, out);
             return PrehashedCaseInsensitive{
                 .value = StringHashMapContext.hash(.{}, out),
@@ -1648,18 +1648,18 @@ pub fn reloadProcess(
         }
     }
 
-    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
+    const dupe_argv = bun.handleOom(allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null));
     for (bun.argv, dupe_argv) |src, *dest| {
-        dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
+        dest.* = bun.handleOom(allocator.dupeZ(u8, src)).ptr;
     }
 
     const environ_slice = std.mem.span(std.c.environ);
-    const environ = allocator.allocSentinel(?[*:0]const u8, environ_slice.len, null) catch unreachable;
+    const environ = bun.handleOom(allocator.allocSentinel(?[*:0]const u8, environ_slice.len, null));
     for (environ_slice, environ) |src, *dest| {
         if (src == null) {
             dest.* = null;
         } else {
-            dest.* = (allocator.dupeZ(u8, sliceTo(src.?, 0)) catch unreachable).ptr;
+            dest.* = bun.handleOom(allocator.dupeZ(u8, sliceTo(src.?, 0))).ptr;
         }
     }
 

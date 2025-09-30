@@ -1,5 +1,5 @@
 const StartManifestTaskError = bun.OOM || error{InvalidURL};
-fn startManifestTask(manager: *PackageManager, pkg_name: []const u8, dep: *const Dependency) StartManifestTaskError!void {
+fn startManifestTask(manager: *PackageManager, pkg_name: []const u8, dep: *const Dependency, needs_extended_manifest: bool) StartManifestTaskError!void {
     const task_id = Task.Id.forManifest(pkg_name);
     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) {
         return;
@@ -12,7 +12,7 @@ fn startManifestTask(manager: *PackageManager, pkg_name: []const u8, dep: *const
         .task_id = task_id,
         .allocator = manager.allocator,
     };
-    try task.forManifest(pkg_name, manager.allocator, manager.scopeForPackageName(pkg_name), null, dep.behavior.optional);
+    try task.forManifest(pkg_name, manager.allocator, manager.scopeForPackageName(pkg_name), null, dep.behavior.optional, needs_extended_manifest);
     manager.enqueueNetworkTask(task);
 }
 
@@ -58,14 +58,16 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                 }
 
                 const pkg_name = pkg_names[pkg_id];
+                const needs_extended_manifest = manager.options.minimal_age_gate != null;
 
                 _ = manager.manifests.byName(
                     manager,
                     manager.scopeForPackageName(pkg_name.slice(string_buf)),
                     pkg_name.slice(string_buf),
                     .load_from_memory_fallback_to_disk,
+                    needs_extended_manifest,
                 ) orelse {
-                    try startManifestTask(manager, pkg_name.slice(string_buf), dep);
+                    try startManifestTask(manager, pkg_name.slice(string_buf), dep, needs_extended_manifest);
                 };
 
                 manager.flushNetworkQueue();
@@ -84,14 +86,16 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                     const resolution: Resolution = pkg_resolutions[pkg_id];
                     if (resolution.tag != .npm) continue;
 
+                    const needs_extended_manifest = manager.options.minimal_age_gate != null;
                     const package_name = pkg_names[pkg_id].slice(string_buf);
                     _ = manager.manifests.byName(
                         manager,
                         manager.scopeForPackageName(package_name),
                         package_name,
                         .load_from_memory_fallback_to_disk,
+                        needs_extended_manifest,
                     ) orelse {
-                        try startManifestTask(manager, package_name, dep);
+                        try startManifestTask(manager, package_name, dep, needs_extended_manifest);
 
                         manager.flushNetworkQueue();
                         _ = manager.scheduleTasks();

@@ -22,7 +22,7 @@ pub const WTF = struct {
         return res;
     }
 
-    extern fn WTF__parseISODate(bytes: [*]const u8, length: usize) f64;
+    extern fn WTF__parseES5Date(bytes: [*]const u8, length: usize) f64;
 
     // 2000-01-01T00:00:00.000Z -> 946684800000 (ms)
     pub fn parseES5Date(buf: []const u8) !f64 {
@@ -31,7 +31,7 @@ pub const WTF = struct {
         if (buf.len == 0)
             return error.InvalidDate;
 
-        const ms = WTF__parseISODate(buf.ptr, buf.len);
+        const ms = WTF__parseES5Date(buf.ptr, buf.len);
         if (std.math.isFinite(ms))
             return ms;
 

@@ -353,8 +353,9 @@ Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ..
 Server.prototype[Symbol.asyncDispose] = function () {
   const { resolve, reject, promise } = Promise.withResolvers();
   this.close(function (err, ...args) {
-    if (err) reject(err);
-    else resolve(...args);
+    if (err) {
+      reject(err);
+    } else resolve(...args);
   });
   return promise;
 };
@@ -475,7 +476,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
@@ -529,11 +529,31 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (isAncientHTTP) {
           http_req.httpVersion = "1.0";
         }
+        if (method === "CONNECT") {
+          // Handle CONNECT method for HTTP tunneling/proxy
+          if (server.listenerCount("connect") > 0) {
+            // For CONNECT, emit the event and let the handler respond
+            // Don't assign the socket to a response for CONNECT
+            // The handler should write the raw response
+            socket[kEnableStreaming](true);
+            const { promise, resolve } = $newPromiseCapability(Promise);
+            socket.once("close", resolve);
+            server.emit("connect", http_req, socket, kEmptyBuffer);
+            return promise;
+          } else {
+            // Node.js will close the socket and will NOT respond with 400 Bad Request
+            socketHandle.close();
+          }
+          return;
+        }
+        socket[kEnableStreaming](false);
+
         const http_res = new ResponseClass(http_req, {
           [kBunServer]: true,
           [kHandle]: handle,
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
+
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
         // start buffering data if any, the user will need to resume() or .on("data") to read it
@@ -679,6 +699,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       //   return promise;
       // },
     });
+
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
     // always set strict method validation to true for node.js compatibility
@@ -787,14 +808,18 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   }
 }
 
+const kBytesWritten = Symbol("kBytesWritten");
+const kEnableStreaming = Symbol("kEnableStreaming");
 const NodeHTTPServerSocket = class Socket extends Duplex {
   bytesRead = 0;
   connecting = false;
   timeout = 0;
+  [kBytesWritten] = 0;
   [kHandle];
   server: typeof Server;
   _httpMessage;
   _secureEstablished = false;
+  #pendingCallback = null;
   constructor(server: typeof Server, handle, encrypted) {
     super();
     this.server = server;
@@ -802,15 +827,56 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this._secureEstablished = !!handle?.secureEstablished;
     handle.onclose = this.#onClose.bind(this);
     handle.duplex = this;
+
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
 
   get bytesWritten() {
-    return this[kHandle]?.response?.getBytesWritten?.() ?? 0;
+    const handle = this[kHandle];
+    return handle
+      ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? this[kBytesWritten] ?? 0)
+      : (this[kBytesWritten] ?? 0);
   }
-  set bytesWritten(value) {}
+  set bytesWritten(value) {
+    this[kBytesWritten] = value;
+  }
 
+  [kEnableStreaming](enable: boolean) {
+    const handle = this[kHandle];
+    if (handle) {
+      if (enable) {
+        handle.ondata = this.#onData.bind(this);
+        handle.ondrain = this.#onDrain.bind(this);
+      } else {
+        handle.ondata = undefined;
+        handle.ondrain = undefined;
+      }
+    }
+  }
+  #onDrain() {
+    const handle = this[kHandle];
+    this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
+    const callback = this.#pendingCallback;
+    if (callback) {
+      this.#pendingCallback = null;
+      (callback as Function)();
+    }
+    this.emit("drain");
+  }
+  #onData(chunk, last) {
+    if (chunk) {
+      this.push(chunk);
+    }
+    if (last) {
+      const handle = this[kHandle];
+      if (handle) {
+        handle.ondata = undefined;
+      }
+
+      this.push(null);
+    }
+  }
   #closeHandle(handle, callback) {
     this[kHandle] = undefined;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback);
@@ -825,8 +891,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onClose() {
     this[kHandle] = null;
+
     const message = this._httpMessage;
     const req = message?.req;
+
     if (req && !req.complete && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
@@ -836,6 +904,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         req.destroy();
       }
     }
+    this.emit("close");
   }
   #onCloseForDestroy(closeCallback) {
     this.#onClose();
@@ -874,9 +943,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       $isCallable(callback) && callback(err);
       return;
     }
+    handle.ondata = undefined;
     if (handle.closed) {
       const onclose = handle.onclose;
-      handle.onclose = null;
+      handle.onclose = undefined;
       if ($isCallable(onclose)) {
         onclose.$call(handle);
       }
@@ -893,7 +963,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       callback();
       return;
     }
-    this.#closeHandle(handle, callback);
+    handle.end();
+    callback();
   }
 
   get localAddress() {
@@ -1001,7 +1072,20 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk, _encoding, _callback) {}
+  _write(_chunk, _encoding, _callback) {
+    const handle = this[kHandle];
+    // only enable writting if we can drain
+    let err;
+    try {
+      if (handle && handle.ondrain && !handle.write(_chunk, _encoding)) {
+        this.#pendingCallback = _callback;
+        return false;
+      }
+    } catch (e) {
+      err = e;
+    }
+    err ? _callback(err) : _callback();
+  }
 
   pause() {
     const handle = this[kHandle];
@@ -1009,6 +1093,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     if (response) {
       response.pause();
     }
+
     return super.pause();
   }
 
@@ -1137,8 +1222,12 @@ function ServerResponse(req, options): void {
     const handle = options[kHandle];
     if (handle) {
       this[kHandle] = handle;
+    } else {
+      this[kHandle] = req[kHandle];
     }
     this[kRejectNonStandardBodyWrites] = options[kRejectNonStandardBodyWrites] ?? false;
+  } else {
+    this[kHandle] = req[kHandle];
   }
 
   this.statusCode = 200;
@@ -1621,6 +1710,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
     chunk = Buffer.from(chunk, encoding);
   }
   const req = this.req;
+
   const shouldEmitClose = req && req.emit && !this.finished;
   if (!this.headersSent) {
     let data = this[firstWriteSymbol];

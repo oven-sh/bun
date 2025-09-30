@@ -3768,7 +3768,7 @@ pub const highway = @import("./highway.zig");
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
 /// Automatically generated C++ bindings for functions marked with `[[ZIG_EXPORT(...)]]`
-pub const cpp = @import("cpp").bindings;
+pub const cpp = @import("cpp");
 
 pub const asan = @import("./asan.zig");
 
@@ -3781,6 +3781,14 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
 }
 
 pub const safety = @import("./safety.zig");
+
+// Export function to check if --use-system-ca flag is set
+pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{ JSError, OutOfMemory }!jsc.JSValue {
+    _ = globalObject;
+    _ = callFrame;
+    const Arguments = @import("./cli/Arguments.zig");
+    return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
+}
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

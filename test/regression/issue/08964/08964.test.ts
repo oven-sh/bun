@@ -6,7 +6,7 @@ import { join } from "node:path";
 test("issue 8964", async () => {
   const { exitCode, signalCode, stdout } = spawnSync({
     cmd: [bunExe(), "test", join(import.meta.dirname, "08964.fixture.ts")],
-    env: bunEnv,
+    env: { ...bunEnv, CI: "false" },
     stdio: ["ignore", "pipe", "inherit"],
   });
   const stdtext = stdout.toString();

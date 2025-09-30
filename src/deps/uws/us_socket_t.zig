@@ -13,7 +13,7 @@ pub const us_socket_t = opaque {
     };
 
     pub fn open(this: *us_socket_t, comptime is_ssl: bool, is_client: bool, ip_addr: ?[]const u8) void {
-        debug("us_socket_open({d}, is_client: {})", .{ @intFromPtr(this), is_client });
+        debug("us_socket_open({p}, is_client: {})", .{ this, is_client });
         const ssl = @intFromBool(is_ssl);
 
         if (ip_addr) |ip| {
@@ -25,22 +25,22 @@ pub const us_socket_t = opaque {
     }
 
     pub fn pause(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_pause({d})", .{@intFromPtr(this)});
+        debug("us_socket_pause({p})", .{this});
         c.us_socket_pause(@intFromBool(ssl), this);
     }
 
     pub fn @"resume"(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_resume({d})", .{@intFromPtr(this)});
+        debug("us_socket_resume({p})", .{this});
         c.us_socket_resume(@intFromBool(ssl), this);
     }
 
     pub fn close(this: *us_socket_t, ssl: bool, code: CloseCode) void {
-        debug("us_socket_close({d}, {s})", .{ @intFromPtr(this), @tagName(code) });
+        debug("us_socket_close({p}, {s})", .{ this, @tagName(code) });
         _ = c.us_socket_close(@intFromBool(ssl), this, code, null);
     }
 
     pub fn shutdown(this: *us_socket_t, ssl: bool) void {
-        debug("us_socket_shutdown({d})", .{@intFromPtr(this)});
+        debug("us_socket_shutdown({p})", .{this});
         c.us_socket_shutdown(@intFromBool(ssl), this);
     }
 
@@ -128,25 +128,25 @@ pub const us_socket_t = opaque {
 
     pub fn write(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
         const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
-        debug("us_socket_write({d}, {d}) = {d}", .{ @intFromPtr(this), data.len, rc });
+        debug("us_socket_write({p}, {d}) = {d}", .{ this, data.len, rc });
         return rc;
     }
 
     pub fn writeFd(this: *us_socket_t, data: []const u8, file_descriptor: bun.FD) i32 {
         if (bun.Environment.isWindows) @compileError("TODO: implement writeFd on Windows");
         const rc = c.us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), file_descriptor.native());
-        debug("us_socket_ipc_write_fd({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), data.len, file_descriptor.native(), rc });
+        debug("us_socket_ipc_write_fd({p}, {d}, {d}) = {d}", .{ this, data.len, file_descriptor.native(), rc });
         return rc;
     }
 
     pub fn write2(this: *us_socket_t, ssl: bool, first: []const u8, second: []const u8) i32 {
         const rc = c.us_socket_write2(@intFromBool(ssl), this, first.ptr, first.len, second.ptr, second.len);
-        debug("us_socket_write2({d}, {d}, {d}) = {d}", .{ @intFromPtr(this), first.len, second.len, rc });
+        debug("us_socket_write2({p}, {d}, {d}) = {d}", .{ this, first.len, second.len, rc });
         return rc;
     }
 
     pub fn rawWrite(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
-        debug("us_socket_raw_write({d}, {d})", .{ @intFromPtr(this), data.len });
+        debug("us_socket_raw_write({p}, {d})", .{ this, data.len });
         return c.us_socket_raw_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
     }
 
@@ -226,6 +226,119 @@ pub const c = struct {
     ) ?*us_socket_t;
     pub extern fn us_socket_get_error(ssl: i32, s: *uws.us_socket_t) c_int;
     pub extern fn us_socket_is_established(ssl: i32, s: *uws.us_socket_t) i32;
+
+    const us_socket_stream_buffer_t = extern struct {
+        list_ptr: ?[*]u8 = null,
+        list_cap: usize = 0,
+        list_len: usize = 0,
+        total_bytes_written: usize = 0,
+        cursor: usize = 0,
+
+        pub fn update(this: *us_socket_stream_buffer_t, stream_buffer: bun.io.StreamBuffer) void {
+            if (stream_buffer.list.capacity > 0) {
+                this.list_ptr = stream_buffer.list.items.ptr;
+            } else {
+                this.list_ptr = null;
+            }
+            this.list_len = stream_buffer.list.items.len;
+            this.list_cap = stream_buffer.list.capacity;
+            this.cursor = stream_buffer.cursor;
+        }
+        pub fn wrote(this: *us_socket_stream_buffer_t, written: usize) void {
+            this.total_bytes_written +|= written;
+        }
+
+        pub fn toStreamBuffer(this: *us_socket_stream_buffer_t) bun.io.StreamBuffer {
+            return .{
+                .list = if (this.list_ptr) |buffer_ptr| .{
+                    .allocator = bun.default_allocator,
+                    .items = buffer_ptr[0..this.list_len],
+                    .capacity = this.list_cap,
+                } else .{
+                    .allocator = bun.default_allocator,
+                    .items = &.{},
+                    .capacity = 0,
+                },
+                .cursor = this.cursor,
+            };
+        }
+
+        pub fn deinit(this: *us_socket_stream_buffer_t) void {
+            if (this.list_ptr) |buffer| {
+                bun.default_allocator.free(buffer[0..this.list_cap]);
+            }
+        }
+    };
+
+    export fn us_socket_free_stream_buffer(buffer: *us_socket_stream_buffer_t) void {
+        buffer.deinit();
+    }
+    export fn us_socket_buffered_js_write(
+        socket: *uws.us_socket_t,
+        is_ssl: bool,
+        ended: bool,
+        buffer: *us_socket_stream_buffer_t,
+        globalObject: *jsc.JSGlobalObject,
+        data: jsc.JSValue,
+        encoding: jsc.JSValue,
+    ) jsc.JSValue {
+        // convever it back to StreamBuffer
+        var stream_buffer = buffer.toStreamBuffer();
+        var total_written: usize = 0;
+        // update the buffer pointer to the new buffer
+        defer {
+            buffer.update(stream_buffer);
+            buffer.wrote(total_written);
+        }
+
+        var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+        const node_buffer: jsc.Node.BlobOrStringOrBuffer = if (data.isUndefined())
+            jsc.Node.BlobOrStringOrBuffer{ .string_or_buffer = jsc.Node.StringOrBuffer.empty }
+        else
+            jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), data, encoding, false, true) catch {
+                return .zero;
+            } orelse {
+                if (!globalObject.hasException()) {
+                    return globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data) catch .zero;
+                }
+                return .zero;
+            };
+
+        defer node_buffer.deinit();
+        if (node_buffer == .blob and node_buffer.blob.needsToReadFile()) {
+            return globalObject.throw("File blob not supported yet in this function.", .{}) catch .zero;
+        }
+
+        const data_slice = node_buffer.slice();
+        if (stream_buffer.isNotEmpty()) {
+            // need to flush
+            const to_flush = stream_buffer.slice();
+            const written: u32 = @max(0, socket.write(is_ssl, to_flush));
+            stream_buffer.wrote(written);
+            total_written +|= written;
+            if (written < to_flush.len) {
+                if (data_slice.len > 0) {
+                    bun.handleOom(stream_buffer.write(data_slice));
+                }
+                return JSValue.jsBoolean(false);
+            }
+            // stream buffer is empty now
+        }
+
+        if (data_slice.len > 0) {
+            const written: u32 = @max(0, socket.write(is_ssl, data_slice));
+            total_written +|= written;
+            if (written < data_slice.len) {
+                bun.handleOom(stream_buffer.write(data_slice[written..]));
+                return JSValue.jsBoolean(false);
+            }
+        }
+        if (ended) {
+            // last part so we shutdown the writable side of the socket aka send FIN
+            socket.shutdown(is_ssl);
+        }
+        return JSValue.jsBoolean(true);
+    }
 };
 
 const bun = @import("bun");
@@ -233,3 +346,6 @@ const std = @import("std");
 
 const uws = @import("../uws.zig");
 const SocketContext = uws.SocketContext;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

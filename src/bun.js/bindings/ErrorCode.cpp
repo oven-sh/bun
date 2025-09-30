@@ -1602,7 +1602,6 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto cause = JSC::JSValue::decode(causeParam);
 
     if (cause.isUndefined()) {

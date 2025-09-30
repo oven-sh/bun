@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { $ } from "bun";
+import { expect, test } from "bun:test";
 
 test("kill() with default signal (SIGKILL)", async () => {
   const p = new $.Shell()`sleep 10`;
@@ -79,7 +79,7 @@ test("kill() is idempotent", async () => {
 
 test("kill() with different signals", async () => {
   const signals = [9, 15, 2, 3];
-  const promises = signals.map(async (sig) => {
+  const promises = signals.map(async sig => {
     const p = new $.Shell()`sleep 10`;
     p.kill(sig);
     const r = await p;

@@ -5,28 +5,9 @@ pub fn parse(input: []const u8) ?f64 {
     var i: usize = 0;
 
     next: switch (input[i]) {
-        ' ',
-        '\t',
-        '\n',
-        '\r',
-        => {
-            i += 1;
-            if (i < input.len) {
-                continue :next input[i];
-            }
-            break :next;
-        },
-        else => break :next,
-    }
-
-    const start = i;
-
-    next: switch (input[i]) {
         '-',
         '.',
         '0'...'9',
-        ' ',
-        '\t'...'\r',
         => {
             i += 1;
             if (i < input.len) {
@@ -34,6 +15,7 @@ pub fn parse(input: []const u8) ?f64 {
             }
             break :next;
         },
+        ' ',
         'a'...'z',
         'A'...'Z',
         => {
@@ -44,9 +26,9 @@ pub fn parse(input: []const u8) ?f64 {
         },
     }
 
-    const value = std.fmt.parseFloat(f64, input[start..i]) catch return null;
+    const value = std.fmt.parseFloat(f64, input[0..i]) catch return null;
 
-    const unit = strings.trim(input[i..], " \t\n\r");
+    const unit = strings.trimLeadingChar(input[i..], ' ');
     if (unit.len == 0) return value;
 
     if (MultiplierMap.getASCIIICaseInsensitive(unit)) |m| {
@@ -209,11 +191,7 @@ pub fn jsFunction(
     globalThis: *JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) JSError!jsc.JSValue {
-    if (callframe.argumentsCount() == 0) {
-        return globalThis.throwInvalidArguments("Bun.ms() expects a string or number", .{});
-    }
-
-    const input = callframe.argument(0);
+    const input, const options = callframe.argumentsAsArray(2);
 
     // If input is a number, format it to a string
     if (input.isNumber()) {
@@ -224,7 +202,6 @@ pub fn jsFunction(
         }
 
         var long = false;
-        const options = callframe.argument(1);
         if (options.isObject()) {
             if (try options.get(globalThis, "long")) |long_value| {
                 long = long_value.toBoolean();

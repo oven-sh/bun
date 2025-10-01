@@ -582,7 +582,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     for (state.handles) |*handle| {
         var iter = handle.config.deps.map.iterator();
         while (iter.next()) |entry| {
-            var sfa = std.heap.stackFallback(256, ctx.allocator);
+            var sfa = bun.allocators.stackFallback(256, ctx.allocator);
             const alloc = sfa.get();
             const buf = try alloc.alloc(u8, entry.key_ptr.len());
             defer alloc.free(buf);

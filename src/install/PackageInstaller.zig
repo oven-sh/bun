@@ -738,7 +738,7 @@ pub const PackageInstaller = struct {
 
         const patch_patch, const patch_contents_hash, const patch_name_and_version_hash, const remove_patch = brk: {
             if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len == 0) break :brk .{ null, null, null, false };
-            var sfa = std.heap.stackFallback(1024, this.lockfile.allocator);
+            var sfa = bun.allocators.stackFallback(1024, this.lockfile.allocator);
             const alloc = sfa.get();
             const name_and_version = std.fmt.allocPrint(alloc, "{s}@{s}", .{
                 pkg_name.slice(this.lockfile.buffers.string_bytes.items),

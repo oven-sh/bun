@@ -859,7 +859,7 @@ pub const struct_ares_caa_reply = extern struct {
     length: usize,
 
     pub fn toJSResponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, comptime _: []const u8) bun.JSError!jsc.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var stack = bun.allocators.stackFallback(2048, parent_allocator);
         var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
@@ -937,7 +937,7 @@ pub const struct_ares_srv_reply = extern struct {
     port: c_ushort,
 
     pub fn toJSResponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, comptime _: []const u8) bun.JSError!jsc.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var stack = bun.allocators.stackFallback(2048, parent_allocator);
         var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
@@ -1020,7 +1020,7 @@ pub const struct_ares_mx_reply = extern struct {
     priority: c_ushort,
 
     pub fn toJSResponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, comptime _: []const u8) bun.JSError!jsc.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var stack = bun.allocators.stackFallback(2048, parent_allocator);
         var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
@@ -1094,7 +1094,7 @@ pub const struct_ares_txt_reply = extern struct {
     length: usize,
 
     pub fn toJSResponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, comptime _: []const u8) bun.JSError!jsc.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var stack = bun.allocators.stackFallback(2048, parent_allocator);
         var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
@@ -1196,7 +1196,7 @@ pub const struct_ares_naptr_reply = extern struct {
     preference: c_ushort,
 
     pub fn toJSResponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, comptime _: []const u8) bun.JSError!jsc.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var stack = bun.allocators.stackFallback(2048, parent_allocator);
         var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
@@ -1288,7 +1288,7 @@ pub const struct_ares_soa_reply = extern struct {
     minttl: c_uint,
 
     pub fn toJSResponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, comptime _: []const u8) bun.JSError!jsc.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var stack = bun.allocators.stackFallback(2048, parent_allocator);
         var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
@@ -1371,7 +1371,7 @@ pub const struct_any_reply = struct {
     caa_reply: ?*struct_ares_caa_reply = null,
 
     pub fn toJSResponse(this: *struct_any_reply, parent_allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, comptime _: []const u8) bun.JSError!jsc.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var stack = bun.allocators.stackFallback(2048, parent_allocator);
         var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 

@@ -1664,7 +1664,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
     for (programs) |program| {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
-        var sfa = std.heap.stackFallback(16384, arena.allocator());
+        var sfa = bun.allocators.stackFallback(16384, arena.allocator());
         spawnSymbolizer(program, sfa.get(), &trace) catch |err| switch (err) {
             // try next program if this one wasn't found
             error.FileNotFound => continue,

@@ -90,7 +90,7 @@ pub fn forManifest(
         // "npm" CLI requests the manifest with the encoded name.
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
-        var stack_fallback_allocator = std.heap.stackFallback(512, arena.allocator());
+        var stack_fallback_allocator = bun.allocators.stackFallback(512, arena.allocator());
         var encoded_name = name;
         if (strings.containsChar(name, '/')) {
             encoded_name = try std.mem.replaceOwned(u8, stack_fallback_allocator.get(), name, "/", "%2f");

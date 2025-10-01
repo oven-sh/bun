@@ -260,7 +260,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn createErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var stack_fallback = bun.allocators.stackFallback(1024 * 4, this.allocator());
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
@@ -283,7 +283,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var stack_fallback = bun.allocators.stackFallback(1024 * 4, this.allocator());
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
@@ -297,7 +297,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn createDOMExceptionInstance(this: *JSGlobalObject, code: jsc.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) JSError!JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var stack_fallback = bun.allocators.stackFallback(1024 * 4, this.allocator());
             var buf = try bun.MutableString.init2048(stack_fallback.get());
             defer buf.deinit();
             var writer = buf.writer();
@@ -311,7 +311,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var stack_fallback = bun.allocators.stackFallback(1024 * 4, this.allocator());
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
@@ -325,7 +325,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn createRangeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var stack_fallback = bun.allocators.stackFallback(1024 * 4, this.allocator());
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
@@ -444,7 +444,7 @@ pub const JSGlobalObject = opaque {
         bun.debugAssert(err != error.JSError);
 
         // Avoid tiny extra allocation
-        var stack = std.heap.stackFallback(128, bun.default_allocator);
+        var stack = bun.allocators.stackFallback(128, bun.default_allocator);
         const allocator_ = stack.get();
         const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
         defer allocator_.free(buffer);
@@ -943,7 +943,7 @@ pub const JSGlobalObject = opaque {
 
             return zig_str.toErrorInstance(globalThis);
         } else {
-            var fallback = std.heap.stackFallback(256, bun.default_allocator);
+            var fallback = bun.allocators.stackFallback(256, bun.default_allocator);
             var alloc = fallback.get();
 
             const buf = std.fmt.allocPrint(alloc, fmt, args) catch unreachable;

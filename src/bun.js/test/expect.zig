@@ -1141,7 +1141,7 @@ pub const Expect = struct {
 
         // prepare the args array
         const args = callFrame.arguments();
-        var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
+        var allocator = bun.allocators.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
         var matcher_args = try std.ArrayList(JSValue).initCapacity(allocator.get(), args.len + 1);
         matcher_args.appendAssumeCapacity(value);
         for (args) |arg| matcher_args.appendAssumeCapacity(arg);
@@ -1694,7 +1694,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
 
         // prepare the args array as `[received, ...captured_args]`
         const args_count = captured_args.getLength(globalThis) catch return false;
-        var allocator = std.heap.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
+        var allocator = bun.allocators.stackFallback(8 * @sizeOf(JSValue), globalThis.allocator());
         var matcher_args = std.ArrayList(JSValue).initCapacity(allocator.get(), args_count + 1) catch {
             globalThis.throwOutOfMemory() catch {};
             return false;
@@ -1728,7 +1728,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         if (matcher_fn.get(globalThis, "toAsymmetricMatcher") catch |e| return maybeClear(dontThrow, globalThis, e)) |fn_value| {
             if (fn_value.jsType().isFunction()) {
                 const captured_args: JSValue = js.capturedArgsGetCached(thisValue) orelse return false;
-                var stack_fallback = std.heap.stackFallback(256, globalThis.allocator());
+                var stack_fallback = bun.allocators.stackFallback(256, globalThis.allocator());
                 const args_len = captured_args.getLength(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e);
                 var args = try std.ArrayList(JSValue).initCapacity(stack_fallback.get(), args_len);
                 var iter = captured_args.arrayIterator(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e);
@@ -1744,7 +1744,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     }
 
     pub fn toAsymmetricMatcher(this: *ExpectCustomAsymmetricMatcher, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
-        var stack_fallback = std.heap.stackFallback(512, globalThis.allocator());
+        var stack_fallback = bun.allocators.stackFallback(512, globalThis.allocator());
         var mutable_string = try bun.MutableString.init2048(stack_fallback.get());
         defer mutable_string.deinit();
 
@@ -1824,7 +1824,7 @@ pub const ExpectMatcherUtils = struct {
     }
 
     fn printValue(globalThis: *JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) !JSValue {
-        var stack_fallback = std.heap.stackFallback(512, globalThis.allocator());
+        var stack_fallback = bun.allocators.stackFallback(512, globalThis.allocator());
         var mutable_string = try bun.MutableString.init2048(stack_fallback.get());
         defer mutable_string.deinit();
 

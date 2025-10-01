@@ -7,7 +7,7 @@ pub noinline fn computeChunks(
 
     bun.assert(this.dev_server == null); // use
 
-    var stack_fallback = std.heap.stackFallback(4096, this.allocator());
+    var stack_fallback = bun.allocators.stackFallback(4096, this.allocator());
     const stack_all = stack_fallback.get();
     var arena = bun.ArenaAllocator.init(stack_all);
     defer arena.deinit();

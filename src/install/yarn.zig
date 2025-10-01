@@ -488,7 +488,7 @@ fn processDeps(
 ) ![]Install.PackageID {
     var deps_it = deps.iterator();
     var count: usize = 0;
-    var dep_spec_name_stack = std.heap.stackFallback(1024, bun.default_allocator);
+    var dep_spec_name_stack = bun.allocators.stackFallback(1024, bun.default_allocator);
     const temp_allocator = dep_spec_name_stack.get();
 
     while (deps_it.next()) |dep| {

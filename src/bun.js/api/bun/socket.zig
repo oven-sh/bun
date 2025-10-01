@@ -929,7 +929,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return this.writeOrEnd(globalObject, &values, true, is_end);
             }
 
-            var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            var stack_fallback = bun.allocators.stackFallback(16 * 1024, bun.default_allocator);
             const allow_string_object = true;
             const buffer: jsc.Node.StringOrBuffer = if (data_value.isUndefined())
                 jsc.Node.StringOrBuffer.empty
@@ -1072,7 +1072,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throwTODO("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.") catch .fail;
             }
 
-            var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            var stack_fallback = bun.allocators.stackFallback(16 * 1024, bun.default_allocator);
             const buffer: jsc.Node.BlobOrStringOrBuffer = if (args[0].isUndefined())
                 jsc.Node.BlobOrStringOrBuffer{ .string_or_buffer = jsc.Node.StringOrBuffer.empty }
             else

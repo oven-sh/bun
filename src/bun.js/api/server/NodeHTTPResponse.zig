@@ -465,7 +465,7 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
         break :brk 200;
     };
 
-    var stack_fallback = std.heap.stackFallback(256, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(256, bun.default_allocator);
     const allocator = stack_fallback.get();
     const status_message_slice = if (!status_message_value.isUndefined())
         try status_message_value.toSlice(globalObject, allocator)

@@ -51,7 +51,7 @@ pub const Parser = struct {
         // var duplicates = bun.StringArrayHashMapUnmanaged(u32){};
         // defer duplicates.deinit(allocator);
 
-        var rope_stack = std.heap.stackFallback(@sizeOf(Rope) * 6, arena_allocator);
+        var rope_stack = bun.allocators.stackFallback(@sizeOf(Rope) * 6, arena_allocator);
         const ropealloc = rope_stack.get();
 
         var skip_until_next_section: bool = false;
@@ -262,7 +262,7 @@ pub const Parser = struct {
             // walk the val to find the first non-escaped comment character (; or #)
             var did_any_escape: bool = false;
             var esc = false;
-            var sfb = std.heap.stackFallback(STACK_BUF_SIZE, arena_allocator);
+            var sfb = bun.allocators.stackFallback(STACK_BUF_SIZE, arena_allocator);
             var unesc = try std.ArrayList(u8).initCapacity(sfb.get(), STACK_BUF_SIZE);
 
             const RopeT = if (comptime usage == .section) *Rope else struct {};

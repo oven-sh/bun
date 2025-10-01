@@ -633,7 +633,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             };
 
             const existing_patchfile_hash = existing_patchfile_hash: {
-                var __sfb = std.heap.stackFallback(1024, manager.allocator);
+                var __sfb = bun.allocators.stackFallback(1024, manager.allocator);
                 const allocator = __sfb.get();
                 const name_and_version = std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer allocator.free(name_and_version);
@@ -671,7 +671,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const pkg_name = pkg.name.slice(strbuf);
 
             const existing_patchfile_hash = existing_patchfile_hash: {
-                var __sfb = std.heap.stackFallback(1024, manager.allocator);
+                var __sfb = bun.allocators.stackFallback(1024, manager.allocator);
                 const sfballoc = __sfb.get();
                 const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer sfballoc.free(name_and_version);
@@ -923,7 +923,7 @@ fn pkgInfoForNameAndVersion(
     name: []const u8,
     version: ?[]const u8,
 ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
-    var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
+    var sfb = bun.allocators.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
     var pairs = bun.handleOom(std.ArrayList(IdPair).initCapacity(sfb.get(), 8));
     defer pairs.deinit();
 

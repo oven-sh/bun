@@ -41,8 +41,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
     var s = std.io.fixedBufferStream(body);
     const reader = s.reader();
 
-    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator());
-    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator());
+    var sfa_general = bun.allocators.stackFallback(65536, ctx.dev.allocator());
+    var sfa_sourcemap = bun.allocators.stackFallback(65536, ctx.dev.allocator());
     const temp_alloc = sfa_general.get();
     var arena = std.heap.ArenaAllocator.init(temp_alloc);
     defer arena.deinit();

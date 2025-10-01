@@ -1109,7 +1109,7 @@ fn ensureRouteIsBundled(
             }
 
             // Prepare a bundle with just this route.
-            var sfa = std.heap.stackFallback(4096, dev.allocator());
+            var sfa = bun.allocators.stackFallback(4096, dev.allocator());
             const temp_alloc = sfa.get();
 
             var entry_points: EntryPointList = .empty;
@@ -1242,7 +1242,7 @@ fn checkRouteFailures(
     route_bundle_index: RouteBundle.Index,
     resp: DevResponse,
 ) !enum { stop, ok, rebuild } {
-    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    var sfa_state = bun.allocators.stackFallback(65536, dev.allocator());
     const sfa = sfa_state.get();
     var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
@@ -1535,7 +1535,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     defer dev.graph_safety_lock.unlock();
 
     // Prepare bitsets for tracing
-    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    var sfa_state = bun.allocators.stackFallback(65536, dev.allocator());
     const sfa = sfa_state.get();
     var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
@@ -1587,7 +1587,7 @@ fn generateJavaScriptCodeForHTMLFile(
     input_file_sources: []bun.logger.Source,
     loaders: []bun.options.Loader,
 ) bun.OOM![]const u8 {
-    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    var sfa_state = bun.allocators.stackFallback(65536, dev.allocator());
     const sfa = sfa_state.get();
     var array = bun.handleOom(std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536));
     defer array.deinit(sfa);
@@ -1836,7 +1836,7 @@ pub fn startAsyncBundle(
 
     // Notify inspector about bundle start
     if (dev.inspector()) |agent| {
-        var sfa_state = std.heap.stackFallback(256, dev.allocator());
+        var sfa_state = bun.allocators.stackFallback(256, dev.allocator());
         const sfa = sfa_state.get();
         var trigger_files = try std.ArrayList(bun.String).initCapacity(sfa, entry_points.set.count());
         defer trigger_files.deinit();
@@ -1931,7 +1931,7 @@ pub fn prepareAndLogResolutionFailures(dev: *DevServer) !void {
 
 fn indexFailures(dev: *DevServer) !void {
     // After inserting failures into the IncrementalGraphs, they are traced to their routes.
-    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    var sfa_state = bun.allocators.stackFallback(65536, dev.allocator());
     const sfa = sfa_state.get();
 
     if (dev.incremental_result.failures_added.items.len > 0) {
@@ -2014,7 +2014,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     defer dev.graph_safety_lock.unlock();
 
     // Prepare bitsets
-    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    var sfa_state = bun.allocators.stackFallback(65536, dev.allocator());
     const sfa = sfa_state.get();
     var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
@@ -2078,7 +2078,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!j
     defer dev.graph_safety_lock.unlock();
 
     // Prepare bitsets
-    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    var sfa_state = bun.allocators.stackFallback(65536, dev.allocator());
 
     const sfa = sfa_state.get();
     var gts = try dev.initGraphTraceState(sfa, 0);
@@ -2252,7 +2252,7 @@ pub fn finalizeBundle(
     const targets = bv2.graph.ast.items(.target);
     const scbs = bv2.graph.server_component_boundaries.slice();
 
-    var sfa = std.heap.stackFallback(65536, bv2.allocator());
+    var sfa = bun.allocators.stackFallback(65536, bv2.allocator());
     const stack_alloc = sfa.get();
     var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, input_file_sources.len);
     for (
@@ -2569,7 +2569,7 @@ pub fn finalizeBundle(
 
     var has_route_bits_set = false;
 
-    var hot_update_payload_sfa = std.heap.stackFallback(65536, dev.allocator());
+    var hot_update_payload_sfa = bun.allocators.stackFallback(65536, dev.allocator());
     var hot_update_payload = std.ArrayList(u8).initCapacity(hot_update_payload_sfa.get(), 65536) catch
         unreachable; // enough space
     defer hot_update_payload.deinit();
@@ -2976,7 +2976,7 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
 
     // If there were pending requests, begin another bundle.
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.first != null or dev.next_bundle.promise.strong.hasValue()) {
-        var sfb = std.heap.stackFallback(4096, dev.allocator());
+        var sfb = bun.allocators.stackFallback(4096, dev.allocator());
         const temp_alloc = sfb.get();
         var entry_points: EntryPointList = .empty;
         defer entry_points.deinit(temp_alloc);
@@ -3610,7 +3610,7 @@ pub fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     defer dev.emitMemoryVisualizerMessageIfNeeded();
     if (dev.emit_incremental_visualizer_events == 0) return;
 
-    var sfb = std.heap.stackFallback(65536, dev.allocator());
+    var sfb = bun.allocators.stackFallback(65536, dev.allocator());
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough capacity on the stack
     defer payload.deinit();
@@ -3640,7 +3640,7 @@ pub fn emitMemoryVisualizerMessage(dev: *DevServer) void {
     comptime assert(bun.FeatureFlags.bake_debugging_features);
     bun.debugAssert(dev.emit_memory_visualizer_events > 0);
 
-    var sfb = std.heap.stackFallback(65536, dev.allocator());
+    var sfb = bun.allocators.stackFallback(65536, dev.allocator());
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough capacity on the stack
     defer payload.deinit();
@@ -4215,7 +4215,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     try file.writeAll(start);
     try file.writeAll("\nlet inlinedData = Uint8Array.from(atob(\"");
 
-    var sfb = std.heap.stackFallback(4096, dev.allocator());
+    var sfb = bun.allocators.stackFallback(4096, dev.allocator());
     var payload = try std.ArrayList(u8).initCapacity(sfb.get(), 4096);
     defer payload.deinit();
     try dev.writeVisualizerMessage(&payload);

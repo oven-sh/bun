@@ -8,7 +8,7 @@
 /// declare function myersDiff(actual: string, expected: string): Diff[];
 /// ```
 pub fn myersDiff(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    var stack_fallback = std.heap.stackFallback(1024 * 2, bun.default_allocator);
+    var stack_fallback = bun.allocators.stackFallback(1024 * 2, bun.default_allocator);
     var arena = std.heap.ArenaAllocator.init(stack_fallback.get());
     defer arena.deinit();
     const allocator = arena.allocator();

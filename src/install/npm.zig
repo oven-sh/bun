@@ -1045,7 +1045,7 @@ pub const PackageManifest = struct {
         ) !void {
             const cache_dir: bun.FD = .fromStdDir(cache_dir_std);
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
+            var stack_fallback = bun.allocators.stackFallback(64 * 1024, bun.default_allocator);
 
             const allocator = stack_fallback.get();
             var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(scope) + 64);

@@ -572,7 +572,7 @@ const ConnParams = struct {
             .address = undefined,
             .options = options,
             ._allocator = allocator,
-            ._connection_str = null,
+            ._connection_str = "",
         };
 
         var owned_loc: []const u8 = undefined;
@@ -592,6 +592,7 @@ const ConnParams = struct {
             );
 
             builder.moveToSlice(&self._connection_str.?);
+
             errdefer {
                 self._allocator.free(self._connection_str.?);
                 self._connection_str = null;
@@ -630,6 +631,22 @@ const ConnParams = struct {
         }
     }
 };
+
+test ConnParams {
+    const params = try ConnParams.init(
+        std.testing.allocator,
+        "valkeys://user:pass@localhost:6380/2",
+        .{},
+    );
+    defer params.deinit();
+
+    std.testing.expectEqual("user", params.username);
+    std.testing.expectEqual("pass", params.password);
+    std.testing.expectEqual(2, params.database);
+    std.testing.expectEqualStrings("localhost", params.address.location());
+    std.testing.expect(params.protocol.isTLS());
+    std.testing.expect(!params.protocol.isUnix());
+}
 
 /// State machine which encapsulates the current state of the Valkey client.
 const ClientState = union(enum) {

@@ -2611,7 +2611,7 @@ pub fn NewServer(protocol_enum: Protocol, development_kind: DevelopmentKind) typ
 
             // --- 6. Handle Bake manifest routes (SSG) ---
             if (this.bake_prod.get()) |prod| {
-                BakeMethods.setBakeManifestRoutes(this, app, prod.manifest);
+                BakeMethods.setRoutes(this, app, prod.manifest);
             }
 
             // --- 7. Initialize plugins if needed ---
@@ -2668,7 +2668,7 @@ pub fn NewServer(protocol_enum: Protocol, development_kind: DevelopmentKind) typ
                 while (iter.next()) |method_to_cover| {
                     // If we have a bake manifest and router for SSR routes, use the SSR handler
                     if (this.bake_prod.get() != null) {
-                        app.method(method_to_cover, "/*", *ThisServer, this, BakeMethods.bakeProductionSSRRouteHandler);
+                        app.method(method_to_cover, "/*", *ThisServer, this, BakeMethods.ssrRouteHandler);
                     } else {
                         switch (this.config.onNodeHTTPRequest) {
                             .zero => switch (this.config.onRequest) {
@@ -2682,7 +2682,7 @@ pub fn NewServer(protocol_enum: Protocol, development_kind: DevelopmentKind) typ
             } else {
                 // If we have a bake manifest and router for SSR routes, use the SSR handler
                 if (this.bake_prod.get() != null) {
-                    app.any("/*", *ThisServer, this, BakeMethods.bakeProductionSSRRouteHandler);
+                    app.any("/*", *ThisServer, this, BakeMethods.ssrRouteHandler);
                 } else {
                     switch (this.config.onNodeHTTPRequest) {
                         .zero => switch (this.config.onRequest) {

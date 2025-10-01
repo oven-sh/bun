@@ -8,11 +8,11 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
         const App = Server.App;
         const ssl_enabled = Server.ssl_enabled;
 
-        pub fn bakeProductionSSRRouteHandler(server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            bakeProductionSSRRouteHandlerWithURL(server, req, resp, req.url());
+        pub fn ssrRouteHandler(server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            ssrRouteHandlerWithUrl(server, req, resp, req.url());
         }
 
-        pub fn bakeProductionSSRRouteHandlerWithURL(server: *ThisServer, req: *uws.Request, resp: *App.Response, url: []const u8) void {
+        pub fn ssrRouteHandlerWithUrl(server: *ThisServer, req: *uws.Request, resp: *App.Response, url: []const u8) void {
             // We can assume manifest and router exist since this handler is only registered when they do
             const manifest = server.bake_prod.get().?.manifest;
             const router = server.bake_prod.get().?.getRouter();
@@ -27,7 +27,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                         .ssr => |*ssr| {
                             _ = ssr;
                             // Call the SSR request handler
-                            onBakeFrameworkSSRRequest(server, req, resp, route_index, &params);
+                            onFrameworkSsrRequest(server, req, resp, route_index, &params);
                             return;
                         },
                         .ssg, .ssg_many => {
@@ -51,20 +51,20 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
             }
         }
 
-        pub fn onBakeFrameworkSSRRequest(
+        pub fn onFrameworkSsrRequest(
             server: *ThisServer,
             req: *uws.Request,
             resp: *App.Response,
             route_index: bun.bake.FrameworkRouter.Route.Index,
             params: *const bun.bake.FrameworkRouter.MatchedParams,
         ) void {
-            onBakeFrameworkSSRRequestImpl(server, req, resp, route_index, params) catch |err| switch (err) {
+            onFrameworkSsrRequestImpl(server, req, resp, route_index, params) catch |err| switch (err) {
                 error.JSError => server.vm.global.reportActiveExceptionAsUnhandled(err),
                 error.OutOfMemory => bun.outOfMemory(),
             };
         }
 
-        pub fn onBakeFrameworkSSRRequestImpl(
+        pub fn onFrameworkSsrRequestImpl(
             server: *ThisServer,
             req: *uws.Request,
             resp: *App.Response,
@@ -229,7 +229,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
             }
         }
 
-        pub fn setBakeManifestRoutes(server: *Server, app: *Server.App, manifest: *bun.bake.Manifest) void {
+        pub fn setRoutes(server: *Server, app: *Server.App, manifest: *bun.bake.Manifest) void {
             // Add route handler for /_bun/* static chunk files
             setStaticRoutes(server, app, manifest);
 
@@ -328,83 +328,6 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                     .{ .method = bun.http.Method.Set.init(.{ .GET = true }) },
                 );
             }
-        }
-
-        pub fn bakeStaticChunkRequestHandler(server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            const manifest = server.bake_prod.get().?.manifest;
-
-            // Get the asset path from the URL (everything after /_bun/)
-            const url = req.url();
-            const prefix = "/_bun/";
-            if (!std.mem.startsWith(u8, url, prefix)) {
-                resp.writeStatus("404 Not Found");
-                resp.end("", false);
-                return;
-            }
-
-            const asset_path = url[prefix.len..];
-            if (asset_path.len == 0) {
-                resp.writeStatus("404 Not Found");
-                resp.end("", false);
-                return;
-            }
-
-            // Build the full file path: manifest.build_output_dir + "/_bun/" + asset_path
-            var file_path_buf: [4096]u8 = undefined;
-            const file_path = std.fmt.bufPrint(&file_path_buf, "{s}/_bun/{s}", .{ manifest.build_output_dir, asset_path }) catch {
-                resp.writeStatus("500 Internal Server Error");
-                resp.end("", false);
-                return;
-            };
-
-            // Make a copy of the path for the blob to own
-            const file_path_copy = bun.default_allocator.dupe(u8, file_path) catch {
-                resp.writeStatus("500 Internal Server Error");
-                resp.end("", false);
-                return;
-            };
-
-            // Determine MIME type based on file extension
-            const mime_type = if (std.mem.endsWith(u8, asset_path, ".js"))
-                bun.http.MimeType.javascript
-            else if (std.mem.endsWith(u8, asset_path, ".css"))
-                bun.http.MimeType.css
-            else if (std.mem.endsWith(u8, asset_path, ".map"))
-                bun.http.MimeType.json
-            else
-                bun.http.MimeType.other;
-
-            // Create a file blob for the static chunk
-            const store = jsc.WebCore.Blob.Store.initFile(
-                .{ .path = .{ .string = bun.PathString.init(file_path_copy) } },
-                mime_type,
-                bun.default_allocator,
-            ) catch {
-                resp.writeStatus("404 Not Found");
-                resp.end("", false);
-                return;
-            };
-
-            const blob = jsc.WebCore.Blob{
-                .size = jsc.WebCore.Blob.max_size,
-                .store = store,
-                .content_type = mime_type.value,
-                .globalThis = server.globalThis,
-            };
-
-            // Create a file route and serve it
-            const any_server = AnyServer.from(server);
-            const file_route = FileRoute.initFromBlob(blob, .{
-                .server = any_server,
-                .status_code = 200,
-            });
-
-            // Serve the file using the file route handler
-            const any_resp = if (ssl_enabled)
-                uws.AnyResponse{ .SSL = resp }
-            else
-                uws.AnyResponse{ .TCP = resp };
-            file_route.onRequest(req, any_resp);
         }
     };
 }

@@ -33,19 +33,19 @@ pub fn VisitExpr(
             };
         }
 
-        const well_known_client_only_react_hooks = [_][]const u8{
-            "useState",
-            "useEffect",
-            "useLayoutEffect",
-            "useReducer",
-            "useRef",
-            "useCallback",
-            "useMemo",
-            "useImperativeHandle",
-            "useInsertionEffect",
-            "useTransition",
-            "useDeferredValue",
-        };
+        // const well_known_client_only_react_hooks = [_][]const u8{
+        //     "useState",
+        //     "useEffect",
+        //     "useLayoutEffect",
+        //     "useReducer",
+        //     "useRef",
+        //     "useCallback",
+        //     "useMemo",
+        //     "useImperativeHandle",
+        //     "useInsertionEffect",
+        //     "useTransition",
+        //     "useDeferredValue",
+        // };
 
         const visitors = struct {
             pub fn e_new_target(_: *P, expr: Expr, _: ExprIn) Expr {

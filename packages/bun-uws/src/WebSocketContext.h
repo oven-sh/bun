@@ -256,6 +256,9 @@ private:
 
             /* For whatever reason, if we already have emitted close event, do not emit it again */
             WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(SSL, s));
+            if (webSocketData->socketData && webSocketData->onSocketClosed) {
+                webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s);
+            }
             if (!webSocketData->isShuttingDown) {
                 /* Emit close event */
                 auto *webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
@@ -273,12 +276,6 @@ private:
 
                 if (webSocketContextData->closeHandler) {
                     webSocketContextData->closeHandler((WebSocket<SSL, isServer, USERDATA> *) s, 1006, reason != NULL && code > 0 ? std::string_view{(char *) reason, (size_t) code} : std::string_view());
-                }
-            }
-            if (webSocketData->socketData) {
-                auto* webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
-                if (webSocketContextData->onSocketClosed) {
-                    webSocketContextData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s);
                 }
             }
 

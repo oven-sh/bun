@@ -321,8 +321,7 @@ public:
         
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
-        auto* onSocketUpgraded = httpContextData->onSocketUpgraded;
-        webSocketContextData->onSocketClosed = httpContextData->onSocketClosed;
+        
         /* Destroy HttpResponseData */
         responseData->~HttpResponseData();
 
@@ -341,9 +340,9 @@ public:
         }
 
         /* Initialize websocket with any moved backpressure intact */
-        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData);
-        if (onSocketUpgraded) {
-            onSocketUpgraded(socketData, SSL, usSocket);
+        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData, httpContextData->onSocketClosed);
+        if (httpContextData->onSocketUpgraded) {
+            httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */

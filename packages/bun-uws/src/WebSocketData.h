@@ -53,9 +53,12 @@ private:
     /* We could be a subscriber */
     Subscriber *subscriber = nullptr;
 public:
+    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     void *socketData = nullptr;
+    /* node http compatibility callbacks */
+    OnSocketClosedCallback onSocketClosed = nullptr;
 
-    WebSocketData(bool perMessageDeflate, CompressOptions compressOptions, BackPressure &&backpressure, void *socketData) : AsyncSocketData<false>(std::move(backpressure)), WebSocketState<true>() {
+    WebSocketData(bool perMessageDeflate, CompressOptions compressOptions, BackPressure &&backpressure, void *socketData, OnSocketClosedCallback onSocketClosed) : AsyncSocketData<false>(std::move(backpressure)), WebSocketState<true>() {
         compressionStatus = perMessageDeflate ? ENABLED : DISABLED;
 
         /* Initialize the dedicated sliding window(s) */
@@ -68,6 +71,7 @@ public:
             }
         }
         this->socketData = socketData;
+        this->onSocketClosed = onSocketClosed;
     }
 
     ~WebSocketData() {

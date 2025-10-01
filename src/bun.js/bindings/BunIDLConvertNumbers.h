@@ -2,6 +2,7 @@
 #include "BunIDLTypes.h"
 #include "BunIDLConvertBase.h"
 #include <JavaScriptCore/JSBigInt.h>
+#include <cmath>
 #include <limits>
 #include <type_traits>
 #include <utility>

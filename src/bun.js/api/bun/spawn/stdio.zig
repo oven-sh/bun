@@ -277,10 +277,10 @@ pub const Stdio = union(enum) {
         };
     }
 
-    fn extractBodyValue(out_stdio: *Stdio, globalThis: *jsc.JSGlobalObject, i: i32, body: *jsc.WebCore.Body.Value, is_sync: bool) bun.JSError!void {
-        body.toBlobIfPossible();
+    fn extractBodyValue(out_stdio: *Stdio, globalThis: *jsc.JSGlobalObject, i: i32, owner: jsc.WebCore.ReadableStream.Owner, body: *jsc.WebCore.Body.Value, is_sync: bool) bun.JSError!void {
+        body.toBlobIfPossible(owner);
 
-        if (body.tryUseAsAnyBlob()) |blob| {
+        if (body.tryUseAsAnyBlob(owner)) |blob| {
             return out_stdio.extractBlob(globalThis, blob, i);
         }
 
@@ -313,7 +313,7 @@ pub const Stdio = union(enum) {
                     else => unreachable,
                 }
 
-                const stream_value = try body.toReadableStream(globalThis);
+                const stream_value = try body.toReadableStream(owner, globalThis);
 
                 const stream = (try jsc.WebCore.ReadableStream.fromJS(stream_value, globalThis)) orelse return globalThis.throwInvalidArguments("Failed to create ReadableStream", .{});
 
@@ -391,9 +391,9 @@ pub const Stdio = union(enum) {
         } else if (value.as(jsc.WebCore.Blob)) |blob| {
             return out_stdio.extractBlob(globalThis, .{ .Blob = blob.dupe() }, i);
         } else if (value.as(jsc.WebCore.Request)) |req| {
-            return extractBodyValue(out_stdio, globalThis, i, req.getBodyValue(), is_sync);
+            return extractBodyValue(out_stdio, globalThis, i, .{ .Request = value }, req.getBodyValue(), is_sync);
         } else if (value.as(jsc.WebCore.Response)) |res| {
-            return extractBodyValue(out_stdio, globalThis, i, res.getBodyValue(), is_sync);
+            return extractBodyValue(out_stdio, globalThis, i, .{ .Response = value }, res.getBodyValue(), is_sync);
         }
 
         if (try jsc.WebCore.ReadableStream.fromJS(value, globalThis)) |stream_| {

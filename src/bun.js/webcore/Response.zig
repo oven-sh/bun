@@ -21,6 +21,8 @@ ref_count: u32 = 1,
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 
+this_jsvalue: jsc.JSRef = .empty(),
+
 pub const getText = ResponseMixin.getText;
 pub const getBody = ResponseMixin.getBody;
 pub const getBytes = ResponseMixin.getBytes;
@@ -51,7 +53,9 @@ pub fn calculateEstimatedByteSize(this: *Response) void {
 
 pub fn toJS(this: *Response, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
-    return js.toJSUnchecked(globalObject, this);
+    const value = js.toJSUnchecked(globalObject, this);
+    this.this_jsvalue = .initWeak(value);
+    return value;
 }
 
 pub fn getBodyValue(
@@ -322,7 +326,7 @@ fn destroy(this: *Response) void {
     this.init.deinit(bun.default_allocator);
     this.body.deinit(bun.default_allocator);
     this.url.deref();
-
+    this.this_jsvalue.deinit();
     bun.destroy(this);
 }
 
@@ -342,6 +346,7 @@ pub fn unref(this: *Response) void {
 pub fn finalize(
     this: *Response,
 ) callconv(.C) void {
+    this.this_jsvalue.finalize();
     this.unref();
 }
 

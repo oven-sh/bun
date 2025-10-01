@@ -1355,13 +1355,13 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     _ = response.body.value.use();
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
-                .Locked => |*locked| {
+                .Locked => {
                     if (destination_blob.isS3()) {
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = try response.body.value.toReadableStream(globalThis);
-                        if (locked.readable.get(globalThis)) |readable| {
+                        const stream_value = try response.body.value.toReadableStream(.Response, data, globalThis);
+                        if (try jsc.WebCore.ReadableStream.fromJS(stream_value, globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1416,13 +1416,13 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     _ = request.body.value.use();
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
-                .Locked => |locked| {
+                .Locked => {
                     if (destination_blob.isS3()) {
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        _ = try request.body.value.toReadableStream(globalThis);
-                        if (locked.readable.get(globalThis)) |readable| {
+                        const stream_value = try request.body.value.toReadableStream(.Request, data, globalThis);
+                        if (try jsc.WebCore.ReadableStream.fromJS(stream_value, globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});

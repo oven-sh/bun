@@ -3,6 +3,133 @@ const ReadableStream = @This();
 value: JSValue,
 ptr: Source,
 
+pub const Ref = union(Type) {
+    empty: void,
+    strong: Strong,
+    Response: void,
+    Request: void,
+
+    pub const Owner = union(Type) {
+        empty: void,
+        strong: void,
+        Response: JSValue,
+        Request: JSValue,
+    };
+
+    pub const Type = enum {
+        empty,
+        strong,
+        Response,
+        Request,
+    };
+
+    pub fn get(this: *const Ref, owner: Owner, global: *jsc.JSGlobalObject) ?ReadableStream {
+        switch (this.*) {
+            .strong => |*strong| return strong.get(global),
+            .Response => {
+                if (owner == .Response) {
+                    if (owner.Response.as(jsc.WebCore.Response)) |_| {
+                        if (jsc.WebCore.Response.js.gc.body.get(owner.Response)) |body_value| {
+                            return ReadableStream.fromJS(body_value, global) catch null;
+                        }
+                    }
+                }
+            },
+            .Request => {
+                if (owner == .Request) {
+                    if (owner.Request.as(jsc.WebCore.Request)) |_| {
+                        if (jsc.WebCore.Request.js.gc.body.get(owner.Request)) |body_value| {
+                            return ReadableStream.fromJS(body_value, global) catch null;
+                        }
+                    }
+                }
+            },
+            .empty => {},
+        }
+
+        return null;
+    }
+
+    pub fn isDisturbed(this: *const Ref, owner: Owner, global: *jsc.JSGlobalObject) bool {
+        const stream = get(this, owner, global) orelse return false;
+        return stream.isDisturbed(global);
+    }
+
+    pub fn tee(this: *const Ref, owner: Owner, global: *jsc.JSGlobalObject) bun.JSError!?struct { ReadableStream, ReadableStream } {
+        const stream = get(this, owner, global) orelse return null;
+        return stream.tee(global) catch null;
+    }
+
+    pub fn has(this: *const Ref, owner: Owner, global: *jsc.JSGlobalObject) bool {
+        _ = get(this, owner, global) orelse return false;
+        return true;
+    }
+
+    pub fn upgrade(this: *Ref, current: *const ReadableStream, global: *jsc.JSGlobalObject) void {
+        if (this.* == .strong) {
+            this.strong.held.set(global, current.value);
+            return;
+        }
+
+        this.* = .{ .strong = .init(current.value, global) };
+    }
+
+    pub fn init(owner: Owner, global: *jsc.JSGlobalObject) Ref {
+        switch (owner) {
+            .Response => {
+                return .{ .Response = {} };
+            },
+            .Request => {
+                return .{ .Request = {} };
+            },
+            .strong => {
+                return .{ .strong = .init(owner.strong, global) };
+            },
+            .empty => {
+                return .{ .empty = {} };
+            },
+        }
+    }
+
+    pub fn deinit(this: *Ref) void {
+        switch (this.*) {
+            .strong => |*strong| {
+                strong.deinit();
+            },
+            .Response => {},
+            .Request => {},
+            .empty => {},
+        }
+        this.* = .{ .empty = {} };
+    }
+
+    pub fn abort(this: *Ref, owner: Owner, global: *jsc.JSGlobalObject) bool {
+        if (this.get(owner, global)) |value| {
+            value.abort(global);
+            this.deinit();
+            return true;
+        }
+        return false;
+    }
+
+    pub fn toAnyBlob(this: *const Ref, owner: Owner, global: *jsc.JSGlobalObject) ?Blob.Any {
+        var value = get(this, owner, global) orelse return null;
+
+        if (value.toAnyBlob(global)) |blob| {
+            this.deinit();
+            return blob;
+        }
+
+        return null;
+    }
+
+    pub fn done(this: *Ref, owner: Owner, globalObject: *jsc.JSGlobalObject) void {
+        const stream = this.get(owner, globalObject) orelse return;
+        stream.done(globalObject);
+        this.deinit();
+    }
+};
+
 pub const Strong = struct {
     held: jsc.Strong.Optional = .empty,
 
@@ -845,3 +972,5 @@ const JSValue = jsc.JSValue;
 const webcore = bun.webcore;
 const Blob = webcore.Blob;
 const streams = webcore.streams;
+
+const std = @import("std");

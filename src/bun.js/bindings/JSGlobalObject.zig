@@ -902,7 +902,7 @@ pub const JSGlobalObject = opaque {
         body.toBlobIfPossible();
 
         var any_blob = switch (body.*) {
-            .Locked => body.tryUseAsAnyBlob() orelse return body.toReadableStream(this),
+            .Locked => body.tryUseAsAnyBlob() orelse return body.toReadableStream(.Response, response_value, this),
             else => body.useAsAnyBlob(),
         };
 

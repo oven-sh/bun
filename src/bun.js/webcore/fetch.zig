@@ -184,17 +184,21 @@ pub const FetchTasklet = struct {
 
         pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!HTTPRequestBody {
             var body_value = try Body.Value.fromJS(globalThis, value);
-            if (body_value == .Used or (body_value == .Locked and (body_value.Locked.action != .none or body_value.Locked.isDisturbed2(globalThis)))) {
+            defer body_value.deinit();
+            if (body_value == .Used or (body_value == .Locked and (body_value.Locked.action != .none or body_value.Locked.isDisturbed(void, globalThis, .js_undefined)))) {
                 return globalThis.ERR(.BODY_ALREADY_USED, "body already used", .{}).throw();
             }
             if (body_value == .Locked) {
-                if (body_value.Locked.readable.has()) {
+                if (body_value.Locked.readable == .strong) {
                     // just grab the ref
-                    return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
+
+                    defer body_value.Locked.readable = .{ .empty = {} };
+                    return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable.strong };
                 }
+
                 const readable = try body_value.toReadableStream(globalThis);
                 if (!readable.isEmptyOrUndefinedOrNull() and body_value == .Locked and body_value.Locked.readable.has()) {
-                    return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
+                    return FetchTasklet.HTTPRequestBody{ .ReadableStream = .init(body_value.Locked.readable, globalThis) };
                 }
             }
             return FetchTasklet.HTTPRequestBody{ .AnyBlob = body_value.useAsAnyBlob() };
@@ -2085,7 +2089,7 @@ pub fn Bun__fetch_(
         if (options_object) |options| {
             if (try options.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
-                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
+                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, .empty, .js_undefined, body__);
                 }
             }
 
@@ -2096,16 +2100,16 @@ pub fn Bun__fetch_(
         }
 
         if (request) |req| {
-            if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
+            if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(.Request, globalThis, first_arg)))) {
                 return globalThis.ERR(.BODY_ALREADY_USED, "Request body already used", .{}).throw();
             }
 
             if (req.body.value == .Locked) {
-                if (req.body.value.Locked.readable.has()) {
+                if (req.body.value.Locked.readable.has(.Request, first_arg, globalThis)) {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                 }
                 const readable = try req.body.value.toReadableStream(globalThis);
-                if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has()) {
+                if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has(.Request, first_arg, globalThis)) {
                     break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                 }
             }
@@ -2116,7 +2120,7 @@ pub fn Bun__fetch_(
         if (request_init_object) |req| {
             if (try req.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
-                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
+                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, .Request, request_init_object, body__);
                 }
             }
         }

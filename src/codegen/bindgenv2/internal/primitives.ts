@@ -61,6 +61,9 @@ function makeSignedType(width: number): Type {
       if (intValue >= max || intValue < min) {
         throw RangeError("integer out of range");
       }
+      if (width === 64 && intValue === min) {
+        return `(${intValue + 1} - 1)`;
+      }
       return intValue.toString();
     }
   })();

@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-react",
-  "version": "0.0.0-canary.7",
+  "version": "0.0.0-canary.8",
   "devDependencies": {
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9"

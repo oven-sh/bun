@@ -8,7 +8,7 @@
  * To write files to a stable location:
  * export BUN_DEV_SERVER_TEST_TEMP="/Users/clo/scratch/dev"
  */
-import { BunFile, Subprocess } from "bun";
+import { $, BunFile, Subprocess } from "bun";
 import * as Bake from "bun:app";
 import { expect, Matchers } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, runBunInstall, tempDirWithFiles } from "harness";
@@ -1423,6 +1423,7 @@ async function installReactWithCache(root: string) {
 
 // Global React cache management
 let reactCachePromise: Promise<void> | null = null;
+const bunFrameworkReactProjectRoot = path.join(import.meta.dir, "..", "..", "packages", "bun-framework-react");
 
 /**
  * Ensures the React cache is populated. This is a global operation that
@@ -1435,24 +1436,23 @@ export async function ensureReactCache(): Promise<void> {
       const cacheValid = cacheFiles.every(file => fs.existsSync(path.join(reactCacheDir, file)));
 
       if (!cacheValid) {
-        // Create a temporary directory for installation
         const tempInstallDir = fs.mkdtempSync(path.join(tempDir, "react-install-"));
 
-        // Create a minimal package.json
         fs.writeFileSync(
           path.join(tempInstallDir, "package.json"),
           JSON.stringify({
             name: "react-cache-install",
             version: "1.0.0",
-            private: true,
           }),
         );
 
         try {
-          // Install React packages
-          await Bun.$`${bunExe()} i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install`
+          await $`
+            cd ${bunFrameworkReactProjectRoot} && bun pm pack --filename=bun-framework-react.tgz
+            cd ${tempInstallDir} && bun add bun-framework-react@${bunFrameworkReactProjectRoot}/bun-framework-react.tgz
+          `
             .cwd(tempInstallDir)
-            .env({ ...bunEnv })
+            .env(bunEnv)
             .throws(true);
 
           // Copy to cache
@@ -1745,7 +1745,7 @@ function testImpl<T extends DevServerTest>(
           path.join(root, "bun.app.ts"),
           dedent`
             ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
-            ${options.framework === "react" ? `import reactFramework from '${path.join(__dirname, "../../packages/bun-framework-react")}';` : ""}
+            ${options.framework === "react" ? `import reactFramework from 'bun-framework-react';` : ""}
             export default {
               app: {
                 framework: ${options.framework === "react" ? "reactFramework" : JSON.stringify(options.framework)},

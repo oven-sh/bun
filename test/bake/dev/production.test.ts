@@ -4,8 +4,6 @@ import { bunEnv, bunExe } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
-const frameworkPath = path.join(import.meta.dir, "../../../packages/bun-framework-react");
-
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
 
@@ -15,7 +13,7 @@ const platformPath = (path: string) => (process.platform === "win32" ? path.repl
 describe("production", () => {
   test("works with sourcemaps - error thrown in React component", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-sourcemap", {
-      "src/index.tsx": `import framework from '${frameworkPath}';
+      "src/index.tsx": `import framework from 'bun-framework-react';
 export default { app: { framework } };`,
       "pages/index.tsx": `export default function IndexPage() {
   throw new Error("oh no!");
@@ -24,10 +22,6 @@ export default { app: { framework } };`,
       "package.json": JSON.stringify({
         "name": "test-app",
         "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
       }),
     });
 
@@ -48,7 +42,7 @@ export default { app: { framework } };`,
 
   test("import.meta properties are inlined in production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-import-meta", {
-      "src/index.tsx": `import framework from '${frameworkPath}';
+      "src/index.tsx": `import framework from 'bun-framework-react';
 export default {
         app: {
           framework,
@@ -142,7 +136,7 @@ export default function TestPage() {
 
   test("import.meta properties are inlined in catch-all routes during production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-catch-all", {
-      "src/index.tsx": `import framework from '${frameworkPath}';
+      "src/index.tsx": `import framework from 'bun-framework-react';
 export default {
         app: {
           framework,
@@ -309,15 +303,11 @@ export default function GettingStarted() {
 
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
-      "app.ts": `import framework from '${frameworkPath}';
+      "app.ts": `import framework from 'bun-framework-react';
 export default { app: { framework } };`,
       "package.json": JSON.stringify({
         "name": "test-app",
         "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
       }),
     });
 
@@ -337,7 +327,7 @@ export default { app: { framework } };`,
 
   test("client-side component with default import should work", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-client-import", {
-      "src/index.tsx": `import framework from '${frameworkPath}';
+      "src/index.tsx": `import framework from 'bun-framework-react';
 export default { app: { framework } };`,
       "pages/index.tsx": `import Client from "../components/Client";
 
@@ -358,10 +348,6 @@ export default function Client() {
       "package.json": JSON.stringify({
         "name": "test-app",
         "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
       }),
     });
 
@@ -381,10 +367,10 @@ export default function Client() {
     expect(htmlContent).toContain("Hello World");
   });
 
-  // Skipped because we removed the check: https://github.com/oven-sh/bun/blob/b2353d687e83a3e5620b838f1358fb65bdb10936/src/ast/visitExpr.zig#L1453
+  // Skipped because we removed the check: src/ast/visitExpr.zig:1453
   test.skip("importing useState server-side", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-react-import", {
-      "src/index.tsx": `import framework from '${frameworkPath}';
+      "src/index.tsx": `import framework from 'bun-framework-react';
 export default { app: { framework } };`,
       "pages/index.tsx": `import { useState } from 'react';
 
@@ -401,10 +387,6 @@ export default function IndexPage() {
       "package.json": JSON.stringify({
         "name": "test-app",
         "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
       }),
     });
 
@@ -420,7 +402,7 @@ export default function IndexPage() {
 
   test("importing useState from client component", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-client-useState", {
-      "src/index.tsx": `import framework from '${frameworkPath}';
+      "src/index.tsx": `import framework from 'bun-framework-react';
 
 const bundlerOptions = {
   sourcemap: "inline",
@@ -457,18 +439,16 @@ export default function Counter() {
       "package.json": JSON.stringify({
         "name": "test-app",
         "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
       }),
     });
 
+    console.log(dir);
+
     // Run the build command
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+    const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
 
     // The build should succeed - client components CAN use useState
-    expect(stderr.toString()).not.toContain("useState");
+    expect(stdout.toString(), stderr.toString()).not.toContain("useState");
     expect(exitCode).toBe(0);
 
     // Check the generated HTML file
@@ -512,7 +492,7 @@ export default function Counter() {
 
   test("don't include client code if fully static route", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-client-js", {
-      "src/index.tsx": `import framework from '${frameworkPath}';
+      "src/index.tsx": `import framework from 'bun-framework-react';
 export default { app: { framework } };`,
       "pages/index.tsx": `
 export default function IndexPage() {
@@ -525,10 +505,6 @@ export default function IndexPage() {
       "package.json": JSON.stringify({
         "name": "test-app",
         "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
       }),
     });
 

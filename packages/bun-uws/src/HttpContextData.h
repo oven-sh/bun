@@ -46,6 +46,7 @@ private:
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
     using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
     
 
@@ -66,6 +67,7 @@ private:
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnSocketDrainCallback onSocketDrain = nullptr;
     OnSocketDataCallback onSocketData = nullptr;
+    OnSocketUpgradedCallback onSocketUpgraded = nullptr;
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit

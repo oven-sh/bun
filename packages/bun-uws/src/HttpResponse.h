@@ -317,12 +317,20 @@ public:
 
         /* Move any backpressure out of HttpResponse */
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) getHttpResponseData())->buffer));
-
+        auto* responseData = getHttpResponseData();
+        auto* socketData = responseData->socketData;
+        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
+        // tell node http support that we upgraded so we dont try to get HttpResponseData from the socket extension
+        if (socketData && httpContextData->onSocketUpgraded) {
+            httpContextData->onSocketUpgraded(socketData, SSL, (us_socket_t *) this);
+        }
         /* Destroy HttpResponseData */
         getHttpResponseData()->~HttpResponseData();
 
         /* Before we adopt and potentially change socket, check if we are corked */
         bool wasCorked = Super::isCorked();
+
+        
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));
@@ -337,7 +345,7 @@ public:
         webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure));
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
+        
         if (httpContextData->flags.isParsingHttp) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
@@ -351,7 +359,6 @@ public:
 
         /* Move construct the UserData right before calling open handler */
         new (webSocket->getUserData()) UserData(std::forward<UserData>(userData));
-        
 
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {

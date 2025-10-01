@@ -38,6 +38,7 @@ private:
     unsigned int controlTipLength = 0;
     bool isShuttingDown = 0;
     bool hasTimedOut = false;
+    
     enum CompressionStatus : char {
         DISABLED,
         ENABLED,
@@ -52,7 +53,9 @@ private:
     /* We could be a subscriber */
     Subscriber *subscriber = nullptr;
 public:
-    WebSocketData(bool perMessageDeflate, CompressOptions compressOptions, BackPressure &&backpressure) : AsyncSocketData<false>(std::move(backpressure)), WebSocketState<true>() {
+    void *socketData = nullptr;
+
+    WebSocketData(bool perMessageDeflate, CompressOptions compressOptions, BackPressure &&backpressure, void *socketData) : AsyncSocketData<false>(std::move(backpressure)), WebSocketState<true>() {
         compressionStatus = perMessageDeflate ? ENABLED : DISABLED;
 
         /* Initialize the dedicated sliding window(s) */
@@ -64,6 +67,7 @@ public:
                 inflationStream = new InflationStream(compressOptions);
             }
         }
+        this->socketData = socketData;
     }
 
     ~WebSocketData() {

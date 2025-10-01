@@ -275,6 +275,12 @@ private:
                     webSocketContextData->closeHandler((WebSocket<SSL, isServer, USERDATA> *) s, 1006, reason != NULL && code > 0 ? std::string_view{(char *) reason, (size_t) code} : std::string_view());
                 }
             }
+            if (webSocketData->socketData) {
+                auto* webSocketContextData = (WebSocketContextData<SSL, USERDATA> *) us_socket_context_ext(SSL, us_socket_context(SSL, (us_socket_t *) s));
+                if (webSocketContextData->onSocketClosed) {
+                    webSocketContextData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s);
+                }
+            }
 
             /* Destruct in-placed data struct */
             webSocketData->~WebSocketData();

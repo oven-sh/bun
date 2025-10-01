@@ -49,7 +49,7 @@ pub fn parse(input: []const u8) ?f64 {
     const unit = strings.trim(input[i..], " \t\n\r");
     if (unit.len == 0) return value;
 
-    if (multiplier_map.getASCIIICaseInsensitive(unit)) |m| {
+    if (MultiplierMap.getASCIIICaseInsensitive(unit)) |m| {
         return value * m;
     }
 
@@ -60,43 +60,51 @@ pub fn parse(input: []const u8) ?f64 {
 const ms_per_year = std.time.ms_per_day * 365.25;
 const ms_per_month = std.time.ms_per_day * (365.25 / 12.0);
 
-const multiplier_map = bun.ComptimeStringMap(f64, .{
+const MultiplierMap = bun.ComptimeStringMap(f64, .{
+    // Years (365.25 days to account for leap years)
     .{ "y", ms_per_year },
     .{ "yr", ms_per_year },
     .{ "yrs", ms_per_year },
     .{ "year", ms_per_year },
     .{ "years", ms_per_year },
 
+    // Months (30.4375 days average)
     .{ "mo", ms_per_month },
     .{ "month", ms_per_month },
     .{ "months", ms_per_month },
 
+    // Weeks
     .{ "w", std.time.ms_per_week },
     .{ "week", std.time.ms_per_week },
     .{ "weeks", std.time.ms_per_week },
 
+    // Days
     .{ "d", std.time.ms_per_day },
     .{ "day", std.time.ms_per_day },
     .{ "days", std.time.ms_per_day },
 
+    // Hours
     .{ "h", std.time.ms_per_hour },
     .{ "hr", std.time.ms_per_hour },
     .{ "hrs", std.time.ms_per_hour },
     .{ "hour", std.time.ms_per_hour },
     .{ "hours", std.time.ms_per_hour },
 
+    // Minutes
     .{ "m", std.time.ms_per_min },
     .{ "min", std.time.ms_per_min },
     .{ "mins", std.time.ms_per_min },
     .{ "minute", std.time.ms_per_min },
     .{ "minutes", std.time.ms_per_min },
 
+    // Seconds
     .{ "s", std.time.ms_per_s },
     .{ "sec", std.time.ms_per_s },
     .{ "secs", std.time.ms_per_s },
     .{ "second", std.time.ms_per_s },
     .{ "seconds", std.time.ms_per_s },
 
+    // Milliseconds
     .{ "ms", 1 },
     .{ "msec", 1 },
     .{ "msecs", 1 },
@@ -122,7 +130,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= ms_per_year) {
         const years = jsMathRound(ms / ms_per_year);
         if (long) {
-            const plural = abs_ms >= ms_per_year * 1.5;
+            const plural = @abs(years) != 1;
             return std.fmt.allocPrint(allocator, "{d} year{s}", .{ years, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}y", .{years});
@@ -132,7 +140,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= ms_per_month) {
         const months = jsMathRound(ms / ms_per_month);
         if (long) {
-            const plural = abs_ms >= ms_per_month * 1.5;
+            const plural = @abs(months) != 1;
             return std.fmt.allocPrint(allocator, "{d} month{s}", .{ months, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}mo", .{months});
@@ -142,7 +150,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_week) {
         const weeks = jsMathRound(ms / std.time.ms_per_week);
         if (long) {
-            const plural = abs_ms >= std.time.ms_per_week * 1.5;
+            const plural = @abs(weeks) != 1;
             return std.fmt.allocPrint(allocator, "{d} week{s}", .{ weeks, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}w", .{weeks});
@@ -152,7 +160,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_day) {
         const days = jsMathRound(ms / std.time.ms_per_day);
         if (long) {
-            const plural = abs_ms >= std.time.ms_per_day * 1.5;
+            const plural = @abs(days) != 1;
             return std.fmt.allocPrint(allocator, "{d} day{s}", .{ days, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}d", .{days});
@@ -162,7 +170,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_hour) {
         const hours = jsMathRound(ms / std.time.ms_per_hour);
         if (long) {
-            const plural = abs_ms >= std.time.ms_per_hour * 1.5;
+            const plural = @abs(hours) != 1;
             return std.fmt.allocPrint(allocator, "{d} hour{s}", .{ hours, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}h", .{hours});
@@ -172,7 +180,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_min) {
         const minutes = jsMathRound(ms / std.time.ms_per_min);
         if (long) {
-            const plural = abs_ms >= std.time.ms_per_min * 1.5;
+            const plural = @abs(minutes) != 1;
             return std.fmt.allocPrint(allocator, "{d} minute{s}", .{ minutes, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}m", .{minutes});
@@ -182,7 +190,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_s) {
         const seconds = jsMathRound(ms / std.time.ms_per_s);
         if (long) {
-            const plural = abs_ms >= std.time.ms_per_s * 1.5;
+            const plural = @abs(seconds) != 1;
             return std.fmt.allocPrint(allocator, "{d} second{s}", .{ seconds, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}s", .{seconds});

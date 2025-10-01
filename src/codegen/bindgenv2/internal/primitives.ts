@@ -22,7 +22,7 @@ function makeUnsignedType(width: number): Type {
   assert(Number.isInteger(width) && width > 0);
   return new (class extends Type {
     get idlType() {
-      return `::Bun::IDLStrictInteger<std::uint${width}_t>`;
+      return `::Bun::IDLStrictInteger<::std::uint${width}_t>`;
     }
     get bindgenType() {
       return `bindgen.BindgenU${width}`;
@@ -45,7 +45,7 @@ function makeSignedType(width: number): Type {
   assert(Number.isInteger(width) && width > 0);
   return new (class extends Type {
     get idlType() {
-      return `::Bun::IDLStrictInteger<std::int${width}_t>`;
+      return `::Bun::IDLStrictInteger<::std::int${width}_t>`;
     }
     get bindgenType() {
       return `bindgen.BindgenI${width}`;

@@ -171,7 +171,21 @@ Then, add the plugin to your `bunfig.toml`:
 plugins = ["bun-plugin-tailwind"]
 ```
 
-Then, reference TailwindCSS in your HTML via `<link>` tag, `@import` in CSS, or `import` in JavaScript.
+### Environment variables
+
+You can pass environment variables to your HTML files by setting `env` in the `[serve.static]` section of your `bunfig.toml` file:
+
+```toml
+[serve.static]
+# Make all BUN_PUBLIC_* environment variables available to client-side code via process.env
+env = "BUN_PUBLIC_*"
+```
+
+This makes all matching environment variables available to client-side code via `process.env.BUN_PUBLIC_MY_VAR`.
+
+### Using TailwindCSS
+
+Reference TailwindCSS in your HTML via `<link>` tag, `@import` in CSS, or `import` in JavaScript.
 
 {% codetabs %}
 

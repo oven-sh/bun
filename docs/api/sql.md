@@ -393,6 +393,18 @@ await sql`SELECT * FROM products WHERE ids = ANY(${sql.array([1, 2, 3])})`;
 
 **Note**: `sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported yet.
 
+### Retrieving array values
+
+Bun.sql supports retrieving array values from PostgreSQL, including arrays of integers, text, dates, timestamps, and more. Arrays properly handle null values, always returning `null` for null elements:
+
+```ts
+const result = await sql`SELECT ARRAY[0, 1, 2, 3, 4, 5, NULL]::integer[]`;
+console.log(result[0].array); // [0, 1, 2, 3, 4, 5, null]
+
+const strings = await sql`SELECT ARRAY['Hello', 'World', NULL]::text[]`;
+console.log(strings[0].array); // ['Hello', 'World', null]
+```
+
 ## `sql``.simple()`
 
 The PostgreSQL wire protocol supports two types of queries: "simple" and "extended". Simple queries can contain multiple statements but don't support parameters, while extended queries (the default) support parameters but only allow one statement.

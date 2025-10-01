@@ -327,7 +327,7 @@ export default {
 };
 ```
 
-Embedded files can be read using `Bun.file`'s functions or the Node.js `fs.readFile` function (in `"node:fs"`).
+Embedded files can be read using `Bun.file`'s functions or the Node.js `fs` module functions (in `"node:fs"`).
 
 For example, to read the contents of the embedded file:
 
@@ -336,8 +336,21 @@ import icon from "./icon.png" with { type: "file" };
 import { file } from "bun";
 
 const bytes = await file(icon).arrayBuffer();
-// await fs.promises.readFile(icon)
-// fs.readFileSync(icon)
+```
+
+Node.js filesystem APIs like `fs.stat`, `fs.readFile`, and `fs.existsSync` are supported for embedded files:
+
+```js
+import { promises as fs } from "node:fs";
+import myEmbeddedFile from "./myEmbeddedFile.txt" with { type: "file" };
+
+await fs.readFile(myEmbeddedFile);
+await fs.stat(myEmbeddedFile);
+
+import fsSync from "node:fs";
+fsSync.readFileSync(myEmbeddedFile);
+fsSync.statSync(myEmbeddedFile);
+fsSync.existsSync(myEmbeddedFile);
 ```
 
 ### Embed SQLite databases

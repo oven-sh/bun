@@ -182,6 +182,11 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 ---
 
+- `NODE_EXTRA_CA_CERTS`
+- Specifies a path to a file containing additional trusted CA certificates for TLS connections. This allows you to specify additional trusted CA certificates beyond the system's default certificate store. Example: `export NODE_EXTRA_CA_CERTS="/path/to/full/bundle.crt"`
+
+---
+
 - `BUN_CONFIG_VERBOSE_FETCH`
 - If `BUN_CONFIG_VERBOSE_FETCH=curl`, then fetch requests will log the url, method, request headers and response headers to the console. This is useful for debugging network requests. This also works with `node:http`. `BUN_CONFIG_VERBOSE_FETCH=1` is equivalent to `BUN_CONFIG_VERBOSE_FETCH=curl` except without the `curl` output.
 

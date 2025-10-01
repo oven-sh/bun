@@ -103,6 +103,16 @@ $ bun install --filter './packages/pkg-a'
 
 For more information on filtering with `bun install`, refer to [Package Manager > Filtering](https://bun.com/docs/cli/filter#bun-install-and-bun-outdated)
 
+## Analyzing and installing missing dependencies
+
+To scan imported packages from source files and add any missing ones to `package.json`:
+
+```bash
+$ bun install --analyze src/**/*.ts
+```
+
+This command analyzes JavaScript/TypeScript source files using Bun's bundler to detect imported packages and ensures they are added to `package.json`.
+
 ## Overrides and resolutions
 
 Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](https://bun.com/docs/install/overrides) for complete documentation.

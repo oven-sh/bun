@@ -342,14 +342,14 @@ pub const Parser = struct {
 
         defer p.lexer.deinit();
 
-        var binary_expression_stack_heap = bun.allocators.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.default_allocator);
+        var binary_expression_stack_heap = std.heap.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.default_allocator);
         p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).initCapacity(
             binary_expression_stack_heap.get(),
             41, // one less in case of unlikely alignment between the stack buffer and reality
         ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_stack.clearAndFree();
 
-        var binary_expression_simplify_stack_heap = bun.allocators.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.default_allocator);
+        var binary_expression_simplify_stack_heap = std.heap.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.default_allocator);
         p.binary_expression_simplify_stack = std.ArrayList(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
             binary_expression_simplify_stack_heap.get(),
             47,

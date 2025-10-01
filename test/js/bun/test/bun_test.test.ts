@@ -103,7 +103,7 @@ test("describe/test", async () => {
     (pass) microtasks and rejections are drained after the test callback is executed
     (pass) after inside test > the test 1
     (pass) after inside test > the test 2
-    (pass) beforeAll inside test fails
+    (pass) beforeEach inside test fails
 
     2 tests skipped:
     (skip) LINE 67

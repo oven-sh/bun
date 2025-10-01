@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunExe } from "harness";
 
 test("23077", async () => {
-  const result = Bun.spawn({
+  await using result = Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/a.fixture.ts", import.meta.dir + "/b.fixture.ts"],
     stdio: ["pipe", "pipe", "pipe"],
   });

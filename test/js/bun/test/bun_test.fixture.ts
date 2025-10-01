@@ -297,7 +297,7 @@ describe("after inside test", () => {
   });
 });
 
-test("beforeAll inside test fails", () => {
+test("beforeEach inside test fails", () => {
   expect(() => beforeEach(() => {})).toThrowErrorMatchingInlineSnapshot(
     `"Cannot call beforeEach() inside a test. Call it inside describe() instead."`,
   );

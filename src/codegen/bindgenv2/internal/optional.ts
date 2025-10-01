@@ -18,7 +18,7 @@ export function Optional(payload: Type): OptionalType {
       return payload.optionalZigType(style);
     }
     toCpp(value: any): string {
-      if (value == null) {
+      if (value === undefined) {
         return `::WebCore::IDLOptional<${payload.idlType}>::nullValue()`;
       }
       return payload.toCpp(value);

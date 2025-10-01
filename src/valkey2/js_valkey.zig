@@ -17,48 +17,53 @@ pub const JsValkey = struct {
         var args_parsed = try Self.parseConstructorArgs(go, cf);
         defer args_parsed.deinit();
 
-        const vm = go.bunVM();
-
         return Self.new(.{
             // TODO(markovejnovic): byteSlice() feels wrong if the URL contains
             // non-ASCII characters.
-            ._client = bun.handleOom(ValkeyClient.init(
-                bun.default_allocator,
-                vm.uwsLoop(),
-                args_parsed.connection_str.byteSlice(),
-                .{}, // TODO(markovejnovic): Accept options from user lol
-            )) catch |err| {
-                switch (err) {
-                    error.InvalidProtocol => {
-                        return go.throw(
-                            "URL protocol must be one of: " ++
-                                "'redis://', 'valkey://', 'rediss://', " ++
-                                "'valkeys://', 'redis+tls://', " ++
-                                "'redis+unix://', 'redis+tls+unix://'.",
-                            .{},
-                        );
-                    },
-                    error.InvalidUnixLocation => {
-                        return go.throw(
-                            "Invalid UNIX socket location given in the URL.",
-                            .{},
-                        );
-                    },
-                    error.MalformedUrl => {
-                        return go.throw("Invalid connection URL given.", .{});
-                    },
-                    error.FailedToCreateSocket => {
-                        // TODO(markovejnovic): Improve this error message.
-                        // This error message sucks, but we can't do better.
-                        return go.throw(
-                            "Unspecified error creating socket.",
-                            .{},
-                        );
-                    },
-                }
-            },
+            ._client = try createClient(go, args_parsed.conn_str.byteSlice()),
             ._ref_count = RefCount.init(),
         });
+    }
+
+    /// Attempt to create the Valkey client.
+    /// This may fail but will offer proper JS errors.
+    fn createClient(
+        go: *bun.jsc.JSGlobalObject,
+        conn_str: []const u8,
+    ) bun.JSError!ValkeyClient {
+        const vm = go.bunVM();
+        return bun.handleOom(ValkeyClient.init(
+            bun.default_allocator,
+            vm.uwsLoop(),
+            conn_str,
+            .{}, // TODO(markovejnovic): Accept options from user lol
+        )) catch |err| {
+            switch (err) {
+                error.InvalidProtocol => {
+                    return go.throw(
+                        "URL protocol must be one of: " ++
+                            "'redis://', 'valkey://', 'rediss://', " ++
+                            "'valkeys://', 'redis+tls://', " ++
+                            "'redis+unix://', 'redis+tls+unix://'.",
+                        .{},
+                    );
+                },
+                error.InvalidUnixLocation => {
+                    return go.throw(
+                        "Invalid UNIX socket location given in the URL.",
+                        .{},
+                    );
+                },
+                error.MalformedUrl => {
+                    return go.throw("Invalid connection URL given.", .{});
+                },
+                error.FailedToCreateSocket => {
+                    // TODO(markovejnovic): Improve this error message.
+                    // This error message sucks, but we can't do better.
+                    return go.throw("Unspecified error creating socket.", .{});
+                },
+            }
+        };
     }
 
     /// Parse arguments given to the constructor. There's a lot of arguments
@@ -67,10 +72,10 @@ pub const JsValkey = struct {
         go: *bun.jsc.JSGlobalObject,
         cf: *bun.jsc.CallFrame,
     ) bun.JSError!struct {
-        connection_str: bun.String,
+        conn_str: bun.String,
 
         pub fn deinit(self: *@This()) void {
-            self.connection_str.deref();
+            self.conn_str.deref();
         }
     } {
         const args = cf.arguments();
@@ -84,7 +89,7 @@ pub const JsValkey = struct {
             bun.String.init(DEFAULT_CONN_STR);
 
         return .{
-            .connection_str = conn_url,
+            .conn_str = conn_url,
         };
     }
 

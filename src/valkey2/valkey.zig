@@ -366,7 +366,7 @@ const SocketIO = struct {
     const debug = bun.Output.scoped(.valkey_socket, .visible);
 };
 
-/// Encodes whether the addres is TCP-based or a Unix socket.
+/// Generalization of different Valkey server addresses -- Unix or TCP.
 const ValkeyAddress = union(enum) {
     const Self = @This();
 

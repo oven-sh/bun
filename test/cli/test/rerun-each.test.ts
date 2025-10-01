@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe, bunEnv, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("--rerun-each should run tests exactly N times", async () => {
   using dir = tempDir("test-rerun-each", {
@@ -28,11 +28,7 @@ test("--rerun-each should run tests exactly N times", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
 
@@ -57,11 +53,7 @@ test("--rerun-each should run tests exactly N times", async () => {
     stdout: "pipe",
   });
 
-  const [stdout2, stderr2, exitCode2] = await Promise.all([
-    proc2.stdout.text(),
-    proc2.stderr.text(),
-    proc2.exited,
-  ]);
+  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
   expect(exitCode2).toBe(0);
   const combined2 = stdout2 + stderr2;
@@ -94,11 +86,7 @@ test("--rerun-each should handle test failures correctly", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Should have non-zero exit code due to failure
   expect(exitCode).not.toBe(0);

@@ -40,7 +40,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
+🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed. Re-exports `WebSocket`, `CloseEvent`, and `MessageEvent`.
+
+```js
+const { WebSocket } = require("node:http");
+```
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 

@@ -72,7 +72,7 @@ struct IDLArray : Detail::IDLMimallocSequence<IDL> {
 
 template<typename T, typename RefDerefTraits = WTF::DefaultRefDerefTraits<T>>
 struct IDLBunInterface : WebCore::IDLType<WTF::RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>> {
-    using NullableType = RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>;
+    using NullableType = WebCore::RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>;
     using NullableInnerParameterType = NullableType;
 
     static inline std::nullptr_t nullValue() { return nullptr; }

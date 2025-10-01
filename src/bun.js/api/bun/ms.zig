@@ -92,85 +92,88 @@ fn getMultiplier(unit: []const u8) ?f64 {
     return null;
 }
 
+// To keep the behavior consistent with JavaScript, we can't use @round
+// Zig's @round uses "round half away from zero": ties round away from zero (2.5→3, -2.5→-3)
+// JavaScript's Math.round uses "round half toward +∞": ties round toward positive infinity (2.5→3, -2.5→-2)
+// This implementation: floor(x) + 1 if fractional part >= 0.5, else floor(x)
+fn jsMathRound(x: f64) i64 {
+    const i = @floor(x);
+    const rounded = if (x - i >= 0.5) i + 1 else i;
+    return @intFromFloat(rounded);
+}
+
 /// Format milliseconds to a human-readable string
 pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
     const abs_ms = @abs(ms);
 
     // Years
     if (abs_ms >= ms_per_year) {
-        const years = @round(ms / ms_per_year);
-        const years_int = @as(i64, @intFromFloat(years));
+        const years = jsMathRound(ms / ms_per_year);
         if (long) {
             const plural = abs_ms >= ms_per_year * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} year{s}", .{ years_int, if (plural) "s" else "" });
+            return std.fmt.allocPrint(allocator, "{d} year{s}", .{ years, if (plural) "s" else "" });
         }
-        return std.fmt.allocPrint(allocator, "{d}y", .{years_int});
+        return std.fmt.allocPrint(allocator, "{d}y", .{years});
     }
 
     // Months
     if (abs_ms >= ms_per_month) {
-        const months = @round(ms / ms_per_month);
-        const months_int = @as(i64, @intFromFloat(months));
+        const months = jsMathRound(ms / ms_per_month);
         if (long) {
             const plural = abs_ms >= ms_per_month * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} month{s}", .{ months_int, if (plural) "s" else "" });
+            return std.fmt.allocPrint(allocator, "{d} month{s}", .{ months, if (plural) "s" else "" });
         }
-        return std.fmt.allocPrint(allocator, "{d}mo", .{months_int});
+        return std.fmt.allocPrint(allocator, "{d}mo", .{months});
     }
 
     // Weeks
     if (abs_ms >= std.time.ms_per_week) {
-        const weeks = @round(ms / std.time.ms_per_week);
-        const weeks_int = @as(i64, @intFromFloat(weeks));
+        const weeks = jsMathRound(ms / std.time.ms_per_week);
         if (long) {
             const plural = abs_ms >= std.time.ms_per_week * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} week{s}", .{ weeks_int, if (plural) "s" else "" });
+            return std.fmt.allocPrint(allocator, "{d} week{s}", .{ weeks, if (plural) "s" else "" });
         }
-        return std.fmt.allocPrint(allocator, "{d}w", .{weeks_int});
+        return std.fmt.allocPrint(allocator, "{d}w", .{weeks});
     }
 
     // Days
     if (abs_ms >= std.time.ms_per_day) {
-        const days = @round(ms / std.time.ms_per_day);
-        const days_int = @as(i64, @intFromFloat(days));
+        const days = jsMathRound(ms / std.time.ms_per_day);
         if (long) {
             const plural = abs_ms >= std.time.ms_per_day * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} day{s}", .{ days_int, if (plural) "s" else "" });
+            return std.fmt.allocPrint(allocator, "{d} day{s}", .{ days, if (plural) "s" else "" });
         }
-        return std.fmt.allocPrint(allocator, "{d}d", .{days_int});
+        return std.fmt.allocPrint(allocator, "{d}d", .{days});
     }
 
     // Hours
     if (abs_ms >= std.time.ms_per_hour) {
-        const hours = @round(ms / std.time.ms_per_hour);
-        const hours_int = @as(i64, @intFromFloat(hours));
+        const hours = jsMathRound(ms / std.time.ms_per_hour);
         if (long) {
             const plural = abs_ms >= std.time.ms_per_hour * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} hour{s}", .{ hours_int, if (plural) "s" else "" });
+            return std.fmt.allocPrint(allocator, "{d} hour{s}", .{ hours, if (plural) "s" else "" });
         }
-        return std.fmt.allocPrint(allocator, "{d}h", .{hours_int});
+        return std.fmt.allocPrint(allocator, "{d}h", .{hours});
     }
 
     // Minutes
     if (abs_ms >= std.time.ms_per_min) {
-        const minutes = @round(ms / std.time.ms_per_min);
-        const minutes_int = @as(i64, @intFromFloat(minutes));
+        const minutes = jsMathRound(ms / std.time.ms_per_min);
         if (long) {
             const plural = abs_ms >= std.time.ms_per_min * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} minute{s}", .{ minutes_int, if (plural) "s" else "" });
+            return std.fmt.allocPrint(allocator, "{d} minute{s}", .{ minutes, if (plural) "s" else "" });
         }
-        return std.fmt.allocPrint(allocator, "{d}m", .{minutes_int});
+        return std.fmt.allocPrint(allocator, "{d}m", .{minutes});
     }
 
     // Seconds
     if (abs_ms >= std.time.ms_per_s) {
-        const seconds = @round(ms / std.time.ms_per_s);
-        const seconds_int = @as(i64, @intFromFloat(seconds));
+        const seconds = jsMathRound(ms / std.time.ms_per_s);
         if (long) {
             const plural = abs_ms >= std.time.ms_per_s * 1.5;
-            return std.fmt.allocPrint(allocator, "{d} second{s}", .{ seconds_int, if (plural) "s" else "" });
+            return std.fmt.allocPrint(allocator, "{d} second{s}", .{ seconds, if (plural) "s" else "" });
         }
-        return std.fmt.allocPrint(allocator, "{d}s", .{seconds_int});
+        return std.fmt.allocPrint(allocator, "{d}s", .{seconds});
     }
 
     // Milliseconds

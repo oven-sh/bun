@@ -85,6 +85,7 @@ describe("Bun.ms - parse (string to number)", () => {
 describe("Bun.ms - format (number to string)", () => {
   test("short format", () => {
     const cases = [
+      [0, "0ms"],
       [500, "500ms"],
       [-500, "-500ms"],
       [1000, "1s"],
@@ -107,6 +108,7 @@ describe("Bun.ms - format (number to string)", () => {
 
   test("long format", () => {
     const cases = [
+      [0, "0 ms"],
       [500, "500 ms"],
       [-500, "-500 ms"],
       [1000, "1 second"],
@@ -131,18 +133,40 @@ describe("Bun.ms - format (number to string)", () => {
     }
   });
 
-  describe("invalid number inputs", () => {
-    test("NaN should throw", () => {
-      expect(() => Bun.ms(NaN)).toThrow();
-    });
+  test("rounding behavior matches JavaScript Math.round and npm ms", () => {
+    // JavaScript Math.round uses "round half toward +∞"
+    // Positive ties (X.5) round up (away from zero): 2.5 → 3
+    // Negative ties (X.5) round up toward zero: -2.5 → -2
+    // This is different from Zig's @round which rounds away from zero
+    //  (so we made our own jsMathRound function)
+    const cases = [
+      // Positive ties - should round up
+      [2500, "3s", "3 seconds"],
+      [3500, "4s", "4 seconds"],
+      [4500, "5s", "5 seconds"],
 
-    test("Infinity should throw", () => {
-      expect(() => Bun.ms(Infinity)).toThrow();
-    });
+      // Negative ties - should round toward zero (toward +∞)
+      [-2500, "-2s", "-2 seconds"],
+      [-3500, "-3s", "-3 seconds"],
+      [-4500, "-4s", "-4 seconds"],
 
-    test("-Infinity should throw", () => {
-      expect(() => Bun.ms(-Infinity)).toThrow();
-    });
+      [9000000, "3h", "3 hours"],
+      [-9000000, "-2h", "-2 hours"],
+
+      [216000000, "3d", "3 days"],
+      [-216000000, "-2d", "-2 days"],
+    ] as const;
+
+    for (const [input, expectedShort, expectedLong] of cases) {
+      expect(Bun.ms(input)).toBe(expectedShort);
+      expect(Bun.ms(input, { long: true })).toBe(expectedLong);
+    }
+  });
+
+  test("invalid number inputs", () => {
+    expect(() => Bun.ms(NaN)).toThrow();
+    expect(() => Bun.ms(Infinity)).toThrow();
+    expect(() => Bun.ms(-Infinity)).toThrow();
   });
 });
 
@@ -241,8 +265,8 @@ describe("Bun.ms - comprehensive coverage", () => {
   });
 });
 
-describe("Bun.ms - dynamic values at runtime", () => {
-  test("dynamic string concatenation", () => {
+test("Bun.ms - dynamic values at runtime", () => {
+  {
     function getNumber() {
       return Math.random() > 0.5 ? 1 : 2;
     }
@@ -251,29 +275,29 @@ describe("Bun.ms - dynamic values at runtime", () => {
 
     // Should be either 1 day or 2 days
     expect(result === 86400000 || result === 172800000).toBe(true);
-  });
+  }
 
-  test("template literal with function call", () => {
+  {
     function getHours() {
       return 5;
     }
     const result = Bun.ms(String(getHours()) + "h");
     expect(result).toBe(18000000); // 5 hours
-  });
+  }
 
-  test("variable string", () => {
+  {
     const timeStr = "10m";
     const result = Bun.ms(timeStr);
     expect(result).toBe(600000);
-  });
+  }
 
-  test("dynamic number formatting", () => {
+  {
     function getMs() {
       return 60000;
     }
     const result = Bun.ms(getMs());
     expect(result).toBe("1m");
-  });
+  }
 });
 
 test("Bun.ms - static string formatting", () => {

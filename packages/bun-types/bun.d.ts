@@ -5239,7 +5239,6 @@ declare module "bun" {
    * @param value - Time string to parse or milliseconds to format
    * @param options - Formatting options (when value is a number)
    * @returns Milliseconds (for string) or formatted string (for number). Returns NaN for invalid strings.
-   * @throws {Error} If the value is invalid
    */
   function ms(value: string): number;
   function ms(value: number, options?: { long?: boolean }): string;

@@ -164,7 +164,7 @@ fn cloneStrings(slice: ?[][*:0]const u8) ?[][*:0]const u8 {
     const inner = slice orelse return null;
     const result = bun.handleOom(bun.default_allocator.alloc([*:0]const u8, inner.len));
     for (inner, result) |string, *out| {
-        out.* = bun.handleOom(bun.default_allocator.dupeZ(u8, std.mem.span(string))),
+        out.* = bun.handleOom(bun.default_allocator.dupeZ(u8, std.mem.span(string)));
     }
     return result;
 }

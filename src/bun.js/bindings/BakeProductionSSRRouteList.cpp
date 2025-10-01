@@ -87,6 +87,9 @@ static const HashTableValue BakeProductionSSRRouteInfoPrototypeValues[] = {
     { "dataForInitialization"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBakeProductionSSRRouteInfoPrototypeFunction_dataForInitialization, 0 } },
 };
 
+// This prototype is needed to augment the RouteInfo object with a
+// `dataForInitialization` function which returns the needed data to initialize
+// the RouteInfo object
 class BakeProductionSSRRouteInfoPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -172,6 +175,16 @@ JSFinalObject* createEmptyRouteInfoObject(JSC::VM& vm, JSC::JSGlobalObject* glob
     return constructEmptyObject(vm, structure);
 }
 
+// The purpose of this type is to:
+// 1. Store and cache the "info" object for each route, this is an object which
+//    represents the state needed to render a route. See the (`RouteInfo`) type in
+//    `src/bake/production-runtime-server.ts`
+//
+//    This object contains things like the modules for the page, layouts, etc.
+//    which could be costly to compute on every request, so we cache them here.
+//
+// 2. Store and cache the "params" object structures for each route. This is
+//    done in a similar manner as ServerRouteList and is directly inspired by it.
 class BakeProductionSSRRouteList final : public JSC::JSDestructibleObject {
 private:
     WTF::FixedVector<WriteBarrier<JSC::JSFinalObject>> m_routeInfos;

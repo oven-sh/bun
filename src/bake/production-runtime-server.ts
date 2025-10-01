@@ -31,11 +31,23 @@ type RouteArgs = {
   styles: string[];
 };
 
+/**
+ * A type representing all the data needed to render this route.
+ *
+ * Note that these fields are actually undefined when this object is
+ * uninitialized
+ */
 type RouteInfo = {
+  /**
+   * The server entrypoint which contains the module to render the page.
+   */
   serverEntrypoint: Module & Bake.ServerEntryPoint;
   routeModules: Module[];
   clientEntryUrl: string;
   styles: string[];
+  /**
+   * A function to fetch the needed to data to initialize this RouteInfo object
+   */
   dataForInitialization(req: Request, routeIndex: number, routerTypeIndex: number): RouteArgs;
   initializing: Promise<unknown> | undefined;
 };

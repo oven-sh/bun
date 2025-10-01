@@ -187,7 +187,6 @@ pub fn NewParser_(
 
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
-        has_reported_use_client_directive_hook_error: bool = false,
         macro_call_count: MacroCallCountType = 0,
 
         hoisted_ref_for_sloppy_mode_block_fn: RefRefMap = .{},

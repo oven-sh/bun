@@ -343,7 +343,7 @@ public:
         /* Initialize websocket with any moved backpressure intact */
         webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData);
         if (onSocketUpgraded) {
-            onSocketUpgraded(socketData, SSL, (us_socket_t *) this);
+            onSocketUpgraded(socketData, SSL, usSocket);
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */

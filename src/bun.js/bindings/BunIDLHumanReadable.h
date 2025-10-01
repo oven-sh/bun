@@ -39,7 +39,8 @@ static constexpr auto nestedHumanReadableName()
 }
 
 template<typename FirstIDL>
-static constexpr auto separatorForHumanReadableBinaryDisjunction() {
+static constexpr auto separatorForHumanReadableBinaryDisjunction()
+{
     if constexpr (IDLHumanReadableName<FirstIDL>::hasPreposition) {
         return std::to_array(", or ");
     } else {

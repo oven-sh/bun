@@ -2,20 +2,19 @@
 
 groups: std.ArrayList(ConcurrentGroup),
 sequences: std.ArrayList(ExecutionSequence),
-entries: std.ArrayList(*ExecutionEntry),
+arena: std.mem.Allocator,
 previous_group_was_concurrent: bool = false,
 
-pub fn init(gpa: std.mem.Allocator) Order {
+pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator) Order {
     return .{
         .groups = std.ArrayList(ConcurrentGroup).init(gpa),
         .sequences = std.ArrayList(ExecutionSequence).init(gpa),
-        .entries = std.ArrayList(*ExecutionEntry).init(gpa),
+        .arena = arena,
     };
 }
 pub fn deinit(this: *Order) void {
     this.groups.deinit();
     this.sequences.deinit();
-    this.entries.deinit();
 }
 
 pub fn generateOrderSub(this: *Order, current: TestScheduleEntry, cfg: Config) bun.JSError!void {
@@ -43,11 +42,11 @@ pub const Config = struct {
 pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry, _: Config) bun.JSError!AllOrderResult {
     const start = this.groups.items.len;
     for (entries) |entry| {
-        const entries_start = this.entries.items.len;
-        try this.entries.append(entry); // add entry to sequence
-        const entries_end = this.entries.items.len;
+        if (bun.Environment.ci_assert and entry.added_in_phase != .preload) bun.assert(entry.next == null);
+        entry.next = null;
+        entry.skip_to = null;
         const sequences_start = this.sequences.items.len;
-        try this.sequences.append(.init(entries_start, entries_end, null)); // add sequence to concurrentgroup
+        try this.sequences.append(.init(entry, null)); // add sequence to concurrentgroup
         const sequences_end = this.sequences.items.len;
         try this.groups.append(.init(sequences_start, sequences_end, this.groups.items.len + 1)); // add a new concurrentgroup to order
         this.previous_group_was_concurrent = false;
@@ -82,48 +81,71 @@ pub fn generateOrderDescribe(this: *Order, current: *DescribeScope, cfg: Config)
     // update skip_to values for afterAll to skip the remaining afterAll items
     afterall_order.setFailureSkipTo(this);
 }
+
+const EntryList = struct {
+    first: ?*ExecutionEntry = null,
+    last: ?*ExecutionEntry = null,
+    pub fn prepend(this: *EntryList, current: *ExecutionEntry) void {
+        current.next = this.first;
+        this.first = current;
+        if (this.last == null) this.last = current;
+    }
+    pub fn append(this: *EntryList, current: *ExecutionEntry) void {
+        if (bun.Environment.ci_assert and current.added_in_phase != .preload) bun.assert(current.next == null);
+        current.next = null;
+        if (this.last) |last| {
+            if (bun.Environment.ci_assert and last.added_in_phase != .preload) bun.assert(last.next == null);
+            last.next = current;
+            this.last = current;
+        } else {
+            this.first = current;
+            this.last = current;
+        }
+    }
+};
+
 pub fn generateOrderTest(this: *Order, current: *ExecutionEntry, _: Config) bun.JSError!void {
-    const entries_start = this.entries.items.len;
     bun.assert(current.base.has_callback == (current.callback != null));
     const use_each_hooks = current.base.has_callback;
 
+    var list: EntryList = .{};
+
     // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
     if (use_each_hooks) {
-        // determine length of beforeEach
-        var beforeEachLen: usize = 0;
-        {
-            var parent: ?*DescribeScope = current.base.parent;
-            while (parent) |p| : (parent = p.base.parent) {
-                beforeEachLen += p.beforeEach.items.len;
-            }
-        }
-        // copy beforeEach entries
-        const beforeEachSlice = try this.entries.addManyAsSlice(beforeEachLen); // add entries to sequence
-        {
-            var parent: ?*DescribeScope = current.base.parent;
-            var i: usize = beforeEachLen;
-            while (parent) |p| : (parent = p.base.parent) {
-                i -= p.beforeEach.items.len;
-                @memcpy(beforeEachSlice[i..][0..p.beforeEach.items.len], p.beforeEach.items);
+        var parent: ?*DescribeScope = current.base.parent;
+        while (parent) |p| : (parent = p.base.parent) {
+            // prepend in reverse so they end up in forwards order
+            var i: usize = p.beforeEach.items.len;
+            while (i > 0) : (i -= 1) {
+                list.prepend(bun.create(this.arena, ExecutionEntry, p.beforeEach.items[i - 1].*));
             }
         }
     }
 
     // append test
-    try this.entries.append(current); // add entry to sequence
+    list.append(current); // add entry to sequence
 
     // gather afterEach
     if (use_each_hooks) {
         var parent: ?*DescribeScope = current.base.parent;
         while (parent) |p| : (parent = p.base.parent) {
-            try this.entries.appendSlice(p.afterEach.items); // add entry to sequence
+            for (p.afterEach.items) |entry| {
+                list.append(bun.create(this.arena, ExecutionEntry, entry.*));
+            }
         }
     }
 
+    // set skip_to values
+    var index = list.first;
+    var skip_to = current.next;
+    while (index) |entry| : (index = entry.next) {
+        if (entry == skip_to) skip_to = null;
+        entry.skip_to = skip_to; // we should consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+    }
+
     // add these as a single sequence
-    const entries_end = this.entries.items.len;
     const sequences_start = this.sequences.items.len;
-    try this.sequences.append(.init(entries_start, entries_end, current)); // add sequence to concurrentgroup
+    try this.sequences.append(.init(list.first, current)); // add sequence to concurrentgroup
     const sequences_end = this.sequences.items.len;
     try appendOrExtendConcurrentGroup(this, current.base.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
 }

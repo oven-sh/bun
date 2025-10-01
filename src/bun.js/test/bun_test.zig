@@ -51,26 +51,48 @@ pub const js_fns = struct {
 
                 const bunTestRoot = try getActiveTestRoot(globalThis, .{ .signature = .{ .str = @tagName(tag) ++ "()" }, .allow_in_preload = true });
 
+                const cfg: ExecutionEntryCfg = .{
+                    .has_done_parameter = has_done_parameter,
+                    .timeout = args.options.timeout,
+                };
                 const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
                     group.log("genericHook in preload", .{});
 
-                    _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, args.callback, .{
-                        .has_done_parameter = has_done_parameter,
-                        .timeout = args.options.timeout,
-                    }, .{});
+                    _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, args.callback, cfg, .{}, .preload);
                     return .js_undefined;
                 };
 
                 switch (bunTest.phase) {
                     .collection => {
-                        _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, args.callback, .{
-                            .has_done_parameter = has_done_parameter,
-                            .timeout = args.options.timeout,
-                        }, .{});
+                        _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, args.callback, cfg, .{}, .collection);
 
                         return .js_undefined;
                     },
                     .execution => {
+                        if (tag == .afterAll or tag == .afterEach) {
+                            // allowed
+                            const active = bunTest.getCurrentStateData();
+                            const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
+                                return globalThis.throw("Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.", .{@tagName(tag)});
+                            };
+                            var append_point = sequence.active_entry;
+
+                            var iter = append_point;
+                            const before_test_entry = while (iter) |entry| : (iter = entry.next) {
+                                if (entry == sequence.test_entry) break true;
+                            } else false;
+
+                            if (before_test_entry) append_point = sequence.test_entry;
+
+                            const append_point_value = append_point orelse return globalThis.throw("Cannot call {s}() here. Call it inside describe() instead.", .{@tagName(tag)});
+
+                            const new_item = ExecutionEntry.create(bunTest.gpa, null, args.callback, cfg, null, .{}, .execution);
+                            new_item.next = append_point_value.next;
+                            append_point_value.next = new_item;
+                            bun.handleOom(bunTest.extra_execution_entries.append(new_item));
+
+                            return .js_undefined;
+                        }
                         return globalThis.throw("Cannot call {s}() inside a test. Call it inside describe() instead.", .{@tagName(tag)});
                     },
                     .done => return globalThis.throw("Cannot call {s}() after the test run has completed", .{@tagName(tag)}),
@@ -158,6 +180,7 @@ pub const BunTest = struct {
     result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     default_concurrent: bool,
+    extra_execution_entries: std.ArrayList(*ExecutionEntry),
 
     phase: enum {
         collection,
@@ -190,6 +213,7 @@ pub const BunTest = struct {
             .reporter = reporter,
             .result_queue = .init(this.gpa),
             .default_concurrent = default_concurrent,
+            .extra_execution_entries = .init(this.gpa),
         };
     }
     pub fn deinit(this: *BunTest) void {
@@ -200,6 +224,11 @@ pub const BunTest = struct {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
             bun.jsc.VirtualMachine.get().timer.remove(&this.timer);
         }
+
+        for (this.extra_execution_entries.items) |entry| {
+            entry.destroy(this.gpa);
+        }
+        this.extra_execution_entries.deinit();
 
         this.execution.deinit();
         this.collection.deinit();
@@ -217,7 +246,7 @@ pub const BunTest = struct {
             group_index: usize,
             entry_data: ?struct {
                 sequence_index: usize,
-                entry_index: usize,
+                entry: *const anyopaque,
                 remaining_repeat_count: i64,
             },
         },
@@ -235,9 +264,9 @@ pub const BunTest = struct {
         }
         pub fn entry(this: *const RefDataValue, buntest: *BunTest) ?*ExecutionEntry {
             if (this.* != .execution) return null;
-            const sequence_item = this.sequence(buntest) orelse return null;
-            const entry_data = this.execution.entry_data orelse return null;
-            return sequence_item.entries(&buntest.execution)[entry_data.entry_index];
+            if (buntest.phase != .execution) return null;
+            const the_sequence, _ = buntest.execution.getCurrentAndValidExecutionSequence(this.*) orelse return null;
+            return the_sequence.active_entry;
         }
 
         pub fn format(this: *const RefDataValue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -245,7 +274,7 @@ pub const BunTest = struct {
                 .start => try writer.print("start", .{}),
                 .collection => try writer.print("collection: active_scope={?s}", .{this.collection.active_scope.base.name}),
                 .execution => if (this.execution.entry_data) |entry_data| {
-                    try writer.print("execution: group_index={d},sequence_index={d},entry_index={d},remaining_repeat_count={d}", .{ this.execution.group_index, entry_data.sequence_index, entry_data.entry_index, entry_data.remaining_repeat_count });
+                    try writer.print("execution: group_index={d},sequence_index={d},entry_index={x},remaining_repeat_count={d}", .{ this.execution.group_index, entry_data.sequence_index, @intFromPtr(entry_data.entry), entry_data.remaining_repeat_count });
                 } else try writer.print("execution: group_index={d}", .{this.execution.group_index}),
                 .done => try writer.print("done", .{}),
             }
@@ -299,11 +328,18 @@ pub const BunTest = struct {
                 const active_sequence_index = 0;
                 const sequence = &sequences[active_sequence_index];
 
+                const active_entry = sequence.active_entry orelse break :blk .{
+                    .execution = .{
+                        .group_index = this.execution.group_index,
+                        .entry_data = null, // the sequence is completed.
+                    },
+                };
+
                 break :blk .{ .execution = .{
                     .group_index = this.execution.group_index,
                     .entry_data = .{
                         .sequence_index = active_sequence_index,
-                        .entry_index = sequence.active_index,
+                        .entry = active_entry,
                         .remaining_repeat_count = sequence.remaining_repeat_count,
                     },
                 } };
@@ -510,7 +546,7 @@ pub const BunTest = struct {
             .collection => {
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
-                var order = Order.init(this.gpa);
+                var order = Order.init(this.gpa, this.arena);
                 defer order.deinit();
 
                 const has_filter = if (this.reporter) |reporter| if (reporter.jest.filter_regex) |_| true else false else false;
@@ -817,8 +853,8 @@ pub const DescribeScope = struct {
         try this.entries.append(.{ .describe = child });
         return child;
     }
-    pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base);
+    pub fn appendTest(this: *DescribeScope, gpa: std.mem.Allocator, name_not_owned: ?[]const u8, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg, phase: ExecutionEntry.AddedInPhase) bun.JSError!*ExecutionEntry {
+        const entry = ExecutionEntry.create(gpa, name_not_owned, callback, cfg, this, base, phase);
         entry.base.propagate(entry.callback != null);
         try this.entries.append(.{ .test_callback = entry });
         return entry;
@@ -832,8 +868,8 @@ pub const DescribeScope = struct {
             .afterAll => return &this.afterAll,
         }
     }
-    pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
-        const entry = try ExecutionEntry.create(gpa, null, callback, cfg, this, base);
+    pub fn appendHook(this: *DescribeScope, gpa: std.mem.Allocator, tag: HookTag, callback: ?jsc.JSValue, cfg: ExecutionEntryCfg, base: BaseScopeCfg, phase: ExecutionEntry.AddedInPhase) bun.JSError!*ExecutionEntry {
+        const entry = ExecutionEntry.create(gpa, null, callback, cfg, this, base, phase);
         try this.getHookEntries(tag).append(entry);
         return entry;
     }
@@ -852,13 +888,20 @@ pub const ExecutionEntry = struct {
     /// '.epoch' = not set
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     timespec: bun.timespec = .epoch,
+    added_in_phase: AddedInPhase,
 
-    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg) bun.JSError!*ExecutionEntry {
+    next: ?*ExecutionEntry = null,
+    skip_to: ?*ExecutionEntry = null,
+
+    const AddedInPhase = enum { preload, collection, execution };
+
+    fn create(gpa: std.mem.Allocator, name_not_owned: ?[]const u8, cb: ?jsc.JSValue, cfg: ExecutionEntryCfg, parent: ?*DescribeScope, base: BaseScopeCfg, phase: AddedInPhase) *ExecutionEntry {
         const entry = bun.create(gpa, ExecutionEntry, .{
             .base = .init(base, gpa, name_not_owned, parent, cb != null),
             .callback = null,
             .timeout = cfg.timeout,
             .has_done_parameter = cfg.has_done_parameter,
+            .added_in_phase = phase,
         });
 
         if (cb) |c| {

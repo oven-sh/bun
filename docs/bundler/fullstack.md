@@ -342,6 +342,22 @@ $ bun add bun-plugin-tailwind
 plugins = ["bun-plugin-tailwind"]
 ```
 
+### Minification
+
+Control HTML import minification in `bunfig.toml`:
+
+```toml#bunfig.toml
+[serve.static]
+# Boolean: enable all minification
+minify = true
+
+# Or object for fine-grained control
+[serve.static.minify]
+whitespace = true
+identifiers = true
+syntax = true
+```
+
 This will allow you to use TailwindCSS utility classes in your HTML and CSS files. All you need to do is import `tailwindcss` somewhere:
 
 ```html#index.html

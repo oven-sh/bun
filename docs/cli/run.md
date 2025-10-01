@@ -159,6 +159,14 @@ Disable native addons and use the `node-addons` export condition.
 $ bun --no-addons run server.js
 ```
 
+### `--zero-fill-buffers`
+
+Force all `Buffer` allocations to be zero-filled for security (Node.js compatibility):
+
+```bash
+$ bun --zero-fill-buffers run app.js
+```
+
 ### Filtering
 
 In monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.

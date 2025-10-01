@@ -40,6 +40,21 @@ test("inline snapshot", () => {
 
 When you run the test, Bun automatically updates the test file itself with the generated snapshot string. This makes the tests more portable and easier to understand, since the expected output is right next to the test.
 
+Indentation is automatically preserved to match your test file's formatting:
+
+```ts
+test("nested object", () => {
+  expect({ user: { name: "Alice", role: "admin" } }).toMatchInlineSnapshot(`
+    {
+      "user": {
+        "name": "Alice",
+        "role": "admin",
+      },
+    }
+  `);
+});
+```
+
 ### Using inline snapshots
 
 1. Write your test with `.toMatchInlineSnapshot()`

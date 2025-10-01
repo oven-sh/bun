@@ -80,6 +80,7 @@ The following Web APIs are partially or completely supported.
 - [`crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto)
   [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
   [`CryptoKey`](https://developer.mozilla.org/en-US/docs/Web/API/CryptoKey)
+  (X25519 curve support for `crypto.subtle.generateKey()`)
 
 ---
 

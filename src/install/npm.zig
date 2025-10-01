@@ -874,7 +874,7 @@ pub const PackageVersion = extern struct {
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,
 
-    /// Timestamp when this version was published (unix seconds, 0 if unknown)
+    /// Unix timestamp when this version was published (0 if unknown)
     publish_timestamp_ms: f64 = 0,
 
     pub fn allDependenciesBundled(this: *const PackageVersion) bool {

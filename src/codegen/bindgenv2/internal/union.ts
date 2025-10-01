@@ -50,9 +50,10 @@ export function Union(
     return `::Bun::IDLOrderedUnion<${alternatives.map(a => a.idlType).join(", ")}>`;
   }
 
-  function validateAlternatives() {
+  function validateAlternatives(name?: string) {
+    const suffix = name == null ? "" : `: ${name}`;
     if (alternatives.length === 0) {
-      throw RangeError("union cannot be empty: " + name);
+      throw RangeError("union cannot be empty" + suffix);
     }
   }
 
@@ -92,7 +93,7 @@ export function Union(
   const name: string = alternativesOrName;
   validateName(name);
   alternatives = Object.values(namedAlternatives);
-  validateAlternatives();
+  validateAlternatives(name);
   // named union (both union and fields are named)
   return new (class extends NamedUnionType {
     get name() {

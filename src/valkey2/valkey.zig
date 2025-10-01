@@ -404,6 +404,10 @@ const ValkeyAddress = union(enum) {
             },
             .standalone_unix, .standalone_tls_unix => .{
                 .unix = Self.parseUnixPath(url_mem) catch {
+                    Self.debug(
+                        "Failed to parse UNIX socket path from URL: {s}",
+                        .{url_mem},
+                    );
                     return error.InvalidUnixLocation;
                 },
             },
@@ -429,16 +433,20 @@ const ValkeyAddress = union(enum) {
 
         return sock_path;
     }
+
+    const debug = bun.Output.scoped(.valkey_address, .visible);
 };
 
 /// Protocols used to connect to Valkey server.
 const ValkeyProtocol = enum {
+    const Self = @This();
+
     standalone,
     standalone_unix,
     standalone_tls,
     standalone_tls_unix,
 
-    const string_map = bun.ComptimeStringMap(ValkeyProtocol, .{
+    const string_map = bun.ComptimeStringMap(Self, .{
         .{ "valkey", .standalone },
         .{ "valkeys", .standalone_tls },
         .{ "valkey+tls", .standalone_tls },
@@ -451,14 +459,14 @@ const ValkeyProtocol = enum {
         .{ "redis+tls+unix", .standalone_tls_unix },
     });
 
-    pub fn isTLS(self: ValkeyProtocol) bool {
+    pub fn isTLS(self: Self) bool {
         return switch (self) {
             .standalone_tls, .standalone_tls_unix => true,
             else => false,
         };
     }
 
-    pub fn isUnix(self: ValkeyProtocol) bool {
+    pub fn isUnix(self: Self) bool {
         return switch (self) {
             .standalone_unix, .standalone_tls_unix => true,
             else => false,
@@ -469,13 +477,21 @@ const ValkeyProtocol = enum {
     /// Returns `standalone` if no protocol is specified.
     /// Errors out with `error.InvalidProtocol` if the protocol is not
     /// recognized.
-    pub fn fromUrl(url: bun.URL) !ValkeyProtocol {
+    pub fn fromUrl(url: bun.URL) !Self {
         if (url.protocol.len == 0) {
             return .standalone;
         }
 
-        return string_map.get(url.protocol) orelse error.InvalidProtocol;
+        return string_map.get(url.protocol) orelse {
+            Self.debug(
+                "Failed to parse protocol from URL: {s}",
+                .{url.protocol},
+            );
+            return error.InvalidProtocol;
+        };
     }
+
+    const debug = bun.Output.scoped(.valkey_protocol, .visible);
 };
 
 pub const TlsConfig = union(enum) {
@@ -615,7 +631,12 @@ const ConnParams = struct {
             return self;
         }
 
+        if (url.pathname.len == 1 and url.pathname[0] == '/') {
+            return self;
+        }
+
         const db_id = std.fmt.parseInt(u32, url.pathname[1..], 10) catch {
+            Self.debug("Failed to parse database ID from path: {s}", .{url.pathname});
             return error.MalformedUrl;
         };
 
@@ -630,6 +651,8 @@ const ConnParams = struct {
             self._allocator.free(str);
         }
     }
+
+    const debug = bun.Output.scoped(.valkey_conn_params, .visible);
 };
 
 test ConnParams {
@@ -696,7 +719,10 @@ const ClientState = union(enum) {
         pub fn onData(self: *@This(), packet: []const u8) void {
             // Path 1: Buffer already has data, append and process from buffer
             if (self._ingress_buffer.remaining().len > 0) {
-                bun.handleOom(self._ingress_buffer.write(self.allocator, packet));
+                bun.handleOom(self._ingress_buffer.write(
+                    self.allocator,
+                    packet,
+                ));
                 self.drainIngressBuffer();
             }
 
@@ -774,7 +800,10 @@ const ClientState = union(enum) {
         }
 
         /// TODO(markovejnovic): This uses the legacy implementation.
-        fn parsePacket(self: *@This(), packet: []const u8) !protocol.ValkeyValue {
+        fn parsePacket(
+            self: *@This(),
+            packet: []const u8,
+        ) !protocol.ValkeyValue {
             var current_data_slice = packet;
             while (current_data_slice.len > 0) {
                 var reader = protocol.ValkeyReader.init(current_data_slice);

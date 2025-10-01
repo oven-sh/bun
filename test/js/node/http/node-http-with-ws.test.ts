@@ -19,14 +19,15 @@ test("should not crash when closing sockets after upgrade", async () => {
     const wsServer = new WebSocketServer({ server });
     wsServer.on("connection", socket => {});
 
-    const socket = tls.connect({ port: (server.address() as AddressInfo).port, ca: options.cert }, () => {
+    const port = (server.address() as AddressInfo).port;
+    const socket = tls.connect({ port, ca: options.cert }, () => {
       // normal request keep the socket alive
-      socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: Keep-Alive\r\nContent-Length: 0\r\n\r\n");
-      socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: Keep-Alive\r\nContent-Length: 0\r\n\r\n");
-      socket.write("GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: Keep-Alive\r\nContent-Length: 0\r\n\r\n");
+      socket.write(`GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Keep-Alive\r\nContent-Length: 0\r\n\r\n`);
+      socket.write(`GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Keep-Alive\r\nContent-Length: 0\r\n\r\n`);
+      socket.write(`GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Keep-Alive\r\nContent-Length: 0\r\n\r\n`);
       // upgrade to websocket
       socket.write(
-        "GET / HTTP/1.1\r\nHost: localhost:3000\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+        `GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`,
       );
     });
     socket.on("data", data => {

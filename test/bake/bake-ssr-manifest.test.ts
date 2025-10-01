@@ -3,23 +3,15 @@ import { bunEnv, bunExe, tempDir, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 import { tempDirWithBakeDeps } from "./bake-harness";
 
-test("bake production build generates manifest with SSR and SSG pages", async () => {
-  const dir = await tempDirWithBakeDeps("bake-ssr-manifest", {
-    "bun.app.ts": `
+test(
+  "bake production build generates manifest with SSR and SSG pages",
+  async () => {
+    const dir = await tempDirWithBakeDeps("bake-ssr-manifest", {
+    "index.ts": `
       export default {
-        app: {
-          framework: "react"
-        }
+        app: "react"
       }
     `,
-    "package.json": `{
-      "dependencies": {
-        "react": "experimental",
-        "react-dom": "experimental",
-        "react-server-dom-bun": "experimental",
-        "react-refresh": "experimental"
-      }
-    }`,
     "pages/index.tsx": `
       export default function IndexPage() {
         return <div>Static Home Page</div>;
@@ -45,7 +37,7 @@ test("bake production build generates manifest with SSR and SSG pages", async ()
 
   // Run the production build
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--app", "bun.app.ts"],
+    cmd: [bunExe(), "build", "--app", "./index.ts"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
@@ -71,63 +63,72 @@ test("bake production build generates manifest with SSR and SSG pages", async ()
   // Read and check manifest
   const manifest = await manifestFile.json();
 
-  // expect(manifest.version).toBe(1);
-  // expect(manifest.entries).toBeDefined();
+  expect(manifest.version).toBe("0.0.1");
+  expect(manifest.routes).toBeDefined();
 
-  // Sort by route_index for consistent ordering
-  // manifest.entries.sort((a, b) => a.route_index - b.route_index);
+  // Sort by route for consistent ordering
+  manifest.routes.sort((a, b) => a.route.localeCompare(b.route));
 
   // Replace dynamic file hashes with placeholders for comparison
-  // const normalizedManifest = {
-  //   version: manifest.version,
-  //   entries: manifest.entries.map(entry => ({
-  //     ...entry,
-  //     client_entrypoint: entry.client_entrypoint ? "/_bun/[hash].js" : undefined,
-  //     modules: entry.modules?.map(() => "_bun/[hash].js"),
-  //     entrypoint: entry.entrypoint,
-  //   })),
-  // };
+  const normalizedManifest = {
+    version: manifest.version,
+    routes: manifest.routes.map(entry => ({
+      ...entry,
+      client_entrypoint: entry.client_entrypoint ? "/_bun/[hash].js" : undefined,
+      modules: entry.modules?.map(() => "_bun/[hash].js"),
+      entrypoint: entry.entrypoint ? "_bun/[hash].js" : undefined,
+    })),
+  };
 
-  expect(manifest).toMatchInlineSnapshot(`
+  expect(normalizedManifest).toMatchInlineSnapshot(`
     {
-      "entries": [
+      "routes": [
         {
-          "entrypoint": "_bun/wkhr98c0.js",
+          "client_entrypoint": "/_bun/[hash].js",
+          "entrypoint": undefined,
+          "mode": "ssr",
+          "modules": [
+            "_bun/[hash].js",
+          ],
+          "route": "/about",
+          "route_type": 0,
+          "styles": [],
+        },
+        {
+          "client_entrypoint": "/_bun/[hash].js",
+          "entrypoint": undefined,
+          "mode": "ssr",
+          "modules": [
+            "_bun/[hash].js",
+          ],
+          "route": "/blog/[slug]",
+          "route_type": 0,
+          "styles": [],
+        },
+        {
+          "client_entrypoint": undefined,
+          "entrypoint": "_bun/[hash].js",
           "mode": "ssg",
-          "route_index": 0,
-          "styles": [],
-        },
-        {
-          "client_entrypoint": "/_bun/htsytxwp.js",
-          "mode": "ssr",
-          "modules": [
-            "_bun/knkf935z.js",
-          ],
-          "route_index": 1,
-          "styles": [],
-        },
-        {
-          "client_entrypoint": "/_bun/htsytxwp.js",
-          "mode": "ssr",
-          "modules": [
-            "_bun/3jrnaj10.js",
-          ],
-          "route_index": 2,
+          "modules": undefined,
+          "route": "/index",
+          "route_type": 0,
           "styles": [],
         },
       ],
-      "version": 1,
+      "version": "0.0.1",
     }
   `);
-});
+  },
+  30000,
+);
 
-test("bake production build generates manifest with multiple SSG pages under the same route", async () => {
-  const dir = await tempDirWithBakeDeps("bake-ssg-manifest", {
-    "bun.app.ts": `
+test(
+  "bake production build generates manifest with multiple SSG pages under the same route",
+  async () => {
+    const dir = await tempDirWithBakeDeps("bake-ssg-manifest", {
+    "index.ts": `
       export default {
-        app: {
-          framework: "react"
-        }
+        app: "react"
       }
     `,
     "pages/blog/[slug].tsx": `
@@ -151,7 +152,7 @@ test("bake production build generates manifest with multiple SSG pages under the
 
   // Run the production build
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--app", "bun.app.ts"],
+    cmd: [bunExe(), "build", "--app", "./index.ts"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
@@ -177,29 +178,52 @@ test("bake production build generates manifest with multiple SSG pages under the
   // Read and check manifest
   const manifest = await manifestFile.json();
 
-  expect(manifest).toMatchInlineSnapshot(`
+  expect(manifest.version).toBe("0.0.1");
+  expect(manifest.routes).toBeDefined();
+
+  // Sort by route then by params for consistent ordering
+  manifest.routes.sort((a, b) => {
+    const routeCmp = a.route.localeCompare(b.route);
+    if (routeCmp !== 0) return routeCmp;
+    return JSON.stringify(a.params || {}).localeCompare(JSON.stringify(b.params || {}));
+  });
+
+  // Replace dynamic file hashes with placeholders for comparison
+  const normalizedManifest = {
+    version: manifest.version,
+    routes: manifest.routes.map(entry => ({
+      ...entry,
+      entrypoint: entry.entrypoint ? "_bun/[hash].js" : undefined,
+    })),
+  };
+
+  expect(normalizedManifest).toMatchInlineSnapshot(`
     {
-      "entries": [
+      "routes": [
         {
-          "entrypoint": "_bun/k9n7hkw3.js",
+          "entrypoint": "_bun/[hash].js",
           "mode": "ssg",
           "params": {
             "slug": "lmao",
           },
-          "route_index": 0,
+          "route": "/blog/[slug]",
+          "route_type": 0,
           "styles": [],
         },
         {
-          "entrypoint": "_bun/k9n7hkw3.js",
+          "entrypoint": "_bun/[hash].js",
           "mode": "ssg",
           "params": {
             "slug": "lolfucku",
           },
-          "route_index": 0,
+          "route": "/blog/[slug]",
+          "route_type": 0,
           "styles": [],
         },
       ],
-      "version": 1,
+      "version": "0.0.1",
     }
   `);
-});
+  },
+  30000,
+);

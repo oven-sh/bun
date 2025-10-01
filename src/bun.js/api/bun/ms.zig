@@ -3,94 +3,106 @@ pub fn parse(input: []const u8) ?f64 {
     if (input.len == 0 or input.len > 100) return null;
 
     var i: usize = 0;
-    while (i < input.len) {
-        const c = input[i];
-        if (c == '-' or c == '.' or std.ascii.isDigit(c) or std.ascii.isWhitespace(c)) {
+
+    next: switch (input[i]) {
+        ' ',
+        '\t',
+        '\n',
+        '\r',
+        => {
             i += 1;
-        } else if (std.ascii.isAlphabetic(c)) {
-            break;
-        } else {
-            return null;
-        }
+            if (i < input.len) {
+                continue :next input[i];
+            }
+            break :next;
+        },
+        else => break :next,
     }
 
-    const number_str = strings.trim(input[0..i], " \t\n\r");
-    const value = std.fmt.parseFloat(f64, number_str) catch return null;
+    const start = i;
+
+    next: switch (input[i]) {
+        '-',
+        '.',
+        '0'...'9',
+        ' ',
+        '\t'...'\t',
+        => {
+            i += 1;
+            if (i < input.len) {
+                continue :next input[i];
+            }
+            break :next;
+        },
+        'a'...'z',
+        'A'...'Z',
+        => {
+            break :next;
+        },
+        else => {
+            return null;
+        },
+    }
+
+    const value = std.fmt.parseFloat(f64, input[start..i]) catch return null;
 
     const unit = strings.trim(input[i..], " \t\n\r");
     if (unit.len == 0) return value;
 
-    return if (getMultiplier(unit)) |m| value * m else null;
+    if (multiplier_map.getASCIIICaseInsensitive(unit)) |m| {
+        return value * m;
+    }
+
+    return null;
 }
 
 // Years (365.25 days to account for leap years)
 const ms_per_year = std.time.ms_per_day * 365.25;
 const ms_per_month = std.time.ms_per_day * (365.25 / 12.0);
 
-fn getMultiplier(unit: []const u8) ?f64 {
-    // Years (365.25 days to account for leap years)
-    if (std.ascii.eqlIgnoreCase(unit, "years") or std.ascii.eqlIgnoreCase(unit, "year") or
-        std.ascii.eqlIgnoreCase(unit, "yrs") or std.ascii.eqlIgnoreCase(unit, "yr") or
-        std.ascii.eqlIgnoreCase(unit, "y"))
-    {
-        return ms_per_year;
-    }
+const multiplier_map = bun.ComptimeStringMap(f64, .{
+    .{ "y", ms_per_year },
+    .{ "yr", ms_per_year },
+    .{ "yrs", ms_per_year },
+    .{ "year", ms_per_year },
+    .{ "years", ms_per_year },
 
-    // Months (30.4375 days average)
-    if (std.ascii.eqlIgnoreCase(unit, "months") or std.ascii.eqlIgnoreCase(unit, "month") or
-        std.ascii.eqlIgnoreCase(unit, "mo"))
-    {
-        return ms_per_month;
-    }
+    .{ "mo", ms_per_month },
+    .{ "month", ms_per_month },
+    .{ "months", ms_per_month },
 
-    // Weeks
-    if (std.ascii.eqlIgnoreCase(unit, "weeks") or std.ascii.eqlIgnoreCase(unit, "week") or
-        std.ascii.eqlIgnoreCase(unit, "w"))
-    {
-        return std.time.ms_per_week;
-    }
+    .{ "w", std.time.ms_per_week },
+    .{ "week", std.time.ms_per_week },
+    .{ "weeks", std.time.ms_per_week },
 
-    // Days
-    if (std.ascii.eqlIgnoreCase(unit, "days") or std.ascii.eqlIgnoreCase(unit, "day") or
-        std.ascii.eqlIgnoreCase(unit, "d"))
-    {
-        return std.time.ms_per_day;
-    }
+    .{ "d", std.time.ms_per_day },
+    .{ "day", std.time.ms_per_day },
+    .{ "days", std.time.ms_per_day },
 
-    // Hours
-    if (std.ascii.eqlIgnoreCase(unit, "hours") or std.ascii.eqlIgnoreCase(unit, "hour") or
-        std.ascii.eqlIgnoreCase(unit, "hrs") or std.ascii.eqlIgnoreCase(unit, "hr") or
-        std.ascii.eqlIgnoreCase(unit, "h"))
-    {
-        return std.time.ms_per_hour;
-    }
+    .{ "h", std.time.ms_per_hour },
+    .{ "hr", std.time.ms_per_hour },
+    .{ "hrs", std.time.ms_per_hour },
+    .{ "hour", std.time.ms_per_hour },
+    .{ "hours", std.time.ms_per_hour },
 
-    // Minutes
-    if (std.ascii.eqlIgnoreCase(unit, "minutes") or std.ascii.eqlIgnoreCase(unit, "minute") or
-        std.ascii.eqlIgnoreCase(unit, "mins") or std.ascii.eqlIgnoreCase(unit, "min") or
-        std.ascii.eqlIgnoreCase(unit, "m"))
-    {
-        return std.time.ms_per_min;
-    }
+    .{ "m", std.time.ms_per_min },
+    .{ "min", std.time.ms_per_min },
+    .{ "mins", std.time.ms_per_min },
+    .{ "minute", std.time.ms_per_min },
+    .{ "minutes", std.time.ms_per_min },
 
-    // Seconds
-    if (std.ascii.eqlIgnoreCase(unit, "seconds") or std.ascii.eqlIgnoreCase(unit, "second") or
-        std.ascii.eqlIgnoreCase(unit, "secs") or std.ascii.eqlIgnoreCase(unit, "sec") or
-        std.ascii.eqlIgnoreCase(unit, "s"))
-    {
-        return std.time.ms_per_s;
-    }
+    .{ "s", std.time.ms_per_s },
+    .{ "sec", std.time.ms_per_s },
+    .{ "secs", std.time.ms_per_s },
+    .{ "second", std.time.ms_per_s },
+    .{ "seconds", std.time.ms_per_s },
 
-    // Milliseconds
-    if (std.ascii.eqlIgnoreCase(unit, "milliseconds") or std.ascii.eqlIgnoreCase(unit, "millisecond") or
-        std.ascii.eqlIgnoreCase(unit, "msecs") or std.ascii.eqlIgnoreCase(unit, "msec") or
-        std.ascii.eqlIgnoreCase(unit, "ms"))
-    {
-        return 1.0;
-    }
-
-    return null;
-}
+    .{ "ms", 1 },
+    .{ "msec", 1 },
+    .{ "msecs", 1 },
+    .{ "millisecond", 1 },
+    .{ "milliseconds", 1 },
+});
 
 // To keep the behavior consistent with JavaScript, we can't use @round
 // Zig's @round uses "round half away from zero": ties round away from zero (2.5→3, -2.5→-3)
@@ -103,7 +115,7 @@ fn jsMathRound(x: f64) i64 {
 }
 
 /// Format milliseconds to a human-readable string
-pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
+pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     const abs_ms = @abs(ms);
 
     // Years
@@ -211,12 +223,10 @@ pub fn jsFunction(
             }
         }
 
-        const result = format(bun.default_allocator, ms_value, long) catch {
-            return globalThis.throwOutOfMemory();
-        };
-        defer bun.default_allocator.free(result);
+        const result = try format(bun.default_allocator, ms_value, long);
 
-        return String.fromBytes(result).toJS(globalThis);
+        var str = String.createExternalGloballyAllocated(.latin1, result);
+        return str.transferToJS(globalThis);
     }
 
     // If input is a string, parse it to milliseconds

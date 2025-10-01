@@ -1463,21 +1463,19 @@ pub fn NewServer(protocol_enum: Protocol, development_kind: DevelopmentKind) typ
                 this.all_closed_promise.strong.has())
             {
                 httplog("schedule other promise", .{});
-                const event_loop = vm.eventLoop();
 
                 // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
                 // again before the task has run.
                 this.flags.has_handled_all_closed_promise = true;
 
-                const task = ServerAllConnectionsClosedTask.new(.{
+                ServerAllConnectionsClosedTask.schedule(.{
                     .globalObject = this.globalThis,
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
                     .promise = .{
                         .strong = .create(this.all_closed_promise.value(), this.globalThis),
                     },
                     .tracker = jsc.Debugger.AsyncTaskTracker.init(vm),
-                });
-                event_loop.enqueueTask(jsc.Task.init(task));
+                }, vm);
             }
             if (this.pending_requests == 0 and
                 this.listener == null and
@@ -2282,7 +2280,10 @@ pub fn NewServer(protocol_enum: Protocol, development_kind: DevelopmentKind) typ
             return .{
                 .js_request = switch (create_js_request) {
                     .yes => request_object.toJS(this.globalThis),
-                    .bake => request_object.toJSForBake(this.globalThis) catch |err| this.globalThis.takeException(err),
+                    .bake => request_object.toJSForBake(this.globalThis) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        else => return null,
+                    },
                     .no => .zero,
                 },
                 .request_object = request_object,
@@ -2924,6 +2925,11 @@ pub const ServerAllConnectionsClosedTask = struct {
     tracker: jsc.Debugger.AsyncTaskTracker,
 
     pub const new = bun.TrivialNew(@This());
+
+    pub fn schedule(this: ServerAllConnectionsClosedTask, vm: *VirtualMachine) void {
+        const ptr = new(this);
+        vm.eventLoop().enqueueTask(jsc.Task.init(ptr));
+    }
 
     pub fn runFromJSThread(this: *ServerAllConnectionsClosedTask, vm: *jsc.VirtualMachine) void {
         httplog("ServerAllConnectionsClosedTask runFromJSThread", .{});

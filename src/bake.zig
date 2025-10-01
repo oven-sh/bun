@@ -63,7 +63,7 @@ pub const UserOptions = struct {
                     return UserOptions{
                         .arena = arena,
                         .allocations = allocations,
-                        .root = try alloc.dupeZ(u8, root),
+                        .root = root,
                         .framework = framework,
                         .bundler_options = bundler_options,
                     };

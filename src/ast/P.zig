@@ -1240,6 +1240,8 @@ pub fn NewParser_(
             parts: *ListManaged(js_ast.Part),
         ) !void {
             bun.assert(!p.response_ref.isNull());
+
+            // If this is a bake production build, we don't use the bun_app_namespace_ref
             if (!p.options.features.hot_module_reloading) {
                 bun.assert(p.bun_app_namespace_ref.isNull());
                 const allocator = p.allocator;
@@ -1338,9 +1340,11 @@ pub fn NewParser_(
             });
 
             // ensure every e_import_identifier holds the namespace
-            const symbol = &p.symbols.items[p.response_ref.inner_index];
-            bun.assert(symbol.namespace_alias != null);
-            symbol.namespace_alias.?.import_record_index = import_record_i;
+            if (p.options.features.hot_module_reloading) {
+                const symbol = &p.symbols.items[p.response_ref.inner_index];
+                bun.assert(symbol.namespace_alias != null);
+                symbol.namespace_alias.?.import_record_index = import_record_i;
+            }
 
             try p.is_import_item.put(allocator, p.response_ref, {});
             try p.named_imports.put(allocator, p.response_ref, js_ast.NamedImport{

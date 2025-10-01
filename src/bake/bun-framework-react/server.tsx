@@ -143,7 +143,6 @@ export async function render(
     const opts = als?.getStore()?.responseOptions ?? { headers: {} };
     const { headers, ...response_options } = opts;
 
-    console.log("Serving this route:", request.url);
     const cookies = meta.pageModule.mode === "ssr" ? { "Set-Cookie": request.cookies.toSetCookieHeaders() } : {};
 
     return new Response(result, {

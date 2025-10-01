@@ -4,18 +4,6 @@ const Response = @This();
 extern fn Response__getAsyncLocalStorageStore(global: *JSGlobalObject, als: JSValue) JSValue;
 extern fn Response__mergeAsyncLocalStorageOptions(global: *JSGlobalObject, alsStore: JSValue, initOptions: JSValue) void;
 
-// Zig function to update AsyncLocalStorage with response options
-pub fn bakeGetAsyncLocalStorage(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const vm = global.bunVM();
-
-    // Get the AsyncLocalStorage instance from the VM
-    if (vm.getDevServerAsyncLocalStorage()) |als| {
-        return als;
-    }
-
-    return .js_undefined;
-}
-
 const ResponseMixin = BodyMixin(@This());
 pub const js = jsc.Codegen.JSResponse;
 // NOTE: toJS is overridden

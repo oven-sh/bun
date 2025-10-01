@@ -17,17 +17,19 @@
 
 namespace Bun {
 
-extern "C" JSC::EncodedJSValue Bun__JSRequest__createForBake(Zig::GlobalObject* globalObject, void* requestPtr)
-
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__JSRequest__createForBake(Zig::GlobalObject* globalObject, void* requestPtr)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto* paramsPrototype = globalObject->m_JSBunRequestParamsPrototype.get(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     // the params are passed into the page component as a prop so we'll make
     // this empty for now
-    auto* emptyParams = JSC::constructEmptyObject(globalObject);
+    auto* emptyParams = JSC::constructEmptyObject(globalObject, paramsPrototype);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSBunRequest* request
@@ -150,8 +152,8 @@ JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr
     : Base(vm, structure, sinkPtr)
 {
 }
-extern "C" size_t Request__estimatedSize(void* requestPtr);
-
+extern SYSV_ABI "C" size_t Request__estimatedSize(void* requestPtr);
+extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
 void JSBunRequest::finishCreation(JSC::VM& vm, JSObject* params)
 {
     Base::finishCreation(vm);

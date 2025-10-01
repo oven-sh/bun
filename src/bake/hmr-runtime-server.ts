@@ -111,7 +111,8 @@ server_exports = {
               pageModule,
               modulepreload: [],
               params,
-              request: pageModule.mode === "ssr" ? req : undefined,
+              // Pass request in metadata when mode is 'ssr'
+              request: pageModule.mode === "ssr" ? requestWithCookies : undefined,
             },
             responseOptionsALS,
           );

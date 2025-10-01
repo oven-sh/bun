@@ -384,7 +384,7 @@ function memberConversion(
           result += dedent(`
             value${i} = object->get(
               &globalObject,
-              ::JSC::Identifier::fromString(vm, ${toASCIILiteral(memberInfo.name)}));
+              ::JSC::Identifier::fromString(vm, ${toASCIILiteral(memberName)}));
             RETURN_IF_EXCEPTION(throwScope, {});
           `);
           return result;

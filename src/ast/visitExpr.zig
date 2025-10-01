@@ -1510,9 +1510,8 @@ pub fn VisitExpr(
                                     if (arg.data == .e_string and arg.data.e_string.isUTF8()) {
                                         const str = arg.data.e_string.slice(p.allocator);
                                         const ms_module = @import("../bun.js/api/bun/ms.zig");
-                                        if (ms_module.parse(str)) |ms_value| {
-                                            return p.newExpr(E.Number{ .value = ms_value }, expr.loc);
-                                        }
+                                        const ms_value = ms_module.parse(str) orelse std.math.nan(f64);
+                                        return p.newExpr(E.Number{ .value = ms_value }, expr.loc);
                                     }
                                 }
                             }

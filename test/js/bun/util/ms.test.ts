@@ -220,3 +220,38 @@ describe("Bun.ms - comprehensive coverage", () => {
     });
   });
 });
+
+describe("Bun.ms - dynamic values at runtime", () => {
+  test("dynamic string concatenation", () => {
+    function getNumber() {
+      return Math.random() > 0.5 ? 1 : 2;
+    }
+    const days = getNumber();
+    const result = Bun.ms(days + "days");
+
+    // Should be either 1 day or 2 days
+    expect(result === 86400000 || result === 172800000).toBe(true);
+  });
+
+  test("template literal with function call", () => {
+    function getHours() {
+      return 5;
+    }
+    const result = Bun.ms(String(getHours()) + "h");
+    expect(result).toBe(18000000); // 5 hours
+  });
+
+  test("variable string", () => {
+    const timeStr = "10m";
+    const result = Bun.ms(timeStr);
+    expect(result).toBe(600000);
+  });
+
+  test("dynamic number formatting", () => {
+    function getMs() {
+      return 60000;
+    }
+    const result = Bun.ms(getMs());
+    expect(result).toBe("1m");
+  });
+});

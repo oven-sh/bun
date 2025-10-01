@@ -7,6 +7,7 @@ test("Bun.ms bundler output", async () => {
   const dir = tempDirWithFiles("ms-bundler", {
     "entry.ts": `
 export const values = {
+  // Valid strings - should inline to numbers
   oneSecond: Bun.ms("1s"),
   oneMinute: Bun.ms("1m"),
   oneHour: Bun.ms("1h"),
@@ -18,6 +19,12 @@ export const values = {
   decimal: Bun.ms("1.5h"),
   justNumber: Bun.ms("100"),
   caseInsensitive: Bun.ms("2D"),
+
+  // Invalid strings - should inline to NaN
+  invalid: Bun.ms("invalid"),
+  empty: Bun.ms(""),
+
+  // Number inputs - should NOT inline (need runtime formatting)
   formatShort: Bun.ms(1000),
   formatLong: Bun.ms(60000, { long: true }),
 };
@@ -51,6 +58,8 @@ export const values = {
       decimal: 5400000,
       justNumber: 100,
       caseInsensitive: 172800000,
+      invalid: NaN,
+      empty: NaN,
       formatShort: Bun.ms(1000),
       formatLong: Bun.ms(60000, { long: !0 })
     };

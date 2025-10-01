@@ -26,7 +26,7 @@ pub fn parse(input: []const u8) ?f64 {
         '.',
         '0'...'9',
         ' ',
-        '\t'...'\t',
+        '\t'...'\r',
         => {
             i += 1;
             if (i < input.len) {

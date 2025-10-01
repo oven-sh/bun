@@ -11,11 +11,7 @@ pub fn TaggedUnion(comptime field_types: []const type) type {
     // Types created with @Type can't contain decls, so in order to have a `deinit` method, we
     // have to do it this way...
     return switch (comptime field_types.len) {
-        0 => union(enum) {
-            pub fn deinit(self: *@This()) void {
-                deinitImpl(@This(), self);
-            }
-        },
+        0 => @compileError("cannot create an empty tagged union"),
         1 => union(enum) {
             @"0": field_types[0],
             pub fn deinit(self: *@This()) void {

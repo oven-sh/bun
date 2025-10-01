@@ -276,6 +276,12 @@ describe("Bun.ms - dynamic values at runtime", () => {
   });
 });
 
+test("Bun.ms - static string formatting", () => {
+  expect(Bun.ms("5s")).toBe(5000);
+  expect(Bun.ms(5000, { long: true })).toBe("5 seconds");
+  expect(Bun.ms(5000, { long: false })).toBe("5s");
+});
+
 test("Bun.ms - bundler output", async () => {
   const dir = tempDirWithFiles("ms-bundler", {
     "entry.ts": `

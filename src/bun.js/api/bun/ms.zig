@@ -186,12 +186,11 @@ pub fn jsFunction(
     globalThis: *JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) JSError!jsc.JSValue {
-    const args = callframe.arguments_old(2);
-    if (args.len == 0) {
+    if (callframe.argumentsCount() == 0) {
         return globalThis.throwInvalidArguments("Bun.ms() expects a string or number", .{});
     }
 
-    const input = args.ptr[0];
+    const input = callframe.argument(0);
 
     // If input is a number, format it to a string
     if (input.isNumber()) {
@@ -202,8 +201,8 @@ pub fn jsFunction(
         }
 
         var long = false;
-        if (args.len > 1 and args.ptr[1].isObject()) {
-            const options = args.ptr[1];
+        const options = callframe.argument(1);
+        if (options.isObject()) {
             if (try options.get(globalThis, "long")) |long_value| {
                 long = long_value.toBoolean();
             }

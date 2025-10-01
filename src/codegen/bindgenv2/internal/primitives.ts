@@ -88,8 +88,15 @@ export const Float: Type = new (class extends Type {
   }
   toCpp(value: number): string {
     assert(typeof value === "number");
-    if (!Number.isFinite(value)) throw RangeError("number must be finite");
-    return util.inspect(value);
+    if (Number.isNaN(value)) {
+      return "::std::numeric_limits<double>::quiet_NaN()";
+    } else if (value === Infinity) {
+      return "::std::numeric_limits<double>::infinity()";
+    } else if (value === -Infinity) {
+      return "-::std::numeric_limits<double>::infinity()";
+    } else {
+      return util.inspect(value);
+    }
   }
 })();
 
@@ -105,14 +112,7 @@ export const FiniteFloat: Type = new (class extends Type {
   }
   toCpp(value: number): string {
     assert(typeof value === "number");
-    if (Number.isNaN(value)) {
-      return "::std::numeric_limits<double>::quiet_NaN()";
-    } else if (value === Infinity) {
-      return "::std::numeric_limits<double>::infinity()";
-    } else if (value === -Infinity) {
-      return "-::std::numeric_limits<double>::infinity()";
-    } else {
-      return util.inspect(value);
-    }
+    if (!Number.isFinite(value)) throw RangeError("number must be finite");
+    return util.inspect(value);
   }
 })();

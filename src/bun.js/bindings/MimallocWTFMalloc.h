@@ -57,6 +57,7 @@ struct MimallocMalloc {
 
     static void* tryAlignedMalloc(std::size_t size, std::size_t alignment)
     {
+        ASSERT(size % alignment == 0);
 #if USE_MIMALLOC
         return mi_malloc_aligned(size, alignment);
 #elif !OS(WINDOWS)

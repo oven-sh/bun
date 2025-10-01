@@ -1240,6 +1240,74 @@ pub fn NewParser_(
             parts: *ListManaged(js_ast.Part),
         ) !void {
             bun.assert(!p.response_ref.isNull());
+
+            // If this is a bake production build, we don't use the bun_app_namespace_ref
+            if (!p.options.features.hot_module_reloading) {
+                bun.assert(p.bun_app_namespace_ref.isNull());
+                const allocator = p.allocator;
+
+                const import_path = "bun:app";
+
+                const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
+
+                var declared_symbols = DeclaredSymbol.List{};
+                try declared_symbols.ensureTotalCapacity(allocator, 1);
+
+                var stmts = try allocator.alloc(Stmt, 1);
+
+                const clause_items = try allocator.dupe(js_ast.ClauseItem, &.{
+                    js_ast.ClauseItem{
+                        .alias = "Response",
+                        .original_name = "Response",
+                        .alias_loc = logger.Loc{},
+                        .name = LocRef{ .ref = p.response_ref, .loc = logger.Loc{} },
+                    },
+                });
+
+                declared_symbols.appendAssumeCapacity(DeclaredSymbol{
+                    .ref = p.response_ref,
+                    .is_top_level = true,
+                });
+
+                // ensure every e_import_identifier holds the namespace
+                // const symbol = &p.symbols.items[p.response_ref.inner_index];
+                // bun.assert(symbol.namespace_alias != null);
+                // symbol.namespace_alias.?.import_record_index = import_record_i;
+
+                try p.is_import_item.put(allocator, p.response_ref, {});
+                try p.named_imports.put(allocator, p.response_ref, js_ast.NamedImport{
+                    .alias = "Response",
+                    .alias_loc = logger.Loc{},
+                    .namespace_ref = null,
+                    .import_record_index = import_record_i,
+                });
+
+                stmts[0] = p.s(
+                    S.Import{
+                        .namespace_ref = Ref.None,
+                        .items = clause_items,
+                        .import_record_index = import_record_i,
+                        .is_single_line = true,
+                    },
+                    logger.Loc{},
+                );
+
+                var import_records = try allocator.alloc(u32, 1);
+                import_records[0] = import_record_i;
+
+                // This import is placed in a part before the main code, however
+                // the bundler ends up re-ordering this to be after... The order
+                // does not matter as ESM imports are always hoisted.
+                parts.append(js_ast.Part{
+                    .stmts = stmts,
+                    .declared_symbols = declared_symbols,
+                    .import_record_indices = bun.BabyList(u32).fromOwnedSlice(import_records),
+                    .tag = .runtime,
+                }) catch unreachable;
+
+                return;
+            }
+
             bun.assert(!p.bun_app_namespace_ref.isNull());
             const allocator = p.allocator;
 
@@ -2110,16 +2178,18 @@ pub fn NewParser_(
                 .none, .client_side => {},
                 else => {
                     p.response_ref = try p.declareGeneratedSymbol(.import, "Response");
-                    p.bun_app_namespace_ref = try p.newSymbol(
-                        .other,
-                        "import_bun_app",
-                    );
-                    const symbol = &p.symbols.items[p.response_ref.inner_index];
-                    symbol.namespace_alias = .{
-                        .namespace_ref = p.bun_app_namespace_ref,
-                        .alias = "Response",
-                        .import_record_index = std.math.maxInt(u32),
-                    };
+                    if (p.options.features.hot_module_reloading) {
+                        p.bun_app_namespace_ref = try p.newSymbol(
+                            .other,
+                            "import_bun_app",
+                        );
+                        const symbol = &p.symbols.items[p.response_ref.inner_index];
+                        symbol.namespace_alias = .{
+                            .namespace_ref = p.bun_app_namespace_ref,
+                            .alias = "Response",
+                            .import_record_index = std.math.maxInt(u32),
+                        };
+                    }
                 },
             }
 

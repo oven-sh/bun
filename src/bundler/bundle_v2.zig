@@ -3850,14 +3850,17 @@ pub const BundleV2 = struct {
                             .browser,
                         ) catch |err| bun.handleOom(err);
 
-                        break :brk .{ server_index, Index.invalid.get() };
+                        // break :brk .{ server_index, Index.invalid.get() };
+                        break :brk .{ Index.invalid.get(), server_index };
                     };
 
+                    // if (result.ast.target != .browser) {
                     graph.pathToSourceIndexMap(result.ast.target).put(
                         this.allocator(),
                         result.source.path.text,
                         reference_source_index,
                     ) catch |err| bun.handleOom(err);
+                    // }
 
                     graph.server_component_boundaries.put(
                         this.allocator(),

@@ -53,6 +53,41 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
   RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args)));
 }
 
+extern "C" JSC::EncodedJSValue BakeLoadProductionServerCode(JSC::JSGlobalObject* global, BunString source, BunString path) {
+  auto& vm = JSC::getVM(global);
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  String pathString = path.toWTFString();
+  String urlString = makeString("file://"_s, pathString);
+
+  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(urlString));
+  JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
+    global,
+    source.toWTFString(),
+    origin,
+    WTFMove(urlString),
+    WTF::TextPosition(),
+    JSC::SourceProviderSourceType::Program
+  ));
+
+  // Execute the program to get the IIFE function
+  JSC::JSValue fnValue = vm.interpreter.executeProgram(sourceCode, global, global);
+  RETURN_IF_EXCEPTION(scope, {});
+
+  RELEASE_ASSERT(fnValue);
+
+  // The result should be a function (the IIFE)
+  JSC::JSFunction* fn = jsCast<JSC::JSFunction*>(fnValue);
+  JSC::CallData callData = JSC::getCallData(fn);
+
+  // Pass import.meta as the argument to the IIFE
+  JSC::MarkedArgumentBuffer args;
+  args.append(Zig::ImportMetaObject::create(global, pathString));
+
+  // Call the IIFE with import.meta to get the exports object
+  RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args)));
+}
+
 extern "C" JSC::JSInternalPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
   return global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined());
 }

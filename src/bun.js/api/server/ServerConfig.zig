@@ -62,6 +62,9 @@ negative_routes: std.ArrayList([:0]const u8) = std.ArrayList([:0]const u8).init(
 user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteBuilder).init(bun.default_allocator),
 
 bake: ?bun.bake.UserOptions = null,
+/// Pointer is allocated by the arena in the manifest
+/// Owned by this struct
+bake_manifest: ?*bun.bake.Manifest = null,
 
 pub const DevelopmentOption = enum {
     development,
@@ -277,6 +280,11 @@ pub fn deinit(this: *ServerConfig) void {
         bake.deinit();
     }
 
+    if (this.bake_manifest) |manifest| {
+        manifest.deinit();
+        this.bake_manifest = null;
+    }
+
     for (this.user_routes_to_build.items) |*builder| {
         builder.deinit();
     }
@@ -408,9 +416,9 @@ pub fn fromJS(
     var has_hostname = false;
 
     defer {
-        if (!args.development.isHMREnabled()) {
-            bun.assert(args.bake == null);
-        }
+        // if (!args.development.isHMREnabled()) {
+        //     bun.assert(args.bake == null);
+        // }
     }
 
     if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
@@ -827,11 +835,84 @@ pub fn fromJS(
                     return global.throwInvalidArguments("'app' + HTML loader not supported.", .{});
                 }
 
-                if (args.development == .production) {
-                    return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
-                }
-
                 args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
+
+                if (args.development == .production) {
+                    const fd = switch (bun.sys.open("dist/manifest.json", bun.O.RDONLY, 0)) {
+                        .result => |fd| fd,
+                        .err => |err| {
+                            const path: []const u8 = "dist/manifest.json";
+                            const errjs = err.withPath(path).toJS(global);
+                            return global.throwValue(errjs);
+                        },
+                    };
+                    defer fd.close();
+                    var log = bun.logger.Log.init(bun.default_allocator);
+                    defer log.deinit();
+
+                    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    errdefer arena.deinit();
+
+                    var types = try std.ArrayListUnmanaged(bun.bake.FrameworkRouter.Type).initCapacity(
+                        bun.default_allocator,
+                        args.bake.?.framework.file_system_router_types.len,
+                    );
+                    errdefer types.deinit(bun.default_allocator);
+
+                    const root = args.bake.?.root;
+                    const transpiler = &global.bunVM().transpiler;
+                    for (args.bake.?.framework.file_system_router_types) |fsr| {
+                        const buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(buf);
+                        const joined_root = bun.path.joinAbsStringBuf(root, buf, &.{fsr.root}, .auto);
+                        const entry = transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
+                            continue;
+
+                        types.appendAssumeCapacity(.{
+                            .abs_root = bun.strings.withoutTrailingSlash(entry.abs_path),
+                            .prefix = fsr.prefix,
+                            .ignore_underscores = fsr.ignore_underscores,
+                            .ignore_dirs = fsr.ignore_dirs,
+                            .extensions = fsr.extensions,
+                            .style = fsr.style,
+                            .allow_layouts = fsr.allow_layouts,
+                            // In production, we don't track individual files as they're already bundled
+                            .server_file = bun.bake.FrameworkRouter.OpaqueFileId.init(0),
+                            .client_file = if (fsr.entry_client) |_|
+                                bun.bake.FrameworkRouter.OpaqueFileId.init(1).toOptional()
+                            else
+                                .none,
+                            .server_file_string = .empty,
+                        });
+                    }
+
+                    var router: ?bun.ptr.Owned(*bun.bake.FrameworkRouter) = bun.ptr.Owned(*bun.bake.FrameworkRouter).alloc(try bun.bake.FrameworkRouter.initEmpty(root, types: {
+                        const ret = types.items;
+                        types = .{};
+                        break :types ret;
+                    }, bun.default_allocator)) catch bun.outOfMemory();
+                    errdefer if (router) |*r| {
+                        r.get().deinit(bun.default_allocator);
+                        r.deinitShallow();
+                    };
+
+                    var manifest = bun.bake.Manifest{
+                        .arena = arena: {
+                            const ret = arena;
+                            arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                            break :arena ret;
+                        },
+                        .router = bun.take(&router).?,
+                    };
+                    errdefer manifest.deinit();
+                    manifest.fromFD(fd, &log) catch |err| {
+                        if (err == error.InvalidManifest) {
+                            return global.throwValue(try log.toJS(global, bun.default_allocator, "Failed to parse manifest.json"));
+                        }
+                        return global.throwError(err, "Failed to parse manifest.json");
+                    };
+                    args.bake_manifest = try manifest.allocate();
+                }
             }
         }
 

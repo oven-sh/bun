@@ -163,6 +163,7 @@ export async function render(
 export async function prerender(meta: Bake.RouteMetadata) {
   const page = getPage(meta, meta.styles);
 
+  console.log("SERVER MANIFEST", serverManifest);
   const rscPayload = renderToPipeableStream(page, serverManifest)
     // TODO: write a lightweight version of PassThrough
     .pipe(new PassThrough());

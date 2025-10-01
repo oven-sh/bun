@@ -109,18 +109,20 @@ pub fn buildCommand(ctx: bun.cli.Command.Context) !void {
     };
 }
 
-pub fn writeSourcemapToDisk(
+pub fn registerSourcemap(
     allocator: std.mem.Allocator,
+    root_dir: std.fs.Dir,
     file: *const OutputFile,
-    bundled_outputs: []const OutputFile,
+    bundled_outputs: []OutputFile,
     source_maps: *bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+    write_to_dist: bool,
 ) !void {
     // don't call this if the file does not have sourcemaps!
     bun.assert(file.source_map_index != std.math.maxInt(u32));
 
     // TODO: should we just write the sourcemaps to disk?
     const source_map_index = file.source_map_index;
-    const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
+    const source_map_file: *OutputFile = &bundled_outputs[source_map_index];
     bun.assert(source_map_file.output_kind == .sourcemap);
 
     const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
@@ -134,6 +136,13 @@ pub fn writeSourcemapToDisk(
         try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
         OutputFile.Index.init(@intCast(source_map_index)),
     );
+
+    if (write_to_dist) {
+        source_map_file.writeToDisk(root_dir, ".") catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+        };
+    }
 }
 
 pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMachine, pt: *PerThread) !void {
@@ -256,6 +265,14 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
     bun.assert(server_transpiler.env == client_transpiler.env);
 
+    const original_roots = brk: {
+        const roots = try allocator.alloc([]const u8, options.framework.file_system_router_types.len);
+        for (options.framework.file_system_router_types, roots) |*in, *out| {
+            out.* = in.root;
+        }
+        break :brk roots;
+    };
+
     framework.* = framework.resolve(&server_transpiler.resolver, &client_transpiler.resolver, allocator) catch {
         if (framework.is_built_in_react)
             try bake.Framework.addReactInstallCommandNote(server_transpiler.log);
@@ -310,6 +327,14 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         FrameworkRouter.InsertionContext.wrap(EntryPointMap, &entry_points),
     );
 
+    // Add the production SSR runtime server as an entry point
+    const production_ssr_runtime_path = bun.path.joinAbs(
+        bun.Environment.base_path,
+        .auto,
+        "src/bake/production-runtime-server.ts",
+    );
+    const production_ssr_runtime_id = try entry_points.getOrPutEntryPoint(production_ssr_runtime_path, .server);
+
     const bundled_outputs_list = try bun.BundleV2.generateFromBakeProductionCLI(
         entry_points,
         &server_transpiler,
@@ -336,6 +361,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     defer root_dir.close();
 
     var maybe_runtime_file_index: ?u32 = null;
+    var maybe_ssr_runtime_file_index: ?u32 = null;
 
     var css_chunks_count: usize = 0;
     var css_chunks_first: usize = 0;
@@ -382,6 +408,13 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
             maybe_runtime_file_index = @intCast(i);
         }
 
+        // Check if this is the SSR runtime server file
+        if (file.entry_point_index) |ep| {
+            if (ep == production_ssr_runtime_id.get()) {
+                maybe_ssr_runtime_file_index = @intCast(i);
+            }
+        }
+
         // TODO: Maybe not do all the disk-writing in 1 thread?
         switch (file.side orelse continue) {
             .client => {
@@ -392,18 +425,18 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 };
             },
             .server => {
-                if (ctx.bundler_options.bake_debug_dump_server) {
-                    _ = file.writeToDisk(root_dir, ".") catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
-                    };
-                }
+                // Always write server files to disk for SSR support
+                // SSR pages need their server bundles available at runtime
+                _ = file.writeToDisk(root_dir, ".") catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                };
 
                 // If the file has a sourcemap, store it so we can put it on
                 // `PerThread` so we can provide sourcemapped stacktraces for
                 // server components.
                 if (file.source_map_index != std.math.maxInt(u32)) {
-                    try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
+                    try registerSourcemap(allocator, root_dir, &file, bundled_outputs, &source_maps, true);
                 }
 
                 switch (file.output_kind) {
@@ -439,7 +472,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
         // TODO: should we just write the sourcemaps to disk?
         if (file.source_map_index != std.math.maxInt(u32)) {
-            try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
+            try registerSourcemap(allocator, root_dir, &file, bundled_outputs, &source_maps, true);
         }
     }
     // Write the runtime file to disk if there are any client chunks
@@ -482,8 +515,21 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     const server_render_funcs = try JSValue.createEmptyArray(global, router.types.len);
     const server_param_funcs = try JSValue.createEmptyArray(global, router.types.len);
     const client_entry_urls = try JSValue.createEmptyArray(global, router.types.len);
+    const router_type_roots = try JSValue.createEmptyArray(global, router.types.len);
+    const router_type_server_entrypoints = try JSValue.createEmptyArray(global, router.types.len);
 
-    for (router.types, 0..) |router_type, i| {
+    for (router.types, original_roots, 0..) |router_type, root, i| {
+        // Add the router type root path to the array (relative path)
+        try router_type_roots.putIndex(global, @intCast(i), try bun.String.createUTF8ForJS(global, root));
+
+        // Add the server entrypoint path for this router type
+        const server_module_key = module_keys[router_type.server_file.get()];
+        const server_entrypoint_js = if (server_module_key.isEmpty())
+            JSValue.null
+        else
+            server_module_key.toJS(global);
+        try router_type_server_entrypoints.putIndex(global, @intCast(i), server_entrypoint_js);
+
         if (router_type.client_file.unwrap()) |client_file| {
             const str = (try bun.String.createFormat("{s}{s}", .{
                 public_path,
@@ -589,7 +635,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 params_buf.append(ctx.allocator, route.part.catch_all) catch unreachable;
             },
             .catch_all_optional => {
-                return global.throw("catch-all routes are not supported in static site generation", .{});
+                return global.throw("catch-all optional routes are not supported in static site generation", .{});
             },
             else => {},
         }
@@ -682,27 +728,89 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         try route_style_references.putIndex(global, @intCast(nav_index), styles);
     }
 
+    // Get the server runtime path if it exists
+    const server_runtime_js = if (maybe_ssr_runtime_file_index) |ssr_idx| blk: {
+        _ = ssr_idx; // Will use the bundled file later if needed
+        const module_key = module_keys[production_ssr_runtime_id.get()];
+        break :blk if (module_key.isEmpty()) JSValue.null else module_key.toJS(global);
+    } else JSValue.null;
+
     const render_promise = BakeRenderRoutesForProdStatic(
         global,
+        // outBase: string
         bun.String.init(root_dir_path),
+        // allServerFiles: string[]
         pt.all_server_files,
+        // renderStatic: FrameworkPrerender[]
         server_render_funcs,
+        // getParams: FrameworkGetParams[]
         server_param_funcs,
+        // clientEntryUrl: string[]
         client_entry_urls,
+        // routerTypeRoots: string[]
+        router_type_roots,
+        // routerTypeServerEntrypoints: string[]
+        router_type_server_entrypoints,
+        // serverRuntime: string | null
+        server_runtime_js,
 
+        // patterns: string[]
         route_patterns,
+        // files: FileIndex[][]
         route_nested_files,
+        // typeAndFlags: TypeAndFlags[]
         route_type_and_flags,
+        // sourceRouteFiles: string[]
         route_source_files,
+        // paramInformation: Array<null | string[]>
         route_param_info,
+        // styles: string[][]
         route_style_references,
     );
+
+    const path_buffer = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buffer);
+
     render_promise.setHandled(vm.jsc_vm);
     vm.waitForPromise(.{ .normal = render_promise });
     switch (render_promise.unwrap(vm.jsc_vm, .mark_handled)) {
         .pending => unreachable,
-        .fulfilled => {
+        .fulfilled => |manifest_value| {
+            // Add assets field to manifest with all client-side files in _bun directory
+            // First, count how many client assets we have
+            const asset_count: usize = bundled_outputs.len;
+
+            // Create assets array and directly add filenames
+            const assets_js = try JSValue.createEmptyArray(global, asset_count);
+            for (bundled_outputs, 0..) |file, asset_index| {
+                const str = bun.path.joinStringBuf(path_buffer, [_][]const u8{ "/", file.dest_path }, .posix);
+                bun.assert(bun.strings.hasPrefixComptime(str, "/_bun/"));
+                var bunstr = bun.String.init(str);
+                try assets_js.putIndex(global, @intCast(asset_index), bunstr.transferToJS(global));
+            }
+
+            _ = manifest_value.put(global, "assets", assets_js);
+
+            // Write manifest to file
+            const manifest_path = try std.fs.path.join(allocator, &.{ root_dir_path, "manifest.json" });
+            defer allocator.free(manifest_path);
+
+            // Convert JSValue to JSON string
+            var manifest_str = bun.String.empty;
+            defer manifest_str.deref();
+            try manifest_value.jsonStringify(global, 2, &manifest_str);
+
+            // Write the manifest file
+            const manifest_utf8 = manifest_str.toUTF8(allocator);
+            defer manifest_utf8.deinit();
+
+            try std.fs.cwd().writeFile(.{
+                .sub_path = manifest_path,
+                .data = manifest_utf8.slice(),
+            });
+
             Output.prettyln("done", .{});
+            Output.prettyln("Manifest written to: {s}", .{manifest_path});
             Output.flush();
         },
         .rejected => |err| {
@@ -765,6 +873,12 @@ extern fn BakeRenderRoutesForProdStatic(
     get_params: JSValue,
     /// Client entry URLs by router type (e.g., ["/client.js", null])
     client_entry_urls: JSValue,
+    /// Router type root paths by router type (e.g., ["/pages", "/app"])
+    router_type_roots: JSValue,
+    /// Router type server entrypoints by router type (e.g., ["bake://react.server.js"])
+    router_type_server_entrypoints: JSValue,
+    /// Server runtime path (e.g., "bake://production-runtime-server.js")
+    server_runtime: JSValue,
     /// Route patterns (e.g., ["/", "/about", "/blog/:slug"])
     patterns: JSValue,
     /// File indices per route (e.g., [[0], [1], [2, 0]])

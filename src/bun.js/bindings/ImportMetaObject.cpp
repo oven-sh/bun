@@ -704,6 +704,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         } else {
             path = meta->url;
         }
+        printf("require path: %s\n", path.utf8().data());
 
         auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
         RETURN_IF_EXCEPTION(scope, );
@@ -731,6 +732,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         } else if (dirname.contains(PLATFORM_SEP)) {
             dirname = dirname.substring(0, dirname.reverseFind(PLATFORM_SEP));
         }
+        printf("dirname: %s\n", dirname.utf8().data());
 
         init.set(jsString(init.vm, dirname));
     });

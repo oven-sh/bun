@@ -505,7 +505,9 @@ const PluginsResult = union(enum) {
     err,
 };
 
-pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { debug, production }) type {
+pub const Protocol = enum { http, https };
+pub const DevelopmentKind = enum { debug, production };
+pub fn NewServer(protocol_enum: Protocol, development_kind: DevelopmentKind) type {
     return struct {
         pub const js = switch (protocol_enum) {
             .http => switch (development_kind) {
@@ -525,6 +527,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub const ssl_enabled = protocol_enum == .https;
         pub const debug_mode = development_kind == .debug;
+
+        const BakeMethods = bun.bake.ProductionServerMethods(protocol_enum, development_kind);
 
         const ThisServer = @This();
         pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This());
@@ -564,6 +568,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         on_clienterror: jsc.Strong.Optional = .empty,
 
         inspector_server_id: jsc.Debugger.DebuggerId = .init(0),
+
+        bake_prod: bun.ptr.Owned(?*bun.bake.ProductionServerState) = .fromRaw(null),
 
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
@@ -1574,6 +1580,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
 
+            this.bake_prod.deinit();
+
             // This should've already been handled in stopListening
             // However, when the JS VM terminates, it hypothetically might not call stopListening
             this.notifyInspectorServerStopped();
@@ -1608,14 +1616,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             errdefer bun.default_allocator.free(base_url);
 
             const dev_server = if (config.bake) |*bake_options|
-                try bun.bake.DevServer.init(.{
-                    .arena = bake_options.arena.allocator(),
-                    .root = bake_options.root,
-                    .framework = bake_options.framework,
-                    .bundler_options = bake_options.bundler_options,
-                    .vm = global.bunVM(),
-                    .broadcast_console_log_from_browser_to_server = config.broadcast_console_log_from_browser_to_server_for_bake,
-                })
+                if (config.development != .production)
+                    try bun.bake.DevServer.init(.{
+                        .arena = bake_options.arena.allocator(),
+                        .root = bake_options.root,
+                        .framework = bake_options.framework,
+                        .bundler_options = bake_options.bundler_options,
+                        .vm = global.bunVM(),
+                        .broadcast_console_log_from_browser_to_server = config.broadcast_console_log_from_browser_to_server_for_bake,
+                    })
+                else
+                    null
             else
                 null;
             errdefer if (dev_server) |d| d.deinit();
@@ -1628,6 +1639,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .allocator = Arena.getThreadLocalDefault(),
                 .dev_server = dev_server,
             });
+
+            if (server.config.bake != null and server.config.development == .production) {
+                var bake_prod = try bake.ProductionServerState.create(
+                    global,
+                    &server.vm.transpiler,
+                    &server.config,
+                    &server.config.bake.?,
+                );
+                server.bake_prod = bake_prod.toOptional();
+            }
 
             if (RequestContext.pool == null) {
                 RequestContext.pool = bun.create(
@@ -2588,7 +2609,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 6. Initialize plugins if needed ---
+            // --- 6. Handle Bake manifest routes (SSG) ---
+            if (this.bake_prod.get()) |prod| {
+                BakeMethods.setBakeManifestRoutes(this, app, prod.manifest);
+            }
+
+            // --- 7. Initialize plugins if needed ---
             if (needs_plugins and this.plugins == null) {
                 if (this.vm.transpiler.options.serve_plugins) |serve_plugins_config| {
                     if (serve_plugins_config.len > 0) {
@@ -2597,7 +2623,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 7. Debug mode specific routes ---
+            // --- 8. Debug mode specific routes ---
             if (debug_mode) {
                 app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
                 if (this.config.inspector) {
@@ -2606,7 +2632,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 8. Handle DevServer routes & Track "/*" Coverage ---
+            // --- 9. Handle DevServer routes & Track "/*" Coverage ---
             var has_dev_server_for_star_path = false;
             if (dev_server) |dev| {
                 // dev.setRoutes might register its own "/*" HTTP handler
@@ -2629,7 +2655,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
-            // --- 9. Consolidated "/*" HTTP Fallback Registration ---
+            // --- 10. Consolidated "/*" HTTP Fallback Registration ---
             if (star_methods_covered_by_user.eql(bun.http.Method.Set.initFull())) {
                 // User/Static/Dev has already provided a "/*" handler for ALL methods.
                 // No further global "/*" HTTP fallback needed.
@@ -2640,21 +2666,31 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 star_methods_covered_by_user.toggleAll();
                 var iter = star_methods_covered_by_user.iterator();
                 while (iter.next()) |method_to_cover| {
-                    switch (this.config.onNodeHTTPRequest) {
-                        .zero => switch (this.config.onRequest) {
-                            .zero => app.method(method_to_cover, "/*", *ThisServer, this, on404),
-                            else => app.method(method_to_cover, "/*", *ThisServer, this, onRequest),
-                        },
-                        else => app.method(method_to_cover, "/*", *ThisServer, this, onNodeHTTPRequest),
+                    // If we have a bake manifest and router for SSR routes, use the SSR handler
+                    if (this.bake_prod.get() != null) {
+                        app.method(method_to_cover, "/*", *ThisServer, this, BakeMethods.bakeProductionSSRRouteHandler);
+                    } else {
+                        switch (this.config.onNodeHTTPRequest) {
+                            .zero => switch (this.config.onRequest) {
+                                .zero => app.method(method_to_cover, "/*", *ThisServer, this, on404),
+                                else => app.method(method_to_cover, "/*", *ThisServer, this, onRequest),
+                            },
+                            else => app.method(method_to_cover, "/*", *ThisServer, this, onNodeHTTPRequest),
+                        }
                     }
                 }
             } else {
-                switch (this.config.onNodeHTTPRequest) {
-                    .zero => switch (this.config.onRequest) {
-                        .zero => app.any("/*", *ThisServer, this, on404),
-                        else => app.any("/*", *ThisServer, this, onRequest),
-                    },
-                    else => app.any("/*", *ThisServer, this, onNodeHTTPRequest),
+                // If we have a bake manifest and router for SSR routes, use the SSR handler
+                if (this.bake_prod.get() != null) {
+                    app.any("/*", *ThisServer, this, BakeMethods.bakeProductionSSRRouteHandler);
+                } else {
+                    switch (this.config.onNodeHTTPRequest) {
+                        .zero => switch (this.config.onRequest) {
+                            .zero => app.any("/*", *ThisServer, this, on404),
+                            else => app.any("/*", *ThisServer, this, onRequest),
+                        },
+                        else => app.any("/*", *ThisServer, this, onNodeHTTPRequest),
+                    }
                 }
             }
 
@@ -3430,3 +3466,5 @@ const Fetch = WebCore.Fetch;
 const Headers = WebCore.Headers;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
+
+const bake = bun.bake;

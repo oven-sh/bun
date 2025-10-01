@@ -23,7 +23,7 @@ pub fn count(this: *StringBuilder, slice: []const u8) void {
     this.cap += slice.len;
 }
 
-pub fn countMany(this: *StringBuilder, slices: []const []const u8) void {
+pub fn countMany(this: *StringBuilder, slices: anytype) void {
     inline for (slices) |slice| {
         this.count(slice);
     }
@@ -108,15 +108,30 @@ pub fn append(this: *StringBuilder, slice: []const u8) []const u8 {
     return result;
 }
 
-/// Append many slices at once, returning a tuple of slices.
-pub fn appendMany(this: *StringBuilder, comptime slices: []const u8) std.meta.Tuple([]const u8, slices.len) {
-    comptime var result_tuple: std.meta.Tuple([]const u8, slices.len) = undefined;
-
+/// Append many slices at once, returning an array of slices.
+pub fn appendMany(
+    this: *StringBuilder,
+    slices: anytype,
+) [slices.len][]const u8 {
+    var result: [slices.len][]const u8 = undefined;
     inline for (slices, 0..) |slice, idx| {
-        result_tuple[idx] = this.append(slice);
+        result[idx] = this.append(slice);
     }
+    return result;
+}
 
-    return result_tuple;
+/// Measure many slices, allocate and then append them all at once.
+///
+/// This is more efficient than appending them one by one due to the fact that
+/// it allocates once.
+pub fn measureAllocateAppend(
+    this: *StringBuilder,
+    allocator: std.mem.Allocator,
+    slices: anytype,
+) ![slices.len][]const u8 {
+    this.countMany(slices);
+    try this.allocate(allocator);
+    return this.appendMany(slices);
 }
 
 pub fn addConcat(this: *StringBuilder, slices: []const []const u8) bun.StringPointer {

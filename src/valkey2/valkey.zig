@@ -16,18 +16,65 @@ pub const ValkeyClient = struct {
     /// the client through `SocketHandler`.
     socket_io: SocketIO,
 
+    /// Current state of the client. Since the client is a state machine, this
+    /// encodes the possible states of the client.
     state: ClientState,
 
     /// Queue of commands that are pending to be sent to the server.
-    outbound_queue: std.fifo.LinearFifo(SerializedCommand, .Dynamic),
+    ///
+    /// Since it is possible to queue commands while disconnected, this queue
+    /// is in the base state.
+    _outbound_queue: std.fifo.LinearFifo(SerializedCommand, .Dynamic),
 
     /// Queue of commands that have been sent to the server and are awaiting a
     /// response.
-    inflight_queue: std.fifo.LinearFifo(SerializedCommand, .Dynamic),
+    ///
+    /// TODO(markovejnovic): Does this need to live in the base state?
+    _inflight_queue: std.fifo.LinearFifo(SerializedCommand, .Dynamic),
+
+    /// The connection parameters used to connect to the Valkey server.
+    connection_params: ConnParams,
 
     /// Create a new Valkey client instance.
-    pub fn init() Self {
-        return Self{};
+    ///
+    /// Arguments:
+    ///   - `url_str`: The connection string to use.
+    ///
+    /// Errors:
+    ///   - `error.InvalidProtocol` if the protocol is not recognized.
+    ///   - `error.InvalidUnixLocation` if the URL is a Unix socket but
+    ///     does not contain a valid path.
+    ///   - `error.MalformedUrl` in other cases of malformed URLs.
+    ///   - `error.FailedToCreateSocket` if the underlying uWS socket could
+    ///     not be created. No further details are provided.
+    pub fn init(
+        allocator: std.mem.Allocator,
+        uws_loop: *bun.uws.Loop,
+        url_str: []const u8,
+        options: ClientOptions,
+    ) !Self {
+        const cparams = try ConnParams.init(allocator, url_str, options);
+
+        return Self{
+            .socket_io = SocketIO.init(options.tls, uws_loop) catch |e| {
+                return switch (e) {
+                    // This remapping is done because from the user of this
+                    // library, there is no point in exposing the details of
+                    // failure.
+                    error.FailedToCreateContext => return error.FailedToCreateSocket,
+                };
+            },
+            .state = .{ .disconnected = .{} },
+            ._outbound_queue = std.fifo.LinearFifo(
+                SerializedCommand,
+                .Dynamic,
+            ).init(allocator),
+            ._inflight_queue = std.fifo.LinearFifo(
+                SerializedCommand,
+                .Dynamic,
+            ).init(allocator),
+            .connection_params = cparams,
+        };
     }
 
     /// Estimate the total number of bytes used by this client.
@@ -35,14 +82,6 @@ pub const ValkeyClient = struct {
         _ = self;
         // TODO(markovejnovic): Implement this properly.
         return 0;
-    }
-
-    /// Initialize with a new Valkey client instance with a socket.
-    pub fn initWithSocket(socket: bun.uws.AnySocket) Self {
-        return Self{
-            .socket = socket,
-            .state = ClientState{},
-        };
     }
 
     /// Deinitialize the Valkey client instance.
@@ -75,6 +114,41 @@ pub const ValkeyClient = struct {
         self.state.onData(data);
     }
 
+    /// Invoked whenever a write action went through. The nominal use-case is
+    /// to push more data.
+    pub fn onWritable(self: *Self) void {
+        _ = self;
+    }
+
+    /// TODO(markovejnovic): When is it invoked?
+    pub fn onTimeout(self: *Self) void {
+        _ = self;
+    }
+
+    /// TODO(markovejnovic): When is it invoked?
+    pub fn onConnectError(
+        self: *Self,
+        _: i32,
+    ) void {
+        _ = self;
+    }
+
+    /// Invoked whenever a connection is ended but not cleanly closed.
+    /// TODO(markovejnovic): Confirm this claim
+    pub fn onEnd(self: *Self) void {
+        _ = self;
+    }
+
+    /// Invoked whenever a connection is successfully closed.
+    pub fn onClose(self: *Self) void {
+        _ = self;
+    }
+
+    /// Invoked when the socket connection has been opened successfully.
+    pub fn onOpen(self: *Self) void {
+        _ = self;
+    }
+
     /// Test whether the client is currently connected to a Valkey server or
     /// not.
     pub fn isConnected(self: *const Self) bool {
@@ -91,18 +165,18 @@ pub const ValkeyClient = struct {
 /// Enum representing whether SSL/TLS is enabled or not.
 ///
 /// Better than a flag because it commuicates intent more clearly.
-const SSLMode = enum(bool) {
+const SslMode = enum(u1) {
     with_ssl,
     without_ssl,
 
-    pub fn sslEnabled(self: SSLMode) bool {
+    pub fn sslEnabled(self: SslMode) bool {
         return switch (self) {
             .with_ssl => true,
             .without_ssl => false,
         };
     }
 
-    pub fn fromBool(enabled: bool) SSLMode {
+    pub fn fromBool(enabled: bool) SslMode {
         return switch (enabled) {
             true => .with_ssl,
             false => .without_ssl,
@@ -118,6 +192,74 @@ const SocketIO = struct {
     _socket: bun.uws.AnySocket,
     _context: ?*bun.uws.SocketContext,
 
+    /// Attempt to create a new SocketIO instance.
+    ///
+    /// Errors:
+    ///   - `error.FailedToCreateContext` if the underlying uWS context could
+    ///     not be created. No further details are provided.
+    pub fn init(tls_config: TlsConfig, uws_loop: *bun.uws.Loop) !Self {
+        return Self{
+            ._context = try Self.createAndConfigureUwsContext(
+                tls_config,
+                uws_loop,
+            ),
+            // TODO(markovejnovic): Feels strange that we're initializing a
+            // detached socket here. Maybe we should initialize the TCP socket
+            // or TLS socket directly?
+            ._socket = .{ .SocketTCP = .{ .socket = .{ .detached = {} } } },
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self._context) |ctx| {
+            ctx.deinit(false);
+        }
+    }
+
+    /// Create a new uWS context given the TLS configuration.
+    ///
+    /// Errors:
+    /// - `error.FailedToCreateContext` if the context could not be created. No
+    ///   further details are provided.
+    fn createAndConfigureUwsContext(
+        tls_config: TlsConfig,
+        uws_loop: *bun.uws.Loop,
+    ) !*bun.uws.SocketContext {
+        // TODO(markovejnovic): The original implementation used to have
+        // support for vm.rareData(). We should probably add that back in.
+        switch (tls_config) {
+            .none => {
+                const HandlerType = Self.SocketHandler(.with_ssl);
+
+                const ctx = bun.uws.SocketContext.createNoSSLContext(
+                    uws_loop,
+                    @sizeOf(*Self),
+                ) orelse {
+                    // TODO(markovejnovic): Maybe get a detailed error?
+                    return error.FailedToCreateContext;
+                };
+
+                HandlerType.SocketHandlerType.configure(
+                    ctx,
+                    true,
+                    *Self,
+                    HandlerType,
+                );
+
+                return ctx;
+            },
+            .enabled => {
+                // TODO(markovejnovic): Implement
+                unreachable;
+            },
+            .custom => |*ssl_config| {
+                // TODO(markovejnovic): Implement
+                _ = ssl_config;
+                unreachable;
+            },
+        }
+    }
+
     /// Fetch the ValkeyClient which owns this SocketIO.
     fn parentClient(self: *Self) *ValkeyClient {
         return @alignCast(@fieldParentPtr("socket_io", self));
@@ -125,13 +267,6 @@ const SocketIO = struct {
 
     pub fn write(self: *Self, data: []const u8) usize {
         return self._socket.write(data);
-    }
-
-    /// Deinitialize the socket and its context.
-    pub fn deinit(self: *Self) void {
-        if (self._context) |ctx| {
-            ctx.deinit(false);
-        }
     }
 
     /// Check if the socket is using TLS.
@@ -143,83 +278,88 @@ const SocketIO = struct {
     }
 
     /// Interactions between the socket and the Valkey client are handled here.
-    fn SocketHandler(comptime ssl_mode: SSLMode) type {
-        const SocketType = bun.uws.NewSocketHandler(ssl_mode.sslEnabled());
-
+    fn SocketHandler(comptime ssl_mode: SslMode) type {
         return struct {
+            pub const SocketHandlerType = bun.uws.NewSocketHandler(
+                ssl_mode.sslEnabled(),
+            );
             // This is laid out in such a way that SocketIO patches its own
             // state and then lets the state machine handle the event.
 
-            pub fn onOpen(self: *Self, socket: SocketType) void {
+            pub fn onOpen(self: *Self, socket: SocketHandlerType) void {
                 Self.debug("{*}.onOpen()", .{self});
-                self.patchSocket(socket);
+                self.patchSocket(socket, ssl_mode);
                 self.parentClient().onOpen();
             }
 
             pub fn onClose(
                 self: *Self,
-                socket: SocketType,
+                socket: SocketHandlerType,
                 _: i32,
                 _: ?*anyopaque,
             ) void {
                 Self.debug("{*}.onClose()", .{self});
-                self.patchSocket(socket);
+                self.patchSocket(socket, ssl_mode);
                 self.parentClient().onClose();
             }
 
-            pub fn onEnd(self: *Self, socket: SocketType) void {
+            pub fn onEnd(self: *Self, socket: SocketHandlerType) void {
                 Self.debug("{*}.onEnd()", .{self});
-                self.patchSocket(socket);
+                self.patchSocket(socket, ssl_mode);
                 self.parentClient().onEnd();
             }
 
             pub fn onConnectError(
                 self: *Self,
-                socket: SocketType,
-                _: i32,
+                socket: SocketHandlerType,
+                err_code: i32,
             ) void {
                 Self.debug("{*}.onConnectError()", .{self});
-                self.patchSocket(socket);
-                self.parentClient().onConnectError();
+                self.patchSocket(socket, ssl_mode);
+                self.parentClient().onConnectError(err_code);
             }
 
-            pub fn onTimeout(self: *Self, socket: SocketType) void {
+            pub fn onTimeout(self: *Self, socket: SocketHandlerType) void {
                 Self.debug("{*}.onTimeout()", .{self});
-                self.patchSocket(socket);
+                self.patchSocket(socket, ssl_mode);
                 self.parentClient().onTimeout();
             }
 
             /// Invoked whenever a packet is received from the server.
             pub fn onData(
                 self: *Self,
-                socket: SocketType,
+                socket: SocketHandlerType,
                 data: []const u8,
             ) void {
                 Self.debug("{*}.onData(data={s})", .{ self, data });
-                self.patchSocket(socket);
-                self.parentClient().onData();
+                self.patchSocket(socket, ssl_mode);
+                self.parentClient().onData(data);
             }
 
-            pub fn onWritable(self: *Self, socket: SocketType) void {
-                Self.debug("{*}.onWritable(data={s})", .{self});
-                self.patchSocket(socket);
+            pub fn onWritable(self: *Self, socket: SocketHandlerType) void {
+                Self.debug("{*}.onWritable()", .{self});
+                self.patchSocket(socket, ssl_mode);
                 self.parentClient().onWritable();
             }
+        };
+    }
 
-            /// Given a concrete socket, update the opaque socket of `self`.
-            ///
-            /// Necessary because the socket type can only be deduced at
-            /// runtime.
-            fn patchSocket(self: *Self, concrete_socket: anytype) void {
-                self._socket = switch (ssl_mode) {
-                    .with_ssl => bun.uws.AnySocket{
-                        .SocketTLS = concrete_socket,
-                    },
-                    .without_ssl => bun.uws.AnySocket{
-                        .SocketTCP = concrete_socket,
-                    },
-                };
-            }
+    /// Given a concrete socket, update the opaque socket of `self`.
+    ///
+    /// Necessary because the socket type can only be deduced at
+    /// runtime.
+    fn patchSocket(
+        self: *Self,
+        concrete_socket: anytype,
+        comptime ssl_mode: SslMode,
+    ) void {
+        self._socket = switch (ssl_mode) {
+            .with_ssl => bun.uws.AnySocket{
+                .SocketTLS = concrete_socket,
+            },
+            .without_ssl => bun.uws.AnySocket{
+                .SocketTCP = concrete_socket,
+            },
         };
     }
 
@@ -240,7 +380,7 @@ const ValkeyAddress = union(enum) {
 
     /// Returns the hostname in the case of TCP, or the path in the case
     /// of a Unix socket.
-    pub fn location(self: ValkeyAddress) []u8 {
+    pub fn location(self: ValkeyAddress) []const u8 {
         return switch (self) {
             .tcp => |tcp| tcp.host,
             .unix => |path| path,
@@ -264,7 +404,7 @@ const ValkeyAddress = union(enum) {
             },
             .standalone_unix, .standalone_tls_unix => .{
                 .unix = Self.parseUnixPath(url_mem) catch {
-                    return error.MissingUnixLocation;
+                    return error.InvalidUnixLocation;
                 },
             },
         };
@@ -275,7 +415,7 @@ const ValkeyAddress = union(enum) {
         const proto_idx = bun.strings.indexOf(url_mem, "://") orelse
             return error.MissingUnixProtocol;
 
-        const sock_path = url_mem()[proto_idx + 3 ..];
+        const sock_path = url_mem[proto_idx + 3 ..];
 
         if (sock_path.len == 0) {
             return error.MissingUnixProtocol;
@@ -329,20 +469,50 @@ const ValkeyProtocol = enum {
     /// Returns `standalone` if no protocol is specified.
     /// Errors out with `error.InvalidProtocol` if the protocol is not
     /// recognized.
-    pub fn fromUrl(url: bun.URL) ValkeyProtocol {
+    pub fn fromUrl(url: bun.URL) !ValkeyProtocol {
         if (url.protocol.len == 0) {
             return .standalone;
         }
 
-        return switch (string_map.get(url.protocol)) {
-            null => return error.InvalidProtocol,
-            else => |p| p,
+        return string_map.get(url.protocol) orelse error.InvalidProtocol;
+    }
+};
+
+pub const TlsConfig = union(enum) {
+    const Self = @This();
+
+    none,
+    enabled,
+    // TODO(markovejnovic): This is definitely debt. Should not depend on
+    // bun.jsc.*
+    custom: bun.jsc.API.ServerConfig.SSLConfig,
+
+    pub fn clone(this: *const Self) Self {
+        return switch (this.*) {
+            .custom => |*ssl_config| .{ .custom = ssl_config.clone() },
+            else => this.*,
+        };
+    }
+
+    pub fn deinit(this: *Self) void {
+        switch (this.*) {
+            .custom => |*ssl_config| ssl_config.deinit(),
+            else => {},
+        }
+    }
+
+    pub fn toSslMode(this: *const Self) SslMode {
+        return switch (this.*) {
+            .none => .without_ssl,
+            else => .with_ssl,
         };
     }
 };
 
 /// Encodes various secondary options for the valkey client.
 const ClientOptions = struct {
+    const Self = @This();
+
     idle_timeout_ms: u32 = 0,
     connection_timeout_ms: u32 = 10_000,
     enable_auto_reconnect: bool = true,
@@ -350,9 +520,14 @@ const ClientOptions = struct {
     enable_offline_queue: bool = true,
     enable_auto_pipelining: bool = true,
     enable_debug_logging: bool = false,
+    tls: TlsConfig = .none,
 
-    // TODO(markovejnovic): Enable TLS
-    //tls: TLS = .none,
+    pub fn sslMode(self: *const Self) SslMode {
+        return switch (self.tls) {
+            .none => .without_ssl,
+            else => .with_ssl,
+        };
+    }
 };
 
 /// Destructured form valkey URL: `[protocol://]host[:port]/[database]`.
@@ -379,6 +554,7 @@ const ConnParams = struct {
     ///   - `error.InvalidUnixLocation` if the URL is a Unix socket but
     ///     does not contain a valid path.
     ///   - `error.MalformedUrl` in other cases of malformed URLs.
+    ///   - `error.OutOfMemory` if the given allocator fails.
     pub fn init(
         allocator: std.mem.Allocator,
         url_mem: []const u8,
@@ -388,7 +564,7 @@ const ConnParams = struct {
 
         const proto = try ValkeyProtocol.fromUrl(url);
 
-        var self = .{
+        var self: Self = .{
             .username = "",
             .password = "",
             .database = 0,
@@ -399,21 +575,21 @@ const ConnParams = struct {
             ._connection_str = null,
         };
 
-        var owned_loc: []u8 = undefined;
+        var owned_loc: []const u8 = undefined;
         const address = try ValkeyAddress.fromUrlProto(url_mem, url, proto);
         const location = address.location();
         if (url.username.len > 0 or url.password.len > 0 or location.len > 0) {
             var builder = bun.StringBuilder{};
-            builder.countMany(.{ url.username, url.password, location });
-
-            try builder.allocate(self._allocator);
             defer builder.deinit(self._allocator);
-
-            self.username, self.password, owned_loc = builder.appendMany(.{
-                url.username,
-                url.password,
-                location,
-            });
+            // TODO(markovejnovic): 80 columns.
+            self.username, self.password, owned_loc = try builder.measureAllocateAppend(
+                self._allocator,
+                [_][]const u8{
+                    url.username,
+                    url.password,
+                    location,
+                },
+            );
 
             builder.moveToSlice(&self._connection_str.?);
             errdefer {
@@ -427,7 +603,7 @@ const ConnParams = struct {
         // thing.
         self.address = switch (address) {
             .tcp => |tcp| ValkeyAddress{ .tcp = .{
-                .host = tcp.location,
+                .host = owned_loc,
                 .port = tcp.port,
             } },
             .unix => ValkeyAddress{ .unix = owned_loc },
@@ -655,25 +831,17 @@ const ClientState = union(enum) {
             .opening => {
                 // Great, we just opened the client. If we're using TLS, then
                 // we transition to the handshake state.
-                // Otherwise, we transition to the connecting state.
+                // Otherwise, we transition to the linked state.
                 self.transition(
                     if (self.parentClient().socket_io.usingTls())
                         .{ .handshake = {} }
                     else
-                        .{ .connecting = {} },
+                        .{ .linked = .{ .state = .authenticating } },
                 );
             },
             else => {
-                Self.debug(
-                    "Received an open event in {*} state. This is a " ++
-                        "programming bug. We will drop the connection to " ++
-                        "recover, but data is lost.",
-                    .{self},
-                );
-
-                // TODO(markovejnovic): Throw some telemetry in here.
-
-                self.transition(.{ .disconnected = {} });
+                self.warnIllegalState("onOpen");
+                self.recoverFromIllegalState();
             },
         }
     }
@@ -682,34 +850,47 @@ const ClientState = union(enum) {
         Self.debug("{*}.onClose()", .{self});
         switch (self) {
             .disconnected => {},
-            .connecting => {},
+            .opening => {},
             .handshake => {},
         }
     }
 
-    pub fn onData(self: *Self) void {
+    pub fn onData(self: *Self, data: []const u8) void {
         Self.debug("{*}.onData()", .{self});
-        switch (self) {
+        _ = data;
+        switch (self.*) {
             .linked => |state| {
-                if (state.ingress_buffer.len == 0) {
-                    // This is a no-op. We received an empty packet.
-                    return;
-                }
+                // TODO(markovejnovic): Lol implemnet.
+                _ = state;
             },
-            .connecting => {},
+            .opening => {},
             else => {
-                Self.debug(
-                    "Received data in {*} state. This is a programming " ++
-                        "bug. We will drop the connection to recover, " ++
-                        "but data is lost.",
-                    .{self},
-                );
-
-                // TODO(markovejnovic): Throw some telemetry in here.
-
-                self.transition(.{ .disconnected = {} });
+                self.warnIllegalState("onData");
+                self.recoverFromIllegalState();
             },
         }
+    }
+
+    /// Warn about an illegal event in the current state.
+    fn warnIllegalState(self: *Self, event_name: []const u8) void {
+        // TODO(markovejnovic): Throw some telemetry in here.
+        Self.debug(
+            "Received an illegal event '{s}' in {s} state. This is a " ++
+                "programming bug.",
+            .{ event_name, @tagName(self.*) },
+        );
+    }
+
+    /// Attempt to recover from an illegal state by transitioning to the
+    /// disconnected state.
+    fn recoverFromIllegalState(self: *Self) void {
+        Self.debug(
+            "Recovering from illegal state by transitioning to disconnected.",
+            .{},
+        );
+
+        // TODO(markovejnovic): This transition makes no sense lmao.
+        self.transition(.{ .disconnected = .{} });
     }
 
     /// Transition the state machine from one state to another.

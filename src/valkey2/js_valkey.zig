@@ -2,24 +2,90 @@
 //! The declaration of all the public methods here is given in
 //! `valkey.classes.ts` and the codegen will invoke these methods.
 pub const JsValkey = struct {
+    const DEFAULT_CONN_STR = "valkey://localhost:6379";
+
     const Self = @This();
 
-    /// The actual, underlying Valkey client.
     _client: ValkeyClient,
+    _ref_count: RefCount,
 
-    pub fn init() JsValkey {
-        return JsValkey{ ._client = ValkeyClient.init() };
+    pub fn constructor(
+        go: *bun.jsc.JSGlobalObject,
+        cf: *bun.jsc.CallFrame,
+    ) bun.JSError!*JsValkey {
+        // Parse the arguments first.
+        var args_parsed = try Self.parseConstructorArgs(go, cf);
+        defer args_parsed.deinit();
+
+        const vm = go.bunVM();
+
+        return Self.new(.{
+            // TODO(markovejnovic): byteSlice() feels wrong if the URL contains
+            // non-ASCII characters.
+            ._client = bun.handleOom(ValkeyClient.init(
+                bun.default_allocator,
+                vm.uwsLoop(),
+                args_parsed.connection_str.byteSlice(),
+                .{}, // TODO(markovejnovic): Accept options from user lol
+            )) catch |err| {
+                switch (err) {
+                    error.InvalidProtocol => {
+                        return go.throw(
+                            "URL protocol must be one of: " ++
+                                "'redis://', 'valkey://', 'rediss://', " ++
+                                "'valkeys://', 'redis+tls://', " ++
+                                "'redis+unix://', 'redis+tls+unix://'.",
+                            .{},
+                        );
+                    },
+                    error.InvalidUnixLocation => {
+                        return go.throw(
+                            "Invalid UNIX socket location given in the URL.",
+                            .{},
+                        );
+                    },
+                    error.MalformedUrl => {
+                        return go.throw("Invalid connection URL given.", .{});
+                    },
+                    error.FailedToCreateSocket => {
+                        // TODO(markovejnovic): Improve this error message.
+                        // This error message sucks, but we can't do better.
+                        return go.throw(
+                            "Unspecified error creating socket.",
+                            .{},
+                        );
+                    },
+                }
+            },
+            ._ref_count = RefCount.init(),
+        });
     }
 
-    /// Construct the JsValkey object.
-    pub fn constructor(
-        global_object: *bun.jsc.JSGlobalObject,
-        callframe: *bun.jsc.CallFrame,
-        js_this: bun.jsc.JSValue,
-    ) bun.JSError!*JsValkey {
-        _ = callframe;
-        _ = js_this;
-        return global_object.throw("RedisClient2 constructor not yet implemented", .{});
+    /// Parse arguments given to the constructor. There's a lot of arguments
+    /// the constructor can take, so this is separated.
+    fn parseConstructorArgs(
+        go: *bun.jsc.JSGlobalObject,
+        cf: *bun.jsc.CallFrame,
+    ) bun.JSError!struct {
+        connection_str: bun.String,
+
+        pub fn deinit(self: *@This()) void {
+            self.connection_str.deref();
+        }
+    } {
+        const args = cf.arguments();
+        const env = go.bunVM().transpiler.env;
+
+        const conn_url = if (args.len > 0 and !args[0].isUndefined())
+            try args[0].toBunString(go)
+        else if (env.get("REDIS_URL") orelse env.get("VALKEY_URL")) |url|
+            bun.String.init(url)
+        else
+            bun.String.init(DEFAULT_CONN_STR);
+
+        return .{
+            .connection_str = conn_url,
+        };
     }
 
     /// Duplicate the JsValkey object.
@@ -65,6 +131,10 @@ pub const JsValkey = struct {
         return .js_undefined;
     }
 
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
     pub fn finalize(self: *Self) void {
         self._client.deinit();
     }
@@ -74,6 +144,10 @@ pub const JsValkey = struct {
     }
 
     pub const js = bun.jsc.Codegen.JSRedisClient2;
+    pub const new = bun.TrivialNew(@This());
+    const RefCount = bun.ptr.RefCount(Self, "_ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
 };
 
 const bun = @import("bun");

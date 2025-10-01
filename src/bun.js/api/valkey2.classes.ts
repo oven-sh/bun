@@ -8,7 +8,6 @@ export default [
   define({
     name: "RedisClient2",
     construct: true,
-    constructNeedsThis: true,
     call: false,
     finalize: true,
     configurable: false,

@@ -1,9 +1,9 @@
-import https from "https";
-import tls from "tls";
-import type { AddressInfo } from "node:net";
-import { WebSocketServer } from "ws";
-import { tls as options } from "harness";
 import { expect, test } from "bun:test";
+import { tls as options } from "harness";
+import https from "https";
+import type { AddressInfo } from "node:net";
+import tls from "tls";
+import { WebSocketServer } from "ws";
 test("should not crash when closing sockets after upgrade", async () => {
   const { promise, resolve } = Promise.withResolvers();
   let http_sockets: tls.TLSSocket[] = [];

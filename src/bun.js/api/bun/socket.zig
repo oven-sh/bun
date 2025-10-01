@@ -111,7 +111,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             this.ref();
-            errdefer this.deref();
+            defer this.deref();
 
             switch (connection) {
                 .host => |c| {

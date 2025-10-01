@@ -23,7 +23,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             }
         } else if (value.isString()) {
             // `.toThrow("") behaves the same as `.toThrow()`
-            const s = value.toString(globalThis);
+            const s = try value.toJSString(globalThis);
             if (s.length() == 0) break :brk .zero;
         }
         break :brk value;

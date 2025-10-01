@@ -1280,6 +1280,11 @@ pub const TestCommand = struct {
         bun.jsc.initialize(false);
         HTTPThread.init(&.{});
 
+        const enable_random = ctx.test_options.randomize;
+        const seed: u32 = if (enable_random) ctx.test_options.seed orelse @truncate(bun.fastRandom()) else 0; // seed is limited to u32 so storing it in js doesn't lose precision
+        var random_instance: ?std.Random.DefaultPrng = if (enable_random) std.Random.DefaultPrng.init(seed) else null;
+        const random = if (random_instance) |*instance| instance.random() else null;
+
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
@@ -1301,9 +1306,12 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .concurrent = ctx.test_options.concurrent,
+                .randomize = random,
+                .concurrent_test_glob = ctx.test_options.concurrent_test_glob,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
                 .bail = ctx.test_options.bail,
+                .max_concurrency = ctx.test_options.max_concurrency,
                 .filter_regex = ctx.test_options.test_filter_regex,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
@@ -1417,7 +1425,9 @@ pub const TestCommand = struct {
                         } else {
                             Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
                         }
-                        Global.exit(1);
+                        vm.exit_handler.exit_code = 1;
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                     },
                 };
             }
@@ -1459,7 +1469,9 @@ pub const TestCommand = struct {
                     } else {
                         Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {}", .{bun.fmt.quote(dir_to_scan)});
                     }
-                    Global.exit(1);
+                    vm.exit_handler.exit_code = 1;
+                    vm.is_shutting_down = true;
+                    vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                 },
             };
         }
@@ -1469,6 +1481,11 @@ pub const TestCommand = struct {
         const search_count = scanner.search_count;
 
         if (test_files.len > 0) {
+            // Randomize the order of test files if --randomize flag is set
+            if (random) |rand| {
+                rand.shuffle(PathString, test_files);
+            }
+
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
@@ -1601,6 +1618,11 @@ pub const TestCommand = struct {
             const did_label_filter_out_all_tests = summary.didLabelFilterOutAllTests() and reporter.jest.unhandled_errors_between_tests == 0;
 
             if (!did_label_filter_out_all_tests) {
+                // Display the random seed if tests were randomized
+                if (random != null) {
+                    Output.prettyError(" <r>--seed={d}<r>\n", .{seed});
+                }
+
                 if (summary.pass > 0) {
                     Output.prettyError("<r><green>", .{});
                 }
@@ -1709,6 +1731,7 @@ pub const TestCommand = struct {
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             vm.exit_handler.exit_code = 1;
         }
+        vm.is_shutting_down = true;
         vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
     }
 
@@ -1807,7 +1830,9 @@ pub const TestCommand = struct {
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
-            bun_test_root.enterFile(file_id, reporter);
+            // Determine if this file should run tests concurrently based on glob pattern
+            const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);
+            bun_test_root.enterFile(file_id, reporter, should_run_concurrent);
             defer bun_test_root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
@@ -1825,7 +1850,9 @@ pub const TestCommand = struct {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
 
-                        Global.exit(1);
+                        vm.exit_handler.exit_code = 1;
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                     }
 
                     return;

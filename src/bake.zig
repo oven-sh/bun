@@ -413,7 +413,7 @@ pub const Framework = struct {
         // This function should only be called with JS objects
         // String handling happens in UserOptions.fromJS
         if (!opts.isObject()) {
-            return global.throwInvalidArguments("Framework configuration must be an object", .{});
+            return global.throwInvalidArguments("Framework definition must be an object", .{});
         }
 
         if (try opts.get(global, "serverEntryPoint") != null) {

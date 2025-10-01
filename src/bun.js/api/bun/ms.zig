@@ -4,11 +4,18 @@ const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const JSGlobalObject = jsc.JSGlobalObject;
 
-const MS_PER_SECOND = 1000.0;
-const MS_PER_MINUTE = MS_PER_SECOND * 60.0;
-const MS_PER_HOUR = MS_PER_MINUTE * 60.0;
-const MS_PER_DAY = MS_PER_HOUR * 24.0;
-const MS_PER_WEEK = MS_PER_DAY * 7.0;
+const ns_per_ms = std.time.ns_per_ms;
+const ns_per_s = std.time.ns_per_s;
+const ns_per_min = std.time.ns_per_min;
+const ns_per_hour = std.time.ns_per_hour;
+const ns_per_day = std.time.ns_per_day;
+const ns_per_week = std.time.ns_per_week;
+
+const MS_PER_SECOND = @as(f64, ns_per_s) / @as(f64, ns_per_ms);
+const MS_PER_MINUTE = @as(f64, ns_per_min) / @as(f64, ns_per_ms);
+const MS_PER_HOUR = @as(f64, ns_per_hour) / @as(f64, ns_per_ms);
+const MS_PER_DAY = @as(f64, ns_per_day) / @as(f64, ns_per_ms);
+const MS_PER_WEEK = @as(f64, ns_per_week) / @as(f64, ns_per_ms);
 const MS_PER_YEAR = MS_PER_DAY * 365.25;
 
 /// Parse a time string like "2d", "1.5h", "5m" to milliseconds

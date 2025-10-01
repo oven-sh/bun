@@ -5207,6 +5207,33 @@ declare module "bun" {
   function sleepSync(ms: number): void;
 
   /**
+   * Parse a time string and return milliseconds, or format milliseconds as a string.
+   *
+   * Compatible with the `ms` npm package.
+   *
+   * When used with a string literal in bundled code, this is inlined at compile-time.
+   *
+   * @example
+   * ```ts
+   * Bun.ms("2d")      // 172800000
+   * Bun.ms("1.5h")    // 5400000
+   * Bun.ms("1m")      // 60000
+   * Bun.ms("5s")      // 5000
+   * Bun.ms("100ms")   // 100
+   * Bun.ms("1y")      // 31557600000
+   * Bun.ms("100")     // 100
+   * Bun.ms(60000)     // "1m"
+   * Bun.ms(60000, { long: true })  // "1 minute"
+   * ```
+   *
+   * @param value - A string like "2d", "1h", "5m" or a number of milliseconds
+   * @param options - Options for formatting (only applies when value is a number)
+   * @returns milliseconds (if string input) or formatted string (if number input), or undefined if invalid string
+   */
+  function ms(value: string): number | undefined;
+  function ms(value: number, options?: { long?: boolean }): string;
+
+  /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
    * @category Utilities

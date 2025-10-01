@@ -1,0 +1,6 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`bundler inlines Bun.ms with string literals 1`] = `
+"var q=Bun.ms("1s"),x=Bun.ms("1m"),z=Bun.ms("1h"),A=Bun.ms("1d"),B=Bun.ms("2w"),C=Bun.ms("0.5y"),E=Bun.ms("5 minutes"),F=Bun.ms("-10s"),G=Bun.ms("1.5h"),J=Bun.ms("100"),K=Bun.ms("2D"),L=Bun.ms(R),P=Bun.ms(Q());console.log(q,x,z,A,B,C);console.log(E,F,G,J,K);console.log(L,P);function Q(){return"1m"}var R=1000;
+"
+`;

@@ -25,6 +25,7 @@ pub const BunObject = struct {
     pub const jest = toJSCallback(@import("../test/jest.zig").Jest.call);
     pub const listen = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "listen", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
+    pub const ms = toJSCallback(@import("./bun/ms.zig").jsFunction);
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
     pub const openInEditor = toJSCallback(Bun.openInEditor);
     pub const registerMacro = toJSCallback(Bun.registerMacro);
@@ -161,6 +162,7 @@ pub const BunObject = struct {
         @export(&BunObject.jest, .{ .name = callbackName("jest") });
         @export(&BunObject.listen, .{ .name = callbackName("listen") });
         @export(&BunObject.mmap, .{ .name = callbackName("mmap") });
+        @export(&BunObject.ms, .{ .name = callbackName("ms") });
         @export(&BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
         @export(&BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
         @export(&BunObject.registerMacro, .{ .name = callbackName("registerMacro") });
@@ -1358,6 +1360,7 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
 pub fn getSemver(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return SemverObject.create(globalThis);
 }
+
 
 pub fn getUnsafe(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return UnsafeObject.create(globalThis);

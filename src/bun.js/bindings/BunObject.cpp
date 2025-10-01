@@ -759,6 +759,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1
     main                                           bunObjectMain                                                       DontDelete|CustomAccessor
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
+    ms                                             BunObject_callback_ms                                               DontDelete|Function 2
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
     origin                                         BunObject_lazyPropCb_wrap_origin                                    DontEnum|ReadOnly|DontDelete|PropertyCallback

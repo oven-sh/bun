@@ -1360,7 +1360,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        const stream_value = try response.body.value.toReadableStream(.Response, data, globalThis);
+                        const stream_value = try response.body.value.toReadableStream(.{ .Response = data }, globalThis);
                         if (try jsc.WebCore.ReadableStream.fromJS(stream_value, globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();
@@ -1421,7 +1421,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         const s3 = &destination_blob.store.?.data.s3;
                         var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                         defer aws_options.deinit();
-                        const stream_value = try request.body.value.toReadableStream(.Request, data, globalThis);
+                        const stream_value = try request.body.value.toReadableStream(.{ .Request = data }, globalThis);
                         if (try jsc.WebCore.ReadableStream.fromJS(stream_value, globalThis)) |readable| {
                             if (readable.isDisturbed(globalThis)) {
                                 destination_blob.detach();

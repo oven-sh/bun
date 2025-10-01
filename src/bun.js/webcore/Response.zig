@@ -274,13 +274,14 @@ pub fn doClone(
 
     if (js_wrapper != .zero) {
         if (cloned.body.value == .Locked) {
-            if (cloned.body.value.Locked.readable.get(globalThis)) |readable| {
+            if (cloned.body.value.Locked.readable.get(.{ .Response = js_wrapper }, globalThis)) |readable| {
                 // If we are teed, then we need to update the cached .body
                 // value to point to the new readable stream
                 // We must do this on both the original and cloned response
                 // but especially the original response since it will have a stale .body value now.
                 js.bodySetCached(js_wrapper, globalThis, readable.value);
-                if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
+                const this_js = this.this_jsvalue.tryGet() orelse .zero;
+                if (this.body.value.Locked.readable.get(if (this_js != .zero) .{ .Response = this_js } else .{ .empty = {} }, globalThis)) |other_readable| {
                     js.bodySetCached(this_value, globalThis, other_readable.value);
                 }
             }

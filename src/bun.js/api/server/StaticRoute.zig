@@ -91,7 +91,8 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 
         // The user may want to pass in the same Response object multiple endpoints
         // Let's let them do that.
-        response.body.value.toBlobIfPossible();
+        const owner = if (response.this_jsvalue.tryGet()) |jsval| jsc.WebCore.ReadableStream.Ref.Owner{ .Response = jsval } else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
+        response.body.value.toBlobIfPossible(owner);
 
         const blob: AnyBlob = brk: {
             switch (response.body.value) {

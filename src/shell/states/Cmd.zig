@@ -576,7 +576,8 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                     _ = rstream;
                     @panic("TODO SHELL READABLE STREAM");
                 } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Response)) |req| {
-                    req.getBodyValue().toBlobIfPossible();
+                    const owner = if (req.this_jsvalue.tryGet()) |jsval| jsc.WebCore.ReadableStream.Ref.Owner{ .Response = jsval } else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
+                    req.getBodyValue().toBlobIfPossible(owner);
                     if (this.node.redirect.stdin) {
                         try spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no);
                     }

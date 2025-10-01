@@ -277,7 +277,7 @@ pub const Stdio = union(enum) {
         };
     }
 
-    fn extractBodyValue(out_stdio: *Stdio, globalThis: *jsc.JSGlobalObject, i: i32, owner: jsc.WebCore.ReadableStream.Owner, body: *jsc.WebCore.Body.Value, is_sync: bool) bun.JSError!void {
+    fn extractBodyValue(out_stdio: *Stdio, globalThis: *jsc.JSGlobalObject, i: i32, owner: jsc.WebCore.ReadableStream.Ref.Owner, body: *jsc.WebCore.Body.Value, is_sync: bool) bun.JSError!void {
         body.toBlobIfPossible(owner);
 
         if (body.tryUseAsAnyBlob(owner)) |blob| {

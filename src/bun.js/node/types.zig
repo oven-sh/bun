@@ -86,9 +86,9 @@ pub const BlobOrStringOrBuffer = union(enum) {
                 }
                 if (allow_request_response) {
                     if (value.as(jsc.WebCore.Request)) |request| {
-                        request.body.value.toBlobIfPossible();
+                        request.body.value.toBlobIfPossible(.{ .empty = {} });
 
-                        if (request.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (request.body.value.tryUseAsAnyBlob(.{ .empty = {} })) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };
@@ -98,9 +98,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
                     }
 
                     if (value.as(jsc.WebCore.Response)) |response| {
-                        response.body.value.toBlobIfPossible();
+                        const owner = if (response.this_jsvalue.tryGet()) |jsval| jsc.WebCore.ReadableStream.Ref.Owner{ .Response = jsval } else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
+                        response.body.value.toBlobIfPossible(owner);
 
-                        if (response.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (response.body.value.tryUseAsAnyBlob(owner)) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };

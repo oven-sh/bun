@@ -5,7 +5,7 @@ const Body = @This();
 value: Value, // = Value.empty,
 
 pub fn len(this: *Body) Blob.SizeType {
-    return this.value.size();
+    return this.value.size(.{ .empty = {} });
 }
 
 pub fn slice(this: *const Body) []const u8 {
@@ -38,9 +38,9 @@ pub fn writeFormat(this: *Body, comptime Formatter: type, formatter: *Formatter,
         try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
         try formatter.writeIndent(Writer, writer);
-        try Blob.writeFormatForSize(false, this.value.size(), writer, enable_ansi_colors);
+        try Blob.writeFormatForSize(false, this.value.size(.{ .empty = {} }), writer, enable_ansi_colors);
     } else if (this.value == .Locked) {
-        if (this.value.Locked.readable.get(this.value.Locked.global)) |stream| {
+        if (this.value.Locked.readable.get(.{ .empty = {} }, this.value.Locked.global)) |stream| {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
@@ -78,8 +78,8 @@ pub const PendingValue = struct {
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
     /// If the size is unknown will be 0
-    fn sizeHint(this: *const PendingValue, comptime T: jsc.WebCore.ReadableStream.Owner.Type, owner_value: jsc.JSValue) Blob.SizeType {
-        if (this.readable.get(T, owner_value, this.global)) |readable| {
+    fn sizeHint(this: *const PendingValue, owner: jsc.WebCore.ReadableStream.Ref.Owner) Blob.SizeType {
+        if (this.readable.get(owner, this.global)) |readable| {
             if (readable.ptr == .Bytes) {
                 return readable.ptr.Bytes.size_hint;
             }
@@ -87,23 +87,23 @@ pub const PendingValue = struct {
         return this.size_hint;
     }
 
-    pub fn toAnyBlob(this: *PendingValue, comptime T: jsc.WebCore.ReadableStream.Owner.Type, owner_value: jsc.JSValue) ?AnyBlob {
+    pub fn toAnyBlob(this: *PendingValue, owner: jsc.WebCore.ReadableStream.Ref.Owner) ?AnyBlob {
         if (this.promise != null)
             return null;
 
-        return this.toAnyBlobAllowPromise(T, owner_value);
+        return this.toAnyBlobAllowPromise(owner);
     }
 
-    pub fn isDisturbed(this: *const PendingValue, comptime T: jsc.WebCore.ReadableStream.Owner.Type, globalObject: *jsc.JSGlobalObject, this_value: jsc.JSValue) bool {
+    pub fn isDisturbed(this: *const PendingValue, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalObject: *jsc.JSGlobalObject) bool {
         if (this.promise != null) {
             return true;
         }
 
-        return this.readable.isDisturbed(T, this_value, globalObject);
+        return this.readable.isDisturbed(owner, globalObject);
     }
 
-    pub fn abort(this: *PendingValue, comptime T: jsc.WebCore.ReadableStream.Owner.Type, owner_value: jsc.JSValue, globalObject: *jsc.JSGlobalObject) bool {
-        return this.readable.abort(T, owner_value, globalObject);
+    pub fn abort(this: *PendingValue, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalObject: *jsc.JSGlobalObject) bool {
+        return this.readable.abort(owner, globalObject);
     }
 
     pub fn isStreamingOrBuffering(this: *PendingValue) bool {
@@ -127,13 +127,13 @@ pub const PendingValue = struct {
         return false;
     }
 
-    pub fn toAnyBlobAllowPromise(this: *PendingValue, comptime T: jsc.WebCore.ReadableStream.Owner.Type, owner_value: jsc.JSValue) ?AnyBlob {
-        return this.readable.toAnyBlob(T, owner_value, this.global);
+    pub fn toAnyBlobAllowPromise(this: *PendingValue, owner: jsc.WebCore.ReadableStream.Ref.Owner) ?AnyBlob {
+        return this.readable.toAnyBlob(owner, this.global);
     }
 
-    pub fn setPromise(value: *PendingValue, globalThis: *jsc.JSGlobalObject, action: Action) JSValue {
+    pub fn setPromise(value: *PendingValue, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalThis: *jsc.JSGlobalObject, action: Action) JSValue {
         value.action = action;
-        if (value.readable.get(globalThis)) |readable| {
+        if (value.readable.get(owner, globalThis)) |readable| {
             switch (action) {
                 .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer, .getBytes => {
                     const promise = switch (action) {
@@ -314,7 +314,7 @@ pub const Value = union(Tag) {
             this.* = .{ .JSValue = .empty };
         }
     };
-    pub fn toBlobIfPossible(this: *Value, owner: jsc.WebCore.ReadableStream.Owner) void {
+    pub fn toBlobIfPossible(this: *Value, owner: jsc.WebCore.ReadableStream.Ref.Owner) void {
         if (this.* == .WTFStringImpl) {
             if (this.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
                 var str = this.WTFStringImpl;
@@ -341,7 +341,7 @@ pub const Value = union(Tag) {
         }
     }
 
-    pub fn size(this: *Value, owner: jsc.WebCore.ReadableStream.Owner) Blob.SizeType {
+    pub fn size(this: *Value, owner: jsc.WebCore.ReadableStream.Ref.Owner) Blob.SizeType {
         return switch (this.*) {
             .Blob => @truncate(this.Blob.getSizeForBindings()),
             .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
@@ -352,7 +352,7 @@ pub const Value = union(Tag) {
         };
     }
 
-    pub fn fastSize(this: *const Value, owner: jsc.WebCore.ReadableStream.Owner) Blob.SizeType {
+    pub fn fastSize(this: *const Value, owner: jsc.WebCore.ReadableStream.Ref.Owner) Blob.SizeType {
         return switch (this.*) {
             .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
             .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteSlice().len)),
@@ -366,7 +366,7 @@ pub const Value = union(Tag) {
         return switch (this.*) {
             .InternalBlob => this.InternalBlob.bytes.items.len,
             .WTFStringImpl => this.WTFStringImpl.memoryCost(),
-            .Locked => this.Locked.sizeHint(.strong, .js_undefined),
+            .Locked => this.Locked.sizeHint(.{ .empty = {} }),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
         };
@@ -376,7 +376,7 @@ pub const Value = union(Tag) {
         return switch (this.*) {
             .InternalBlob => this.InternalBlob.sliceConst().len,
             .WTFStringImpl => this.WTFStringImpl.byteSlice().len,
-            .Locked => this.Locked.sizeHint(void, .js_undefined),
+            .Locked => this.Locked.sizeHint(.{ .empty = {} }),
             // .InlineBlob => this.InlineBlob.sliceConst().len,
             else => 0,
         };
@@ -418,7 +418,7 @@ pub const Value = union(Tag) {
 
     // pub const empty = Value{ .Empty = {} };
 
-    pub fn toReadableStream(this: *Value, comptime T: jsc.WebCore.ReadableStream.Owner.Type, owner_value: jsc.JSValue, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    pub fn toReadableStream(this: *Value, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         jsc.markBinding(@src());
 
         switch (this.*) {
@@ -437,9 +437,10 @@ pub const Value = union(Tag) {
                 blob.resolveSize();
                 const value = try jsc.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.size);
 
+                const stream = (try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?;
                 this.* = .{
                     .Locked = .{
-                        .readable = jsc.WebCore.ReadableStream.Strong.init((try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?, globalThis),
+                        .readable = .{ .strong = .init(stream, globalThis) },
                         .global = globalThis,
                     },
                 };
@@ -447,7 +448,7 @@ pub const Value = union(Tag) {
             },
             .Locked => {
                 var locked = &this.Locked;
-                if (locked.readable.get(T, owner_value, globalThis)) |readable| {
+                if (locked.readable.get(owner, globalThis)) |readable| {
                     return readable.value;
                 }
                 if (locked.promise != null or locked.action != .none) {
@@ -482,18 +483,18 @@ pub const Value = union(Tag) {
                     reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.owned.size_hint));
                 }
 
-                locked.readable = .{
-                    .strong = jsc.WebCore.ReadableStream.Strong.init(.{
-                        .ptr = .{ .Bytes = &reader.context },
-                        .value = try reader.toReadableStream(globalThis),
-                    }, globalThis),
+                const stream_value = try reader.toReadableStream(globalThis);
+                const stream = jsc.WebCore.ReadableStream{
+                    .ptr = .{ .Bytes = &reader.context },
+                    .value = stream_value,
                 };
+                locked.readable = .{ .strong = .init(stream, globalThis) };
 
                 if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-                    onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(void, .js_undefined, globalThis).?);
+                    onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(owner, globalThis).?);
                 }
 
-                return locked.readable.get(T, owner_value, globalThis).?.value;
+                return locked.readable.get(owner, globalThis).?.value;
             },
             .Error => {
                 // TODO: handle error properly
@@ -618,7 +619,7 @@ pub const Value = union(Tag) {
     pub fn fromReadableStreamWithoutLockCheck(readable: jsc.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
         return .{
             .Locked = .{
-                .readable = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis),
+                .readable = .{ .strong = .init(readable, globalThis) },
                 .global = globalThis,
             },
         };
@@ -634,7 +635,7 @@ pub const Value = union(Tag) {
         if (to_resolve.* == .Locked) {
             var locked = &to_resolve.Locked;
 
-            if (locked.readable.get(global)) |readable| {
+            if (locked.readable.get(.{ .empty = {} }, global)) |readable| {
                 readable.done(global);
                 locked.readable.deinit();
             }
@@ -731,7 +732,7 @@ pub const Value = union(Tag) {
     }
 
     pub fn use(this: *Value) Blob {
-        this.toBlobIfPossible();
+        this.toBlobIfPossible(.{ .empty = {} });
 
         switch (this.*) {
             .Blob => {
@@ -793,7 +794,7 @@ pub const Value = union(Tag) {
         }
     }
 
-    pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
+    pub fn tryUseAsAnyBlob(this: *Value, owner: jsc.WebCore.ReadableStream.Ref.Owner) ?AnyBlob {
         if (this.* == .WTFStringImpl) {
             if (this.WTFStringImpl.canUseAsUTF8()) {
                 return AnyBlob{ .WTFStringImpl = this.WTFStringImpl };
@@ -804,7 +805,7 @@ pub const Value = union(Tag) {
             .Blob => AnyBlob{ .Blob = this.Blob },
             .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
             // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
-            .Locked => this.Locked.toAnyBlobAllowPromise(.strong, .js_undefined) orelse return null,
+            .Locked => this.Locked.toAnyBlobAllowPromise(owner) orelse return null,
             else => return null,
         };
 
@@ -832,7 +833,7 @@ pub const Value = union(Tag) {
                 }
             },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
-            .Locked => this.Locked.toAnyBlobAllowPromise(.strong, .js_undefined) orelse AnyBlob{ .Blob = .{} },
+            .Locked => this.Locked.toAnyBlobAllowPromise(.strong) orelse AnyBlob{ .Blob = .{} },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 
@@ -849,7 +850,7 @@ pub const Value = union(Tag) {
             .InternalBlob => .{ .InternalBlob = this.InternalBlob },
             .WTFStringImpl => .{ .WTFStringImpl = this.WTFStringImpl },
             // .InlineBlob => .{ .InlineBlob = this.InlineBlob },
-            .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .Blob = .{} },
+            .Locked => this.Locked.toAnyBlobAllowPromise(.strong) orelse AnyBlob{ .Blob = .{} },
             else => .{ .Blob = Blob.initEmpty(undefined) },
         };
 
@@ -881,7 +882,7 @@ pub const Value = union(Tag) {
 
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
             // Avoid creating unnecessary duplicate JSValue.
-            if (strong_readable.get(global)) |readable| {
+            if (strong_readable.get(.strong, global)) |readable| {
                 if (readable.ptr == .Bytes) {
                     readable.ptr.Bytes.onData(
                         .{ .err = this.Error.toStreamError(global) },
@@ -914,7 +915,7 @@ pub const Value = union(Tag) {
             if (!this.Locked.deinit) {
                 this.Locked.deinit = true;
                 this.Locked.readable.deinit();
-                this.Locked.readable = .{};
+                this.Locked.readable = .empty;
             }
 
             return;
@@ -943,19 +944,19 @@ pub const Value = union(Tag) {
     pub fn tee(this: *Value, globalThis: *jsc.JSGlobalObject) bun.JSError!Value {
         var locked = &this.Locked;
 
-        if (locked.readable.isDisturbed(globalThis)) {
+        if (locked.readable.isDisturbed(.strong, globalThis)) {
             return Value{ .Used = {} };
         }
 
-        if (try locked.readable.tee(globalThis)) |readable| {
+        if (try locked.readable.tee(.{ .strong = {} }, globalThis)) |readable| {
             return Value{
                 .Locked = .{
-                    .readable = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis),
+                    .readable = .{ .strong = jsc.WebCore.ReadableStream.Strong.init(readable.@"0", globalThis) },
                     .global = globalThis,
                 },
             };
         }
-        if (locked.promise != null or locked.action != .none or locked.readable.has()) {
+        if (locked.promise != null or locked.action != .none or locked.readable.has(.strong, globalThis)) {
             return Value{ .Used = {} };
         }
 
@@ -988,27 +989,30 @@ pub const Value = union(Tag) {
             reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.owned.size_hint));
         }
 
-        locked.readable = jsc.WebCore.ReadableStream.Strong.init(.{
+        const stream_value = try reader.toReadableStream(globalThis);
+        const stream = jsc.WebCore.ReadableStream{
             .ptr = .{ .Bytes = &reader.context },
-            .value = try reader.toReadableStream(globalThis),
-        }, globalThis);
+            .value = stream_value,
+        };
+        locked.readable = .{ .strong = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis) };
 
         if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-            onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(globalThis).?);
+            onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(.{ .strong = {} }, globalThis).?);
         }
 
-        const teed = (try locked.readable.tee(globalThis)) orelse return Value{ .Used = {} };
+        const first, const second = (try locked.readable.tee(.strong, globalThis)) orelse return Value{ .Used = {} };
+        locked.readable = .{ .strong = .init(first, globalThis) };
 
         return Value{
             .Locked = .{
-                .readable = jsc.WebCore.ReadableStream.Strong.init(teed, globalThis),
+                .readable = .{ .strong = .init(second, globalThis) },
                 .global = globalThis,
             },
         };
     }
 
     pub fn clone(this: *Value, globalThis: *jsc.JSGlobalObject) bun.JSError!Value {
-        this.toBlobIfPossible();
+        this.toBlobIfPossible(.empty);
 
         if (this.* == .Locked) {
             return this.tee(globalThis);
@@ -1062,18 +1066,29 @@ pub fn extract(
 
 pub fn Mixin(comptime Type: type) type {
     return struct {
+        inline fn getOwner(this_value: JSValue) jsc.WebCore.ReadableStream.Ref.Owner {
+            if (Type == jsc.WebCore.Request) {
+                return .{ .Request = this_value };
+            } else if (Type == jsc.WebCore.Response) {
+                return .{ .Response = this_value };
+            } else {
+                @compileError("Mixin only supports Request or Response types");
+            }
+        }
+
         pub fn getText(this: *Type, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            const owner = getOwner(callframe.this());
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(owner, globalObject)) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
-                return value.Locked.setPromise(globalObject, .{ .getText = {} });
+                return value.Locked.setPromise(owner, globalObject, .{ .getText = {} });
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
@@ -1081,16 +1096,20 @@ pub fn Mixin(comptime Type: type) type {
         }
 
         pub fn getBody(this: *Type, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
+            const this_value = if (Type == jsc.WebCore.Response) this.this_jsvalue.tryGet() orelse JSValue.zero else JSValue.zero; // TODO: get Request jsvalue
+            const owner = if (this_value != .zero) getOwner(this_value) else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
             var body: *Body.Value = this.getBodyValue();
 
             if (body.* == .Used) {
                 return jsc.WebCore.ReadableStream.used(globalThis);
             }
 
-            return body.toReadableStream(globalThis);
+            return body.toReadableStream(owner, globalThis);
         }
 
         pub fn getBodyUsed(this: *Type, globalObject: *jsc.JSGlobalObject) JSValue {
+            const this_value = if (Type == jsc.WebCore.Response) this.this_jsvalue.tryGet() orelse JSValue.zero else JSValue.zero; // TODO: get Request jsvalue
+            const owner = if (this_value != .zero) getOwner(this_value) else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
             return JSValue.jsBoolean(
                 switch (this.getBodyValue().*) {
                     .Used => true,
@@ -1099,7 +1118,7 @@ pub fn Mixin(comptime Type: type) type {
                             break :brk true;
                         }
 
-                        if (pending.readable.get(globalObject)) |*stream| {
+                        if (pending.readable.get(owner, globalObject)) |*stream| {
                             break :brk stream.isDisturbed(globalObject);
                         }
 
@@ -1119,19 +1138,20 @@ pub fn Mixin(comptime Type: type) type {
         }
 
         pub fn getJSON(this: *Type, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            const owner = getOwner(callframe.this());
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(owner, globalObject)) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
-                value.toBlobIfPossible();
+                value.toBlobIfPossible(owner);
                 if (value.* == .Locked) {
-                    return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
+                    return value.Locked.setPromise(owner, globalObject, .{ .getJSON = {} });
                 }
             }
 
@@ -1145,6 +1165,7 @@ pub fn Mixin(comptime Type: type) type {
         }
 
         pub fn getArrayBuffer(this: *Type, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            const owner = getOwner(callframe.this());
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1152,13 +1173,13 @@ pub fn Mixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(owner, globalObject)) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                value.toBlobIfPossible();
+                value.toBlobIfPossible(owner);
 
                 if (value.* == .Locked) {
-                    return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
+                    return value.Locked.setPromise(owner, globalObject, .{ .getArrayBuffer = {} });
                 }
             }
 
@@ -1169,6 +1190,7 @@ pub fn Mixin(comptime Type: type) type {
         }
 
         pub fn getBytes(this: *Type, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            const owner = getOwner(callframe.this());
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1176,12 +1198,12 @@ pub fn Mixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(owner, globalObject)) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                value.toBlobIfPossible();
+                value.toBlobIfPossible(owner);
                 if (value.* == .Locked) {
-                    return value.Locked.setPromise(globalObject, .{ .getBytes = {} });
+                    return value.Locked.setPromise(owner, globalObject, .{ .getBytes = {} });
                 }
             }
 
@@ -1191,6 +1213,7 @@ pub fn Mixin(comptime Type: type) type {
         }
 
         pub fn getFormData(this: *Type, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+            const owner = getOwner(callframe.this());
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1198,10 +1221,10 @@ pub fn Mixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(owner, globalObject)) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
-                value.toBlobIfPossible();
+                value.toBlobIfPossible(owner);
             }
 
             var encoder = (try this.getFormDataEncoding()) orelse {
@@ -1210,7 +1233,7 @@ pub fn Mixin(comptime Type: type) type {
             };
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalObject, .{ .getFormData = encoder });
+                return value.Locked.setPromise(owner, globalObject, .{ .getFormData = encoder });
             }
 
             var blob: AnyBlob = value.useAsAnyBlob();
@@ -1242,6 +1265,7 @@ pub fn Mixin(comptime Type: type) type {
         }
 
         pub fn getBlobWithThisValue(this: *Type, globalObject: *jsc.JSGlobalObject, this_value: JSValue) bun.JSError!jsc.JSValue {
+            const owner = if (this_value != .zero) getOwner(this_value) else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1249,17 +1273,14 @@ pub fn Mixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.action != .none or
-                    ((this_value != .zero and value.Locked.isDisturbed(Type, globalObject, this_value)) or
-                        (this_value == .zero and value.Locked.readable.isDisturbed(globalObject))))
-                {
+                if (value.Locked.action != .none or value.Locked.isDisturbed(owner, globalObject)) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
-                value.toBlobIfPossible();
+                value.toBlobIfPossible(owner);
 
                 if (value.* == .Locked) {
-                    return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
+                    return value.Locked.setPromise(owner, globalObject, .{ .getBlob = {} });
                 }
             }
 
@@ -1307,7 +1328,7 @@ pub const ValueBufferer = struct {
     js_sink: ?*ArrayBufferSink.JSSink = null,
     byte_stream: ?*jsc.WebCore.ByteStream = null,
     // readable stream strong ref to keep byte stream alive
-    readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
+    readable_stream_ref: jsc.WebCore.ReadableStream.Ref = .{ .empty = {} },
     stream_buffer: bun.MutableString,
     allocator: std.mem.Allocator,
     global: *JSGlobalObject,
@@ -1349,7 +1370,7 @@ pub const ValueBufferer = struct {
     }
 
     pub fn run(sink: *@This(), value: *jsc.WebCore.Body.Value) !void {
-        value.toBlobIfPossible();
+        value.toBlobIfPossible(.{ .empty = {} });
 
         switch (value.*) {
             .Used => {
@@ -1542,7 +1563,7 @@ pub const ValueBufferer = struct {
     fn bufferLockedBodyValue(sink: *@This(), value: *jsc.WebCore.Body.Value) !void {
         assert(value.* == .Locked);
         const locked = &value.Locked;
-        if (locked.readable.get(.strong, .js_undefined, sink.global)) |stream| {
+        if (locked.readable.get(.{ .empty = {} }, sink.global)) |stream| {
             // keep the stream alive until we're done with it
             sink.readable_stream_ref = locked.readable;
             value.* = .{ .Used = {} };
@@ -1589,7 +1610,7 @@ pub const ValueBufferer = struct {
 
         if (locked.onReceiveValue != null or locked.task != null) {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
-            const readable = try value.toReadableStream(sink.global);
+            const readable = try value.toReadableStream(.empty, sink.global);
             readable.ensureStillAlive();
             readable.protect();
             return try sink.bufferLockedBodyValue(value);
@@ -1608,7 +1629,7 @@ pub const ValueBufferer = struct {
                 return;
             },
             else => {
-                value.toBlobIfPossible();
+                value.toBlobIfPossible(.{ .empty = {} });
                 var input = value.useAsAnyBlobAllowNonUTF8String();
                 const bytes = input.slice();
                 log("onReceiveValue {}", .{bytes.len});

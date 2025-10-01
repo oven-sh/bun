@@ -59,7 +59,8 @@ pub fn memoryCost(this: *const FileRoute) usize {
 
 pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSError!?*FileRoute {
     if (argument.as(jsc.WebCore.Response)) |response| {
-        response.body.value.toBlobIfPossible();
+        const owner = if (response.this_jsvalue.tryGet()) |jsval| jsc.WebCore.ReadableStream.Ref.Owner{ .Response = jsval } else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
+        response.body.value.toBlobIfPossible(owner);
         if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
             if (response.body.value.Blob.store.?.data.file.pathlike == .fd) {
                 return globalThis.throwTODO("Support serving files from a file descriptor. Please pass a path instead.");

@@ -112,7 +112,7 @@ pub const Ref = union(Type) {
         return false;
     }
 
-    pub fn toAnyBlob(this: *const Ref, owner: Owner, global: *jsc.JSGlobalObject) ?Blob.Any {
+    pub fn toAnyBlob(this: *Ref, owner: Owner, global: *jsc.JSGlobalObject) ?Blob.Any {
         var value = get(this, owner, global) orelse return null;
 
         if (value.toAnyBlob(global)) |blob| {

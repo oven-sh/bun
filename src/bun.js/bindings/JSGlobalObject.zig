@@ -899,10 +899,11 @@ pub const JSGlobalObject = opaque {
         }
 
         // We're done validating. From now on, deal with extracting the body.
-        body.toBlobIfPossible();
+        const owner = jsc.WebCore.ReadableStream.Ref.Owner{ .Response = response_value };
+        body.toBlobIfPossible(owner);
 
         var any_blob = switch (body.*) {
-            .Locked => body.tryUseAsAnyBlob() orelse return body.toReadableStream(.Response, response_value, this),
+            .Locked => body.tryUseAsAnyBlob(owner) orelse return body.toReadableStream(owner, this),
             else => body.useAsAnyBlob(),
         };
 

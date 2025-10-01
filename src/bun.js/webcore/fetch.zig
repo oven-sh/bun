@@ -185,20 +185,22 @@ pub const FetchTasklet = struct {
         pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!HTTPRequestBody {
             var body_value = try Body.Value.fromJS(globalThis, value);
             defer body_value.deinit();
-            if (body_value == .Used or (body_value == .Locked and (body_value.Locked.action != .none or body_value.Locked.isDisturbed(void, globalThis, .js_undefined)))) {
+            if (body_value == .Used or (body_value == .Locked and (body_value.Locked.action != .none or body_value.Locked.isDisturbed(.empty, globalThis)))) {
                 return globalThis.ERR(.BODY_ALREADY_USED, "body already used", .{}).throw();
             }
             if (body_value == .Locked) {
                 if (body_value.Locked.readable == .strong) {
                     // just grab the ref
 
-                    defer body_value.Locked.readable = .{ .empty = {} };
+                    defer body_value.Locked.readable = .empty;
                     return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable.strong };
                 }
 
-                const readable = try body_value.toReadableStream(globalThis);
-                if (!readable.isEmptyOrUndefinedOrNull() and body_value == .Locked and body_value.Locked.readable.has()) {
-                    return FetchTasklet.HTTPRequestBody{ .ReadableStream = .init(body_value.Locked.readable, globalThis) };
+                const readable = try body_value.toReadableStream(.empty, globalThis);
+                if (!readable.isEmptyOrUndefinedOrNull() and body_value == .Locked and body_value.Locked.readable.has(.empty, globalThis)) {
+                    if (body_value.Locked.readable.get(.empty, globalThis)) |stream| {
+                        return FetchTasklet.HTTPRequestBody{ .ReadableStream = .init(stream, globalThis) };
+                    }
                 }
             }
             return FetchTasklet.HTTPRequestBody{ .AnyBlob = body_value.useAsAnyBlob() };
@@ -451,7 +453,8 @@ pub const FetchTasklet = struct {
         if (this.getCurrentResponse()) |response| {
             var body = &response.body;
             if (body.value == .Locked) {
-                if (body.value.Locked.readable.get(globalThis)) |readable| {
+                const response_js = response.this_jsvalue.tryGet() orelse .zero;
+                if (body.value.Locked.readable.get(if (response_js != .zero) .{ .Response = response_js } else .{ .empty = {} }, globalThis)) |readable| {
                     if (readable.ptr == .Bytes) {
                         readable.ptr.Bytes.size_hint = this.getSizeHint();
 
@@ -468,7 +471,7 @@ pub const FetchTasklet = struct {
                             );
                         } else {
                             var prev = body.value.Locked.readable;
-                            body.value.Locked.readable = .{};
+                            body.value.Locked.readable = .{ .empty = {} };
                             readable.value.ensureStillAlive();
                             prev.deinit();
                             readable.value.ensureStillAlive();
@@ -2089,7 +2092,7 @@ pub fn Bun__fetch_(
         if (options_object) |options| {
             if (try options.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
-                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, .empty, .js_undefined, body__);
+                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
                 }
             }
 
@@ -2100,17 +2103,17 @@ pub fn Bun__fetch_(
         }
 
         if (request) |req| {
-            if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(.Request, globalThis, first_arg)))) {
+            if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(.{ .Request = first_arg }, globalThis)))) {
                 return globalThis.ERR(.BODY_ALREADY_USED, "Request body already used", .{}).throw();
             }
 
             if (req.body.value == .Locked) {
-                if (req.body.value.Locked.readable.has(.Request, first_arg, globalThis)) {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
+                if (req.body.value.Locked.readable.has(.{ .Request = first_arg }, globalThis)) {
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(.{ .Request = first_arg }, globalThis).?, globalThis) };
                 }
-                const readable = try req.body.value.toReadableStream(globalThis);
-                if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has(.Request, first_arg, globalThis)) {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
+                const readable = try req.body.value.toReadableStream(.{ .Request = first_arg }, globalThis);
+                if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has(.{ .Request = first_arg }, globalThis)) {
+                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(.{ .Request = first_arg }, globalThis).?, globalThis) };
                 }
             }
 
@@ -2120,7 +2123,7 @@ pub fn Bun__fetch_(
         if (request_init_object) |req| {
             if (try req.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
-                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, .Request, request_init_object, body__);
+                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(globalThis, body__);
                 }
             }
         }

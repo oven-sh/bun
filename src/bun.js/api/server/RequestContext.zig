@@ -680,7 +680,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                 if (this.response_ptr) |response| {
                     if (response.body.value == .Locked) {
-                        if (response.body.value.Locked.readable.abort(.Response, response_jsvalue, globalThis)) {
+                        if (response.body.value.Locked.readable.abort(.{ .Response = response_jsvalue }, globalThis)) {
                             any_js_calls = true;
                         }
                     }
@@ -1214,7 +1214,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             // TODO: should this timeout?
                             this.response_ptr.?.body.value = .{
                                 .Locked = .{
-                                    .readable = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis),
+                                    .readable = .{ .strong = .init(stream, globalThis) },
                                     .global = globalThis,
                                 },
                             };
@@ -1452,7 +1452,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
             }
             // not content-length or transfer-encoding so we need to respect the body
-            response.body.value.toBlobIfPossible();
+            const owner = if (response.this_jsvalue.tryGet()) |jsval| jsc.WebCore.ReadableStream.Ref.Owner{ .Response = jsval } else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
+            response.body.value.toBlobIfPossible(owner);
             switch (response.body.value) {
                 .InternalBlob, .WTFStringImpl => {
                     var blob = response.body.value.useAsAnyBlobAllowNonUTF8String();
@@ -1557,7 +1558,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     }
                     return;
                 } else {
-                    response.body.value.toBlobIfPossible();
+                    const owner = if (response.this_jsvalue.tryGet()) |jsval| jsc.WebCore.ReadableStream.Ref.Owner{ .Response = jsval } else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
+                    response.body.value.toBlobIfPossible(owner);
 
                     switch (response.body.value) {
                         .Blob => |*blob| {
@@ -1616,7 +1618,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             }
                             return;
                         }
-                        response.body.value.toBlobIfPossible();
+                        const owner = if (response.this_jsvalue.tryGet()) |jsval| jsc.WebCore.ReadableStream.Ref.Owner{ .Response = jsval } else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
+                        response.body.value.toBlobIfPossible(owner);
                         switch (response.body.value) {
                             .Blob => |*blob| {
                                 if (blob.needsToReadFile()) {
@@ -1661,7 +1664,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (resp.body.value == .Locked) {
                     const global = resp.body.value.Locked.global;
                     if (resp.this_jsvalue.tryGet()) |value| {
-                        resp.body.value.Locked.readable.done(.Response, value, global);
+                        resp.body.value.Locked.readable.done(.{ .Response = value }, global);
                     } else {
                         resp.body.value.Locked.readable.deinit();
                     }
@@ -1715,7 +1718,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (req.response_ptr) |resp| {
                 if (resp.body.value == .Locked) {
                     if (resp.this_jsvalue.tryGet()) |value| {
-                        resp.body.value.Locked.readable.done(.Response, value, globalThis);
+                        resp.body.value.Locked.readable.done(.{ .Response = value }, globalThis);
                     } else {
                         resp.body.value.Locked.readable.deinit();
                     }
@@ -1801,7 +1804,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             // If a ReadableStream can trivially be converted to a Blob, do so.
             // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
-            value.toBlobIfPossible();
+            value.toBlobIfPossible(.{ .empty = {} });
             const globalThis = this.server.?.globalThis;
             switch (value.*) {
                 .Error => |*err_ref| {
@@ -1827,11 +1830,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     }
 
-                    if (lock.readable.get(.Response, this.response_jsvalue, globalThis)) |stream_| {
+                    if (lock.readable.get(.{ .Response = this.response_jsvalue }, globalThis)) |stream_| {
                         const stream: jsc.WebCore.ReadableStream = stream_;
                         {
                             var old = this.readable_stream_ref;
-                            this.readable_stream_ref = .init(lock.readable, globalThis);
+                            this.readable_stream_ref = .init(stream, globalThis);
                             old.deinit();
                             value.* = .{ .Used = {} };
                         }
@@ -1913,7 +1916,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                     if (lock.onReceiveValue != null or lock.task != null) {
                         // someone else is waiting for the stream or waiting for `onStartStreaming`
-                        const readable = value.toReadableStream(.Response, this.response_jsvalue, globalThis) catch return; // TODO: properly propagate exception upwards
+                        const readable = value.toReadableStream(.{ .Response = this.response_jsvalue }, globalThis) catch return;
                         readable.ensureStillAlive();
                         this.doRenderWithBody(value);
                         return;
@@ -2168,7 +2171,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     ctx.flags.response_protected = false;
                     ctx.response_ptr = response;
 
-                    response.body.value.toBlobIfPossible();
+                    const owner = if (response.this_jsvalue.tryGet()) |jsval| jsc.WebCore.ReadableStream.Ref.Owner{ .Response = jsval } else jsc.WebCore.ReadableStream.Ref.Owner{ .empty = {} };
+                    response.body.value.toBlobIfPossible(owner);
                     switch (response.body.value) {
                         .Blob => |*blob| {
                             if (blob.needsToReadFile()) {
@@ -2498,7 +2502,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn onRequestBodyReadableStreamAvailable(ptr: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
             var this = bun.cast(*RequestContext, ptr);
             bun.debugAssert(this.request_body_readable_stream_ref.held.impl == null);
-            this.request_body_readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
+            this.request_body_readable_stream_ref = .init(readable, globalThis);
         }
 
         pub fn onStartBufferingCallback(this: *anyopaque) void {

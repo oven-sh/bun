@@ -199,7 +199,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         .zero => "Request",
         else => "BunRequest",
     };
-    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(), .{}) });
+    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(.{ .empty = {} }), .{}) });
     {
         formatter.indent += 1;
         defer formatter.indent -|= 1;
@@ -238,7 +238,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         } else if (this.body.value == .InternalBlob or this.body.value == .WTFStringImpl) {
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
-            const size = this.body.value.size();
+            const size = this.body.value.size(.empty);
             if (size == 0) {
                 var empty = Blob.initEmpty(undefined);
                 try empty.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
@@ -246,7 +246,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
                 try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
             }
         } else if (this.body.value == .Locked) {
-            if (this.body.value.Locked.readable.get(this.body.value.Locked.global)) |stream| {
+            if (this.body.value.Locked.readable.get(.strong, this.body.value.Locked.global)) |stream| {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -800,13 +800,14 @@ pub fn doClone(
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
         if (cloned.body.value == .Locked) {
-            if (cloned.body.value.Locked.readable.get(globalThis)) |readable| {
+            if (cloned.body.value.Locked.readable.get(.{ .Request = js_wrapper }, globalThis)) |readable| {
                 // If we are teed, then we need to update the cached .body
                 // value to point to the new readable stream
                 // We must do this on both the original and cloned request
                 // but especially the original request since it will have a stale .body value now.
                 js.bodySetCached(js_wrapper, globalThis, readable.value);
-                if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
+                const this_js = this.toJS(globalThis);
+                if (this.body.value.Locked.readable.get(.{ .Request = this_js }, globalThis)) |other_readable| {
                     js.bodySetCached(this_value, globalThis, other_readable.value);
                 }
             }
@@ -854,7 +855,7 @@ pub fn ensureFetchHeaders(
         this._headers = FetchHeaders.createEmpty();
         const content_type = switch (this.body.value) {
             .Blob => |blob| blob.content_type,
-            .Locked => |locked| if (locked.readable.get(globalThis)) |*readable| switch (readable.ptr) {
+            .Locked => |locked| if (locked.readable.get(.{ .empty = {} }, globalThis)) |*readable| switch (readable.ptr) {
                 .Blob => |blob| blob.content_type,
                 else => null,
             } else null,

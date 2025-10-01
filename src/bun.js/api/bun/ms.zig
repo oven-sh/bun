@@ -4,20 +4,6 @@ const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const JSGlobalObject = jsc.JSGlobalObject;
 
-const ns_per_ms = std.time.ns_per_ms;
-const ns_per_s = std.time.ns_per_s;
-const ns_per_min = std.time.ns_per_min;
-const ns_per_hour = std.time.ns_per_hour;
-const ns_per_day = std.time.ns_per_day;
-const ns_per_week = std.time.ns_per_week;
-
-const MS_PER_SECOND = @as(f64, ns_per_s) / @as(f64, ns_per_ms);
-const MS_PER_MINUTE = @as(f64, ns_per_min) / @as(f64, ns_per_ms);
-const MS_PER_HOUR = @as(f64, ns_per_hour) / @as(f64, ns_per_ms);
-const MS_PER_DAY = @as(f64, ns_per_day) / @as(f64, ns_per_ms);
-const MS_PER_WEEK = @as(f64, ns_per_week) / @as(f64, ns_per_ms);
-const MS_PER_YEAR = MS_PER_DAY * 365.25;
-
 /// Parse a time string like "2d", "1.5h", "5m" to milliseconds
 pub fn parse(input: []const u8) ?f64 {
     if (input.len == 0 or input.len > 100) return null;
@@ -78,26 +64,26 @@ pub fn parse(input: []const u8) ?f64 {
 }
 
 fn getMultiplier(unit: []const u8) ?f64 {
-    // Years
+    // Years (365.25 days to account for leap years)
     if (std.ascii.eqlIgnoreCase(unit, "years") or std.ascii.eqlIgnoreCase(unit, "year") or
         std.ascii.eqlIgnoreCase(unit, "yrs") or std.ascii.eqlIgnoreCase(unit, "yr") or
         std.ascii.eqlIgnoreCase(unit, "y"))
     {
-        return MS_PER_YEAR;
+        return std.time.ms_per_day * 365.25;
     }
 
     // Weeks
     if (std.ascii.eqlIgnoreCase(unit, "weeks") or std.ascii.eqlIgnoreCase(unit, "week") or
         std.ascii.eqlIgnoreCase(unit, "w"))
     {
-        return MS_PER_WEEK;
+        return std.time.ms_per_week;
     }
 
     // Days
     if (std.ascii.eqlIgnoreCase(unit, "days") or std.ascii.eqlIgnoreCase(unit, "day") or
         std.ascii.eqlIgnoreCase(unit, "d"))
     {
-        return MS_PER_DAY;
+        return std.time.ms_per_day;
     }
 
     // Hours
@@ -105,7 +91,7 @@ fn getMultiplier(unit: []const u8) ?f64 {
         std.ascii.eqlIgnoreCase(unit, "hrs") or std.ascii.eqlIgnoreCase(unit, "hr") or
         std.ascii.eqlIgnoreCase(unit, "h"))
     {
-        return MS_PER_HOUR;
+        return std.time.ms_per_hour;
     }
 
     // Minutes
@@ -113,7 +99,7 @@ fn getMultiplier(unit: []const u8) ?f64 {
         std.ascii.eqlIgnoreCase(unit, "mins") or std.ascii.eqlIgnoreCase(unit, "min") or
         std.ascii.eqlIgnoreCase(unit, "m"))
     {
-        return MS_PER_MINUTE;
+        return std.time.ms_per_min;
     }
 
     // Seconds
@@ -121,7 +107,7 @@ fn getMultiplier(unit: []const u8) ?f64 {
         std.ascii.eqlIgnoreCase(unit, "secs") or std.ascii.eqlIgnoreCase(unit, "sec") or
         std.ascii.eqlIgnoreCase(unit, "s"))
     {
-        return MS_PER_SECOND;
+        return std.time.ms_per_s;
     }
 
     // Milliseconds
@@ -140,41 +126,41 @@ fn getMultiplier(unit: []const u8) ?f64 {
 pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
     const abs_ms = @abs(ms);
 
-    if (abs_ms >= MS_PER_DAY) {
-        const days = @round(ms / MS_PER_DAY);
+    if (abs_ms >= std.time.ms_per_day) {
+        const days = @round(ms / std.time.ms_per_day);
         const days_int = @as(i64, @intFromFloat(days));
         if (long) {
-            const plural = abs_ms >= MS_PER_DAY * 1.5;
+            const plural = abs_ms >= std.time.ms_per_day * 1.5;
             return std.fmt.allocPrint(allocator, "{d} day{s}", .{ days_int, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}d", .{days_int});
     }
 
-    if (abs_ms >= MS_PER_HOUR) {
-        const hours = @round(ms / MS_PER_HOUR);
+    if (abs_ms >= std.time.ms_per_hour) {
+        const hours = @round(ms / std.time.ms_per_hour);
         const hours_int = @as(i64, @intFromFloat(hours));
         if (long) {
-            const plural = abs_ms >= MS_PER_HOUR * 1.5;
+            const plural = abs_ms >= std.time.ms_per_hour * 1.5;
             return std.fmt.allocPrint(allocator, "{d} hour{s}", .{ hours_int, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}h", .{hours_int});
     }
 
-    if (abs_ms >= MS_PER_MINUTE) {
-        const minutes = @round(ms / MS_PER_MINUTE);
+    if (abs_ms >= std.time.ms_per_min) {
+        const minutes = @round(ms / std.time.ms_per_min);
         const minutes_int = @as(i64, @intFromFloat(minutes));
         if (long) {
-            const plural = abs_ms >= MS_PER_MINUTE * 1.5;
+            const plural = abs_ms >= std.time.ms_per_min * 1.5;
             return std.fmt.allocPrint(allocator, "{d} minute{s}", .{ minutes_int, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}m", .{minutes_int});
     }
 
-    if (abs_ms >= MS_PER_SECOND) {
-        const seconds = @round(ms / MS_PER_SECOND);
+    if (abs_ms >= std.time.ms_per_s) {
+        const seconds = @round(ms / std.time.ms_per_s);
         const seconds_int = @as(i64, @intFromFloat(seconds));
         if (long) {
-            const plural = abs_ms >= MS_PER_SECOND * 1.5;
+            const plural = abs_ms >= std.time.ms_per_s * 1.5;
             return std.fmt.allocPrint(allocator, "{d} second{s}", .{ seconds_int, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}s", .{seconds_int});

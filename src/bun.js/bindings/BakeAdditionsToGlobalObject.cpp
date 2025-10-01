@@ -27,7 +27,7 @@ extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObje
     auto& vm = globalObject->vm();
 
     auto* zig = jsCast<Zig::GlobalObject*>(globalObject);
-    auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_DevServerFrameworkRequestArgsClassStructure.get(zig));
+    auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_FrameworkRequestArgsClassStructure.get(zig));
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     object->putDirectOffset(vm, 0, JSValue::decode(routerTypeMain));

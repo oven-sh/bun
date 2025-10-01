@@ -1,10 +1,17 @@
 import type { Framework } from "bun:app";
 
 function resolve(specifier: string) {
-  return require.resolve(specifier);
+  return Bun.fileURLToPath(import.meta.resolve(specifier));
 }
 
 const framework: Framework = {
+  serverComponents: {
+    separateSSRGraph: true,
+    serverRuntimeImportSource: resolve("./vendor/react-server-dom-bun/server.node.js"),
+  },
+  reactFastRefresh: {
+    importSource: resolve("react-refresh/runtime"),
+  },
   fileSystemRouterTypes: [
     {
       root: "pages",
@@ -18,19 +25,11 @@ const framework: Framework = {
       ignoreDirs: ["node_modules", ".git"],
     },
   ],
-  serverComponents: {
-    separateSSRGraph: true,
-    serverRegisterClientReferenceExport: "registerClientReference",
-    serverRuntimeImportSource: resolve("./vendor/react-server-dom-bun/server.node.unbundled.js"),
-  },
-  reactFastRefresh: {
-    importSource: resolve("react-refresh/runtime"),
-  },
-  bundlerOptions: {
-    ssr: {
-      conditions: ["react-server"],
-    },
-  },
+  // bundlerOptions: {
+  //   ssr: {
+  //     conditions: ["react-server"],
+  //   },
+  // },
 };
 
 export default framework;

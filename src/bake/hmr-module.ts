@@ -30,7 +30,7 @@ export const serverManifest: ServerManifest = {};
 export const ssrManifest: SSRManifest = {};
 /** Client */
 export let onServerSideReload: (() => Promise<void> | void) | null = null;
-const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};
+const eventHandlers: Record<Bun.HMREvent | string, HotEventHandler[] | undefined> = {};
 let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
@@ -954,14 +954,6 @@ declare global {
     asyncId?: string;
   }
 }
-
-// bun:app, bun:app/server, bun:app/client, and bun:wrap are provided by this
-// file instead of the bundler
-
-// registerSynthetic("bun:app", {
-//   // `bun:app` exports types only, but we don't declare it so we don't throw a
-//   // not found error if the user does a normal, non-type-only import
-// });
 
 registerSynthetic("bun:wrap", {
   __name,

@@ -175,6 +175,9 @@ JSFinalObject* createEmptyRouteInfoObject(JSC::VM& vm, JSC::JSGlobalObject* glob
 class BakeProductionSSRRouteList final : public JSC::JSDestructibleObject {
 private:
     WTF::FixedVector<WriteBarrier<JSC::JSFinalObject>> m_routeInfos;
+    // Two things to note:
+    // 1. JSC imposes an upper bound of 64 properties
+    // 2. We can't mix and match keys and indices (user can't make a route param that is named as a number)
     WTF::FixedVector<WriteBarrier<Structure>> m_paramsObjectStructures;
 
 public:
@@ -218,6 +221,22 @@ public:
         return m_routeInfos[index].get();
     }
 
+    Structure* routeParamsStructure(size_t index) const
+    {
+        return m_paramsObjectStructures[index].get();
+    }
+
+    Structure* createRouteParamsStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<BunString> identifiers)
+    {
+        auto structure = JSC::Structure::create(vm, globalObject, globalObject->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, 0), JSFinalObject::info(), NonArray, identifiers.size());
+        PropertyOffset offset = 0;
+        for (const auto& identifier : identifiers) {
+            structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, identifier.toWTFString()), 0, offset);
+        }
+        this->m_paramsObjectStructures[index].set(vm, this, structure);
+        return structure;
+    }
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
@@ -245,7 +264,7 @@ void BakeProductionSSRRouteList::visitChildrenImpl(JSCell* cell, Visitor& visito
 
     for (unsigned i = 0; i < thisCallSite->m_routeInfos.size(); i++) {
         if (thisCallSite->m_routeInfos[i]) visitor.append(thisCallSite->m_routeInfos[i]);
-        // if (thisCallSite->m_paramsObjectStructures[i]) visitor.append(thisCallSite->m_paramsObjectStructures[i]);
+        if (thisCallSite->m_paramsObjectStructures[i]) visitor.append(thisCallSite->m_paramsObjectStructures[i]);
     }
 }
 DEFINE_VISIT_CHILDREN(BakeProductionSSRRouteList);
@@ -254,6 +273,24 @@ extern "C" JSC::EncodedJSValue Bun__BakeProductionSSRRouteList__create(Zig::Glob
 {
     auto* routeList = BakeProductionSSRRouteList::create(globalObject->vm(), globalObject, routeCount);
     return JSValue::encode(routeList);
+}
+
+extern "C" JSC::EncodedJSValue Bun__BakeProductionSSRRouteList__createRouteParamsStructure(Zig::GlobalObject* globalObject, EncodedJSValue routeListObject, size_t index, BunString* paramsInfo, size_t paramsCount)
+{
+    BakeProductionSSRRouteList* routeList = jsCast<BakeProductionSSRRouteList*>(JSValue::decode(routeListObject));
+    std::span<BunString> paramsInfoSpan(paramsInfo, paramsCount);
+    auto* structure = routeList->createRouteParamsStructure(globalObject->vm(), globalObject, index, paramsInfoSpan);
+    return JSValue::encode(structure);
+}
+
+extern "C" JSC::EncodedJSValue Bun__BakeProductionSSRRouteList__getRouteParamsStructure(Zig::GlobalObject* globalObject, EncodedJSValue routeListObject, size_t index)
+{
+    BakeProductionSSRRouteList* routeList = jsCast<BakeProductionSSRRouteList*>(JSValue::decode(routeListObject));
+    auto* structure = routeList->routeParamsStructure(index);
+    if (!structure) {
+        return JSValue::encode(jsUndefined());
+    }
+    return JSValue::encode(structure);
 }
 
 extern "C" JSC::EncodedJSValue Bun__BakeProductionSSRRouteList__getRouteInfo(Zig::GlobalObject* globalObject, EncodedJSValue routeListObject, size_t index)

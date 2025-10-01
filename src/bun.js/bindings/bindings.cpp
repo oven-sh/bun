@@ -2299,6 +2299,13 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     return JSC::JSValue::encode(result);
 }
 
+extern "C" SYSV_ABI JSC::EncodedJSValue JSC__JSObject__createWithStructure(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedStructureValue)
+{
+    JSC::JSValue structureValue = JSC::JSValue::decode(encodedStructureValue);
+    JSC::Structure* structure = JSC::jsCast<JSC::Structure*>(structureValue);
+    return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject->vm(), structure));
+}
+
 JSC::EncodedJSValue
 JSC__JSObject__create(JSC::JSGlobalObject* globalObject, size_t initialCapacity, void* arg2,
     void (*ArgFn3)(void* arg0, JSC::JSObject* arg1, JSC::JSGlobalObject* arg2))
@@ -3115,6 +3122,13 @@ CPP_DECL void JSC__JSValue__putIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
     JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
     JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
     array->putDirectIndex(arg1, arg2, value2);
+}
+CPP_DECL void JSC__JSValue__putDirectOffset(JSC::EncodedJSValue targetValue, JSC::JSGlobalObject* global, uint32_t offset, JSC::EncodedJSValue value)
+{
+    JSC::JSValue target = JSC::JSValue::decode(targetValue);
+    JSC::JSValue val = JSC::JSValue::decode(value);
+    JSC::JSObject* targetObject = JSC::jsCast<JSC::JSObject*>(target);
+    targetObject->putDirectOffset(global->vm(), offset, val);
 }
 
 CPP_DECL void JSC__JSValue__push(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue3)

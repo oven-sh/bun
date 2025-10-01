@@ -239,6 +239,36 @@ pub fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFra
 
 extern "C" fn Bake__getProdNewRouteParamsJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
 
+pub fn createParamsObject(
+    self: *Self,
+    global: *bun.jsc.JSGlobalObject,
+    route_index: bun.bake.FrameworkRouter.Route.Index,
+    params: *const bun.bake.FrameworkRouter.MatchedParams,
+) bun.JSError!bun.jsc.JSValue {
+    const params_structure = try SSRRouteList.getRouteParamsStructure(
+        global,
+        self.route_list.get(),
+        route_index.get(),
+    ) orelse params_structure: {
+        // MatchedParams enforces a limit of 64 parameters
+        var js_params: [64]bun.String = undefined;
+        var it = params.keyIterator();
+        var i: usize = 0;
+        while (it.next()) |key| {
+            js_params[i] = bun.String.init(key);
+            i += 1;
+        }
+        const params_structure = try SSRRouteList.createRouteParamsStructure(
+            global,
+            self.route_list.get(),
+            route_index.get(),
+            js_params[0..i],
+        );
+        break :params_structure params_structure;
+    };
+    return try params.toJSWithStructure(global, params_structure);
+}
+
 pub fn newRouteParams(
     self: *Self,
     global: *bun.jsc.JSGlobalObject,
@@ -259,7 +289,7 @@ pub fn newRouteParams(
     const router_type_index = framework_route.type.get();
 
     // Convert params to JSValue
-    const params_js = params.toJS(global);
+    const params_js = try self.createParamsObject(global, route_index, params);
 
     // Get the setAsyncLocalStorage function that properly sets up the AsyncLocalStorage instance
     const setAsyncLocalStorage = Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global);

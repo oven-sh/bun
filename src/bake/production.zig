@@ -109,18 +109,20 @@ pub fn buildCommand(ctx: bun.cli.Command.Context) !void {
     };
 }
 
-pub fn writeSourcemapToDisk(
+pub fn registerSourcemap(
     allocator: std.mem.Allocator,
+    root_dir: std.fs.Dir,
     file: *const OutputFile,
-    bundled_outputs: []const OutputFile,
+    bundled_outputs: []OutputFile,
     source_maps: *bun.StringArrayHashMapUnmanaged(OutputFile.Index),
+    write_to_dist: bool,
 ) !void {
     // don't call this if the file does not have sourcemaps!
     bun.assert(file.source_map_index != std.math.maxInt(u32));
 
     // TODO: should we just write the sourcemaps to disk?
     const source_map_index = file.source_map_index;
-    const source_map_file: *const OutputFile = &bundled_outputs[source_map_index];
+    const source_map_file: *OutputFile = &bundled_outputs[source_map_index];
     bun.assert(source_map_file.output_kind == .sourcemap);
 
     const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
@@ -134,6 +136,13 @@ pub fn writeSourcemapToDisk(
         try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
         OutputFile.Index.init(@intCast(source_map_index)),
     );
+
+    if (write_to_dist) {
+        source_map_file.writeToDisk(root_dir, ".") catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+        };
+    }
 }
 
 pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMachine, pt: *PerThread) !void {
@@ -427,7 +436,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 // `PerThread` so we can provide sourcemapped stacktraces for
                 // server components.
                 if (file.source_map_index != std.math.maxInt(u32)) {
-                    try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
+                    try registerSourcemap(allocator, root_dir, &file, bundled_outputs, &source_maps, true);
                 }
 
                 switch (file.output_kind) {
@@ -463,7 +472,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
         // TODO: should we just write the sourcemaps to disk?
         if (file.source_map_index != std.math.maxInt(u32)) {
-            try writeSourcemapToDisk(allocator, &file, bundled_outputs, &source_maps);
+            try registerSourcemap(allocator, root_dir, &file, bundled_outputs, &source_maps, true);
         }
     }
     // Write the runtime file to disk if there are any client chunks

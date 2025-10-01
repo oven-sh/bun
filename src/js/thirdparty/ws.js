@@ -262,12 +262,12 @@ class BunWebSocket extends EventEmitter {
       this.#ws.send(normalizeData(data, opts), opts?.compress);
     } catch (error) {
       // Node.js APIs expect callback arguments to be called after the current stack pops
-      typeof cb === "function" && process.nextTick(cb, error);
+      if (typeof cb === "function") process.nextTick(cb, error);
       return;
     }
     // deviation: this should be called once the data is written, not immediately
     // Node.js APIs expect callback arguments to be called after the current stack pops
-    typeof cb === "function" && process.nextTick(cb, null);
+    if (typeof cb === "function") process.nextTick(cb, null);
   }
 
   close(code, reason) {
@@ -393,7 +393,7 @@ class BunWebSocket extends EventEmitter {
       return;
     }
 
-    typeof cb === "function" && cb();
+    if (typeof cb === "function") cb();
   }
 
   pong(data, mask, cb) {
@@ -422,7 +422,7 @@ class BunWebSocket extends EventEmitter {
       return;
     }
 
-    typeof cb === "function" && cb();
+    if (typeof cb === "function") cb();
   }
 
   pause() {
@@ -792,7 +792,7 @@ class BunWebSocketMocked extends EventEmitter {
       this.#bufferedAmount -= chunk.length;
       this.#enquedMessages.shift();
 
-      typeof cb === "function" && queueMicrotask(cb);
+      if (typeof cb === "function") queueMicrotask(cb);
     }
   }
 
@@ -814,11 +814,11 @@ class BunWebSocketMocked extends EventEmitter {
     try {
       this.#ws.ping(data);
     } catch (error) {
-      typeof cb === "function" && cb(error);
+      if (typeof cb === "function") cb(error);
       return;
     }
 
-    typeof cb === "function" && cb();
+    if (typeof cb === "function") cb();
   }
 
   pong(data, mask, cb) {
@@ -839,11 +839,11 @@ class BunWebSocketMocked extends EventEmitter {
     try {
       this.#ws.pong(data);
     } catch (error) {
-      typeof cb === "function" && cb(error);
+      if (typeof cb === "function") cb(error);
       return;
     }
 
-    typeof cb === "function" && cb();
+    if (typeof cb === "function") cb();
   }
 
   send(data, opts, cb) {
@@ -868,7 +868,7 @@ class BunWebSocketMocked extends EventEmitter {
         return;
       }
 
-      typeof cb === "function" && process.nextTick(cb);
+      if (typeof cb === "function") process.nextTick(cb);
     } else if (this.#state === ReadyState_CONNECTING) {
       // not connected yet
       this.#enquedMessages.push([data, opts?.compress, cb]);

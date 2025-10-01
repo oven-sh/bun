@@ -34,7 +34,7 @@ export const values = {
 
   const output = await result.outputs[0].text();
   expect(output).toMatchInlineSnapshot(`
-    "// ../../tmp/ms-bundler_2IefkN/entry.ts
+    "// ../../tmp/ms-bundler_R3U5oN/entry.ts
     var values = {
       oneSecond: Bun.ms("1s"),
       oneMinute: Bun.ms("1m"),

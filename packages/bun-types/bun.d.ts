@@ -5209,9 +5209,7 @@ declare module "bun" {
   /**
    * Parse a time string and return milliseconds, or format milliseconds as a string.
    *
-   * Compatible with the `ms` npm package.
-   *
-   * When used with a string literal in bundled code, this is inlined at compile-time.
+   * Drop-in replacement for the `ms` npm package with compile-time inlining support.
    *
    * @example
    * ```ts
@@ -5220,17 +5218,98 @@ declare module "bun" {
    * Bun.ms("1m")      // 60000
    * Bun.ms("5s")      // 5000
    * Bun.ms("100ms")   // 100
+   * Bun.ms("1mo")     // 2629800000
    * Bun.ms("1y")      // 31557600000
    * Bun.ms("100")     // 100
    * Bun.ms(60000)     // "1m"
    * Bun.ms(60000, { long: true })  // "1 minute"
+   * Bun.ms("invalid") // NaN
    * ```
    *
-   * @param value - A string like "2d", "1h", "5m" or a number of milliseconds
-   * @param options - Options for formatting (only applies when value is a number)
-   * @returns milliseconds (if string input) or formatted string (if number input), or undefined if invalid string
+   * Supports these units:
+   * - `ms`, `millisecond`, `milliseconds`
+   * - `s`, `sec`, `second`, `seconds`
+   * - `m`, `min`, `minute`, `minutes`
+   * - `h`, `hr`, `hour`, `hours`
+   * - `d`, `day`, `days`
+   * - `w`, `week`, `weeks`
+   * - `mo`, `month`, `months`
+   * - `y`, `yr`, `year`, `years`
+   *
+   * @param value - Time string to parse or milliseconds to format
+   * @param options - Formatting options (when value is a number)
+   * @returns Milliseconds (for string) or formatted string (for number). Returns NaN for invalid strings.
    */
-  function ms(value: string): number | undefined;
+  function ms(
+    value:
+      | `${number}`
+      | `${number}${
+          | "ms"
+          | "s"
+          | "m"
+          | "h"
+          | "d"
+          | "w"
+          | "y"
+          | "millisecond"
+          | "milliseconds"
+          | "msec"
+          | "msecs"
+          | "second"
+          | "seconds"
+          | "sec"
+          | "secs"
+          | "minute"
+          | "minutes"
+          | "min"
+          | "mins"
+          | "hour"
+          | "hours"
+          | "hr"
+          | "hrs"
+          | "day"
+          | "days"
+          | "week"
+          | "weeks"
+          | "month"
+          | "months"
+          | "mo"
+          | "year"
+          | "years"
+          | "yr"
+          | "yrs"}`
+      | `${number} ${
+          | "ms"
+          | "millisecond"
+          | "milliseconds"
+          | "msec"
+          | "msecs"
+          | "second"
+          | "seconds"
+          | "sec"
+          | "secs"
+          | "minute"
+          | "minutes"
+          | "min"
+          | "mins"
+          | "hour"
+          | "hours"
+          | "hr"
+          | "hrs"
+          | "day"
+          | "days"
+          | "week"
+          | "weeks"
+          | "month"
+          | "months"
+          | "mo"
+          | "year"
+          | "years"
+          | "yr"
+          | "yrs"}`
+      | string,
+    options?: never,
+  ): number;
   function ms(value: number, options?: { long?: boolean }): string;
 
   /**

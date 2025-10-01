@@ -72,6 +72,13 @@ fn getMultiplier(unit: []const u8) ?f64 {
         return std.time.ms_per_day * 365.25;
     }
 
+    // Months (30.4375 days average)
+    if (std.ascii.eqlIgnoreCase(unit, "months") or std.ascii.eqlIgnoreCase(unit, "month") or
+        std.ascii.eqlIgnoreCase(unit, "mo"))
+    {
+        return std.time.ms_per_day * 30.4375;
+    }
+
     // Weeks
     if (std.ascii.eqlIgnoreCase(unit, "weeks") or std.ascii.eqlIgnoreCase(unit, "week") or
         std.ascii.eqlIgnoreCase(unit, "w"))
@@ -125,7 +132,43 @@ fn getMultiplier(unit: []const u8) ?f64 {
 /// Format milliseconds to a human-readable string
 pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
     const abs_ms = @abs(ms);
+    const ms_per_year = std.time.ms_per_day * 365.25;
+    const ms_per_month = std.time.ms_per_day * 30.4375;
 
+    // Years
+    if (abs_ms >= ms_per_year) {
+        const years = @round(ms / ms_per_year);
+        const years_int = @as(i64, @intFromFloat(years));
+        if (long) {
+            const plural = abs_ms >= ms_per_year * 1.5;
+            return std.fmt.allocPrint(allocator, "{d} year{s}", .{ years_int, if (plural) "s" else "" });
+        }
+        return std.fmt.allocPrint(allocator, "{d}y", .{years_int});
+    }
+
+    // Months
+    if (abs_ms >= ms_per_month) {
+        const months = @round(ms / ms_per_month);
+        const months_int = @as(i64, @intFromFloat(months));
+        if (long) {
+            const plural = abs_ms >= ms_per_month * 1.5;
+            return std.fmt.allocPrint(allocator, "{d} month{s}", .{ months_int, if (plural) "s" else "" });
+        }
+        return std.fmt.allocPrint(allocator, "{d}mo", .{months_int});
+    }
+
+    // Weeks
+    if (abs_ms >= std.time.ms_per_week) {
+        const weeks = @round(ms / std.time.ms_per_week);
+        const weeks_int = @as(i64, @intFromFloat(weeks));
+        if (long) {
+            const plural = abs_ms >= std.time.ms_per_week * 1.5;
+            return std.fmt.allocPrint(allocator, "{d} week{s}", .{ weeks_int, if (plural) "s" else "" });
+        }
+        return std.fmt.allocPrint(allocator, "{d}w", .{weeks_int});
+    }
+
+    // Days
     if (abs_ms >= std.time.ms_per_day) {
         const days = @round(ms / std.time.ms_per_day);
         const days_int = @as(i64, @intFromFloat(days));
@@ -136,6 +179,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{d}d", .{days_int});
     }
 
+    // Hours
     if (abs_ms >= std.time.ms_per_hour) {
         const hours = @round(ms / std.time.ms_per_hour);
         const hours_int = @as(i64, @intFromFloat(hours));
@@ -146,6 +190,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{d}h", .{hours_int});
     }
 
+    // Minutes
     if (abs_ms >= std.time.ms_per_min) {
         const minutes = @round(ms / std.time.ms_per_min);
         const minutes_int = @as(i64, @intFromFloat(minutes));
@@ -156,6 +201,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{d}m", .{minutes_int});
     }
 
+    // Seconds
     if (abs_ms >= std.time.ms_per_s) {
         const seconds = @round(ms / std.time.ms_per_s);
         const seconds_int = @as(i64, @intFromFloat(seconds));
@@ -166,6 +212,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
         return std.fmt.allocPrint(allocator, "{d}s", .{seconds_int});
     }
 
+    // Milliseconds
     const ms_int = @as(i64, @intFromFloat(ms));
     if (long) {
         return std.fmt.allocPrint(allocator, "{d} ms", .{ms_int});
@@ -214,10 +261,10 @@ pub fn jsFunction(
         const slice = str.toSlice(bun.default_allocator);
         defer slice.deinit();
 
-        const result = parse(slice.slice()) orelse return .js_undefined;
+        const result = parse(slice.slice()) orelse return JSValue.jsNumber(std.math.nan(f64));
         return JSValue.jsNumber(result);
     }
 
-    // Invalid input type
-    return .js_undefined;
+    // Invalid input type returns NaN
+    return JSValue.jsNumber(std.math.nan(f64));
 }

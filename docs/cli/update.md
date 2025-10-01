@@ -90,6 +90,17 @@ Packages are organized in sections by dependency type:
 
 Within each section, individual packages may have additional suffixes (` dev`, ` peer`, ` optional`) for extra clarity.
 
+## `--recursive`
+
+Use the `--recursive` flag with `--interactive` to update dependencies across all workspaces in a monorepo:
+
+```sh
+$ bun update --interactive --recursive
+$ bun update -i -r
+```
+
+This displays an additional "Workspace" column showing which workspace each dependency belongs to.
+
 ## `--latest`
 
 By default, `bun update` will update to the latest version of a dependency that satisfies the version range specified in your `package.json`.

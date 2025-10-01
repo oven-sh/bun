@@ -159,7 +159,6 @@ export function Union(
           pub const FFIType = bindgen.FFITaggedUnion(&.{ ${alternatives
             .map(a => a.bindgenType + ".FFIType")
             .join(", ")} });
-          pub const OptionalFFIType = FFIType;
           pub fn convertFromFFI(ffi_value: Self.FFIType) Self.ZigType {
             return switch (ffi_value.tag) {
               ${joinIndented(
@@ -171,9 +170,6 @@ export function Union(
               )}
               else => unreachable,
             };
-          }
-          pub fn convertOptionalFromFFI(ffi_value: Self.OptionalFFIType) ?Self.ZigType {
-            return if (ffi_value.isNull()) null else Self.convertFromFFI(ffi_value);
           }
         };
 

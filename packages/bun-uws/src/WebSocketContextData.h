@@ -52,7 +52,7 @@ struct WebSocketContextData {
 private:
 
 public:
-
+    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     /* This one points to the App's shared topicTree */
     TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree;
 
@@ -64,6 +64,8 @@ public:
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *, int, std::string_view)> closeHandler = nullptr;
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *, std::string_view)> pingHandler = nullptr;
     MoveOnlyFunction<void(WebSocket<SSL, true, USERDATA> *, std::string_view)> pongHandler = nullptr;
+    /* node http compatibility callbacks */
+    OnSocketClosedCallback onSocketClosed = nullptr;
 
     /* Settings for this context */
     size_t maxPayloadLength = 0;

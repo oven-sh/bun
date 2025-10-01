@@ -321,8 +321,12 @@ public:
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
         // tell node http support that we upgraded so we dont try to get HttpResponseData from the socket extension
-        if (socketData && httpContextData->onSocketUpgraded) {
-            httpContextData->onSocketUpgraded(socketData, SSL, (us_socket_t *) this);
+        if (socketData) {
+            // we only care about the onClose after upgrading to websocket
+            webSocketContextData->onSocketClosed = httpContextData->onSocketClosed;
+            if (httpContextData->onSocketUpgraded) {
+              httpContextData->onSocketUpgraded(socketData, SSL, (us_socket_t *) this);
+            }
         }
         /* Destroy HttpResponseData */
         getHttpResponseData()->~HttpResponseData();
@@ -342,7 +346,7 @@ public:
         }
 
         /* Initialize websocket with any moved backpressure intact */
-        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure));
+        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData);
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
         

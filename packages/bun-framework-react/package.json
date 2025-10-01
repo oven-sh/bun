@@ -29,8 +29,8 @@
   ],
   "type": "module",
   "dependencies": {
-    "react": "^19.2.0-canary-b0c1dc01-20250925",
-    "react-dom": "^19.2.0-canary-b0c1dc01-20250925",
-    "react-refresh": "^0.18.0-canary-b0c1dc01-20250925"
+    "react": "^0.0.0-experimental-ef889445-20250930",
+    "react-dom": "^0.0.0-experimental-ef889445-20250930",
+    "react-refresh": "^0.0.0-experimental-ef889445-20250930"
   }
 }

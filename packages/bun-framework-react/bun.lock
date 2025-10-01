@@ -4,9 +4,9 @@
     "": {
       "name": "bun-framework-react",
       "dependencies": {
-        "react": "^19.2.0-canary-b0c1dc01-20250925",
-        "react-dom": "^19.2.0-canary-b0c1dc01-20250925",
-        "react-refresh": "^0.18.0-canary-b0c1dc01-20250925",
+        "react": "^0.0.0-experimental-ef889445-20250930",
+        "react-dom": "^0.0.0-experimental-ef889445-20250930",
+        "react-refresh": "^0.0.0-experimental-ef889445-20250930",
       },
       "devDependencies": {
         "@types/react": "^19.1.13",
@@ -21,12 +21,12 @@
 
     "csstype": ["csstype@3.1.3", "", {}, "sha512-M1uQkMl8rQK/szD0LNhtqxIPLpimGm8sOBwU7lLnCpSbTyY3yeU1Vc7l4KT5zT4s/yOxHH5O7tIuuLOCnLADRw=="],
 
-    "react": ["react@19.2.0-canary-b0c1dc01-20250925", "", {}, "sha512-WzDzV9MAuR5b9oo8es8d8zdvu1oNuKMCUfcP2TI1RkJn6ZUxc3Jpp4uaZyntPF8YgbyUAfbEFfMTtw5WrO+4rw=="],
+    "react": ["react@0.0.0-experimental-ef889445-20250930", "", {}, "sha512-KVwhRIlvwh/FD8PVHkSlosAP9+PhHW2U63RJOteZaYgZv5OTRgXPZkKwelcWwAqcntntLjqH8LaYsTnGWOY2CQ=="],
 
-    "react-dom": ["react-dom@19.2.0-canary-b0c1dc01-20250925", "", { "dependencies": { "scheduler": "0.27.0-canary-b0c1dc01-20250925" }, "peerDependencies": { "react": "19.2.0-canary-b0c1dc01-20250925" } }, "sha512-MKVXLtOtML4Ai1Q07bZs5KdPmdSIuBwvAhlH0hZQbW8XOtTejn6LMCirQAKrF1aryyx+1tA1vaHVGxkXu/cyEA=="],
+    "react-dom": ["react-dom@0.0.0-experimental-ef889445-20250930", "", { "dependencies": { "scheduler": "0.0.0-experimental-ef889445-20250930" }, "peerDependencies": { "react": "0.0.0-experimental-ef889445-20250930" } }, "sha512-NxFoE259P9Ndg+M/JKTbNYdMQ0qc7DWvLrw4xsge2rOxJXxK5a+SmfAjteXJJIddSZHM/+c+hKGcaYFa3WJ2iQ=="],
 
-    "react-refresh": ["react-refresh@0.18.0-canary-b0c1dc01-20250925", "", {}, "sha512-kDUinGtbPKpWw2bN5D129KvfSKbFwFNitDswV0jy4WUUsCj7elWx2WXNKofuzcYQ0z9NheXDWebKdhA/kilrYA=="],
+    "react-refresh": ["react-refresh@0.0.0-experimental-ef889445-20250930", "", {}, "sha512-Ux3lsHvNGGJ7eknz7lqmCfrkOOKHG+2znsWISXvWGnZ5/+9YelfK0ht8lXH8fkbeHf44UG6/QrZ/zn4Vznt7sw=="],
 
-    "scheduler": ["scheduler@0.27.0-canary-b0c1dc01-20250925", "", {}, "sha512-N3YU+EoyYxCAxC8r8pUFHDm//87ZvaX0TA67gBNieoIVGtN84j5vWfcdgbSe+xMEkSaFSUduaLX7IugSaDJ1Bw=="],
+    "scheduler": ["scheduler@0.0.0-experimental-ef889445-20250930", "", {}, "sha512-nQrKdca1hhFcnUJt4hEGd5NSzp4mJxqtUB+B6XYq+Ju5RBGqselw7+LHYkAcuxycYzhGNqQN9fVx5Qimsgi2Hg=="],
   }
 }

@@ -532,23 +532,16 @@ export default function IndexPage() {
       }),
     });
 
-    // Run the build command
     const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
 
-    // The build should succeed
-    // expect(stderr.toString()).toBe("");
     expect(exitCode).toBe(0);
 
-    // Check the generated HTML file
     const htmlPage = path.join(dir, "dist", "index.html");
     expect(existsSync(htmlPage)).toBe(true);
 
     const htmlContent = await Bun.file(htmlPage).text();
 
-    // Verify the content is rendered
     expect(htmlContent).toContain("Hello World");
-
-    // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
 });

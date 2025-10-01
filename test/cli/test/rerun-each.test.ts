@@ -60,6 +60,35 @@ test("--rerun-each should run tests exactly N times", async () => {
   expect(combined2).toMatch(/1 pass/);
 });
 
+test("--rerun-each should report correct file count", async () => {
+  using dir = tempDir("test-rerun-each-file-count", {
+    "test1.test.ts": `
+      import { test, expect } from "bun:test";
+      test("test in file 1", () => {
+        expect(true).toBe(true);
+      });
+    `,
+  });
+
+  // Run with --rerun-each=3
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "test1.test.ts", "--rerun-each=3"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+
+  // Should report "Ran 3 tests across 1 file" not "across 3 files"
+  const combined = stdout + stderr;
+  expect(combined).toContain("Ran 3 tests across 1 file");
+  expect(combined).not.toContain("across 3 files");
+});
+
 test("--rerun-each should handle test failures correctly", async () => {
   using dir = tempDir("test-rerun-each-fail", {
     "fail.test.ts": `

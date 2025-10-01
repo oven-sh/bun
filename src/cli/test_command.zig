@@ -1845,7 +1845,10 @@ pub const TestCommand = struct {
 
             bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
             var promise = try vm.loadEntryPointForTestRunner(file_path);
-            reporter.summary().files += 1;
+            // Only count the file once, not once per repeat
+            if (repeat_index == 0) {
+                reporter.summary().files += 1;
+            }
 
             switch (promise.status(vm.global.vm())) {
                 .rejected => {

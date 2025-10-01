@@ -1,5 +1,5 @@
 #pragma once
-#include "root.h"
+#include <JavaScriptCore/JSCJSValue.h>
 #include <memory>
 
 extern "C" void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot);

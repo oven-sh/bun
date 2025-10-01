@@ -142,12 +142,12 @@ describe("Bun.ms - format (number to string)", () => {
     const cases = [
       // Positive ties - should round up
       [1000, "1s", "1 second"],
-      [-1000, "-1s", "-1 second"],
       [2500, "3s", "3 seconds"],
       [3500, "4s", "4 seconds"],
       [4500, "5s", "5 seconds"],
-
+      
       // Negative ties - should round toward zero (toward +∞)
+      [-1000, "-1s", "-1 second"],
       [-2500, "-2s", "-2 seconds"],
       [-3500, "-3s", "-3 seconds"],
       [-4500, "-4s", "-4 seconds"],

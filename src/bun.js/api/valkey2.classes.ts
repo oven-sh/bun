@@ -1,9 +1,5 @@
 import { define } from "../../codegen/class-definitions";
 
-function method(name: string, length = 0) {
-  return { name: { fn: name, length: length } };
-}
-
 export default [
   define({
     name: "RedisClient2",
@@ -14,9 +10,9 @@ export default [
     JSType: "0b11101111",
     memoryCost: true,
     proto: {
-      connected: {
-        getter: "getConnected",
-      },
+      close: { fn: "close", length: 0 },
+      connect: { fn: "connect", length: 0 },
+      connected: { getter: "getConnected" },
       //onconnect: {
       //  getter: "getOnConnect",
       //  setter: "setOnConnect",
@@ -63,8 +59,6 @@ export default [
       //  fn: "expire",
       //  length: 2,
       //},
-      ...method("connect"),
-      ...method("close"),
       //send: {
       //  fn: "jsSend",
       //  length: 2,

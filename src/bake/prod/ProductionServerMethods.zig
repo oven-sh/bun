@@ -231,10 +231,7 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
 
         pub fn setBakeManifestRoutes(server: *Server, app: *Server.App, manifest: *bun.bake.Manifest) void {
             // Add route handler for /_bun/* static chunk files
-            // FIXME: this is being done dynamically. Either put the _bun/*
-            //        files in the manifest or read the directory and make the routes
-            //        up front
-            app.get("/_bun/*", *Server, server, bakeStaticChunkRequestHandler);
+            setStaticRoutes(server, app, manifest);
 
             // First, we need to serve the client entrypoint files
             // These are shared across all SSG routes of the same type
@@ -272,6 +269,64 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                         }
                     },
                 }
+            }
+        }
+
+        pub fn setStaticRoutes(server: *Server, app: *Server.App, manifest: *bun.bake.Manifest) void {
+            const assets = manifest.assets;
+
+            const pathbuf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(pathbuf);
+
+            for (assets) |asset_path| {
+                bun.assert(bun.strings.hasPrefixComptime(asset_path, "/_bun/"));
+                const file = bun.strings.trimPrefixComptime(u8, asset_path, "/_bun/");
+
+                const file_path_copy = bun.default_allocator.dupe(u8, bun.path.joinStringBuf(
+                    pathbuf,
+                    &[_][]const u8{ manifest.build_output_dir, file },
+                    .auto,
+                )) catch |e| bun.handleOom(e);
+
+                // Determine MIME type based on file extension
+                const mime_type = if (std.mem.endsWith(u8, asset_path, ".js"))
+                    bun.http.MimeType.javascript
+                else if (std.mem.endsWith(u8, asset_path, ".css"))
+                    bun.http.MimeType.css
+                else if (std.mem.endsWith(u8, asset_path, ".map"))
+                    bun.http.MimeType.json
+                else
+                    bun.http.MimeType.other;
+
+                // Create a file blob for the static chunk
+                const store = jsc.WebCore.Blob.Store.initFile(
+                    .{ .path = .{ .string = bun.PathString.init(file_path_copy) } },
+                    mime_type,
+                    bun.default_allocator,
+                ) catch |e| bun.handleOom(e);
+
+                const blob = jsc.WebCore.Blob{
+                    .size = jsc.WebCore.Blob.max_size,
+                    .store = store,
+                    .content_type = mime_type.value,
+                    .globalThis = server.globalThis,
+                };
+
+                // Create a file route and serve it
+                const any_server = AnyServer.from(server);
+                const file_route = FileRoute.initFromBlob(blob, .{
+                    .server = any_server,
+                    .status_code = 200,
+                });
+                ServerConfig.applyStaticRoute(
+                    any_server,
+                    Server.ssl_enabled,
+                    app,
+                    *FileRoute,
+                    file_route,
+                    asset_path,
+                    .{ .method = bun.http.Method.Set.init(.{ .GET = true }) },
+                );
             }
         }
 

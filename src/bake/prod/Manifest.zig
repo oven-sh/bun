@@ -21,6 +21,8 @@ routes: []Route = &[_]Route{},
 build_output_dir: []const u8 = "dist",
 /// Router types with their server entrypoints
 router_types: []RouterType = &[_]RouterType{},
+/// Static assets
+assets: [][]const u8 = &[_][]const u8{},
 
 /// All memory allocated with bun.default_allocator here
 router: bun.ptr.Owned(*FrameworkRouter),
@@ -130,6 +132,23 @@ fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log)
         }
     }
 
+    if (json_obj.get("assets")) |assets_prop| {
+        if (assets_prop.data == .e_array) {
+            const items = assets_prop.data.e_array.items.slice();
+            self.assets = try allocator.alloc([]const u8, items.len);
+
+            for (items, self.assets) |*in, *out| {
+                if (in.data != .e_string) {
+                    // All style array elements must be strings
+                    try log.addError(&json_source, Loc.Empty, "\"assets\" must be an array of strings");
+                    return error.InvalidManifest;
+                }
+                const style_str = try in.data.e_string.string(allocator);
+                out.* = style_str;
+            }
+        }
+    }
+
     // Parse router_types array (optional)
     if (json_obj.get("router_types")) |router_types_prop| {
         if (router_types_prop.data == .e_array) {
@@ -165,18 +184,18 @@ fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log)
         }
     }
 
-    // Parse entries array
-    const entries_prop = json_obj.get("entries") orelse {
-        try log.addError(&json_source, json_expr.loc, "manifest.json must have an 'entries' field");
+    // Parse routes array
+    const routes_prop = json_obj.get("routes") orelse {
+        try log.addError(&json_source, json_expr.loc, "manifest.json must have an 'routes' field");
         return error.InvalidManifest;
     };
 
-    if (entries_prop.data != .e_array) {
-        try log.addError(&json_source, entries_prop.loc, "manifest.json entries must be an array");
+    if (routes_prop.data != .e_array) {
+        try log.addError(&json_source, routes_prop.loc, "manifest.json routes must be an array");
         return error.InvalidManifest;
     }
 
-    const entries = entries_prop.data.e_array.items.slice();
+    const entries = routes_prop.data.e_array.items.slice();
 
     // Group entries by route_index
     var route_map = std.AutoHashMap(u32, std.ArrayList(RawManifestEntry)).init(temp_allocator);

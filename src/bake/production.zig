@@ -758,11 +758,30 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         // styles: string[][]
         route_style_references,
     );
+
+    const path_buffer = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buffer);
+
     render_promise.setHandled(vm.jsc_vm);
     vm.waitForPromise(.{ .normal = render_promise });
     switch (render_promise.unwrap(vm.jsc_vm, .mark_handled)) {
         .pending => unreachable,
         .fulfilled => |manifest_value| {
+            // Add assets field to manifest with all client-side files in _bun directory
+            // First, count how many client assets we have
+            const asset_count: usize = bundled_outputs.len;
+
+            // Create assets array and directly add filenames
+            const assets_js = try JSValue.createEmptyArray(global, asset_count);
+            for (bundled_outputs, 0..) |file, asset_index| {
+                const str = bun.path.joinStringBuf(path_buffer, [_][]const u8{ "/", file.dest_path }, .posix);
+                bun.assert(bun.strings.hasPrefixComptime(str, "/_bun/"));
+                var bunstr = bun.String.init(str);
+                try assets_js.putIndex(global, @intCast(asset_index), bunstr.transferToJS(global));
+            }
+
+            _ = manifest_value.put(global, "assets", assets_js);
+
             // Write manifest to file
             const manifest_path = try std.fs.path.join(allocator, &.{ root_dir_path, "manifest.json" });
             defer allocator.free(manifest_path);

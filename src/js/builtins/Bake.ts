@@ -169,8 +169,10 @@ export async function renderRoutesForProdStatic(
 
   type Manifest = {
     version: string;
-    entries: ManifestEntry[];
+    routes: ManifestEntry[];
+    router_types: Array<{ server_entrypoint: string | null }>;
     server_runtime?: string;
+    assets: Array<string>;
   };
 
   let entries: ManifestEntry[] = [];
@@ -279,7 +281,7 @@ export async function renderRoutesForProdStatic(
   );
 
   // Build the router_types array (make server_entrypoint relative to _bun folder)
-  const routerTypes = [];
+  const routerTypes: Array<{ server_entrypoint: string | null }> = [];
   for (let i = 0; i < routerTypeServerEntrypoints.length; i++) {
     const serverEntrypoint = routerTypeServerEntrypoints[i];
     if (serverEntrypoint) {
@@ -298,8 +300,9 @@ export async function renderRoutesForProdStatic(
 
   const manifest: Manifest = {
     version: "0.0.1",
-    entries: entries,
+    routes: entries,
     router_types: routerTypes,
+    assets: [],
   };
 
   return manifest;

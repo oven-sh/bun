@@ -850,6 +850,9 @@ pub fn fromJS(
                     var log = bun.logger.Log.init(bun.default_allocator);
                     defer log.deinit();
 
+                    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    errdefer arena.deinit();
+
                     var types = try std.ArrayListUnmanaged(bun.bake.FrameworkRouter.Type).initCapacity(
                         bun.default_allocator,
                         args.bake.?.framework.file_system_router_types.len,
@@ -865,7 +868,7 @@ pub fn fromJS(
                         const entry = transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
                             continue;
 
-                        try types.append(bun.default_allocator, .{
+                        types.appendAssumeCapacity(.{
                             .abs_root = bun.strings.withoutTrailingSlash(entry.abs_path),
                             .prefix = fsr.prefix,
                             .ignore_underscores = fsr.ignore_underscores,
@@ -883,14 +886,22 @@ pub fn fromJS(
                         });
                     }
 
-                    var router: ?bun.ptr.Owned(*bun.bake.FrameworkRouter) = bun.ptr.Owned(*bun.bake.FrameworkRouter).alloc(try bun.bake.FrameworkRouter.initEmpty(root, types.items, bun.default_allocator)) catch bun.outOfMemory();
+                    var router: ?bun.ptr.Owned(*bun.bake.FrameworkRouter) = bun.ptr.Owned(*bun.bake.FrameworkRouter).alloc(try bun.bake.FrameworkRouter.initEmpty(root, types: {
+                        const ret = types.items;
+                        types = .{};
+                        break :types ret;
+                    }, bun.default_allocator)) catch bun.outOfMemory();
                     errdefer if (router) |*r| {
                         r.get().deinit(bun.default_allocator);
                         r.deinitShallow();
                     };
 
                     var manifest = bun.bake.Manifest{
-                        .arena = std.heap.ArenaAllocator.init(bun.default_allocator),
+                        .arena = arena: {
+                            const ret = arena;
+                            arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                            break :arena ret;
+                        },
                         .router = bun.take(&router).?,
                     };
                     errdefer manifest.deinit();

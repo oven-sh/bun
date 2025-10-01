@@ -28,7 +28,7 @@ export function Optional(payload: Type): OptionalType {
 
 export abstract class NullableType extends Type {}
 
-export function Nullable(payload: Type): OptionalType {
+export function Nullable(payload: Type): NullableType {
   const AsOptional = Optional(payload);
   return new (class extends NullableType {
     get idlType() {

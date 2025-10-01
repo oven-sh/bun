@@ -1497,6 +1497,29 @@ pub fn VisitExpr(
                     }
                 };
 
+                // Implement constant folding for Bun.ms("1s") -> 1000
+                if (p.should_fold_typescript_constant_expressions or p.options.features.inlining) {
+                    if (e_.args.len == 1) {
+                        if (e_.target.data.as(.e_dot)) |dot| {
+                            // Check if this is Bun.ms("string")
+                            if (dot.target.data == .e_identifier and strings.eqlComptime(dot.name, "ms")) {
+                                const symbol = &p.symbols.items[dot.target.data.e_identifier.ref.innerIndex()];
+                                // Verify it's the global "Bun" identifier (unbound = global)
+                                if (symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "Bun")) {
+                                    const arg = e_.args.at(0).unwrapInlined();
+                                    if (arg.data == .e_string and arg.data.e_string.isUTF8()) {
+                                        const str = arg.data.e_string.slice(p.allocator);
+                                        const ms_module = @import("../bun.js/api/bun/ms.zig");
+                                        if (ms_module.parse(str)) |ms_value| {
+                                            return p.newExpr(E.Number{ .value = ms_value }, expr.loc);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 return expr;
             }
             pub fn e_new(p: *P, expr: Expr, _: ExprIn) Expr {

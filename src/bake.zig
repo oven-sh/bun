@@ -295,27 +295,11 @@ pub const Framework = struct {
     /// The provided allocator is not stored.
     pub fn auto(
         _: std.mem.Allocator,
-        resolver: *bun.resolver.Resolver,
-        file_system_router_types: []FileSystemRouterType,
+        _: *bun.resolver.Resolver,
+        _: []FileSystemRouterType,
     ) !Framework {
-        var fw: Framework = Framework.none;
-
-        if (file_system_router_types.len > 0) {
-            // For auto mode with file system routing, we need React-like setup
-            // but without the embedded modules
-            fw = .{
-                .file_system_router_types = file_system_router_types,
-                .server_components = null,
-                .react_fast_refresh = null,
-                .built_in_modules = .empty,
-            };
-        }
-
-        if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
-            fw.react_fast_refresh = .{ .import_source = rfr };
-        }
-
-        return fw;
+        // Auto is not implemented, currently only used at src/bun.js/api/server/ServerConfig.zig:672
+        return Framework.none;
     }
 
     /// Unopiniated default.

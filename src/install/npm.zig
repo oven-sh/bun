@@ -938,8 +938,8 @@ pub const PackageManifest = struct {
         // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
         // - v0.0.4: fixed bug with cpu & os tag not being added correctly
         // - v0.0.5: added bundled dependencies
-        // - v0.0.6: added version publish times and extended manifest flag for minimum release age
-        // - v0.0.7: changed semver major/minor/patch to each use u64 instead of u32
+        // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
+        // - v0.0.7: added version publish times and extended manifest flag for minimum release age
         pub const version = "bun-npm-manifest-cache-v0.0.7\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
@@ -1598,10 +1598,11 @@ pub const PackageManifest = struct {
             };
         }
 
-        pub fn getNewestFiltered(self: FindVersionResult) ?Semver.Version {
+        pub fn isLimitedFromAge(self: FindVersionResult) bool {
             return switch (self) {
-                .found_with_filter => |filtered| filtered.newest_filtered,
-                else => null,
+                .found_with_filter => |filtered| filtered.newest_filtered != null,
+                .err => |err| err == .all_versions_too_recent,
+                else => false,
             };
         }
     };

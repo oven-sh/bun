@@ -432,19 +432,17 @@ pub const OutdatedCommand = struct {
 
                 const actual_latest = manifest.findByDistTag("latest") orelse continue;
 
-                const _latest = manifest.findByDistTagWithFilter("latest", manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
-                const latest = _latest.unwrap() orelse continue;
+                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
 
-                const _update_version = if (resolved_version.tag == .npm)
+                const update_version = if (resolved_version.tag == .npm)
                     manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes)
                 else
                     manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
-                const update_version = _update_version.unwrap() orelse continue;
 
                 if (resolution.value.npm.version.order(actual_latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
-                const has_filtered_update = _update_version.getNewestFiltered() != null;
-                const has_filtered_latest = _latest.getNewestFiltered() != null;
+                const has_filtered_update = update_version.isLimitedFromAge();
+                const has_filtered_latest = latest.isLimitedFromAge();
                 if (has_filtered_update or has_filtered_latest) has_filtered_versions = true;
 
                 const package_name_len = package_name.len +
@@ -463,12 +461,20 @@ pub const OutdatedCommand = struct {
                 if (version_buf.items.len > max_current) max_current = version_buf.items.len;
                 version_buf.clearRetainingCapacity();
 
-                bun.handleOom(version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}));
+                if (update_version.unwrap()) |update_version_| {
+                    bun.handleOom(version_writer.print("{}", .{update_version_.version.fmt(manifest.string_buf)}));
+                } else {
+                    bun.handleOom(version_writer.print("{}", .{resolution.value.npm.version.fmt(manifest.string_buf)}));
+                }
                 const update_version_len = version_buf.items.len + (if (has_filtered_update) " *".len else 0);
                 if (update_version_len > max_update) max_update = update_version_len;
                 version_buf.clearRetainingCapacity();
 
-                bun.handleOom(version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}));
+                if (latest.unwrap()) |latest_version| {
+                    bun.handleOom(version_writer.print("{}", .{latest_version.version.fmt(manifest.string_buf)}));
+                } else {
+                    bun.handleOom(version_writer.print("{}", .{resolution.value.npm.version.fmt(manifest.string_buf)}));
+                }
                 const latest_version_len = version_buf.items.len + (if (has_filtered_latest) " *".len else 0);
                 if (latest_version_len > max_latest) max_latest = latest_version_len;
                 version_buf.clearRetainingCapacity();
@@ -574,14 +580,12 @@ pub const OutdatedCommand = struct {
                     manager.options.minimal_age_gate_ms != null,
                 ) orelse continue;
 
-                const _latest = manifest.findByDistTagWithFilter("latest", manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
-                const latest = _latest.unwrap() orelse continue;
+                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
                 const resolved_version = manager.lockfile.resolveCatalogDependency(dep) orelse continue;
-                const _update = if (resolved_version.tag == .npm)
+                const update = if (resolved_version.tag == .npm)
                     manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes)
                 else
                     manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
-                const update = _update.unwrap() orelse continue;
 
                 table.printLineSeparator();
 
@@ -618,11 +622,15 @@ pub const OutdatedCommand = struct {
                     // update version
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
-
-                    bun.handleOom(version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}));
-                    Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                    var update_version_len = version_buf.items.len;
-                    if (_update.getNewestFiltered() != null) {
+                    if (update.unwrap()) |update_version| {
+                        bun.handleOom(version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}));
+                        Output.pretty("{s}", .{update_version.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                    } else {
+                        bun.handleOom(version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}));
+                        Output.pretty("<d>{s}<r>", .{version_buf.items});
+                    }
+                    var update_version_len: usize = version_buf.items.len;
+                    if (update.isLimitedFromAge()) {
                         Output.pretty(" <blue>*<r>", .{});
                         update_version_len += " *".len;
                     }
@@ -634,11 +642,15 @@ pub const OutdatedCommand = struct {
                     // latest version
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
-
-                    bun.handleOom(version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}));
-                    Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
-                    var latest_version_len = version_buf.items.len;
-                    if (_latest.getNewestFiltered() != null) {
+                    if (latest.unwrap()) |latest_version| {
+                        bun.handleOom(version_writer.print("{}", .{latest_version.version.fmt(manifest.string_buf)}));
+                        Output.pretty("{s}", .{latest_version.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                    } else {
+                        bun.handleOom(version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}));
+                        Output.pretty("<d>{s}<r>", .{version_buf.items});
+                    }
+                    var latest_version_len: usize = version_buf.items.len;
+                    if (latest.isLimitedFromAge()) {
                         Output.pretty(" <blue>*<r>", .{});
                         latest_version_len += " *".len;
                     }

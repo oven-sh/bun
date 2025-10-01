@@ -665,6 +665,10 @@ pub const Bunfig = struct {
                     if (install_obj.get("npmMinimalAgeGate")) |min_age| {
                         switch (min_age.data) {
                             .e_number => |days| {
+                                if (days.value < 0) {
+                                    try this.addError(min_age.loc, "Expected positive number of days for npmMinimalAgeGate");
+                                    return;
+                                }
                                 install.minimal_age_gate_ms = days.value * std.time.ms_per_day;
                             },
                             else => {

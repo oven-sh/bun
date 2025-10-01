@@ -10,4 +10,4 @@ preload = "./test/preload.ts"
 
 [install]
 linker = "isolated"
-npmMinimalAgeGate = 1
+npmMinimalAgeGate = 100

@@ -838,6 +838,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
             Output.errGeneric("Expected --npm-minimal-age-gate to be a positive number: {s}", .{min_age_days});
             Global.crash();
         };
+        if (days < 0) {
+            Output.errGeneric("Expected --npm-minimal-age-gate to be a positive number: {s}", .{min_age_days});
+            Global.crash();
+        }
         cli.minimal_age_gate_ms = days * std.time.ms_per_day;
     }
 

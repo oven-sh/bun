@@ -285,6 +285,7 @@ fn handlePath(
     string: bun.string.WTFStringImpl,
 ) bun.JSError![:0]const u8 {
     const name = string.toOwnedSliceZ(bun.default_allocator);
+    errdefer bun.default_allocator.free(name);
     if (std.posix.system.access(name, std.posix.F_OK) != 0) {
         return global.throwInvalidArguments(
             std.fmt.comptimePrint("Unable to access {s} path", .{field}),
@@ -338,7 +339,12 @@ fn handleFileArray(
     elements: []const bindgen_generated.SSLConfigSingleFile,
 ) ReadFromBlobError![][*:0]const u8 {
     var result: bun.collections.ArrayListDefault([*:0]const u8) = try .initCapacity(elements.len);
-    errdefer result.deinit();
+    errdefer {
+        for (result.items()) |string| {
+            bun.freeSensitive(bun.default_allocator, std.mem.span(string));
+        }
+        result.deinit();
+    }
     for (elements) |*elem| {
         result.appendAssumeCapacity(try handleSingleFile(global, switch (elem.*) {
             .string => |*ref| .{ .string = ref.get() },

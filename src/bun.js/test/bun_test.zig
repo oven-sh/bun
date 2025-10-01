@@ -136,14 +136,14 @@ pub const BunTestRoot = struct {
         bun.assert(this.active_file == null);
     }
 
-    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool) void {
+    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool, first_last: FirstLast) void {
         group.begin(@src());
         defer group.end();
 
         bun.assert(this.active_file.get() == null);
 
         this.active_file = .new(undefined);
-        this.active_file.get().?.init(this.gpa, this, file_id, reporter, default_concurrent);
+        this.active_file.get().?.init(this.gpa, this, file_id, reporter, default_concurrent, first_last);
     }
     pub fn exitFile(this: *BunTestRoot) void {
         group.begin(@src());
@@ -164,6 +164,11 @@ pub const BunTestRoot = struct {
         var clone = this.active_file.clone();
         return clone.take();
     }
+
+    pub const FirstLast = struct {
+        first: bool,
+        last: bool,
+    };
 };
 
 pub const BunTest = struct {
@@ -180,6 +185,7 @@ pub const BunTest = struct {
     result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     default_concurrent: bool,
+    first_last: BunTestRoot.FirstLast,
     extra_execution_entries: std.ArrayList(*ExecutionEntry),
 
     phase: enum {
@@ -190,7 +196,7 @@ pub const BunTest = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool) void {
+    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool, first_last: BunTestRoot.FirstLast) void {
         group.begin(@src());
         defer group.end();
 
@@ -213,6 +219,7 @@ pub const BunTest = struct {
             .reporter = reporter,
             .result_queue = .init(this.gpa),
             .default_concurrent = default_concurrent,
+            .first_last = first_last,
             .extra_execution_entries = .init(this.gpa),
         };
     }
@@ -546,19 +553,20 @@ pub const BunTest = struct {
             .collection => {
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
-                var order = Order.init(this.gpa, this.arena);
-                defer order.deinit();
 
                 const has_filter = if (this.reporter) |reporter| if (reporter.jest.filter_regex) |_| true else false else false;
                 const should_randomize: ?std.Random = if (this.reporter) |reporter| reporter.jest.randomize else null;
-                const cfg: Order.Config = .{
+
+                var order = Order.init(this.gpa, this.arena, .{
                     .always_use_hooks = this.collection.root_scope.base.only == .no and !has_filter,
                     .randomize = should_randomize,
-                };
-                const beforeall_order: Order.AllOrderResult = if (cfg.always_use_hooks or this.collection.root_scope.base.has_callback) try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items, cfg) else .empty;
-                try order.generateOrderDescribe(this.collection.root_scope, cfg);
+                });
+                defer order.deinit();
+
+                const beforeall_order: Order.AllOrderResult = if (this.first_last.first) try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items) else .empty;
+                try order.generateOrderDescribe(this.collection.root_scope);
                 beforeall_order.setFailureSkipTo(&order);
-                const afterall_order: Order.AllOrderResult = if (cfg.always_use_hooks or this.collection.root_scope.base.has_callback) try order.generateAllOrder(this.buntest.hook_scope.afterAll.items, cfg) else .empty;
+                const afterall_order: Order.AllOrderResult = if (this.first_last.last) try order.generateAllOrder(this.buntest.hook_scope.afterAll.items) else .empty;
                 afterall_order.setFailureSkipTo(&order);
 
                 try this.execution.loadFromOrder(&order);

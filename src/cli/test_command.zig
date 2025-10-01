@@ -1763,18 +1763,17 @@ pub const TestCommand = struct {
                 const reporter = this.reporter;
                 const vm = this.vm;
                 var files = this.files;
-                const allocator = this.allocator;
                 bun.assert(files.len > 0);
 
                 if (files.len > 1) {
-                    for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                    for (files[0 .. files.len - 1], 0..) |file_name, i| {
+                        TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{ .first = files.len == 1, .last = true }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
             }
         };
 
@@ -1792,7 +1791,7 @@ pub const TestCommand = struct {
         reporter: *CommandLineReporter,
         vm: *jsc.VirtualMachine,
         file_name: string,
-        _: std.mem.Allocator,
+        first_last: bun_test.BunTestRoot.FirstLast,
     ) !void {
         defer {
             js_ast.Expr.Data.Store.reset();
@@ -1832,7 +1831,7 @@ pub const TestCommand = struct {
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);
-            bun_test_root.enterFile(file_id, reporter, should_run_concurrent);
+            bun_test_root.enterFile(file_id, reporter, should_run_concurrent, first_last);
             defer bun_test_root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);

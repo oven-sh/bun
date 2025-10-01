@@ -15,7 +15,7 @@ afterAll(() => {
 });
 
 it("should not print anything to stderr when running bun.lockb", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false });
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
   // copy bar-0.0.2.tgz to package_dir
   await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(packageDir, "bar-0.0.2.tgz"));
@@ -79,7 +79,7 @@ it("should not print anything to stderr when running bun.lockb", async () => {
 });
 
 it("should continue using a binary lockfile if it exists", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false });
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
   await write(
     packageJson,

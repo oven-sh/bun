@@ -325,7 +325,7 @@ pub const Runner = struct {
                         return _entry.value_ptr.*;
                     }
 
-                    var blob_: ?jsc.WebCore.Blob = null;
+                    var blob_: ?*const jsc.WebCore.Blob = null;
                     const mime_type: ?MimeType = null;
 
                     if (value.jsType() == .DOMWrapper) {
@@ -334,30 +334,23 @@ pub const Runner = struct {
                         } else if (value.as(jsc.WebCore.Request)) |resp| {
                             return this.run(try resp.getBlobWithoutCallFrame(this.global));
                         } else if (value.as(jsc.WebCore.Blob)) |resp| {
-                            blob_ = resp.*;
-                            blob_.?.allocator = null;
+                            blob_ = resp;
                         } else if (value.as(bun.api.ResolveMessage) != null or value.as(bun.api.BuildMessage) != null) {
                             _ = this.macro.vm.uncaughtException(this.global, value, false);
                             return error.MacroFailed;
                         }
                     }
 
-                    if (blob_) |*blob| {
-                        const out_expr = Expr.fromBlob(
+                    if (blob_) |blob| {
+                        return Expr.fromBlob(
                             blob,
                             this.allocator,
                             mime_type,
                             this.log,
                             this.caller.loc,
                         ) catch {
-                            blob.deinit();
                             return error.MacroFailed;
                         };
-                        if (out_expr.data == .e_string) {
-                            blob.deinit();
-                        }
-
-                        return out_expr;
                     }
 
                     return Expr.init(E.String, E.String.empty, this.caller.loc);

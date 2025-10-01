@@ -660,7 +660,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
         const wbuf = bun.w_path_buffer_pool.get();
         defer bun.w_path_buffer_pool.put(wbuf);
         const wpath = bun.strings.toKernel32Path(wbuf, file_path);
-        assertIsValidWindowsPath(u16, wpath);
+
         return Maybe(void).errnoSysP(
             kernel32.CreateDirectoryW(wpath.ptr, null),
             .mkdir,
@@ -811,7 +811,7 @@ fn openDirAtWindowsNtPath(
     const no_follow = options.no_follow;
     const can_rename_or_delete = options.can_rename_or_delete;
     const read_only = options.read_only;
-    assertIsValidWindowsPath(u16, path);
+
     const base_flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
         w.SYNCHRONIZE | w.FILE_TRAVERSE;
     const iterable_flag: u32 = if (iterable) w.FILE_LIST_DIRECTORY else 0;
@@ -1010,7 +1010,6 @@ pub fn openFileAtWindowsNtPath(
     // this path is probably already backslash normalized so we're only going to check for '.\'
     // const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
     // bun.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
-    assertIsValidWindowsPath(u16, path);
 
     var result: windows.HANDLE = undefined;
 
@@ -2624,7 +2623,6 @@ pub fn mmap(
 }
 
 pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(page_size_min) u8) {
-    assertIsValidWindowsPath(u8, path);
     const fd = switch (open(path, bun.O.RDWR, 0)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
@@ -4156,7 +4154,6 @@ const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const c = bun.c; // translated c headers
 const jsc = bun.jsc;
 const libc_stat = bun.Stat;
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const darwin_nocancel = bun.darwin.nocancel;
 
 const windows = bun.windows;

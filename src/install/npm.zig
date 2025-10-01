@@ -875,7 +875,7 @@ pub const PackageVersion = extern struct {
     has_install_script: bool = false,
 
     /// Timestamp when this version was published (unix seconds, 0 if unknown)
-    publish_timestamp: u32 = 0,
+    publish_timestamp_ms: f64 = 0,
 
     pub fn allDependenciesBundled(this: *const PackageVersion) bool {
         return this.bundled_dependencies.isInvalid();
@@ -1475,8 +1475,8 @@ pub const PackageManifest = struct {
     pub fn isPackageVersionTooRecent(
         this: *const PackageManifest,
         package_version: *const PackageVersion,
-        current_timestamp: u32,
-        minimal_age_gate_seconds: u32,
+        current_timestamp_ms: f64,
+        minimal_age_gate_ms: f64,
         exclusions: ?[]const []const u8,
     ) bool {
         if (exclusions) |excl| {
@@ -1488,7 +1488,7 @@ pub const PackageManifest = struct {
             }
         }
 
-        return package_version.publish_timestamp > current_timestamp -| minimal_age_gate_seconds;
+        return package_version.publish_timestamp_ms > current_timestamp_ms - minimal_age_gate_ms;
     }
 
     pub fn searchVersionList(
@@ -1497,7 +1497,7 @@ pub const PackageManifest = struct {
         packages: []const PackageVersion,
         group: Semver.Query.Group,
         group_buf: string,
-        minimal_age_gate_days: ?f32,
+        minimal_age_gate_ms: ?f64,
         exclusions: ?[]const []const u8,
         newest_filtered: *?*const Semver.Version,
     ) ?FindVersionResult {
@@ -1505,15 +1505,10 @@ pub const PackageManifest = struct {
         var best_version: ?FindResult = null;
         var i = versions.len;
 
-        const current_timestamp: u32 = @intCast(std.time.timestamp());
-        const minimal_age_gate_seconds: ?u32 = if (minimal_age_gate_days) |days|
-            @intFromFloat(days * @as(f32, @floatFromInt(std.time.s_per_day)))
-        else
-            null;
-
-        const seven_days_seconds: u32 = 7 * std.time.s_per_day;
-        const stability_window_seconds: u32 = if (minimal_age_gate_seconds) |min_age_seconds|
-            @min(min_age_seconds, seven_days_seconds)
+        const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
+        const seven_days_ms: f64 = 7 * std.time.ms_per_day;
+        const stability_window_ms: f64 = if (minimal_age_gate_ms) |min_age_ms|
+            @min(min_age_ms, seven_days_ms)
         else
             0;
 
@@ -1521,8 +1516,8 @@ pub const PackageManifest = struct {
             const version = versions[i - 1];
             if (group.satisfies(version, group_buf, this.string_buf)) {
                 const package = &packages[i - 1];
-                if (minimal_age_gate_seconds) |min_age_seconds| {
-                    if (this.isPackageVersionTooRecent(package, current_timestamp, min_age_seconds, exclusions)) {
+                if (minimal_age_gate_ms) |min_age_ms| {
+                    if (this.isPackageVersionTooRecent(package, current_timestamp_ms, min_age_ms, exclusions)) {
                         if (newest_filtered.* == null) newest_filtered.* = &version;
                         prev_package_blocked_from_age = package;
                     }
@@ -1536,11 +1531,11 @@ pub const PackageManifest = struct {
                         }
 
                         // only try to go backwards for a max of 7 days on top of existing minimum age
-                        if (package.publish_timestamp < current_timestamp -| (min_age_seconds + seven_days_seconds)) {
+                        if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
                             break;
                         }
 
-                        const is_stable = package.publish_timestamp <= prev_package.publish_timestamp + stability_window_seconds;
+                        const is_stable = package.publish_timestamp_ms <= prev_package.publish_timestamp_ms + stability_window_ms;
                         if (is_stable) {
                             best_version = .{
                                 .version = version,
@@ -1614,19 +1609,18 @@ pub const PackageManifest = struct {
     pub fn findByDistTagWithFilter(
         this: *const PackageManifest,
         tag: string,
-        minimal_age_gate_days: ?f32,
+        minimal_age_gate_ms: ?f64,
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
         const dist_result = this.findByDistTag(tag) orelse return .{ .err = .not_found };
-        const min_age = minimal_age_gate_days orelse {
+        const min_age_ms = minimal_age_gate_ms orelse {
             return .{ .found = dist_result };
         };
-        const current_timestamp: u32 = @intCast(std.time.timestamp());
-        const min_age_seconds: u32 = @intFromFloat(min_age * @as(f32, @floatFromInt(std.time.s_per_day)));
-        const seven_days_seconds: u32 = 7 * std.time.s_per_day;
-        const stability_window_seconds: u32 = @min(min_age_seconds, seven_days_seconds);
+        const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
+        const seven_days_ms: f64 = 7 * std.time.ms_per_day;
+        const stability_window_ms = @min(min_age_ms, seven_days_ms);
 
-        const dist_too_recent = this.isPackageVersionTooRecent(dist_result.package, current_timestamp, min_age_seconds, exclusions);
+        const dist_too_recent = this.isPackageVersionTooRecent(dist_result.package, current_timestamp_ms, min_age_ms, exclusions);
         if (!dist_too_recent) {
             return .{ .found = dist_result };
         }
@@ -1653,7 +1647,7 @@ pub const PackageManifest = struct {
             const package = &packages[idx];
 
             if (version.order(latest_version, this.string_buf, this.string_buf) == .gt) continue;
-            if (package.publish_timestamp == 0) continue;
+            if (package.publish_timestamp_ms == 0) continue;
             if (latest_version_tag_before_dot) |expected_tag| {
                 const package_tag = version.tag.pre.slice(this.string_buf);
                 const actual_tag =
@@ -1662,7 +1656,7 @@ pub const PackageManifest = struct {
                 if (!strings.eql(actual_tag, expected_tag)) continue;
             }
 
-            if (this.isPackageVersionTooRecent(package, current_timestamp, min_age_seconds, exclusions)) {
+            if (this.isPackageVersionTooRecent(package, current_timestamp_ms, min_age_ms, exclusions)) {
                 prev_package_blocked_from_age = package;
                 continue;
             }
@@ -1676,11 +1670,11 @@ pub const PackageManifest = struct {
                     };
                 }
                 // only try to go backwards for a max of 7 days on top of existing minimum age
-                if (package.publish_timestamp < current_timestamp -| (min_age_seconds + seven_days_seconds)) {
+                if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
                     break;
                 }
 
-                const is_stable = package.publish_timestamp <= prev_package.publish_timestamp + stability_window_seconds;
+                const is_stable = package.publish_timestamp_ms <= prev_package.publish_timestamp_ms + stability_window_ms;
                 if (is_stable) {
                     best_version = .{
                         .version = version,
@@ -1714,23 +1708,22 @@ pub const PackageManifest = struct {
         this: *const PackageManifest,
         group: Semver.Query.Group,
         group_buf: string,
-        minimal_age_gate_days: ?f32,
+        minimal_age_gate_ms: ?f64,
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
-        if (minimal_age_gate_days != null) {
+        if (minimal_age_gate_ms != null) {
             bun.debugAssert(this.pkg.has_extended_manifest);
         }
 
         const left = group.head.head.range.left;
         var newest_filtered: ?*const Semver.Version = null;
-        const current_timestamp: u32 = @intCast(std.time.timestamp());
+        const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
 
         if (left.op == .eql) {
             const result = this.findByVersion(left.version);
             if (result) |r| {
-                if (minimal_age_gate_days) |min_age| {
-                    const min_age_seconds: u32 = @intFromFloat(min_age * @as(f32, @floatFromInt(std.time.s_per_day)));
-                    if (this.isPackageVersionTooRecent(r.package, current_timestamp, min_age_seconds, exclusions)) {
+                if (minimal_age_gate_ms) |min_age_ms| {
+                    if (this.isPackageVersionTooRecent(r.package, current_timestamp_ms, min_age_ms, exclusions)) {
                         return .{ .err = .too_recent };
                     }
                 }
@@ -1741,9 +1734,8 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (minimal_age_gate_days) |min_age| {
-                    const min_age_secs: u32 = @intFromFloat(min_age * @as(f32, @floatFromInt(std.time.s_per_day)));
-                    if (this.isPackageVersionTooRecent(result.package, current_timestamp, min_age_secs, exclusions)) {
+                if (minimal_age_gate_ms) |min_age_ms| {
+                    if (this.isPackageVersionTooRecent(result.package, current_timestamp_ms, min_age_ms, exclusions)) {
                         newest_filtered = &result.version;
                     }
                 }
@@ -1764,7 +1756,7 @@ pub const PackageManifest = struct {
             this.pkg.releases.values.get(this.package_versions),
             group,
             group_buf,
-            minimal_age_gate_days,
+            minimal_age_gate_ms,
             exclusions,
             &newest_filtered,
         )) |result| {
@@ -1777,7 +1769,7 @@ pub const PackageManifest = struct {
                 this.pkg.prereleases.values.get(this.package_versions),
                 group,
                 group_buf,
-                minimal_age_gate_days,
+                minimal_age_gate_ms,
                 exclusions,
                 &newest_filtered,
             )) |result| {
@@ -1790,25 +1782,6 @@ pub const PackageManifest = struct {
         }
 
         return .{ .err = .not_found };
-    }
-
-    pub fn findByVersionWithFilter(
-        this: *const PackageManifest,
-        target_version: Semver.Version,
-        minimal_age_gate_days: ?f32,
-        exclusions: ?[]const []const u8,
-    ) FindVersionResult {
-        const result = this.findByVersion(target_version) orelse return .{ .err = .not_found };
-
-        if (minimal_age_gate_days) |min_age| {
-            const current_timestamp: f32 = @floatFromInt(@divTrunc(std.time.timestamp(), std.time.ms_per_s));
-
-            if (this.isPackageVersionTooRecent(result.package, current_timestamp, min_age, exclusions)) {
-                return .{ .err = .too_recent };
-            }
-        }
-
-        return .{ .found = result };
     }
 
     pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group, group_buf: string) ?FindResult {
@@ -2579,19 +2552,12 @@ pub const PackageManifest = struct {
                     }
 
                     if (json.asProperty("time")) |time_obj| {
-                        switch (time_obj.expr.data) {
-                            .e_object => |time_obj_obj| {
-                                if (time_obj_obj.get(version_name)) |time_str| {
-                                    if (time_str.asString(allocator)) |version_str| {
-                                        const parse_result = bun.jsc.wtf.parseES5Date(version_str) catch null;
-                                        if (parse_result) |ms| {
-                                            const seconds: u32 = @intFromFloat(ms / @as(f64, @floatFromInt(std.time.ms_per_s)));
-                                            package_version.publish_timestamp = seconds;
-                                        }
-                                    }
+                        if (time_obj.expr.get(version_name)) |publish_time_expr| {
+                            if (publish_time_expr.asString(allocator)) |publish_time_str| {
+                                if (bun.jsc.wtf.parseES5Date(publish_time_str) catch null) |time| {
+                                    package_version.publish_timestamp_ms = time;
                                 }
-                            },
-                            else => {},
+                            }
                         }
                     }
 

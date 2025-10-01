@@ -58,7 +58,7 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                 }
 
                 const pkg_name = pkg_names[pkg_id];
-                const needs_extended_manifest = manager.options.minimal_age_gate != null;
+                const needs_extended_manifest = manager.options.minimal_age_gate_ms != null;
 
                 _ = manager.manifests.byName(
                     manager,
@@ -86,7 +86,7 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                     const resolution: Resolution = pkg_resolutions[pkg_id];
                     if (resolution.tag != .npm) continue;
 
-                    const needs_extended_manifest = manager.options.minimal_age_gate != null;
+                    const needs_extended_manifest = manager.options.minimal_age_gate_ms != null;
                     const package_name = pkg_names[pkg_id].slice(string_buf);
                     _ = manager.manifests.byName(
                         manager,

@@ -591,7 +591,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                             err,
                                         );
                                     } else {
-                                        const days = this.options.minimal_age_gate orelse 0;
+                                        const age_gate_ms = this.options.minimal_age_gate_ms orelse 0;
                                         if (version.tag == .dist_tag) {
                                             this.log.addErrorFmt(
                                                 null,
@@ -601,7 +601,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                 .{
                                                     this.lockfile.str(&name),
                                                     this.lockfile.str(&version.value.dist_tag.tag),
-                                                    days,
+                                                    age_gate_ms / std.time.ms_per_day,
                                                 },
                                             ) catch unreachable;
                                         } else {
@@ -613,7 +613,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                 .{
                                                     this.lockfile.str(&name),
                                                     this.lockfile.str(&version.literal),
-                                                    days,
+                                                    age_gate_ms / std.time.ms_per_day,
                                                 },
                                             ) catch unreachable;
                                         }
@@ -707,7 +707,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
                         if (!dependency.behavior.isPeer() or install_peer) {
                             if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
-                                const needs_extended_manifest = this.options.minimal_age_gate != null;
+                                const needs_extended_manifest = this.options.minimal_age_gate_ms != null;
                                 if (this.options.enable.manifest_cache) {
                                     var expired = false;
                                     if (this.manifests.byNameHashAllowExpired(
@@ -724,13 +724,12 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         // We can skip the network request, even if it's beyond the caching period
                                         if (version.tag == .npm and version.value.npm.version.isExact()) {
                                             if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
-                                                if (this.options.minimal_age_gate) |min_age| {
-                                                    const current_timestamp: u32 = @intCast(std.time.timestamp());
-                                                    const min_age_seconds: u32 = @intFromFloat(min_age * @as(f32, @floatFromInt(std.time.s_per_day)));
-
-                                                    if (loaded_manifest.?.isPackageVersionTooRecent(find_result.package, current_timestamp, min_age_seconds, null)) {
+                                                if (this.options.minimal_age_gate_ms) |min_age_ms| {
+                                                    const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
+                                                    if (loaded_manifest.?.isPackageVersionTooRecent(find_result.package, current_timestamp_ms, min_age_ms, null)) {
                                                         const package_name = this.lockfile.str(&name);
-                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} days", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age }) catch {};
+                                                        const min_age_days = min_age_ms / std.time.ms_per_day;
+                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} days", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_days }) catch {};
                                                         return;
                                                     }
                                                 }
@@ -1624,12 +1623,12 @@ fn getOrPutResolvedPackage(
                 this.scopeForPackageName(name_str),
                 name_hash,
                 .load_from_memory_fallback_to_disk,
-                this.options.minimal_age_gate != null,
+                this.options.minimal_age_gate_ms != null,
             ) orelse return null; // manifest might still be downloading. This feels unreliable.
 
             const version_result: Npm.PackageManifest.FindVersionResult = switch (version.tag) {
-                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.minimal_age_gate, this.options.minimal_age_gate_excludes),
-                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.minimal_age_gate, this.options.minimal_age_gate_excludes),
+                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.minimal_age_gate_ms, this.options.minimal_age_gate_excludes),
+                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.minimal_age_gate_ms, this.options.minimal_age_gate_excludes),
                 else => unreachable,
             };
 
@@ -1639,6 +1638,7 @@ fn getOrPutResolvedPackage(
                     const package_name = this.lockfile.str(&name);
                     if (PackageManager.verbose_install or this.options.log_level == .verbose) {
                         if (filtered.newest_filtered) |newest| {
+                            const min_age_days = this.options.minimal_age_gate_ms orelse 0 / std.time.ms_per_day;
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
@@ -1647,7 +1647,7 @@ fn getOrPutResolvedPackage(
                                         tag_str,
                                         filtered.result.version.fmt(manifest.string_buf),
                                         newest.fmt(manifest.string_buf),
-                                        this.options.minimal_age_gate orelse 0,
+                                        min_age_days,
                                     });
                                 },
                                 .npm => {
@@ -1657,7 +1657,7 @@ fn getOrPutResolvedPackage(
                                         version_str,
                                         filtered.result.version.fmt(manifest.string_buf),
                                         newest.fmt(manifest.string_buf),
-                                        this.options.minimal_age_gate orelse 0,
+                                        min_age_days,
                                     });
                                 },
                                 else => unreachable,
@@ -1667,13 +1667,14 @@ fn getOrPutResolvedPackage(
 
                     if (comptime successFn == assignRootResolution) {
                         if (filtered.newest_filtered) |newest| {
+                            const min_age_days = this.options.minimal_age_gate_ms orelse 0 / std.time.ms_per_day;
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
-                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}@{s}\" was downgraded from {s} to {s} due to npm-minimal-age-gate filter ({d} days)", .{ package_name, tag_str, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), this.options.minimal_age_gate orelse 0 }) catch {};
+                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}@{s}\" was downgraded from {s} to {s} due to npm-minimal-age-gate filter ({d} days)", .{ package_name, tag_str, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_days }) catch {};
                                 },
                                 .npm => {
-                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}\" was downgraded from {s} to {s} due to npm-minimal-age-gate filter ({d} days)", .{ package_name, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), this.options.minimal_age_gate orelse 0 }) catch {};
+                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}\" was downgraded from {s} to {s} due to npm-minimal-age-gate filter ({d} days)", .{ package_name, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_days }) catch {};
                                 },
                                 else => unreachable,
                             }

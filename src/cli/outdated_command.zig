@@ -441,8 +441,8 @@ pub const OutdatedCommand = struct {
 
                 if (resolution.value.npm.version.order(actual_latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
-                const has_filtered_update = update_version.isLimitedFromAge();
-                const has_filtered_latest = latest.isLimitedFromAge();
+                const has_filtered_update = update_version.latestIsFiltered();
+                const has_filtered_latest = latest.latestIsFiltered();
                 if (has_filtered_update or has_filtered_latest) has_filtered_versions = true;
 
                 const package_name_len = package_name.len +
@@ -630,7 +630,7 @@ pub const OutdatedCommand = struct {
                         Output.pretty("<d>{s}<r>", .{version_buf.items});
                     }
                     var update_version_len: usize = version_buf.items.len;
-                    if (update.isLimitedFromAge()) {
+                    if (update.latestIsFiltered()) {
                         Output.pretty(" <blue>*<r>", .{});
                         update_version_len += " *".len;
                     }
@@ -650,7 +650,7 @@ pub const OutdatedCommand = struct {
                         Output.pretty("<d>{s}<r>", .{version_buf.items});
                     }
                     var latest_version_len: usize = version_buf.items.len;
-                    if (latest.isLimitedFromAge()) {
+                    if (latest.latestIsFiltered()) {
                         Output.pretty(" <blue>*<r>", .{});
                         latest_version_len += " *".len;
                     }

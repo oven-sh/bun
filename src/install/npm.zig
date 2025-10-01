@@ -1598,10 +1598,11 @@ pub const PackageManifest = struct {
             };
         }
 
-        pub fn isLimitedFromAge(self: FindVersionResult) bool {
+        pub fn latestIsFiltered(self: FindVersionResult) bool {
             return switch (self) {
                 .found_with_filter => |filtered| filtered.newest_filtered != null,
-                .err => |err| err == .all_versions_too_recent,
+                .err => |err| err == .all_versions_too_recent, 
+                // .err.too_recent is only for direct version checks which doesn't prove there was a later version that could have been chosen
                 else => false,
             };
         }

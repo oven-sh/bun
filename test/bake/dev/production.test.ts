@@ -4,6 +4,8 @@ import { bunEnv, bunExe } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
+const frameworkPath = path.join(import.meta.dir, "../../../packages/bun-framework-react");
+
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
 
@@ -13,7 +15,8 @@ const platformPath = (path: string) => (process.platform === "win32" ? path.repl
 describe("production", () => {
   test("works with sourcemaps - error thrown in React component", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-sourcemap", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "src/index.tsx": `import framework from '${frameworkPath}';
+export default { app: { framework } };`,
       "pages/index.tsx": `export default function IndexPage() {
   throw new Error("oh no!");
   return <div>Hello World</div>;
@@ -45,10 +48,11 @@ describe("production", () => {
 
   test("import.meta properties are inlined in production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-import-meta", {
-      "src/index.tsx": `export default { 
-        app: { 
-          framework: "react",
-        } 
+      "src/index.tsx": `import framework from '${frameworkPath}';
+export default {
+        app: {
+          framework,
+        }
       };`,
       "pages/index.tsx": `
 export default function IndexPage() {
@@ -138,10 +142,11 @@ export default function TestPage() {
 
   test("import.meta properties are inlined in catch-all routes during production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-catch-all", {
-      "src/index.tsx": `export default { 
-        app: { 
-          framework: "react",
-        } 
+      "src/index.tsx": `import framework from '${frameworkPath}';
+export default {
+        app: {
+          framework,
+        }
       };`,
       "pages/blog/[...slug].tsx": `
 export default function BlogPost({ params }) {
@@ -304,7 +309,8 @@ export default function GettingStarted() {
 
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
-      "app.ts": `export default { app: { framework: "react" } };`,
+      "app.ts": `import framework from '${frameworkPath}';
+export default { app: { framework } };`,
       "package.json": JSON.stringify({
         "name": "test-app",
         "version": "1.0.0",
@@ -331,7 +337,8 @@ export default function GettingStarted() {
 
   test("client-side component with default import should work", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-client-import", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "src/index.tsx": `import framework from '${frameworkPath}';
+export default { app: { framework } };`,
       "pages/index.tsx": `import Client from "../components/Client";
 
 export default function IndexPage() {
@@ -374,9 +381,11 @@ export default function Client() {
     expect(htmlContent).toContain("Hello World");
   });
 
-  test("importing useState server-side", async () => {
+  // Skipped because we removed the check: https://github.com/oven-sh/bun/blob/b2353d687e83a3e5620b838f1358fb65bdb10936/src/ast/visitExpr.zig#L1453
+  test.skip("importing useState server-side", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-react-import", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "src/index.tsx": `import framework from '${frameworkPath}';
+export default { app: { framework } };`,
       "pages/index.tsx": `import { useState } from 'react';
 
 export default function IndexPage() {
@@ -411,16 +420,17 @@ export default function IndexPage() {
 
   test("importing useState from client component", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-client-useState", {
-      "src/index.tsx": `
- const bundlerOptions = {
+      "src/index.tsx": `import framework from '${frameworkPath}';
+
+const bundlerOptions = {
   sourcemap: "inline",
   minify: {
     whitespace: false,
     identifiers: false,
     syntax: false,
   },
-};     
-export default { app: { framework: "react", bundlerOptions: { server: bundlerOptions, client: bundlerOptions, ssr: bundlerOptions } } };`,
+};
+export default { app: { framework, bundlerOptions: { server: bundlerOptions, client: bundlerOptions, ssr: bundlerOptions } } };`,
       "pages/index.tsx": `import Counter from "../components/Counter";
 
 export default function IndexPage() {
@@ -502,7 +512,8 @@ export default function Counter() {
 
   test("don't include client code if fully static route", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-client-js", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "src/index.tsx": `import framework from '${frameworkPath}';
+export default { app: { framework } };`,
       "pages/index.tsx": `
 export default function IndexPage() {
   return (

@@ -316,14 +316,15 @@ public:
         HttpContext<SSL> *httpContext = (HttpContext<SSL> *) us_socket_context(SSL, (struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
-        BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) getHttpResponseData())->buffer));
         auto* responseData = getHttpResponseData();
+        BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
+        
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
         auto* onSocketUpgraded = httpContextData->onSocketUpgraded;
         webSocketContextData->onSocketClosed = httpContextData->onSocketClosed;
         /* Destroy HttpResponseData */
-        getHttpResponseData()->~HttpResponseData();
+        responseData->~HttpResponseData();
 
         /* Before we adopt and potentially change socket, check if we are corked */
         bool wasCorked = Super::isCorked();
@@ -346,7 +347,6 @@ public:
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        
         if (httpContextData->flags.isParsingHttp) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;

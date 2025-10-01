@@ -420,6 +420,8 @@ console.log(buf.toString());
 // => Hello world
 ```
 
+`Buffer.prototype.toLocaleString` is an alias for `Buffer.prototype.toString`.
+
 For complete documentation, refer to the [Node.js documentation](https://nodejs.org/api/buffer.html).
 
 ## `Blob`

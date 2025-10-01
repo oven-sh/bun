@@ -18,6 +18,18 @@ const socket = await Bun.udpSocket({
 console.log(socket.port); // 41234
 ```
 
+Enable address and port reuse:
+
+```ts
+const socket = await Bun.udpSocket({
+  port: 8000,
+  reuseAddr: true, // Allow reusing address
+  reusePort: true, // Enable load balancing on Linux
+});
+```
+
+The `reusePort` option enables load balancing between multiple processes on Linux. On other platforms, `reuseAddr` allows reusing an address that is already in use.
+
 ### Send a datagram
 
 Specify the data to send, as well as the destination port and address.

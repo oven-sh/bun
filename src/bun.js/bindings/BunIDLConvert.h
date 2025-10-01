@@ -216,10 +216,10 @@ public:
         JSC::JSValue value,
         Ctx& ctx)
     {
+        auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         std::optional<ReturnType> result;
         auto tryAlternative = [&]<typename T>() -> bool {
-            auto& vm = JSC::getVM(&globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
             auto alternativeResult = Bun::tryConvertIDL<T>(globalObject, value, ctx);
             RETURN_IF_EXCEPTION(scope, true);
             if (!alternativeResult.has_value()) {
@@ -254,8 +254,6 @@ private:
         std::optional<ReturnType> result;
         auto tryAlternative = [&]<std::size_t index>() -> bool {
             using T = std::tuple_element_t<index, std::tuple<IDL...>>;
-            auto& vm = JSC::getVM(&globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
             if constexpr (index == sizeof...(IDL) - 1) {
                 auto alternativeResult = Bun::convertIDL<T>(globalObject, value, ctx);
                 RETURN_IF_EXCEPTION(scope, true);
@@ -271,9 +269,12 @@ private:
                 return true;
             }
         };
-        (tryAlternative.template operator()<indices>() || ...);
-        RETURN_IF_EXCEPTION(scope, {});
-        ASSERT(result.has_value());
+        bool done = (tryAlternative.template operator()<indices>() || ...);
+        ASSERT(done);
+        if (!result.has_value()) {
+            // Exception
+            return {};
+        }
         return std::move(*result);
     }
 };

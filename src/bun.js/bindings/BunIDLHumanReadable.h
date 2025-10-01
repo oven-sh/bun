@@ -66,13 +66,13 @@ struct IDLHumanReadableName<IDL> : BaseIDLHumanReadableName {
 template<typename IDL>
     requires WebCore::IsIDLInteger<IDL>::value
 struct IDLHumanReadableName<IDL> : BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("number");
+    static constexpr auto humanReadableName = std::to_array("integer");
 };
 
 template<typename IDL>
     requires WebCore::IsIDLFloatingPoint<IDL>::value
 struct IDLHumanReadableName<IDL> : BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("integer");
+    static constexpr auto humanReadableName = std::to_array("number");
 };
 
 template<typename IDL>

@@ -302,7 +302,7 @@ console.log(config); // => { apiUrl: "https://api.example.com" }
 Listen for worker creation events using `process.emit()`:
 
 ```js
-process.on("worker", (worker) => {
+process.on("worker", worker => {
   console.log("New worker created:", worker.threadId);
 });
 ```

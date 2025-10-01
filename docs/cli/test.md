@@ -47,6 +47,8 @@ To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
 $ bun test --test-name-pattern addition
 ```
 
+When no tests match the filter, `bun test` exits with code 1.
+
 To run a specific file in the test runner, make sure the path starts with `./` or `/` to distinguish it from a filter name.
 
 ```bash
@@ -185,6 +187,11 @@ test.serial("second serial test", () => {
 // This test can run concurrently if --concurrent is enabled
 test("independent test", () => {
   expect(true).toBe(true);
+});
+
+// Chaining test qualifiers
+test.failing.each([1, 2, 3])("chained qualifiers %d", input => {
+  expect(input).toBe(0); // This test is expected to fail for each input
 });
 ```
 

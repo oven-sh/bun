@@ -587,7 +587,7 @@ function TLSSocket(socket?, options?) {
   this._SNICallback = undefined;
   this.servername = undefined;
   this.authorized = false;
-  this.authorizationError;
+  void this.authorizationError;
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
 
@@ -665,7 +665,7 @@ TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
   if (this[krenegotiationDisabled]) {
     // if renegotiation is disabled should emit error event in nextTick for nodejs compatibility
     const error = $ERR_TLS_RENEGOTIATION_DISABLED();
-    typeof callback === "function" && process.nextTick(callback, error);
+    if (typeof callback === "function") process.nextTick(callback, error);
     return false;
   }
 
@@ -689,11 +689,11 @@ TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
   try {
     socket.renegotiate?.();
     // if renegotiate is successful should emit secure event when done
-    typeof callback === "function" && this.once("secure", () => callback(null));
+    if (typeof callback === "function") this.once("secure", () => callback(null));
     return true;
   } catch (err) {
     // if renegotiate fails should emit error event in nextTick for nodejs compatibility
-    typeof callback === "function" && process.nextTick(callback, err);
+    if (typeof callback === "function") process.nextTick(callback, err);
     return false;
   }
 };

@@ -888,15 +888,17 @@ pub const ParsedSourceMap = struct {
 
     is_standalone_module_graph: bool = false,
 
-    const SourceProviderKind = enum(u1) { zig, bake };
+    const SourceProviderKind = enum(u2) { zig, bake, dev_server };
     const AnySourceProvider = union(enum) {
         zig: *SourceProviderMap,
         bake: *BakeSourceProvider,
+        dev_server: *DevServerSourceProvider,
 
         pub fn ptr(this: AnySourceProvider) *anyopaque {
             return switch (this) {
                 .zig => @ptrCast(this.zig),
                 .bake => @ptrCast(this.bake),
+                .dev_server => @ptrCast(this.dev_server),
             };
         }
 
@@ -909,6 +911,7 @@ pub const ParsedSourceMap = struct {
             return switch (this) {
                 .zig => this.zig.getSourceMap(source_filename, load_hint, result),
                 .bake => this.bake.getSourceMap(source_filename, load_hint, result),
+                .dev_server => this.dev_server.getSourceMap(source_filename, load_hint, result),
             };
         }
     };
@@ -916,7 +919,7 @@ pub const ParsedSourceMap = struct {
     const SourceContentPtr = packed struct(u64) {
         load_hint: SourceMapLoadHint,
         kind: SourceProviderKind,
-        data: u61,
+        data: u60,
 
         pub const none: SourceContentPtr = .{ .load_hint = .none, .kind = .zig, .data = 0 };
 
@@ -928,10 +931,15 @@ pub const ParsedSourceMap = struct {
             return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .bake };
         }
 
+        fn fromDevServerProvider(p: *DevServerSourceProvider) SourceContentPtr {
+            return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .dev_server };
+        }
+
         pub fn provider(sc: SourceContentPtr) ?AnySourceProvider {
             switch (sc.kind) {
                 .zig => return .{ .zig = @ptrFromInt(sc.data) },
                 .bake => return .{ .bake = @ptrFromInt(sc.data) },
+                .dev_server => return .{ .dev_server = @ptrFromInt(sc.data) },
             }
         }
     };
@@ -1021,9 +1029,10 @@ pub const SourceMapLoadHint = enum(u2) {
     is_external_map,
 };
 
+/// Always returns UTF-8
 fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
     const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
-    const found = bun.strings.indexOfT(T, source, needle) orelse return null;
+    const found = std.mem.lastIndexOf(T, source, needle) orelse return null;
     const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
     const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
     return switch (T) {
@@ -1066,29 +1075,67 @@ pub fn getSourceMapImpl(
             defer source.deref();
             bun.assert(source.tag == .ZigString);
 
-            const found_url = (if (source.is8Bit())
-                findSourceMappingURL(u8, source.latin1(), allocator)
-            else
-                findSourceMappingURL(u16, source.utf16(), allocator)) orelse
-                break :try_inline;
+            const maybe_found_url = found_url: {
+                if (source.is8Bit())
+                    break :found_url findSourceMappingURL(u8, source.latin1(), allocator);
+
+                break :found_url findSourceMappingURL(u16, source.utf16(), allocator);
+            };
+
+            const found_url = maybe_found_url orelse break :try_inline;
             defer found_url.deinit();
+
+            const parsed = parseUrl(
+                bun.default_allocator,
+                allocator,
+                found_url.slice(),
+                result,
+            ) catch |err| {
+                inline_err = err;
+                break :try_inline;
+            };
 
             break :parsed .{
                 .is_inline_map,
-                parseUrl(
-                    bun.default_allocator,
-                    allocator,
-                    found_url.slice(),
-                    result,
-                ) catch |err| {
-                    inline_err = err;
-                    break :try_inline;
-                },
+                parsed,
             };
         }
 
         // try to load a .map file
         if (load_hint != .is_inline_map) try_external: {
+            if (comptime SourceProviderKind == DevServerSourceProvider) {
+                // For DevServerSourceProvider, get the source map JSON directly
+                const source_map_data = provider.getSourceMapJSON();
+
+                if (source_map_data.length == 0) {
+                    break :try_external;
+                }
+
+                const json_slice = source_map_data.ptr[0..source_map_data.length];
+
+                // Parse the JSON source map
+                break :parsed .{
+                    .is_external_map,
+                    parseJSON(
+                        bun.default_allocator,
+                        allocator,
+                        json_slice,
+                        result,
+                    ) catch |err| {
+                        // Print warning even if this came from non-visible code like
+                        // calling `error.stack`. This message is only printed if
+                        // the sourcemap has been found but is invalid, such as being
+                        // invalid JSON text or corrupt mappings.
+                        bun.Output.warn("Could not decode sourcemap in dev server runtime: {s} - {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        }); // Disable the "try using --sourcemap=external" hint
+                        bun.jsc.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
+                };
+            }
+
             if (comptime SourceProviderKind == BakeSourceProvider) fallback_to_normal: {
                 const global = bun.jsc.VirtualMachine.get().global;
                 // If we're using bake's production build the global object will
@@ -1234,6 +1281,39 @@ pub const BakeSourceProvider = opaque {
     ) ?SourceMap.ParseUrl {
         return getSourceMapImpl(
             BakeSourceProvider,
+            provider,
+            source_filename,
+            load_hint,
+            result,
+        );
+    }
+};
+
+pub const DevServerSourceProvider = opaque {
+    pub const SourceMapData = extern struct {
+        ptr: [*]const u8,
+        length: usize,
+    };
+
+    extern fn DevServerSourceProvider__getSourceSlice(*DevServerSourceProvider) bun.String;
+    extern fn DevServerSourceProvider__getSourceMapJSON(*DevServerSourceProvider) SourceMapData;
+
+    pub const getSourceSlice = DevServerSourceProvider__getSourceSlice;
+    pub const getSourceMapJSON = DevServerSourceProvider__getSourceMapJSON;
+
+    pub fn toSourceContentPtr(this: *DevServerSourceProvider) ParsedSourceMap.SourceContentPtr {
+        return ParsedSourceMap.SourceContentPtr.fromDevServerProvider(this);
+    }
+
+    /// The last two arguments to this specify loading hints
+    pub fn getSourceMap(
+        provider: *DevServerSourceProvider,
+        source_filename: []const u8,
+        load_hint: SourceMap.SourceMapLoadHint,
+        result: SourceMap.ParseUrlResultHint,
+    ) ?SourceMap.ParseUrl {
+        return getSourceMapImpl(
+            DevServerSourceProvider,
             provider,
             source_filename,
             load_hint,

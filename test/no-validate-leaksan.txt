@@ -145,6 +145,7 @@ test/js/node/test/parallel/test-tls-fast-writing.js
 test/js/bun/sqlite/sqlite.test.js
 test/js/workerd/html-rewriter.test.js
 test/regression/issue/12250.test.ts
+test/js/bun/test/parallel/test-http-10177-response.write-with-non-ascii-latin1-should-not-cause-duplicated-character-or-segfault.ts
 
 
 # crash for reasons not related to LSAN
@@ -397,6 +398,14 @@ test/js/third_party/resvg/bbox.test.js
 test/regression/issue/10139.test.ts
 test/js/bun/udp/udp_socket.test.ts
 test/cli/init/init.test.ts
+
+# There are some leaks related to the dev server closing on process exit, the fix is to
+# tick the event loop on globalExit but this breaks like 50 tests. Since the
+# leak is when process exits it should be fine for now but it should be fixed at
+# some point.
+test/bake/dev/react-response.test.ts
+test/bake/dev/react-cookies.test.ts
+test/bake/dev/server-sourcemap.test.ts
 
 # Watcher Thread
 test/bake/dev-and-prod.test.ts

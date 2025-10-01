@@ -285,7 +285,7 @@ fn handlePath(
     string: bun.string.WTFStringImpl,
 ) bun.JSError![:0]const u8 {
     const name = string.toOwnedSliceZ(bun.default_allocator);
-    errdefer bun.default_allocator.free(name);
+    errdefer bun.freeSensitive(bun.default_allocator, name);
     if (std.posix.system.access(name, std.posix.F_OK) != 0) {
         return global.throwInvalidArguments(
             std.fmt.comptimePrint("Unable to access {s} path", .{field}),
@@ -328,7 +328,7 @@ fn handleFile(
         .file => |*ref| .{ .file = ref.get() },
         .array => |*list| return try handleFileArray(global, list.items()),
     });
-    errdefer bun.default_allocator.free(single);
+    errdefer bun.freeSensitive(bun.default_allocator, single);
     const result = try bun.default_allocator.alloc([*:0]const u8, 1);
     result[0] = single;
     return result;

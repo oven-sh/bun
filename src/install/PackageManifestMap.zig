@@ -61,8 +61,8 @@ pub fn byNameHashAllowExpired(
             }
         }
 
-        if (entry.value_ptr.* == .expired) {
-            if (is_expired) |expiry| {
+        if (is_expired) |expiry| {
+            if (entry.value_ptr.* == .expired) {
                 expiry.* = true;
                 return &entry.value_ptr.expired;
             }

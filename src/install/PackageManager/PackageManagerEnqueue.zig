@@ -1638,7 +1638,7 @@ fn getOrPutResolvedPackage(
                     const package_name = this.lockfile.str(&name);
                     if (PackageManager.verbose_install or this.options.log_level == .verbose) {
                         if (filtered.newest_filtered) |newest| {
-                            const min_age_days = this.options.minimal_age_gate_ms orelse 0 / std.time.ms_per_day;
+                            const min_age_days = (this.options.minimal_age_gate_ms orelse 0) / std.time.ms_per_day;
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
@@ -1667,7 +1667,7 @@ fn getOrPutResolvedPackage(
 
                     if (comptime successFn == assignRootResolution) {
                         if (filtered.newest_filtered) |newest| {
-                            const min_age_days = this.options.minimal_age_gate_ms orelse 0 / std.time.ms_per_day;
+                            const min_age_days = (this.options.minimal_age_gate_ms orelse 0) / std.time.ms_per_day;
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);

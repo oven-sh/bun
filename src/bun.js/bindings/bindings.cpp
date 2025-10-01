@@ -32,6 +32,7 @@
 #include "WebCoreJSBuiltins.h"
 
 #include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/ArrayBufferView.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
@@ -3023,16 +3024,19 @@ JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC:
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
-bool JSC__JSValue__asArrayBuffer_(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1,
-    Bun__ArrayBuffer* arg2)
+bool JSC__JSValue__asArrayBuffer(
+    JSC::EncodedJSValue encodedValue,
+    JSC::JSGlobalObject* globalObject,
+    Bun__ArrayBuffer* out)
 {
-    ASSERT_NO_PENDING_EXCEPTION(arg1);
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     if (!value || !value.isCell()) [[unlikely]] {
         return false;
     }
 
     auto type = value.asCell()->type();
+    void* data = nullptr;
 
     switch (type) {
     case JSC::JSType::Uint8ArrayType:
@@ -3048,60 +3052,56 @@ bool JSC__JSValue__asArrayBuffer_(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObj
     case JSC::JSType::Float64ArrayType:
     case JSC::JSType::BigInt64ArrayType:
     case JSC::JSType::BigUint64ArrayType: {
-        JSC::JSArrayBufferView* typedArray = JSC::jsCast<JSC::JSArrayBufferView*>(value);
-        arg2->len = typedArray->length();
-        arg2->byte_len = typedArray->byteLength();
-        // the offset is already set by vector()
-        // https://github.com/oven-sh/bun/issues/561
-        arg2->offset = 0;
-        arg2->cell_type = type;
-        arg2->ptr = (char*)typedArray->vectorWithoutPACValidation();
-        arg2->_value = JSValue::encode(value);
-        return true;
+        JSC::JSArrayBufferView* view = JSC::jsCast<JSC::JSArrayBufferView*>(value);
+        data = view->vector();
+        out->len = view->length();
+        out->byte_len = view->byteLength();
+        out->cell_type = type;
+        out->shared = view->isShared();
+        break;
     }
     case JSC::JSType::ArrayBufferType: {
-        JSC::ArrayBuffer* typedArray = JSC::jsCast<JSC::JSArrayBuffer*>(value)->impl();
-        arg2->len = typedArray->byteLength();
-        arg2->byte_len = typedArray->byteLength();
-        arg2->offset = 0;
-        arg2->cell_type = JSC::JSType::ArrayBufferType;
-        arg2->ptr = (char*)typedArray->data();
-        arg2->shared = typedArray->isShared();
-        arg2->_value = JSValue::encode(value);
-        return true;
+        JSC::ArrayBuffer* buffer = JSC::jsCast<JSC::JSArrayBuffer*>(value)->impl();
+        data = buffer->data();
+        out->len = buffer->byteLength();
+        out->byte_len = buffer->byteLength();
+        out->cell_type = JSC::JSType::ArrayBufferType;
+        out->shared = buffer->isShared();
+        break;
     }
     case JSC::JSType::ObjectType:
     case JSC::JSType::FinalObjectType: {
         if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
-            arg2->len = view->length();
-            arg2->byte_len = view->byteLength();
-            arg2->offset = 0;
-            arg2->cell_type = view->type();
-            arg2->ptr = (char*)view->vectorWithoutPACValidation();
-            arg2->_value = JSValue::encode(value);
-            return true;
-        }
-
-        if (JSC::JSArrayBuffer* jsBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(value)) {
+            data = view->vector();
+            out->len = view->length();
+            out->byte_len = view->byteLength();
+            out->cell_type = view->type();
+            out->shared = view->isShared();
+        } else if (JSC::JSArrayBuffer* jsBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(value)) {
             JSC::ArrayBuffer* buffer = jsBuffer->impl();
             if (!buffer)
                 return false;
-            arg2->len = buffer->byteLength();
-            arg2->byte_len = buffer->byteLength();
-            arg2->offset = 0;
-            arg2->cell_type = JSC::JSType::ArrayBufferType;
-            arg2->ptr = (char*)buffer->data();
-            arg2->_value = JSValue::encode(value);
-            return true;
+            data = buffer->data();
+            out->len = buffer->byteLength();
+            out->byte_len = buffer->byteLength();
+            out->cell_type = JSC::JSType::ArrayBufferType;
+            out->shared = buffer->isShared();
+        } else {
+            return false;
         }
         break;
     }
     default: {
-        break;
+        return false;
     }
     }
-
-    return false;
+    out->_value = JSValue::encode(value);
+    if (data) {
+        // Avoid setting `ptr` to null; the corresponding Zig field is a non-optional pointer.
+        // The caller should have already set `ptr` to a zero-length array.
+        out->ptr = static_cast<char*>(data);
+    }
+    return true;
 }
 
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject* arg0, size_t length)
@@ -6884,4 +6884,20 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
     }
 
     return lineColumn.line;
+}
+
+extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }
+extern "C" void JSC__ArrayBuffer__deref(JSC::ArrayBuffer* self) { self->deref(); }
+extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__ArrayBuffer* out)
+{
+    const std::size_t byteLength = self->byteLength();
+    if (void* data = self->data()) {
+        // Avoid setting `ptr` to null; it's a non-optional pointer in Zig.
+        out->ptr = static_cast<char*>(data);
+    }
+    out->len = byteLength;
+    out->byte_len = byteLength;
+    out->_value = 0;
+    out->cell_type = JSC::JSType::ArrayBufferType;
+    out->shared = self->isShared();
 }

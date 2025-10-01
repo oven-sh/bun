@@ -92,14 +92,15 @@ struct WebCore::Converter<Bun::IDLStrictInteger<T>>
             return {};
         }
         if constexpr (maxInt >= static_cast<std::uint64_t>(maxSafeInteger)) {
-            return static_cast<T>(number);
-        } else if (intVal < static_cast<std::int64_t>(minInt)
-            || intVal > static_cast<std::int64_t>(maxInt)) {
-            ctx.throwIntegerOutOfRange(globalObject, scope, intVal, minInt, maxInt);
-            return {};
-        } else {
-            return static_cast<T>(number);
+            if (std::signed_integral<T> || intVal >= 0) {
+                return static_cast<T>(intVal);
+            }
+        } else if (intVal >= static_cast<std::int64_t>(minInt)
+            && intVal <= static_cast<std::int64_t>(maxInt)) {
+            return static_cast<T>(intVal);
         }
+        ctx.throwIntegerOutOfRange(globalObject, scope, intVal, minInt, maxInt);
+        return {};
     }
 
     template<Bun::IDLConversionContext Ctx>

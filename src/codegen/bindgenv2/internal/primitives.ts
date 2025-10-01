@@ -31,7 +31,7 @@ function makeUnsignedType(width: number): Type {
       return `u${width}`;
     }
     toCpp(value: number | bigint): string {
-      assert(["number", "bigint"].includes(typeof value));
+      assert(typeof value === "bigint" || Number.isSafeInteger(value));
       const intValue = BigInt(value);
       if (intValue < 0) throw RangeError("unsigned int cannot be negative");
       const max = 1n << BigInt(width);
@@ -54,7 +54,7 @@ function makeSignedType(width: number): Type {
       return `i${width}`;
     }
     toCpp(value: number | bigint): string {
-      assert(["number", "bigint"].includes(typeof value));
+      assert(typeof value === "bigint" || Number.isSafeInteger(value));
       const intValue = BigInt(value);
       const max = 1n << BigInt(width - 1);
       const min = -max;

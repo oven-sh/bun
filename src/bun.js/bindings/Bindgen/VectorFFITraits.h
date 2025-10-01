@@ -104,7 +104,7 @@ public:
                 new (storage + i * sizeof(FFIElement)) FFIElement { std::move(newElem) };
             }
 #if __cpp_lib_start_lifetime_as >= 202207L
-            FFIElement* data = std::start_lifetime_as_array<FFIElement*>(storage, newCapacity);
+            FFIElement* data = std::start_lifetime_as_array<FFIElement>(storage, newCapacity);
 #else
             // We need to start the lifetime of an object of type "array of `capacity`
             // `FFIElement`" without invalidating the object representation. Without

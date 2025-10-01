@@ -1361,7 +1361,6 @@ pub fn getSemver(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue 
     return SemverObject.create(globalThis);
 }
 
-
 pub fn getUnsafe(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return UnsafeObject.create(globalThis);
 }

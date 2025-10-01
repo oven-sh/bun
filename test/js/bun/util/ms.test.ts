@@ -1,8 +1,10 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
+import { join } from "path";
 
 describe("Bun.ms - parse (string to number)", () => {
-  describe("short strings", () => {
-    test.each([
+  test("short strings", () => {
+    const cases = [
       ["100", 100],
       ["1m", 60000],
       ["1h", 3600000],
@@ -17,13 +19,15 @@ describe("Bun.ms - parse (string to number)", () => {
       ["-1h", -3600000],
       ["-200", -200],
       [".5ms", 0.5],
-    ])('Bun.ms("%s") should return %d', (input, expected) => {
+    ] as const;
+
+    for (const [input, expected] of cases) {
       expect(Bun.ms(input)).toBe(expected);
-    });
+    }
   });
 
-  describe("long strings", () => {
-    test.each([
+  test("long strings", () => {
+    const cases = [
       ["53 milliseconds", 53],
       ["17 msecs", 17],
       ["1 sec", 1000],
@@ -37,13 +41,15 @@ describe("Bun.ms - parse (string to number)", () => {
       ["-100 milliseconds", -100],
       ["-1.5 hours", -5400000],
       ["-10 minutes", -600000],
-    ])('Bun.ms("%s") should return %d', (input, expected) => {
+    ] as const;
+
+    for (const [input, expected] of cases) {
       expect(Bun.ms(input)).toBe(expected);
-    });
+    }
   });
 
-  describe("case insensitive", () => {
-    test.each([
+  test("case insensitive", () => {
+    const cases = [
       ["1M", 60000],
       ["1H", 3600000],
       ["2D", 172800000],
@@ -54,27 +60,31 @@ describe("Bun.ms - parse (string to number)", () => {
       ["1 HOUR", 3600000],
       ["1 DAY", 86400000],
       ["1 WEEK", 604800000],
-    ])('Bun.ms("%s") should return %d', (input, expected) => {
+    ] as const;
+
+    for (const [input, expected] of cases) {
       expect(Bun.ms(input)).toBe(expected);
-    });
+    }
   });
 
-  describe("invalid inputs", () => {
-    test.each([
+  test("invalid inputs", () => {
+    const cases = [
       ["", "empty string"],
       [" ", "whitespace only"],
       ["foo", "invalid unit"],
       ["1x", "unknown unit"],
       ["1.2.3s", "multiple dots"],
-    ])('Bun.ms("%s") should return NaN (%s)', (input) => {
+    ] as const;
+
+    for (const [input] of cases) {
       expect(Bun.ms(input)).toBeNaN();
-    });
+    }
   });
 });
 
 describe("Bun.ms - format (number to string)", () => {
-  describe("short format", () => {
-    test.each([
+  test("short format", () => {
+    const cases = [
       [500, "500ms"],
       [-500, "-500ms"],
       [1000, "1s"],
@@ -88,13 +98,15 @@ describe("Bun.ms - format (number to string)", () => {
       [31557600001, "1y"],
       [234234234, "3d"],
       [-234234234, "-3d"],
-    ])("Bun.ms(%d) should return %s", (input, expected) => {
+    ] as const;
+
+    for (const [input, expected] of cases) {
       expect(Bun.ms(input)).toBe(expected);
-    });
+    }
   });
 
-  describe("long format", () => {
-    test.each([
+  test("long format", () => {
+    const cases = [
       [500, "500 ms"],
       [-500, "-500 ms"],
       [1000, "1 second"],
@@ -112,9 +124,11 @@ describe("Bun.ms - format (number to string)", () => {
       [31557600001, "1 year"],
       [234234234, "3 days"],
       [-234234234, "-3 days"],
-    ])("Bun.ms(%d, { long: true }) should return %s", (input, expected) => {
+    ] as const;
+
+    for (const [input, expected] of cases) {
       expect(Bun.ms(input, { long: true })).toBe(expected);
-    });
+    }
   });
 
   describe("invalid number inputs", () => {
@@ -133,8 +147,8 @@ describe("Bun.ms - format (number to string)", () => {
 });
 
 describe("Bun.ms - comprehensive coverage", () => {
-  describe("all time units", () => {
-    test.each([
+  test("all time units", () => {
+    const cases = [
       // Milliseconds
       ["1ms", 1],
       ["1millisecond", 1],
@@ -184,13 +198,15 @@ describe("Bun.ms - comprehensive coverage", () => {
       ["1year", 31557600000],
       ["1years", 31557600000],
       ["2years", 63115200000],
-    ])('Bun.ms("%s") should parse correctly', (input, expected) => {
+    ] as const;
+
+    for (const [input, expected] of cases) {
       expect(Bun.ms(input)).toBe(expected);
-    });
+    }
   });
 
-  describe("decimals and negatives", () => {
-    test.each([
+  test("decimals and negatives", () => {
+    const cases = [
       ["1.5s", 1500],
       ["1.5h", 5400000],
       ["0.5d", 43200000],
@@ -199,13 +215,15 @@ describe("Bun.ms - comprehensive coverage", () => {
       ["-0.5d", -43200000],
       [".5s", 500],
       ["-.5s", -500],
-    ])('Bun.ms("%s") should handle decimals/negatives', (input, expected) => {
+    ] as const;
+
+    for (const [input, expected] of cases) {
       expect(Bun.ms(input)).toBe(expected);
-    });
+    }
   });
 
-  describe("whitespace handling", () => {
-    test.each([
+  test("whitespace handling", () => {
+    const cases = [
       ["1 s", 1000],
       ["1  s", 1000],
       ["1   s", 1000],
@@ -215,9 +233,11 @@ describe("Bun.ms - comprehensive coverage", () => {
       ["1 second", 1000],
       ["1  seconds", 1000],
       ["  1 second  ", 1000],
-    ])('Bun.ms("%s") should handle whitespace', (input, expected) => {
+    ] as const;
+
+    for (const [input, expected] of cases) {
       expect(Bun.ms(input)).toBe(expected);
-    });
+    }
   });
 });
 
@@ -254,4 +274,81 @@ describe("Bun.ms - dynamic values at runtime", () => {
     const result = Bun.ms(getMs());
     expect(result).toBe("1m");
   });
+});
+
+test("Bun.ms - bundler output", async () => {
+  const dir = tempDirWithFiles("ms-bundler", {
+    "entry.ts": `
+const dynamic = () => Math.random() > 0.5 ? 1 : 2;
+
+export const values = {
+  // Valid strings - should inline to numbers
+  oneSecond: Bun.ms("1s"),
+  oneMinute: Bun.ms("1m"),
+  oneHour: Bun.ms("1h"),
+  oneDay: Bun.ms("1d"),
+  twoWeeks: Bun.ms("2w"),
+  halfYear: Bun.ms("0.5y"),
+  withSpaces: Bun.ms("5 minutes"),
+  negative: Bun.ms("-10s"),
+  decimal: Bun.ms("1.5h"),
+  justNumber: Bun.ms("100"),
+  caseInsensitive: Bun.ms("2D"),
+
+  // Invalid strings - should inline to NaN
+  invalid: Bun.ms("invalid"),
+  empty: Bun.ms(""),
+
+  // Number inputs - should inline to strings
+  formatShort: Bun.ms(1000),
+  formatLong: Bun.ms(60000, { long: true }),
+
+  // dynamic should not inline
+  dynamic: Bun.ms(\`\$\{dynamic()\}s\`),
+
+  // test
+  dontBeWeird: abc.ms("1s"),
+};
+    `,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [join(dir, "entry.ts")],
+    minify: {
+      syntax: true,
+    },
+  });
+
+  expect(result.success).toBe(true);
+  expect(result.outputs).toHaveLength(1);
+
+  let output = await result.outputs[0].text();
+  output = output.replace(/\/\/.*?\/entry\.ts/, "// entry.ts");
+
+  expect(output).toMatchInlineSnapshot(`
+    "// entry.ts
+    var dynamic = () => Math.random() > 0.5 ? 1 : 2, values = {
+      oneSecond: 1000,
+      oneMinute: 60000,
+      oneHour: 3600000,
+      oneDay: 86400000,
+      twoWeeks: 1209600000,
+      halfYear: 15778800000,
+      withSpaces: 300000,
+      negative: -1e4,
+      decimal: 5400000,
+      justNumber: 100,
+      caseInsensitive: 172800000,
+      invalid: NaN,
+      empty: NaN,
+      formatShort: "1s",
+      formatLong: "1 minute",
+      dynamic: Bun.ms(\`\${dynamic()}s\`),
+      dontBeWeird: abc.ms("1s")
+    };
+    export {
+      values
+    };
+    "
+  `);
 });

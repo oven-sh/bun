@@ -5239,77 +5239,9 @@ declare module "bun" {
    * @param value - Time string to parse or milliseconds to format
    * @param options - Formatting options (when value is a number)
    * @returns Milliseconds (for string) or formatted string (for number). Returns NaN for invalid strings.
+   * @throws {Error} If the value is invalid
    */
-  function ms(
-    value:
-      | `${number}`
-      | `${number}${
-          | "ms"
-          | "s"
-          | "m"
-          | "h"
-          | "d"
-          | "w"
-          | "y"
-          | "millisecond"
-          | "milliseconds"
-          | "msec"
-          | "msecs"
-          | "second"
-          | "seconds"
-          | "sec"
-          | "secs"
-          | "minute"
-          | "minutes"
-          | "min"
-          | "mins"
-          | "hour"
-          | "hours"
-          | "hr"
-          | "hrs"
-          | "day"
-          | "days"
-          | "week"
-          | "weeks"
-          | "month"
-          | "months"
-          | "mo"
-          | "year"
-          | "years"
-          | "yr"
-          | "yrs"}`
-      | `${number} ${
-          | "ms"
-          | "millisecond"
-          | "milliseconds"
-          | "msec"
-          | "msecs"
-          | "second"
-          | "seconds"
-          | "sec"
-          | "secs"
-          | "minute"
-          | "minutes"
-          | "min"
-          | "mins"
-          | "hour"
-          | "hours"
-          | "hr"
-          | "hrs"
-          | "day"
-          | "days"
-          | "week"
-          | "weeks"
-          | "month"
-          | "months"
-          | "mo"
-          | "year"
-          | "years"
-          | "yr"
-          | "yrs"}`
-      | string,
-    options?: never,
-  ): number;
+  function ms(value: string): number;
   function ms(value: number, options?: { long?: boolean }): string;
 
   /**

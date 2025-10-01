@@ -1,67 +1,31 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-
 /// Parse a time string like "2d", "1.5h", "5m" to milliseconds
 pub fn parse(input: []const u8) ?f64 {
     if (input.len == 0 or input.len > 100) return null;
 
     var i: usize = 0;
-    var negative = false;
-
-    // Skip leading whitespace
-    while (i < input.len and std.ascii.isWhitespace(input[i])) : (i += 1) {}
-    if (i >= input.len) return null;
-
-    // Check for negative sign
-    if (input[i] == '-') {
-        negative = true;
-        i += 1;
-    }
-
-    // Parse number
-    const start = i;
-    var has_digits = false;
-    var has_dot = false;
-
     while (i < input.len) {
         const c = input[i];
-        if (std.ascii.isDigit(c)) {
-            has_digits = true;
+        if (c == '-' or c == '.' or std.ascii.isDigit(c) or std.ascii.isWhitespace(c)) {
             i += 1;
-        } else if (c == '.' and !has_dot) {
-            has_dot = true;
-            i += 1;
-        } else if (std.ascii.isWhitespace(c) or std.ascii.isAlphabetic(c)) {
+        } else if (std.ascii.isAlphabetic(c)) {
             break;
         } else {
             return null;
         }
     }
 
-    if (!has_digits) return null;
+    const number_str = strings.trim(input[0..i], " \t\n\r");
+    const value = std.fmt.parseFloat(f64, number_str) catch return null;
 
-    const number_str = input[start..i];
-    var value = std.fmt.parseFloat(f64, number_str) catch return null;
-
-    if (negative) value = -value;
-
-    // Skip whitespace after number
-    while (i < input.len and std.ascii.isWhitespace(input[i])) : (i += 1) {}
-
-    // Get unit (rest of string, excluding trailing whitespace)
-    var unit_end = input.len;
-    while (unit_end > i and std.ascii.isWhitespace(input[unit_end - 1])) : (unit_end -= 1) {}
-    const unit = input[i..unit_end];
-
-    // Default to milliseconds if no unit
+    const unit = strings.trim(input[i..], " \t\n\r");
     if (unit.len == 0) return value;
 
-    // Match unit (case-insensitive)
     return if (getMultiplier(unit)) |m| value * m else null;
 }
+
+// Years (365.25 days to account for leap years)
+const ms_per_year = std.time.ms_per_day * 365.25;
+const ms_per_month = std.time.ms_per_day * (365.25 / 12.0);
 
 fn getMultiplier(unit: []const u8) ?f64 {
     // Years (365.25 days to account for leap years)
@@ -69,14 +33,14 @@ fn getMultiplier(unit: []const u8) ?f64 {
         std.ascii.eqlIgnoreCase(unit, "yrs") or std.ascii.eqlIgnoreCase(unit, "yr") or
         std.ascii.eqlIgnoreCase(unit, "y"))
     {
-        return std.time.ms_per_day * 365.25;
+        return ms_per_year;
     }
 
     // Months (30.4375 days average)
     if (std.ascii.eqlIgnoreCase(unit, "months") or std.ascii.eqlIgnoreCase(unit, "month") or
         std.ascii.eqlIgnoreCase(unit, "mo"))
     {
-        return std.time.ms_per_day * 30.4375;
+        return ms_per_month;
     }
 
     // Weeks
@@ -128,12 +92,9 @@ fn getMultiplier(unit: []const u8) ?f64 {
     return null;
 }
 
-
 /// Format milliseconds to a human-readable string
 pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
     const abs_ms = @abs(ms);
-    const ms_per_year = std.time.ms_per_day * 365.25;
-    const ms_per_month = std.time.ms_per_day * 30.4375;
 
     // Years
     if (abs_ms >= ms_per_year) {
@@ -224,9 +185,11 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]const u8 {
 pub fn jsFunction(
     globalThis: *JSGlobalObject,
     callframe: *jsc.CallFrame,
-) bun.JSError!jsc.JSValue {
+) JSError!jsc.JSValue {
     const args = callframe.arguments_old(2);
-    if (args.len == 0) return .js_undefined;
+    if (args.len == 0) {
+        return globalThis.throwInvalidArguments("Bun.ms() expects a string or number", .{});
+    }
 
     const input = args.ptr[0];
 
@@ -238,7 +201,6 @@ pub fn jsFunction(
             return globalThis.throwInvalidArguments("Value must be a finite number", .{});
         }
 
-        // Check for options argument
         var long = false;
         if (args.len > 1 and args.ptr[1].isObject()) {
             const options = args.ptr[1];
@@ -252,7 +214,7 @@ pub fn jsFunction(
         };
         defer bun.default_allocator.free(result);
 
-        return bun.String.fromBytes(result).toJS(globalThis);
+        return String.fromBytes(result).toJS(globalThis);
     }
 
     // If input is a string, parse it to milliseconds
@@ -261,10 +223,20 @@ pub fn jsFunction(
         const slice = str.toSlice(bun.default_allocator);
         defer slice.deinit();
 
-        const result = parse(slice.slice()) orelse return JSValue.jsNumber(std.math.nan(f64));
+        const result = parse(slice.slice()) orelse std.math.nan(f64);
         return JSValue.jsNumber(result);
     }
 
-    // Invalid input type returns NaN
-    return JSValue.jsNumber(std.math.nan(f64));
+    return globalThis.throwInvalidArguments("Bun.ms() expects a string or number", .{});
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSError = bun.JSError;
+const String = bun.String;
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

@@ -737,4 +737,29 @@ describe("Bun.semver.satisfies()", () => {
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
+
+  // Regression test for unreachable code panic in SemverQuery.zig:411
+  // The crash occurs when: pipe (|) sets token.tag = .none, then hyphen (-)
+  // doesn't reset token.tag or set skip_round, so toRange() is called with .none
+  test("crash: toRange with .none token after pipe and hyphen", () => {
+    // The bug path:
+    // 1. Parse a version (count > 0)
+    // 2. Parse "|" which sets token.tag = .none and skip_round = true
+    // 3. Next iteration: parse "-" which doesn't reset token.tag or skip_round
+    // 4. Parse version number, calls toRange() with .none -> CRASH at line 411
+
+    // These patterns trigger the crash: pipe followed by hyphen and version
+    expect(satisfies("2.0.0", "1.0.0 || -2.0.0")).toBeFalse();
+    expect(satisfies("2.0.0", "1.0.0||-2.0.0")).toBeFalse();
+    expect(satisfies("2.0.0", "1.0.0 || - 2.0.0")).toBeFalse();
+    expect(satisfies("2.0.0", "^1.0.0 | -2.0.0")).toBeFalse();
+    expect(satisfies("2.0.0", ">=1.0.0||-2.0.0")).toBeFalse();
+    expect(satisfies("2.0.0", "~1.0.0 || -2.0.0")).toBeFalse();
+
+    // Also test with version ranges after the hyphen
+    expect(satisfies("2.0.0", "1.0.0 || ->=2.0.0")).toBeFalse();
+    expect(satisfies("2.0.0", "1.0.0 || ->2.0.0")).toBeFalse();
+    expect(satisfies("2.0.0", "1.0.0 || -<3.0.0")).toBeFalse();
+    expect(satisfies("2.0.0", "1.0.0 || -<=3.0.0")).toBeFalse();
+  });
 });

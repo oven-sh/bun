@@ -152,7 +152,7 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
     template<typename IDLEnum = void>
     void throwBadEnumValue(JSC::JSGlobalObject& global, JSC::ThrowScope& scope)
     {
-        derived().throwRangeErrorWithPredicate("is not a valid enumeration value"_s);
+        derived().throwRangeErrorWithPredicate(global, scope, "is not a valid enumeration value"_s);
     }
 
     template<HasIDLHumanReadableName IDLEnum>

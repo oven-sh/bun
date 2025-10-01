@@ -1497,21 +1497,69 @@ pub fn VisitExpr(
                     }
                 };
 
-                // Implement constant folding for Bun.ms("1s") -> 1000
+                // Implement constant folding for Bun.ms("1s") -> 1000 and Bun.ms(1000) -> "1s"
                 if (p.should_fold_typescript_constant_expressions or p.options.features.inlining) {
-                    if (e_.args.len == 1) {
-                        if (e_.target.data.as(.e_dot)) |dot| {
-                            // Check if this is Bun.ms("string")
-                            if (dot.target.data == .e_identifier and strings.eqlComptime(dot.name, "ms")) {
-                                const symbol = &p.symbols.items[dot.target.data.e_identifier.ref.innerIndex()];
-                                // Verify it's the global "Bun" identifier (unbound = global)
-                                if (symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "Bun")) {
+                    if (e_.target.data.as(.e_dot)) |dot| {
+                        // Check if this is Bun.ms(...)
+                        if (dot.target.data == .e_identifier and strings.eqlComptime(dot.name, "ms")) {
+                            const symbol = &p.symbols.items[dot.target.data.e_identifier.ref.innerIndex()];
+                            // Verify it's the global "Bun" identifier (unbound = global)
+                            if (symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "Bun")) {
+                                const ms_module = @import("../bun.js/api/bun/ms.zig");
+
+                                // Case 1: Bun.ms("string") -> number
+                                if (e_.args.len == 1) {
                                     const arg = e_.args.at(0).unwrapInlined();
                                     if (arg.data == .e_string and arg.data.e_string.isUTF8()) {
                                         const str = arg.data.e_string.slice(p.allocator);
-                                        const ms_module = @import("../bun.js/api/bun/ms.zig");
                                         const ms_value = ms_module.parse(str) orelse std.math.nan(f64);
                                         return p.newExpr(E.Number{ .value = ms_value }, expr.loc);
+                                    } else if (arg.data == .e_number) {
+                                        // Case 2: Bun.ms(number) -> "string"
+                                        const num = arg.data.e_number.value;
+                                        // Check for NaN/Infinity (would throw at runtime)
+                                        if (std.math.isNan(num) or std.math.isInf(num)) {
+                                            // Don't inline - would throw error at runtime
+                                            return expr;
+                                        }
+                                        // Format with short format (default)
+                                        if (ms_module.format(p.allocator, num, false)) |formatted| {
+                                            return p.newExpr(E.String.init(formatted), expr.loc);
+                                        } else |_| {
+                                            // OOM, don't inline
+                                            return expr;
+                                        }
+                                    }
+                                } else if (e_.args.len == 2) {
+                                    // Case 3: Bun.ms(number, { long: true/false }) -> "string"
+                                    const arg = e_.args.at(0).unwrapInlined();
+                                    const opts = e_.args.at(1).unwrapInlined();
+
+                                    if (arg.data == .e_number and opts.data == .e_object) {
+                                        const num = arg.data.e_number.value;
+                                        if (std.math.isNan(num) or std.math.isInf(num)) {
+                                            return expr;
+                                        }
+
+                                        // Try to extract "long" property value
+                                        var long = false;
+                                        for (opts.data.e_object.properties.slice()) |prop| {
+                                            if (prop.key) |key| {
+                                                if (key.data == .e_string and strings.eqlComptime(key.data.e_string.slice(p.allocator), "long")) {
+                                                    if (prop.value) |val| {
+                                                        if (val.data == .e_boolean) {
+                                                            long = val.data.e_boolean.value;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if (ms_module.format(p.allocator, num, long)) |formatted| {
+                                            return p.newExpr(E.String.init(formatted), expr.loc);
+                                        } else |_| {
+                                            return expr;
+                                        }
                                     }
                                 }
                             }

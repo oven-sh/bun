@@ -60,8 +60,8 @@ export const values = {
       caseInsensitive: 172800000,
       invalid: NaN,
       empty: NaN,
-      formatShort: Bun.ms(1000),
-      formatLong: Bun.ms(60000, { long: !0 })
+      formatShort: "1s",
+      formatLong: "1 minute"
     };
     export {
       values

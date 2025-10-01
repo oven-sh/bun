@@ -326,15 +326,19 @@ pub const ArrayBuffer = extern struct {
     pub const slice = byteSlice;
 
     pub inline fn asU16(this: *const @This()) []u16 {
-        return std.mem.bytesAsSlice(u16, @as([*]u16, @ptrCast(@alignCast(this.ptr)))[0..this.byte_len]);
+        return @alignCast(this.asU16Unaligned());
     }
 
     pub inline fn asU16Unaligned(this: *const @This()) []align(1) u16 {
-        return std.mem.bytesAsSlice(u16, @as([*]align(1) u16, @ptrCast(@alignCast(this.ptr)))[0..this.byte_len]);
+        return @ptrCast(this.ptr[0 .. this.byte_len / @sizeOf(u16) * @sizeOf(u16)]);
     }
 
     pub inline fn asU32(this: *const @This()) []u32 {
-        return std.mem.bytesAsSlice(u32, @as([*]u32, @ptrCast(@alignCast(this.ptr)))[0..this.byte_len]);
+        return @alignCast(this.asU32Unaligned());
+    }
+
+    pub inline fn asU32Unaligned(this: *const @This()) []align(1) u32 {
+        return @ptrCast(this.ptr[0 .. this.byte_len / @sizeOf(u32) * @sizeOf(u32)]);
     }
 
     pub const BinaryType = enum(u4) {

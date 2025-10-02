@@ -344,6 +344,17 @@ export const values = {
   dontBeWeird: abc.ms("1s"),
 };
     `,
+    "bun.ts": `
+import { ms, sleep } from "bun";
+
+export const values = {
+  import: ms("1s"),
+  importLong: ms(1000, { long: true }),
+  ms: Bun.ms(),
+  mss: ms,
+  sleep: sleep,
+};
+`,
   });
 
   const result = await Bun.build({
@@ -379,6 +390,37 @@ export const values = {
       formatLong: "1 minute",
       dynamic: Bun.ms(\`\${dynamic()}s\`),
       dontBeWeird: abc.ms("1s")
+    };
+    export {
+      values
+    };
+    "
+  `);
+
+  const bunResult = await Bun.build({
+    entrypoints: [join(dir, "bun.ts")],
+    minify: {
+      syntax: true,
+    },
+    target: "bun",
+  });
+
+  expect(bunResult.success).toBe(true);
+  expect(bunResult.outputs).toHaveLength(1);
+
+  let bunOutput = await bunResult.outputs[0].text();
+  bunOutput = bunOutput.replace(/\/\/.*?\/bun\.ts/, "// bun.ts");
+
+  expect(bunOutput).toMatchInlineSnapshot(`
+    "// @bun
+    // bun.ts
+    var {ms, sleep } = globalThis.Bun;
+    var values = {
+      import: 1000,
+      importLong: "1 second",
+      ms: Bun.ms(),
+      mss: ms,
+      sleep
     };
     export {
       values

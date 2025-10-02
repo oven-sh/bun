@@ -226,6 +226,33 @@ pub fn jsFunction(
     return globalThis.throwInvalidArguments("Bun.ms() expects a string or number", .{});
 }
 
+// Bundler macro inlining for Bun.ms
+pub fn astFunction(p: anytype, e_: *const E.Call, loc: logger.Loc) !?Expr {
+    if (e_.args.len == 0) return null;
+    const arg = e_.args.at(0).unwrapInlined();
+
+    if (arg.asString(p.allocator)) |str| {
+        const ms_value = parse(str) orelse std.math.nan(f64);
+        return p.newExpr(E.Number{ .value = ms_value }, loc);
+    }
+
+    if (arg.asNumber()) |num| {
+        if (std.math.isNan(num) or std.math.isInf(num)) return null;
+
+        var long = false;
+        if (e_.args.len >= 2) {
+            const opts = e_.args.at(1).unwrapInlined();
+            if (opts.getBoolean("long")) |b| {
+                long = b;
+            }
+        }
+
+        const formatted = try format(p.allocator, num, long);
+        return p.newExpr(E.String.init(formatted), loc);
+    }
+    return null;
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -236,3 +263,7 @@ const strings = bun.strings;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
+
+const logger = bun.logger;
+const E = bun.ast.E;
+const Expr = bun.ast.Expr;

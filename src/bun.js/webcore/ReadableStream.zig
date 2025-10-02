@@ -29,7 +29,7 @@ pub const Ref = union(Type) {
             .Response => {
                 if (owner == .Response) {
                     if (owner.Response.as(jsc.WebCore.Response)) |_| {
-                        if (jsc.WebCore.Response.js.gc.body.get(owner.Response)) |body_value| {
+                        if (Response.js.gc.body.get(owner.Response)) |body_value| {
                             return ReadableStream.fromJS(body_value, global) catch null;
                         }
                     }
@@ -38,7 +38,7 @@ pub const Ref = union(Type) {
             .Request => {
                 if (owner == .Request) {
                     if (owner.Request.as(jsc.WebCore.Request)) |_| {
-                        if (jsc.WebCore.Request.js.gc.body.get(owner.Request)) |body_value| {
+                        if (Request.js.gc.body.get(owner.Request)) |body_value| {
                             return ReadableStream.fromJS(body_value, global) catch null;
                         }
                     }
@@ -55,9 +55,50 @@ pub const Ref = union(Type) {
         return stream.isDisturbed(global);
     }
 
-    pub fn tee(this: *const Ref, owner: Owner, global: *jsc.JSGlobalObject) bun.JSError!?struct { ReadableStream, ReadableStream } {
+    pub fn setValue(this: *Ref, owner: Owner, stream_jsvalue: jsc.JSValue, global: *jsc.JSGlobalObject) void {
+        switch (owner) {
+            .Response => |jsvalue| {
+                if (jsvalue != .zero) {
+                    Response.js.gc.body.set(jsvalue, global, stream_jsvalue);
+                    this.deinit();
+                    this.* = .Response;
+                } else {
+                    this.deinit();
+                    this.* = .empty;
+                }
+            },
+            .Request => |jsvalue| {
+                if (jsvalue != .zero) {
+                    Request.js.gc.body.set(jsvalue, global, stream_jsvalue);
+                    this.deinit();
+                    this.* = .Request;
+                } else {
+                    this.deinit();
+                    this.* = .empty;
+                }
+            },
+            .strong => {
+                this.deinit();
+                this.* = .{ .strong = .init(stream_jsvalue, global) };
+            },
+            .empty => {},
+        }
+    }
+
+    pub fn set(this: *Ref, owner: Owner, stream: ReadableStream, global: *jsc.JSGlobalObject) void {
+        this.setValue(owner, stream.value, global);
+    }
+
+    pub fn tee(this: *Ref, owner: Owner, global: *jsc.JSGlobalObject, readable_stream_value: ?*[2]jsc.JSValue) bun.JSError!?struct { ReadableStream, ReadableStream } {
         const stream = get(this, owner, global) orelse return null;
-        return stream.tee(global) catch null;
+
+        const result = try stream.tee(global) orelse return null;
+        if (readable_stream_value) |value| {
+            value.* = .{ result.@"0".value, result.@"1".value };
+        } else {
+            this.set(owner, result.@"0", global);
+        }
+        return result;
     }
 
     pub fn has(this: *const Ref, owner: Owner, global: *jsc.JSGlobalObject) bool {
@@ -77,16 +118,16 @@ pub const Ref = union(Type) {
     pub fn init(owner: Owner, global: *jsc.JSGlobalObject) Ref {
         switch (owner) {
             .Response => {
-                return .{ .Response = {} };
+                return .Response;
             },
             .Request => {
-                return .{ .Request = {} };
+                return .Request;
             },
             .strong => {
                 return .{ .strong = .init(owner.strong, global) };
             },
             .empty => {
-                return .{ .empty = {} };
+                return .empty;
             },
         }
     }
@@ -100,7 +141,7 @@ pub const Ref = union(Type) {
             .Request => {},
             .empty => {},
         }
-        this.* = .{ .empty = {} };
+        this.* = .empty;
     }
 
     pub fn abort(this: *Ref, owner: Owner, global: *jsc.JSGlobalObject) bool {
@@ -974,3 +1015,5 @@ const Blob = webcore.Blob;
 const streams = webcore.streams;
 
 const std = @import("std");
+const Request = jsc.WebCore.Request;
+const Response = jsc.WebCore.Response;

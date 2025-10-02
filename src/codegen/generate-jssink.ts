@@ -424,7 +424,8 @@ size_t ${controller}::memoryCost(void* sinkPtr) {
 }
 
 size_t ${controller}::estimatedSize(JSCell* cell, JSC::VM& vm) {
-    return Base::estimatedSize(cell, vm) + ${controller}::memoryCost(jsCast<${controller}*>(cell)->wrapped());
+    auto* wrapped = jsCast<${controller}*>(cell)->wrapped();
+    return Base::estimatedSize(cell, vm) + (wrapped ? ${controller}::memoryCost(wrapped) : 0);
 }
 
 JSC_DECLARE_HOST_FUNCTION(${controller}__close);

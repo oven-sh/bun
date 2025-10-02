@@ -298,8 +298,10 @@ pub fn makeMaybePooled(globalObject: *jsc.JSGlobalObject, ptr: *Response) JSValu
 pub fn cloneValue(
     this: *Response,
     globalThis: *JSGlobalObject,
+    this_value: jsc.JSValue,
+    readable_stream_tee: ?*[2]jsc.JSValue,
 ) bun.JSError!Response {
-    var body = try this.body.clone(globalThis);
+    var body = try this.body.clone(.{ .Response = this_value }, globalThis, readable_stream_tee);
     errdefer body.deinit(bun.default_allocator);
     var init = try this.init.clone(globalThis);
     errdefer init.deinit(bun.default_allocator);
@@ -311,8 +313,8 @@ pub fn cloneValue(
     };
 }
 
-pub fn clone(this: *Response, globalThis: *JSGlobalObject) bun.JSError!*Response {
-    return bun.new(Response, try this.cloneValue(globalThis));
+pub fn clone(this: *Response, globalThis: *JSGlobalObject, this_value: jsc.JSValue, readable_stream_tee: ?*[2]jsc.JSValue) bun.JSError!*Response {
+    return bun.new(Response, try this.cloneValue(globalThis, this_value, readable_stream_tee));
 }
 
 pub fn getStatus(
@@ -538,7 +540,7 @@ pub fn constructError(
     return response.toJS(globalThis);
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, thisValue: JSValue) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
@@ -566,10 +568,11 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                     return s3.throwSignError(sign_err, globalThis);
                 };
                 defer result.deinit();
-                response.init.headers = try response.getOrCreateHeaders(globalThis);
+                const headers = try response.getOrCreateHeaders(globalThis);
+                errdefer headers.deref();
+                try headers.put(.Location, result.url, globalThis);
                 response.redirected = true;
-                var headers_ref = response.init.headers.?;
-                try headers_ref.put(.Location, result.url, globalThis);
+                response.init.headers = headers;
                 return bun.new(Response, response);
             }
         }
@@ -595,13 +598,15 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return error.JSError;
     }
 
+    var readable_stream_value: JSValue = .zero;
+
     var body: Body = brk: {
         if (arguments[0].isUndefinedOrNull()) {
             break :brk Body{
                 .value = Body.Value{ .Null = {} },
             };
         }
-        break :brk try Body.extract(globalThis, arguments[0]);
+        break :brk try Body.extract(globalThis, arguments[0], &readable_stream_value);
     };
     errdefer body.deinit(bun.default_allocator);
 
@@ -609,21 +614,23 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return error.JSError;
     }
 
+    if (body.value == .Blob and
+        init.headers != null and
+        body.value.Blob.content_type.len > 0 and
+        !init.headers.?.fastHas(.ContentType))
+    {
+        try init.headers.?.put(.ContentType, body.value.Blob.content_type, globalThis);
+    }
+
     var response = bun.new(Response, Response{
         .body = body,
         .init = init,
     });
 
-    if (response.body.value == .Blob and
-        response.init.headers != null and
-        response.body.value.Blob.content_type.len > 0 and
-        !response.init.headers.?.fastHas(.ContentType))
-    {
-        try response.init.headers.?.put(.ContentType, response.body.value.Blob.content_type, globalThis);
-    }
-
     response.calculateEstimatedByteSize();
-
+    if (thisValue != .zero and readable_stream_value != .zero) {
+        response.body.value.Locked.readable.set(.{ .Response = thisValue }, response.body.value.Locked.global, readable_stream_value);
+    }
     return response;
 }
 

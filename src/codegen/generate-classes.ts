@@ -1710,7 +1710,7 @@ size_t ${name}::memoryCost(void* ptr) {
 size_t ${name}::estimatedSize(JSC::JSCell* cell, JSC::VM& vm) {
   auto* thisObject = jsCast<${name}*>(cell);
   auto* wrapped = thisObject->wrapped();
-  return Base::estimatedSize(cell, vm) + ${name}::memoryCost(wrapped);
+  return Base::estimatedSize(cell, vm) + (wrapped ? ${name}::memoryCost(wrapped) : 0);
 }
 
 void ${name}::destroy(JSCell* cell)

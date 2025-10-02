@@ -16,9 +16,9 @@ pub fn use(this: *Body) Blob {
     return this.value.use();
 }
 
-pub fn clone(this: *Body, globalThis: *JSGlobalObject) bun.JSError!Body {
+pub fn clone(this: *Body, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalThis: *JSGlobalObject, readable_stream_tee: ?*[2]jsc.JSValue) bun.JSError!Body {
     return Body{
-        .value = try this.value.clone(globalThis),
+        .value = try this.value.clone(owner, globalThis, readable_stream_tee),
     };
 }
 
@@ -504,6 +504,10 @@ pub const Value = union(Tag) {
     }
 
     pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!Value {
+        return fromJSWithReadableStreamValue(globalThis, value, null);
+    }
+
+    pub fn fromJSWithReadableStreamValue(globalThis: *JSGlobalObject, value: JSValue, readable_stream_value: ?*JSValue) bun.JSError!Value {
         value.ensureStillAlive();
 
         if (value.isEmptyOrUndefinedOrNull()) {
@@ -596,6 +600,11 @@ pub const Value = union(Tag) {
                     return .Empty;
                 },
                 else => {},
+            }
+
+            if (readable_stream_value) |readable_stream_ptr| {
+                readable_stream_ptr.* = readable.value;
+                return .{ .Locked = .{ .global = globalThis, .readable = .empty } };
             }
 
             return Body.Value.fromReadableStreamWithoutLockCheck(readable, globalThis);
@@ -941,23 +950,32 @@ pub const Value = union(Tag) {
         }
     }
 
-    pub fn tee(this: *Value, globalThis: *jsc.JSGlobalObject) bun.JSError!Value {
+    pub fn tee(this: *Value, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalThis: *jsc.JSGlobalObject, readable_stream_tee: ?*[2]jsc.JSValue) bun.JSError!Value {
         var locked = &this.Locked;
 
-        if (locked.readable.isDisturbed(.strong, globalThis)) {
-            return Value{ .Used = {} };
+        if (locked.readable.isDisturbed(owner, globalThis)) {
+            return .Used;
         }
 
-        if (try locked.readable.tee(.{ .strong = {} }, globalThis)) |readable| {
-            return Value{
+        if (try locked.readable.tee(owner, globalThis, readable_stream_tee)) |result| {
+            if (readable_stream_tee != null) {
+                return .{
+                    .Locked = .{
+                        .global = globalThis,
+                    },
+                };
+            }
+
+            return .{
                 .Locked = .{
-                    .readable = .{ .strong = jsc.WebCore.ReadableStream.Strong.init(readable.@"0", globalThis) },
+                    .readable = .{ .strong = .init(result.@"1", globalThis) },
                     .global = globalThis,
                 },
             };
         }
-        if (locked.promise != null or locked.action != .none or locked.readable.has(.strong, globalThis)) {
-            return Value{ .Used = {} };
+
+        if (locked.promise != null or locked.action != .none or locked.readable.has(owner, globalThis)) {
+            return .Used;
         }
 
         var drain_result: jsc.WebCore.DrainResult = .{
@@ -970,8 +988,8 @@ pub const Value = union(Tag) {
         }
 
         if (drain_result == .empty or drain_result == .aborted) {
-            this.* = .{ .Null = {} };
-            return Value{ .Null = {} };
+            this.* = .Null;
+            return .Null;
         }
 
         var reader = jsc.WebCore.ByteStream.Source.new(.{
@@ -994,28 +1012,35 @@ pub const Value = union(Tag) {
             .ptr = .{ .Bytes = &reader.context },
             .value = stream_value,
         };
-        locked.readable = .{ .strong = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis) };
+        locked.readable.set(.strong, stream, globalThis);
 
         if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-            onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(.{ .strong = {} }, globalThis).?);
+            onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(owner, globalThis).?);
         }
 
-        const first, const second = (try locked.readable.tee(.strong, globalThis)) orelse return Value{ .Used = {} };
-        locked.readable = .{ .strong = .init(first, globalThis) };
+        const tee_result = (try locked.readable.tee(owner, globalThis, readable_stream_tee)) orelse return Value{ .Used = {} };
+
+        if (readable_stream_tee != null) {
+            return .{
+                .Locked = .{
+                    .global = globalThis,
+                },
+            };
+        }
 
         return Value{
             .Locked = .{
-                .readable = .{ .strong = .init(second, globalThis) },
+                .readable = .{ .strong = .init(tee_result.@"1", globalThis) },
                 .global = globalThis,
             },
         };
     }
 
-    pub fn clone(this: *Value, globalThis: *jsc.JSGlobalObject) bun.JSError!Value {
-        this.toBlobIfPossible(.empty);
+    pub fn clone(this: *Value, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalThis: *jsc.JSGlobalObject, readable_stream_tee: ?*[2]jsc.JSValue) bun.JSError!Value {
+        this.toBlobIfPossible(owner);
 
         if (this.* == .Locked) {
-            return this.tee(globalThis);
+            return try this.tee(owner, globalThis, readable_stream_tee);
         }
 
         if (this.* == .InternalBlob) {
@@ -1054,10 +1079,11 @@ pub const Value = union(Tag) {
 pub fn extract(
     globalThis: *JSGlobalObject,
     value: JSValue,
+    readable_stream_value: ?*JSValue,
 ) bun.JSError!Body {
     var body = Body{ .value = Value{ .Null = {} } };
 
-    body.value = try Value.fromJS(globalThis, value);
+    body.value = try Value.fromJSWithReadableStreamValue(globalThis, value, readable_stream_value);
     if (body.value == .Blob) {
         assert(!body.value.Blob.isHeapAllocated()); // owned by Body
     }
@@ -1328,7 +1354,7 @@ pub const ValueBufferer = struct {
     js_sink: ?*ArrayBufferSink.JSSink = null,
     byte_stream: ?*jsc.WebCore.ByteStream = null,
     // readable stream strong ref to keep byte stream alive
-    readable_stream_ref: jsc.WebCore.ReadableStream.Ref = .{ .empty = {} },
+    readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
     stream_buffer: bun.MutableString,
     allocator: std.mem.Allocator,
     global: *JSGlobalObject,
@@ -1564,13 +1590,14 @@ pub const ValueBufferer = struct {
         assert(value.* == .Locked);
         const locked = &value.Locked;
         if (locked.readable.get(.{ .empty = {} }, sink.global)) |stream| {
-            // keep the stream alive until we're done with it
-            sink.readable_stream_ref = locked.readable;
-            value.* = .{ .Used = {} };
-
             if (stream.isLocked(sink.global)) {
                 return error.StreamAlreadyUsed;
             }
+
+            // keep the stream alive until we're done with it
+            sink.readable_stream_ref = .init(stream, sink.global);
+            value.deinit();
+            value.* = .{ .Used = {} };
 
             switch (stream.ptr) {
                 .Invalid => {

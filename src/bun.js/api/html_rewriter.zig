@@ -197,7 +197,7 @@ pub const HTMLRewriter = struct {
 
         if (kind != .other) {
             {
-                const body_value = try jsc.WebCore.Body.extract(global, response_value);
+                const body_value = try jsc.WebCore.Body.extract(global, response_value, null);
                 const resp = bun.new(Response, Response{
                     .init = .{
                         .status_code = 200,

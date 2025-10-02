@@ -4,6 +4,7 @@ export default [
   define({
     name: "Request",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
     final: false,
     klass: {},
@@ -68,6 +69,7 @@ export default [
   define({
     name: "Response",
     construct: true,
+    constructNeedsThis: true,
     finalize: true,
     final: false,
     JSType: "0b11101110",

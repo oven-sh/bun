@@ -175,7 +175,8 @@ pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
 
 pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
-    return js.toJSUnchecked(globalObject, this);
+    const value = js.toJSUnchecked(globalObject, this);
+    return value;
 }
 
 extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) callconv(jsc.conv) jsc.JSValue;
@@ -522,7 +523,7 @@ const Fields = enum {
     url,
 };
 
-pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSValue) bun.JSError!Request {
+pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSValue, readable_stream_tee: ?*[2]jsc.JSValue) bun.JSError!Request {
     var success = false;
     const vm = globalThis.bunVM();
     const body = try vm.initRequestBodyValue(.{ .Null = {} });
@@ -582,7 +583,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         if (value_type == .DOMWrapper) {
             if (value.asDirect(Request)) |request| {
                 if (values_to_try.len == 1) {
-                    try request.cloneInto(&req, bun.default_allocator, globalThis, fields.contains(.url));
+                    try request.cloneInto(&req, bun.default_allocator, globalThis, fields.contains(.url), value, readable_stream_tee);
                     success = true;
                     return req;
                 }
@@ -610,7 +611,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                     switch (request.body.value) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = try request.body.value.clone(globalThis);
+                            req.body.value = try request.body.value.clone(.{ .Request = value }, globalThis, readable_stream_tee);
                             fields.insert(.body);
                         },
                     }
@@ -641,7 +642,11 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                     switch (response.body.value) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.body.value = try response.body.value.clone(globalThis);
+                            req.body.value = try response.body.value.clone(.empty, globalThis, readable_stream_tee);
+                            if (readable_stream_tee) |tee_value| {
+                                Response.js.gc.body.set(value, globalThis, tee_value[1]);
+                            }
+
                             fields.insert(.body);
                         },
                     }
@@ -654,7 +659,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         if (!fields.contains(.body)) {
             if (try value.fastGet(globalThis, .body)) |body_| {
                 fields.insert(.body);
-                req.body.value = try Body.Value.fromJS(globalThis, body_);
+                req.body.value = try Body.Value.fromJSWithReadableStreamValue(globalThis, body_, if (readable_stream_tee) |tee| &tee[1] else null);
             }
 
             if (globalThis.hasException()) return error.JSError;
@@ -775,12 +780,23 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     return req;
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Request {
+pub fn constructor(
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+    thisValue: JSValue,
+) bun.JSError!*Request {
     const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.ptr[0..arguments_.len];
+    var readable_stream_tee: [2]JSValue = .{ .zero, .zero };
 
-    const request = try constructInto(globalThis, arguments);
-    return Request.new(request);
+    const request = try constructInto(globalThis, arguments, &readable_stream_tee);
+    const result = Request.new(request);
+
+    if (readable_stream_tee[1] != .zero and result.body.value == .Locked) {
+        js.gc.body.set(thisValue, globalThis, readable_stream_tee[1]);
+    }
+
+    return result;
 }
 
 pub fn getBodyValue(
@@ -795,22 +811,16 @@ pub fn doClone(
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
     const this_value = callframe.this();
-    const cloned = try this.clone(bun.default_allocator, globalThis);
-
+    var readable_stream_tee: [2]JSValue = .{ .zero, .zero };
+    const cloned = try this.clone(bun.default_allocator, globalThis, this_value, &readable_stream_tee);
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
-        if (cloned.body.value == .Locked) {
-            if (cloned.body.value.Locked.readable.get(.{ .Request = js_wrapper }, globalThis)) |readable| {
-                // If we are teed, then we need to update the cached .body
-                // value to point to the new readable stream
-                // We must do this on both the original and cloned request
-                // but especially the original request since it will have a stale .body value now.
-                js.bodySetCached(js_wrapper, globalThis, readable.value);
-                const this_js = this.toJS(globalThis);
-                if (this.body.value.Locked.readable.get(.{ .Request = this_js }, globalThis)) |other_readable| {
-                    js.bodySetCached(this_value, globalThis, other_readable.value);
-                }
-            }
+        if (this.body.value == .Locked and readable_stream_tee[0] != .zero) {
+            js.gc.body.set(js_wrapper, globalThis, readable_stream_tee[0]);
+        }
+
+        if (cloned.body.value == .Locked and readable_stream_tee[1] != .zero) {
+            js.gc.body.set(js_wrapper, globalThis, readable_stream_tee[1]);
         }
     }
 
@@ -928,11 +938,13 @@ pub fn cloneInto(
     allocator: std.mem.Allocator,
     globalThis: *JSGlobalObject,
     preserve_url: bool,
+    this_value: jsc.JSValue,
+    readable_stream_tee: ?*[2]jsc.JSValue,
 ) bun.JSError!void {
     _ = allocator;
     this.ensureURL() catch {};
     const vm = globalThis.bunVM();
-    var body_ = try this.body.value.clone(globalThis);
+    var body_ = try this.body.value.clone(.{ .Request = this_value }, globalThis, readable_stream_tee);
     errdefer body_.deinit();
     const body = try vm.initRequestBodyValue(body_);
     const url = if (preserve_url) req.url else this.url.dupeRef();
@@ -953,10 +965,10 @@ pub fn cloneInto(
     }
 }
 
-pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) bun.JSError!*Request {
+pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject, this_value: jsc.JSValue, readable_stream_tee: ?*[2]jsc.JSValue) bun.JSError!*Request {
     const req = Request.new(undefined);
     errdefer bun.destroy(req);
-    try this.cloneInto(req, allocator, globalThis, false);
+    try this.cloneInto(req, allocator, globalThis, false, this_value, readable_stream_tee);
     return req;
 }
 

@@ -98,10 +98,10 @@ const MultiplierMap = bun.ComptimeStringMap(f64, .{
 // Zig's @round uses "round half away from zero": ties round away from zero (2.5→3, -2.5→-3)
 // JavaScript's Math.round uses "round half toward +∞": ties round toward positive infinity (2.5→3, -2.5→-2)
 // This implementation: floor(x) + 1 if fractional part >= 0.5, else floor(x)
-fn jsMathRound(x: f64) f64 {
+fn jsMathRound(x: f64) i64 {
     const i: f64 = @ceil(x);
-    if ((i - 0.5) > x) return i - 1.0;
-    return i;
+    if ((i - 0.5) > x) return @intFromFloat(i - 1.0);
+    return @intFromFloat(i);
 }
 
 /// Format milliseconds to a human-readable string
@@ -179,7 +179,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     }
 
     // Milliseconds
-    const ms_int = @as(i64, @intFromFloat(ms));
+    const ms_int: i64 = @intFromFloat(ms);
     if (long) {
         return std.fmt.allocPrint(allocator, "{d} ms", .{ms_int});
     }
@@ -216,11 +216,10 @@ pub fn jsFunction(
 
     // If input is a string, parse it to milliseconds
     if (input.isString()) {
-        const str = try input.getZigString(globalThis);
-        const slice = str.toSlice(bun.default_allocator);
-        defer slice.deinit();
+        const str = try input.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
 
-        const result = parse(slice.slice()) orelse std.math.nan(f64);
+        const result = parse(str.slice()) orelse std.math.nan(f64);
         return JSValue.jsNumber(result);
     }
 

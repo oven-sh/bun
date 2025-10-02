@@ -146,6 +146,11 @@ pub fn BindgenArray(comptime Child: type) type {
             const capacity: usize = @intCast(ffi_value.capacity);
 
             const data = ffi_value.data orelse return .init();
+            bun.assertf(
+                length <= capacity,
+                "length ({d}) should not exceed capacity ({d})",
+                .{ length, capacity },
+            );
             var unmanaged: std.ArrayListUnmanaged(Child.FFIType) = .{
                 .items = data[0..length],
                 .capacity = capacity,

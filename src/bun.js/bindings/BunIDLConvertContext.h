@@ -2,7 +2,6 @@
 #include "BunIDLHumanReadable.h"
 #include <JavaScriptCore/Error.h>
 #include <wtf/text/MakeString.h>
-#include <wtf/text/StringBuilder.h>
 #include <concepts>
 #include <tuple>
 

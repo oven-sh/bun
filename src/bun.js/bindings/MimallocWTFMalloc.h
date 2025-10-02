@@ -10,7 +10,7 @@
 namespace Bun {
 // For use with WTF types like WTF::Vector.
 struct MimallocMalloc {
-#if USE_MIMALLOC
+#if USE(MIMALLOC)
     static constexpr std::size_t maxAlign = MI_MAX_ALIGN_SIZE;
 #else
     static constexpr std::size_t maxAlign = alignof(std::max_align_t);
@@ -25,7 +25,7 @@ struct MimallocMalloc {
 
     static void* tryMalloc(std::size_t size)
     {
-#if USE_MIMALLOC
+#if USE(MIMALLOC)
         return mi_malloc(size);
 #else
         return std::malloc(size);
@@ -41,7 +41,7 @@ struct MimallocMalloc {
 
     static void* tryZeroedMalloc(std::size_t size)
     {
-#if USE_MIMALLOC
+#if USE(MIMALLOC)
         return mi_zalloc(size);
 #else
         return std::calloc(size, 1);
@@ -60,7 +60,7 @@ struct MimallocMalloc {
         ASSERT(alignment > 0);
         ASSERT((alignment & (alignment - 1)) == 0); // ensure power of two
         ASSERT(((alignment - 1) & size) == 0); // ensure size multiple of alignment
-#if USE_MIMALLOC
+#if USE(MIMALLOC)
         return mi_malloc_aligned(size, alignment);
 #elif !OS(WINDOWS)
         return std::aligned_alloc(alignment, size);
@@ -79,7 +79,7 @@ struct MimallocMalloc {
 
     static void* tryRealloc(void* p, std::size_t size)
     {
-#if USE_MIMALLOC
+#if USE(MIMALLOC)
         return mi_realloc(p, size);
 #else
         return std::realloc(p, size);
@@ -88,7 +88,7 @@ struct MimallocMalloc {
 
     static void free(void* p)
     {
-#if USE_MIMALLOC
+#if USE(MIMALLOC)
         mi_free(p);
 #else
         std::free(p);

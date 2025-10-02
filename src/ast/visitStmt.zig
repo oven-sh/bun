@@ -1315,10 +1315,10 @@ pub fn VisitStmt(
                     try p.top_level_enums.append(p.allocator, data.name.ref.?);
                 }
 
-                try (p.recordDeclaredSymbol(data.name.ref.?));
-                try (p.pushScopeForVisitPass(.entry, stmt.loc));
+                try p.recordDeclaredSymbol(data.name.ref.?);
+                try p.pushScopeForVisitPass(.entry, stmt.loc);
                 defer p.popScope();
-                try (p.recordDeclaredSymbol(data.arg));
+                try p.recordDeclaredSymbol(data.arg);
 
                 const allocator = p.allocator;
                 // Scan ahead for any variables inside this namespace. This must be done
@@ -1327,7 +1327,7 @@ pub fn VisitStmt(
                 // We need to convert the uses into property accesses on the namespace.
                 for (data.values) |value| {
                     if (value.ref.isValid()) {
-                        try (p.is_exported_inside_namespace.put(allocator, value.ref, data.arg));
+                        try p.is_exported_inside_namespace.put(allocator, value.ref, data.arg);
                     }
                 }
 
@@ -1336,7 +1336,7 @@ pub fn VisitStmt(
                 // without initializers are initialized to undefined.
                 var next_numeric_value: ?f64 = 0.0;
 
-                var value_exprs = try (ListManaged(Expr).initCapacity(allocator, data.values.len));
+                var value_exprs = try ListManaged(Expr).initCapacity(allocator, data.values.len);
 
                 var all_values_are_pure = true;
 

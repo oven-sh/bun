@@ -1,4 +1,4 @@
-import ms from "ms";
+import { ms } from "ms";
 import { bench, run } from "../runner.mjs";
 
 const stringInputs = ["1s", "1m", "1h", "1d", "1w", "1y", "2 days", "10h", "2.5 hrs", "1.5h", "100ms"];

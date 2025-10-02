@@ -359,7 +359,7 @@ fn handleFileArray(
             .file => |*ref| .{ .file = ref.get() },
         }));
     }
-    return result.toOwnedSlice();
+    return try result.toOwnedSlice();
 }
 
 fn handleSingleFile(

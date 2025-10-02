@@ -277,5 +277,7 @@ pub const math = struct {
     }
 };
 
+pub const generated = @import("bindgen_generated");
+
 const bun = @import("bun");
 const std = @import("std");

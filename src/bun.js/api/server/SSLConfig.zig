@@ -204,7 +204,7 @@ pub fn fromJS(
     global: *jsc.JSGlobalObject,
     value: jsc.JSValue,
 ) bun.JSError!?SSLConfig {
-    var generated: bindgen_generated.SSLConfig = try .fromJS(global, value);
+    var generated: jsc.generated.SSLConfig = try .fromJS(global, value);
     defer generated.deinit();
     var result: SSLConfig = zero;
     errdefer result.deinit();
@@ -304,7 +304,7 @@ fn handlePath(
 fn handleFileForField(
     global: *jsc.JSGlobalObject,
     comptime field: []const u8,
-    file: *const bindgen_generated.SSLConfigFile,
+    file: *const jsc.generated.SSLConfigFile,
 ) bun.JSError!?[][*:0]const u8 {
     return handleFile(global, file) catch |err| switch (err) {
         error.JSError => return error.JSError,
@@ -325,7 +325,7 @@ fn handleFileForField(
 
 fn handleFile(
     global: *jsc.JSGlobalObject,
-    file: *const bindgen_generated.SSLConfigFile,
+    file: *const jsc.generated.SSLConfigFile,
 ) ReadFromBlobError!?[][*:0]const u8 {
     const single = try handleSingleFile(global, switch (file.*) {
         .none => return null,
@@ -342,7 +342,7 @@ fn handleFile(
 
 fn handleFileArray(
     global: *jsc.JSGlobalObject,
-    elements: []const bindgen_generated.SSLConfigSingleFile,
+    elements: []const jsc.generated.SSLConfigSingleFile,
 ) ReadFromBlobError!?[][*:0]const u8 {
     if (elements.len == 0) return null;
     var result: bun.collections.ArrayListDefault([*:0]const u8) = try .initCapacity(elements.len);
@@ -380,7 +380,6 @@ fn handleSingleFile(
     };
 }
 
-const bindgen_generated = @import("bindgen_generated");
 const std = @import("std");
 
 const bun = @import("bun");

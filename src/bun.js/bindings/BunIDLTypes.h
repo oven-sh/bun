@@ -6,10 +6,6 @@
 #include <variant>
 #include <wtf/Vector.h>
 
-namespace JSC {
-class JSValue;
-}
-
 namespace WTF {
 struct CrashOnOverflow;
 }

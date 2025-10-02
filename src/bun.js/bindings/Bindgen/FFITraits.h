@@ -1,7 +1,6 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -10,7 +9,6 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
-#include <wtf/Vector.h>
 #include <StrongRef.h>
 #include "FFIUnion.h"
 
@@ -42,7 +40,6 @@ template<> struct FFITraits<float> : TrivialFFI<float> {};
 template<> struct FFITraits<double> : TrivialFFI<double> {};
 
 enum FFINullPtr : std::uint8_t {};
-enum FFIMonostate : std::uint8_t {};
 
 template<> struct FFITraits<std::nullptr_t> {
     using FFIType = FFINullPtr;
@@ -94,13 +91,13 @@ struct FFITraits<std::variant<Args...>> {
 
 template<typename T>
 struct FFITraits<std::optional<T>> {
-    using FFIType = FFIVariant<std::monostate, typename FFITraits<T>::FFIType>;
+    using FFIType = FFIVariant<FFINullPtr, typename FFITraits<T>::FFIType>;
 
     static FFIType convertToFFI(std::optional<T>&& cppValue)
     {
-        using StdVariant = std::variant<std::monostate, typename FFITraits<T>::FFIType>;
+        using StdVariant = std::variant<FFINullPtr, typename FFITraits<T>::FFIType>;
         if (!cppValue) {
-            return FFIType { StdVariant { std::monostate {} } };
+            return FFIType { StdVariant { FFINullPtr {} } };
         }
         return FFIType { StdVariant { FFITraits<T>::convertToFFI(std::move(*cppValue)) } };
     }

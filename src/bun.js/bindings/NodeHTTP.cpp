@@ -139,6 +139,7 @@ public:
     us_socket_t* socket = nullptr;
     unsigned is_ssl : 1 = 0;
     unsigned ended : 1 = 0;
+    unsigned upgraded : 1 = 0;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
     static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
@@ -160,10 +161,15 @@ public:
     }
 
     template<bool SSL>
-    static void clearSocketData(us_socket_t* socket)
+    static void clearSocketData(bool upgraded, us_socket_t* socket)
     {
-        auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
-        httpResponseData->socketData = nullptr;
+        if (upgraded) {
+            auto* webSocket = (uWS::WebSocketData*)us_socket_ext(SSL, socket);
+            webSocket->socketData = nullptr;
+        } else {
+            auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
+            httpResponseData->socketData = nullptr;
+        }
     }
 
     void close()
@@ -195,9 +201,9 @@ public:
     {
         if (socket) {
             if (is_ssl) {
-                clearSocketData<true>(socket);
+                clearSocketData<true>(this->upgraded, socket);
             } else {
-                clearSocketData<false>(socket);
+                clearSocketData<false>(this->upgraded, socket);
             }
         }
         us_socket_free_stream_buffer(&streamBuffer);
@@ -1142,6 +1148,12 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
         socket->onData(data, length, last);
+    });
+    app->setOnSocketUpgraded([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
+        auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
+        // the socket is adopted and might not be the same as the rawSocket
+        socket->socket = rawSocket;
+        socket->upgraded = true;
     });
 }
 

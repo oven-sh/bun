@@ -481,15 +481,15 @@ cache=${customHome}/.npm-cache
     );
 
     // Run install with modified HOME
+    const childEnv = { ...env };
+    childEnv.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+    childEnv.HOME = customHome;
+    childEnv.USERPROFILE = customHome; // Windows uses USERPROFILE instead of HOME
+
     const { stdout, stderr, exited } = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      env: {
-        ...env,
-        HOME: customHome,
-        USERPROFILE: customHome, // Windows uses USERPROFILE instead of HOME
-        BUN_INSTALL_CACHE_DIR: undefined,
-      },
+      env: childEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

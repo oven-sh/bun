@@ -98,10 +98,10 @@ const MultiplierMap = bun.ComptimeStringMap(f64, .{
 // Zig's @round uses "round half away from zero": ties round away from zero (2.5→3, -2.5→-3)
 // JavaScript's Math.round uses "round half toward +∞": ties round toward positive infinity (2.5→3, -2.5→-2)
 // This implementation: floor(x) + 1 if fractional part >= 0.5, else floor(x)
-fn jsMathRound(x: f64) i64 {
-    const i = @floor(x);
-    const rounded = if (x - i >= 0.5) i + 1 else i;
-    return @intFromFloat(rounded);
+fn jsMathRound(x: f64) f64 {
+    const i: f64 = @ceil(x);
+    if ((i - 0.5) > x) return i - 1.0;
+    return i;
 }
 
 /// Format milliseconds to a human-readable string
@@ -112,7 +112,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= ms_per_year) {
         const years = jsMathRound(ms / ms_per_year);
         if (long) {
-            const plural = @abs(years) != 1;
+            const plural = abs_ms >= ms_per_year * 1.5;
             return std.fmt.allocPrint(allocator, "{d} year{s}", .{ years, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}y", .{years});
@@ -122,7 +122,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= ms_per_month) {
         const months = jsMathRound(ms / ms_per_month);
         if (long) {
-            const plural = @abs(months) != 1;
+            const plural = abs_ms >= ms_per_month * 1.5;
             return std.fmt.allocPrint(allocator, "{d} month{s}", .{ months, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}mo", .{months});
@@ -132,7 +132,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_week) {
         const weeks = jsMathRound(ms / std.time.ms_per_week);
         if (long) {
-            const plural = @abs(weeks) != 1;
+            const plural = abs_ms >= std.time.ms_per_week * 1.5;
             return std.fmt.allocPrint(allocator, "{d} week{s}", .{ weeks, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}w", .{weeks});
@@ -142,7 +142,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_day) {
         const days = jsMathRound(ms / std.time.ms_per_day);
         if (long) {
-            const plural = @abs(days) != 1;
+            const plural = abs_ms >= std.time.ms_per_day * 1.5;
             return std.fmt.allocPrint(allocator, "{d} day{s}", .{ days, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}d", .{days});
@@ -152,7 +152,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_hour) {
         const hours = jsMathRound(ms / std.time.ms_per_hour);
         if (long) {
-            const plural = @abs(hours) != 1;
+            const plural = abs_ms >= std.time.ms_per_hour * 1.5;
             return std.fmt.allocPrint(allocator, "{d} hour{s}", .{ hours, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}h", .{hours});
@@ -162,7 +162,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_min) {
         const minutes = jsMathRound(ms / std.time.ms_per_min);
         if (long) {
-            const plural = @abs(minutes) != 1;
+            const plural = abs_ms >= std.time.ms_per_min * 1.5;
             return std.fmt.allocPrint(allocator, "{d} minute{s}", .{ minutes, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}m", .{minutes});
@@ -172,7 +172,7 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     if (abs_ms >= std.time.ms_per_s) {
         const seconds = jsMathRound(ms / std.time.ms_per_s);
         if (long) {
-            const plural = @abs(seconds) != 1;
+            const plural = abs_ms >= std.time.ms_per_s * 1.5;
             return std.fmt.allocPrint(allocator, "{d} second{s}", .{ seconds, if (plural) "s" else "" });
         }
         return std.fmt.allocPrint(allocator, "{d}s", .{seconds});

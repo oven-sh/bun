@@ -221,37 +221,41 @@ pub fn fromJS(
     if (generated.server_name.get()) |server_name| {
         result.server_name = server_name.toOwnedSliceZ(bun.default_allocator);
         result.requires_custom_request_ctx = true;
-        any = true;
     }
+
     result.low_memory_mode = generated.low_memory_mode;
     result.reject_unauthorized = @intFromBool(
         generated.reject_unauthorized orelse vm.getTLSRejectUnauthorized(),
     );
     result.request_cert = @intFromBool(generated.request_cert);
-    result.ca = try handleFileForField(global, "ca", &generated.ca);
-    result.cert = try handleFileForField(global, "cert", &generated.cert);
-    result.key = try handleFileForField(global, "key", &generated.key);
     result.secure_options = generated.secure_options;
     any = any or
         result.low_memory_mode or
         generated.reject_unauthorized != null or
+        generated.request_cert or
+        result.secure_options != 0;
+
+    result.ca = try handleFileForField(global, "ca", &generated.ca);
+    result.cert = try handleFileForField(global, "cert", &generated.cert);
+    result.key = try handleFileForField(global, "key", &generated.key);
+    result.requires_custom_request_ctx = result.requires_custom_request_ctx or
         result.ca != null or
         result.cert != null or
-        result.key != null or
-        result.secure_options != 0;
+        result.key != null;
+
     if (generated.key_file.get()) |key_file| {
         result.key_file_name = try handlePath(global, "keyFile", key_file);
         result.requires_custom_request_ctx = true;
-        any = true;
     }
     if (generated.cert_file.get()) |cert_file| {
         result.cert_file_name = try handlePath(global, "certFile", cert_file);
-        any = true;
+        result.requires_custom_request_ctx = true;
     }
     if (generated.ca_file.get()) |ca_file| {
         result.ca_file_name = try handlePath(global, "caFile", ca_file);
-        any = true;
+        result.requires_custom_request_ctx = true;
     }
+
     const protocols = switch (generated.alpn_protocols) {
         .none => null,
         .string => |*ref| ref.get().toOwnedSliceZ(bun.default_allocator),
@@ -262,19 +266,21 @@ pub fn fromJS(
     };
     if (protocols) |some_protocols| {
         result.protos = some_protocols;
-        any = true;
+        result.requires_custom_request_ctx = true;
     }
     if (generated.ciphers.get()) |ciphers| {
         result.ssl_ciphers = ciphers.toOwnedSliceZ(bun.default_allocator);
         result.is_using_default_ciphers = false;
         result.requires_custom_request_ctx = true;
-        any = true;
     }
+
     result.client_renegotiation_limit = generated.client_renegotiation_limit;
     result.client_renegotiation_window = generated.client_renegotiation_window;
     any = any or
+        result.requires_custom_request_ctx or
         result.client_renegotiation_limit != 0 or
         generated.client_renegotiation_window != 0;
+
     // We don't need to deinit `result` if `any` is false.
     return if (any) result else null;
 }
@@ -337,7 +343,8 @@ fn handleFile(
 fn handleFileArray(
     global: *jsc.JSGlobalObject,
     elements: []const bindgen_generated.SSLConfigSingleFile,
-) ReadFromBlobError![][*:0]const u8 {
+) ReadFromBlobError!?[][*:0]const u8 {
+    if (elements.len == 0) return null;
     var result: bun.collections.ArrayListDefault([*:0]const u8) = try .initCapacity(elements.len);
     errdefer {
         for (result.items()) |string| {

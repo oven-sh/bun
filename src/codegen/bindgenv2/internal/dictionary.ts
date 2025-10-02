@@ -280,11 +280,13 @@ export function Dictionary(
             }
             const result = dedent(`
               pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!Self {
+                var scope: jsc.ExceptionValidationScope = undefined;
+                scope.init(globalThis, @src());
+                defer scope.deinit();
                 var ffi_result: FFI${name} = undefined;
-                return if (bindgenConvertJSTo${name}(globalThis, value, &ffi_result))
-                  Bindgen${name}.convertFromFFI(ffi_result)
-                else
-                  error.JSError;
+                const success = bindgenConvertJSTo${name}(globalThis, value, &ffi_result);
+                scope.assertExceptionPresenceMatches(!success);
+                return if (success) Bindgen${name}.convertFromFFI(ffi_result) else error.JSError;
               }
             `);
             return addIndent(10, "\n" + result);

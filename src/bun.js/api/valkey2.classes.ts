@@ -4,6 +4,7 @@ export default [
   define({
     name: "RedisClient2",
     construct: true,
+    constructNeedsThis: true,
     call: false,
     finalize: true,
     configurable: false,
@@ -225,5 +226,8 @@ export default [
       //pubsub: { fn: "pubsub" },
     },
     //values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
+    values: [
+      "connectionPromise", // Used to track the progress of the connection. Not exposed to JS.
+    ]
   }),
 ];

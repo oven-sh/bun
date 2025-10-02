@@ -105,11 +105,12 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
                     // -838:59:59 to 838:59:59 is valid (it only store seconds)
                     // it should be represented as HH:MM:SS or HHH:MM:SS if total_hours > 24
                     var buffer: [32]u8 = undefined;
+                    const sign = if (time.negative) "-" else "";
                     const slice = brk: {
                         if (total_hours > 24) {
-                            break :brk std.fmt.bufPrint(&buffer, "{s}{d:0>3}:{d:0>2}:{d:0>2}", .{ if (time.negative) "-" else "", total_hours, time.minutes, time.seconds }) catch return error.InvalidBinaryValue;
+                            break :brk std.fmt.bufPrint(&buffer, "{s}{d:0>3}:{d:0>2}:{d:0>2}", .{ sign, total_hours, time.minutes, time.seconds }) catch return error.InvalidBinaryValue;
                         } else {
-                            break :brk std.fmt.bufPrint(&buffer, "{s}{d:0>2}:{d:0>2}:{d:0>2}", .{ if (time.negative) "-" else "", total_hours, time.minutes, time.seconds }) catch return error.InvalidBinaryValue;
+                            break :brk std.fmt.bufPrint(&buffer, "{s}{d:0>2}:{d:0>2}:{d:0>2}", .{ sign, total_hours, time.minutes, time.seconds }) catch return error.InvalidBinaryValue;
                         }
                     };
                     return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };

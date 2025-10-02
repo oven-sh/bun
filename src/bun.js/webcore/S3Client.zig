@@ -26,7 +26,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         if (credentials.accessKeyId.len > 0) {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>accessKeyId<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
-            try(formatter.printComma(Writer, writer, enable_ansi_colors);
+            try formatter.printComma(Writer, writer, enable_ansi_colors);
 
             try writer.writeAll("\n");
         }

@@ -178,11 +178,13 @@ pub const BundleV2 = struct {
 
     fn ensureClientTranspiler(this: *BundleV2) void {
         if (this.client_transpiler == null) {
-            _ = bun.handleOom(this.initializeClientTranspiler());
+            _ = this.initializeClientTranspiler() catch |e| {
+                std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+            };
         }
     }
 
-    fn initializeClientTranspiler(this: *BundleV2) bun.OOM!*Transpiler {
+    fn initializeClientTranspiler(this: *BundleV2) !*Transpiler {
         @branchHint(.cold);
         const alloc = this.allocator();
 
@@ -233,7 +235,9 @@ pub const BundleV2 = struct {
     pub inline fn transpilerForTarget(noalias this: *BundleV2, target: options.Target) *Transpiler {
         if (!this.transpiler.options.server_components and this.linker.dev_server == null) {
             if (target == .browser and this.transpiler.options.target.isServerSide()) {
-                return this.client_transpiler orelse bun.handleOom(this.initializeClientTranspiler());
+                return this.client_transpiler orelse this.initializeClientTranspiler() catch |e| {
+                    std.debug.panic("Failed to initialize client transpiler: {s}", .{@errorName(e)});
+                };
             }
 
             return this.transpiler;

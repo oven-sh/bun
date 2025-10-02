@@ -253,12 +253,12 @@ describe("Bun.ms - comprehensive coverage", () => {
       ["1 s", 1000],
       ["1  s", 1000],
       ["1   s", 1000],
-      [" 1s", 1000],
-      ["1s ", 1000],
-      [" 1s ", 1000],
+      [" 1s", NaN],
+      ["1s ", NaN],
+      [" 1s ", NaN],
       ["1 second", 1000],
       ["1  seconds", 1000],
-      ["  1 second  ", 1000],
+      ["  1 second  ", NaN],
     ] as const;
 
     for (const [input, expected] of cases) {

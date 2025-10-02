@@ -413,12 +413,13 @@ if (isDockerEnabled()) {
             expect(result.getTime()).toBe(-251);
           }
         });
-        test("time", async () => {
+        test.only("time", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a TIME)`;
           const times = [
             { a: "00:00:00" },
+            { a: "01:01:01" },
             { a: "10:10:10" },
             { a: "12:12:59" },
             { a: "-838:59:59" },

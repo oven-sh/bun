@@ -641,6 +641,10 @@ public:
         httpContext->getSocketContextData()->onClientError = std::move(onClientError);
     }
 
+    void setOnSocketUpgraded(HttpContextData<SSL>::OnSocketUpgradedCallback onUpgraded) {
+        httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
+    }
+
     TemplatedApp &&run() {
         uWS::run();
         return std::move(*this);

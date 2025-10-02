@@ -3,7 +3,6 @@
 #include <JavaScriptCore/Error.h>
 #include <wtf/text/MakeString.h>
 #include <concepts>
-#include <tuple>
 
 namespace Bun {
 

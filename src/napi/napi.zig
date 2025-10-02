@@ -832,7 +832,7 @@ pub export fn napi_get_typedarray_info(
     maybe_length: ?*usize,
     maybe_data: ?*[*]u8,
     maybe_arraybuffer: ?*napi_value,
-    maybe_byte_offset: ?*usize, // TODO: remove this? it's always 0
+    maybe_byte_offset: ?*usize, // note: this is always 0
 ) napi_status {
     log("napi_get_typedarray_info", .{});
     const env = env_ orelse {
@@ -884,7 +884,7 @@ pub export fn napi_get_dataview_info(
     maybe_bytelength: ?*usize,
     maybe_data: ?*[*]u8,
     maybe_arraybuffer: ?*napi_value,
-    maybe_byte_offset: ?*usize, // TODO: remove this? it's always 0
+    maybe_byte_offset: ?*usize, // note: this is always 0
 ) napi_status {
     log("napi_get_dataview_info", .{});
     const env = env_ orelse {

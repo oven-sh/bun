@@ -92,18 +92,35 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
         },
         .MYSQL_TYPE_TIME => {
             return switch (try reader.byte()) {
-                0 => SQLDataCell{ .tag = .null, .value = .{ .null = 0 } },
+                0 => {
+                    const slice = "00:00:00";
+                    return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                },
                 8, 12 => |l| {
                     var data = try reader.read(l);
                     defer data.deinit();
                     const time = try Time.fromData(&data);
-                    return SQLDataCell{ .tag = .date, .value = .{ .date = time.toJSTimestamp() } };
+
+                    const total_hours = time.hours + time.days * 24;
+                    // -838:59:59 to 838:59:59 is valid (it only store seconds)
+                    // it should be represented as HH:MM:SS or HHH:MM:SS if total_hours > 24
+                    var buffer: [32]u8 = undefined;
+                    const slice = brk: {
+                        if (total_hours > 24) {
+                            break :brk std.fmt.bufPrint(&buffer, "{s}{d:0>3}:{d:2}:{d:2}", .{ if (time.negative) "-" else "", total_hours, time.minutes, time.seconds }) catch return error.InvalidBinaryValue;
+                        } else {
+                            break :brk std.fmt.bufPrint(&buffer, "{s}{d:0>2}:{d:2}:{d:2}", .{ if (time.negative) "-" else "", total_hours, time.minutes, time.seconds }) catch return error.InvalidBinaryValue;
+                        }
+                    };
+                    return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
                 },
                 else => return error.InvalidBinaryValue,
             };
         },
         .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIMESTAMP, .MYSQL_TYPE_DATETIME => switch (try reader.byte()) {
-            0 => SQLDataCell{ .tag = .null, .value = .{ .null = 0 } },
+            0 => {
+                return SQLDataCell{ .tag = .date, .value = .{ .date = 0 } };
+            },
             11, 7, 4 => |l| {
                 var data = try reader.read(l);
                 defer data.deinit();

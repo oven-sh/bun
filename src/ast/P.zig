@@ -2771,6 +2771,18 @@ pub fn NewParser_(
                     }
                 }
 
+                // Auto-inline Bun.ms when imported from "bun"
+                // This allows: import { ms } from "bun"; ms("1s") -> 1000
+                // without requiring `with { type: "macro" }`
+                if (comptime allow_macros) {
+                    if (strings.eqlComptime(path.text, "bun") and strings.eqlComptime(item.alias, "ms")) {
+                        try p.macro.refs.put(ref, .{
+                            .import_record_id = stmt.import_record_index,
+                            .name = item.alias,
+                        });
+                    }
+                }
+
                 if (macro_remap) |*remap| {
                     if (remap.get(item.alias)) |remapped_path| {
                         const new_import_id = p.addImportRecord(.stmt, path.loc, remapped_path);

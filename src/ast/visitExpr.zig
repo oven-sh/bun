@@ -1149,6 +1149,51 @@ pub fn VisitExpr(
                 }
                 return expr;
             }
+
+            /// Helper function to inline Bun.ms() and import { ms } from "bun" calls
+            /// Returns the inlined expression if successful, null otherwise
+            fn inlineMsCall(p: *P, e_: *const E.Call, loc: logger.Loc) ?Expr {
+                const ms_module = @import("../bun.js/api/bun/ms.zig");
+
+                if (e_.args.len == 1) {
+                    const arg = e_.args.at(0).unwrapInlined();
+                    if (arg.data == .e_string and arg.data.e_string.isUTF8()) {
+                        // ms("string") -> number
+                        const str = arg.data.e_string.slice(p.allocator);
+                        const ms_value = ms_module.parse(str) orelse std.math.nan(f64);
+                        return p.newExpr(E.Number{ .value = ms_value }, loc);
+                    } else if (arg.data == .e_number) {
+                        // ms(number) -> "string"
+                        const num = arg.data.e_number.value;
+                        if (std.math.isNan(num) or std.math.isInf(num)) return null;
+                        if (ms_module.format(p.allocator, num, false)) |formatted| {
+                            return p.newExpr(E.String.init(formatted), loc);
+                        } else |_| return null;
+                    }
+                } else if (e_.args.len == 2) {
+                    // ms(number, { long: true/false }) -> "string"
+                    const arg = e_.args.at(0).unwrapInlined();
+                    const opts = e_.args.at(1).unwrapInlined();
+
+                    if (arg.data == .e_number and opts.data == .e_object) {
+                        const num = arg.data.e_number.value;
+                        if (std.math.isNan(num) or std.math.isInf(num)) return null;
+
+                        var long = false;
+                        if (opts.data.e_object.get("long")) |val| {
+                            if (val.data == .e_boolean) {
+                                long = val.data.e_boolean.value;
+                            }
+                        }
+
+                        if (ms_module.format(p.allocator, num, long)) |formatted| {
+                            return p.newExpr(E.String.init(formatted), loc);
+                        } else |_| return null;
+                    }
+                }
+                return null;
+            }
+
             pub fn e_call(p: *P, expr: Expr, in: ExprIn) Expr {
                 const e_ = expr.data.e_call;
                 p.call_target = e_.target.data;
@@ -1387,6 +1432,16 @@ pub fn VisitExpr(
 
                         const name = macro_ref_data.name orelse e_.target.data.e_dot.name;
                         const record = &p.import_records.items[macro_ref_data.import_record_id];
+
+                        // Special case: import { ms } from "bun" gets compile-time constant folding
+                        // instead of macro execution. This allows ms("1s") -> 1000 inline optimization.
+                        if (record.tag == .bun and strings.eqlComptime(name, "ms")) {
+                            if (inlineMsCall(p, e_, expr.loc)) |result| {
+                                return result;
+                            }
+                            // If we can't inline (dynamic args), fall through to normal macro execution
+                        }
+
                         const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                         const start_error_count = p.log.msgs.items.len;
                         p.macro_call_count += 1;
@@ -1500,48 +1555,11 @@ pub fn VisitExpr(
                 // Implement constant folding for Bun.ms("1s") -> 1000 and Bun.ms(1000) -> "1s"
                 if (p.should_fold_typescript_constant_expressions or p.options.features.inlining) {
                     if (e_.target.data.as(.e_dot)) |dot| {
-                        // Check if this is Bun.ms(...)
                         if (dot.target.data == .e_identifier and strings.eqlComptime(dot.name, "ms")) {
                             const symbol = &p.symbols.items[dot.target.data.e_identifier.ref.innerIndex()];
-                            // Verify it's the global "Bun" identifier (unbound = global)
                             if (symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "Bun")) {
-                                const ms_module = @import("../bun.js/api/bun/ms.zig");
-
-                                if (e_.args.len == 1) {
-                                    const arg = e_.args.at(0).unwrapInlined();
-                                    if (arg.data == .e_string and arg.data.e_string.isUTF8()) {
-                                        // Case 1: Bun.ms("string") -> number
-                                        const str = arg.data.e_string.slice(p.allocator);
-                                        const ms_value = ms_module.parse(str) orelse std.math.nan(f64);
-                                        return p.newExpr(E.Number{ .value = ms_value }, expr.loc);
-                                    } else if (arg.data == .e_number) {
-                                        // Case 2: Bun.ms(number) -> "string"
-                                        const num = arg.data.e_number.value;
-                                        if (std.math.isNan(num) or std.math.isInf(num)) return expr;
-                                        if (ms_module.format(p.allocator, num, false)) |formatted| {
-                                            return p.newExpr(E.String.init(formatted), expr.loc);
-                                        } else |_| return expr;
-                                    }
-                                } else if (e_.args.len == 2) {
-                                    // Case 3: Bun.ms(number, { long: true/false }) -> "string"
-                                    const arg = e_.args.at(0).unwrapInlined();
-                                    const opts = e_.args.at(1).unwrapInlined();
-
-                                    if (arg.data == .e_number and opts.data == .e_object) {
-                                        const num = arg.data.e_number.value;
-                                        if (std.math.isNan(num) or std.math.isInf(num)) return expr;
-
-                                        var long = false;
-                                        if (opts.data.e_object.get("long")) |val| {
-                                            if (val.data == .e_boolean) {
-                                                long = val.data.e_boolean.value;
-                                            }
-                                        }
-
-                                        if (ms_module.format(p.allocator, num, long)) |formatted| {
-                                            return p.newExpr(E.String.init(formatted), expr.loc);
-                                        } else |_| return expr;
-                                    }
+                                if (inlineMsCall(p, e_, expr.loc)) |result| {
+                                    return result;
                                 }
                             }
                         }

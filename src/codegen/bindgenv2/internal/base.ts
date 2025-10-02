@@ -1,9 +1,18 @@
 import util from "node:util";
+import type { NullableType, OptionalType } from "./optional";
 
 /** Default is "compact". */
 export type CodeStyle = "compact" | "pretty";
 
 export abstract class Type {
+  get optional(): OptionalType {
+    return optional(this);
+  }
+
+  get nullable(): NullableType {
+    return nullable(this);
+  }
+
   abstract readonly idlType: string;
   abstract readonly bindgenType: string;
 
@@ -123,3 +132,6 @@ export function toASCIILiteral(value: string): string {
   }
   return `${toQuotedLiteral(value)}_s`;
 }
+
+// Avoid a circular dependency error by performing a dynamic import here.
+const { optional, nullable } = await import("./optional");

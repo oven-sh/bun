@@ -3,7 +3,7 @@ import { joinIndented, NamedType, reindent, toASCIILiteral, toQuotedLiteral } fr
 
 abstract class EnumType extends NamedType {}
 
-export function Enum(name: string, values: string[]): EnumType {
+export function enumeration(name: string, values: string[]): EnumType {
   if (values.length === 0) {
     throw RangeError("enum cannot be empty: " + name);
   }

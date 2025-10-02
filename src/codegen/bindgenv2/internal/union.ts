@@ -25,8 +25,8 @@ export function isUnion(type: Type): boolean {
   return type instanceof AnonymousUnionType || type instanceof NamedUnionType;
 }
 
-export function Union(alternatives: Type[]): AnonymousUnionType;
-export function Union(name: string, alternatives: NamedAlternatives): NamedUnionType;
+export function union(alternatives: Type[]): AnonymousUnionType;
+export function union(name: string, alternatives: NamedAlternatives): NamedUnionType;
 
 /**
  * The order of types in this union is significant. Each type is tried in order, and the first one
@@ -35,7 +35,7 @@ export function Union(name: string, alternatives: NamedAlternatives): NamedUnion
  * This means that it is an error to specify `RawAny` or `StrongAny` as anything other than the
  * last alternative, as conversion to any subsequent types would never be attempted.
  */
-export function Union(
+export function union(
   alternativesOrName: Type[] | string,
   maybeNamedAlternatives?: NamedAlternatives,
 ): AnonymousUnionType | NamedUnionType {

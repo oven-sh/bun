@@ -3,7 +3,7 @@ import { Type } from "./base";
 
 export abstract class OptionalType extends Type {}
 
-export function Optional(payload: Type): OptionalType {
+export function optional(payload: Type): OptionalType {
   if (isAny(payload)) {
     throw RangeError("`Any` types are already optional");
   }
@@ -28,8 +28,8 @@ export function Optional(payload: Type): OptionalType {
 
 export abstract class NullableType extends Type {}
 
-export function Nullable(payload: Type): NullableType {
-  const AsOptional = Optional(payload);
+export function nullable(payload: Type): NullableType {
+  const AsOptional = optional(payload);
   return new (class extends NullableType {
     get idlType() {
       return `::WebCore::IDLNullable<${payload.idlType}>`;
@@ -50,7 +50,7 @@ export function Nullable(payload: Type): NullableType {
 }
 
 /** For use in unions, to represent an optional union. */
-export const Undefined = new (class extends Type {
+const Undefined = new (class extends Type {
   get idlType() {
     return `::Bun::IDLStrictUndefined`;
   }
@@ -66,7 +66,7 @@ export const Undefined = new (class extends Type {
 })();
 
 /** For use in unions, to represent a nullable union. */
-export const Null = new (class extends Type {
+const Null = new (class extends Type {
   get idlType() {
     return `::Bun::IDLStrictNull`;
   }
@@ -80,3 +80,5 @@ export const Null = new (class extends Type {
     return `nullptr`;
   }
 })();
+
+export { Null as null, Undefined as undefined };

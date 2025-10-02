@@ -1611,7 +1611,7 @@ describe.concurrent("should error with invalid options", async () => {
           requestCert: "invalid",
         },
       });
-    }).toThrow('TLSOptions.requestCert must be a boolean');
+    }).toThrow("TLSOptions.requestCert must be a boolean");
   });
   it("rejectUnauthorized", () => {
     expect(() => {
@@ -1624,7 +1624,7 @@ describe.concurrent("should error with invalid options", async () => {
           rejectUnauthorized: "invalid",
         },
       });
-    }).toThrow('TLSOptions.rejectUnauthorized must be a boolean');
+    }).toThrow("TLSOptions.rejectUnauthorized must be a boolean");
   });
   it("lowMemoryMode", () => {
     expect(() => {

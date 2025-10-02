@@ -11,7 +11,7 @@ import {
   Type,
   validateName,
 } from "./base";
-import { Null, NullableType, OptionalType, Undefined } from "./optional";
+import * as optional from "./optional";
 import { isUnion } from "./union";
 
 export interface DictionaryMember {
@@ -42,7 +42,7 @@ interface DictionaryOptions {
   generateConversionFunction?: boolean;
 }
 
-export function Dictionary(
+export function dictionary(
   nameOrOptions: string | DictionaryOptions,
   members: DictionaryMembers,
 ): DictionaryType {
@@ -426,10 +426,10 @@ function memberConversion(
 
 function basicPermitsUndefined(type: Type): boolean {
   return (
-    type instanceof OptionalType ||
-    type instanceof NullableType ||
-    type === Undefined ||
-    type === Null ||
+    type instanceof optional.OptionalType ||
+    type instanceof optional.NullableType ||
+    type === optional.undefined ||
+    type === optional.null ||
     isAny(type)
   );
 }

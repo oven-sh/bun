@@ -2,7 +2,7 @@ import assert from "node:assert";
 import util from "node:util";
 import { Type } from "./base";
 
-export const Bool: Type = new (class extends Type {
+export const bool: Type = new (class extends Type {
   get idlType() {
     return "::Bun::IDLStrictBoolean";
   }
@@ -62,24 +62,28 @@ function makeSignedType(width: number): Type {
         throw RangeError("integer out of range");
       }
       if (width === 64 && intValue === min) {
-        return `(${intValue + 1} - 1)`;
+        return `(${intValue + 1n} - 1)`;
       }
       return intValue.toString();
     }
   })();
 }
 
-export const Uint8: Type = makeUnsignedType(8);
-export const Uint16: Type = makeUnsignedType(16);
-export const Uint32: Type = makeUnsignedType(32);
-export const Uint64: Type = makeUnsignedType(64);
+export const u8: Type = makeUnsignedType(8);
+export const u16: Type = makeUnsignedType(16);
+export const u32: Type = makeUnsignedType(32);
+export const u64: Type = makeUnsignedType(64);
 
-export const Int8: Type = makeSignedType(8);
-export const Int16: Type = makeSignedType(16);
-export const Int32: Type = makeSignedType(32);
-export const Int64: Type = makeSignedType(64);
+export const i8: Type = makeSignedType(8);
+export const i16: Type = makeSignedType(16);
+export const i32: Type = makeSignedType(32);
+export const i64: Type = makeSignedType(64);
 
-export const Float: Type = new (class extends Type {
+export const f64: Type = new (class extends Type {
+  get finite() {
+    return finiteF64;
+  }
+
   get idlType() {
     return "::Bun::IDLStrictDouble";
   }
@@ -103,15 +107,15 @@ export const Float: Type = new (class extends Type {
   }
 })();
 
-export const FiniteFloat: Type = new (class extends Type {
+export const finiteF64: Type = new (class extends Type {
   get idlType() {
     return "::Bun::IDLFiniteDouble";
   }
   get bindgenType() {
-    return Float.bindgenType;
+    return f64.bindgenType;
   }
   zigType(style?) {
-    return Float.zigType(style);
+    return f64.zigType(style);
   }
   toCpp(value: number): string {
     assert(typeof value === "number");

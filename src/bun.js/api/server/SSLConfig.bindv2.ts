@@ -1,53 +1,53 @@
-import * as bg from "bindgenv2";
+import * as b from "bindgenv2";
 
-export const SSLConfigSingleFile = bg.Union("SSLConfigSingleFile", {
-  string: bg.String,
-  buffer: bg.ArrayBuffer,
-  file: bg.Blob,
+export const SSLConfigSingleFile = b.union("SSLConfigSingleFile", {
+  string: b.String,
+  buffer: b.ArrayBuffer,
+  file: b.Blob,
 });
 
-export const SSLConfigFile = bg.Union("SSLConfigFile", {
-  none: bg.Null,
-  string: bg.String,
-  buffer: bg.ArrayBuffer,
-  file: bg.Blob,
-  array: bg.Array(SSLConfigSingleFile),
+export const SSLConfigFile = b.union("SSLConfigFile", {
+  none: b.null,
+  string: b.String,
+  buffer: b.ArrayBuffer,
+  file: b.Blob,
+  array: b.Array(SSLConfigSingleFile),
 });
 
-export const ALPNProtocols = bg.Union("ALPNProtocols", {
-  none: bg.Null,
-  string: bg.String,
-  buffer: bg.ArrayBuffer,
+export const ALPNProtocols = b.union("ALPNProtocols", {
+  none: b.null,
+  string: b.String,
+  buffer: b.ArrayBuffer,
 });
 
-export const SSLConfig = bg.Dictionary(
+export const SSLConfig = b.dictionary(
   {
     name: "SSLConfig",
     userFacingName: "TLSOptions",
     generateConversionFunction: true,
   },
   {
-    passphrase: bg.Nullable(bg.String),
+    passphrase: b.String.nullable,
     dhParamsFile: {
-      type: bg.Nullable(bg.String),
+      type: b.String.nullable,
       internalName: "dh_params_file",
     },
     serverName: {
-      type: bg.Nullable(bg.String),
+      type: b.String.nullable,
       internalName: "server_name",
       altNames: ["servername"],
     },
     lowMemoryMode: {
-      type: bg.Bool,
+      type: b.bool,
       default: false,
       internalName: "low_memory_mode",
     },
     rejectUnauthorized: {
-      type: bg.Nullable(bg.Bool),
+      type: b.bool.nullable,
       internalName: "reject_unauthorized",
     },
     requestCert: {
-      type: bg.Bool,
+      type: b.bool,
       default: false,
       internalName: "request_cert",
     },
@@ -55,34 +55,34 @@ export const SSLConfig = bg.Dictionary(
     cert: SSLConfigFile,
     key: SSLConfigFile,
     secureOptions: {
-      type: bg.Uint32,
+      type: b.u32,
       default: 0,
       internalName: "secure_options",
     },
     keyFile: {
-      type: bg.Nullable(bg.String),
+      type: b.String.nullable,
       internalName: "key_file",
     },
     certFile: {
-      type: bg.Nullable(bg.String),
+      type: b.String.nullable,
       internalName: "cert_file",
     },
     caFile: {
-      type: bg.Nullable(bg.String),
+      type: b.String.nullable,
       internalName: "ca_file",
     },
     ALPNProtocols: {
       type: ALPNProtocols,
       internalName: "alpn_protocols",
     },
-    ciphers: bg.Nullable(bg.String),
+    ciphers: b.String.nullable,
     clientRenegotiationLimit: {
-      type: bg.Uint32,
+      type: b.u32,
       default: 0,
       internalName: "client_renegotiation_limit",
     },
     clientRenegotiationWindow: {
-      type: bg.Uint32,
+      type: b.u32,
       default: 0,
       internalName: "client_renegotiation_window",
     },

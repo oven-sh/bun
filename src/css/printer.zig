@@ -352,7 +352,7 @@ pub fn Printer(comptime Writer: type) type {
         pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) PrintErr!void {
             // assuming the writer comes from an ArrayList
             const start: usize = getWrittenAmt(this.dest);
-            bun.handleOom(this.dest.print(fmt, args));
+            this.dest.print(fmt, args) catch return this.addFmtError();
             const written = getWrittenAmt(this.dest) - start;
             this.col += @intCast(written);
         }

@@ -29,6 +29,7 @@
 
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
+#include "WebCoreJSBuiltins.h"
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/BytecodeIndex.h"
@@ -59,6 +60,7 @@
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/ProxyObject.h"
@@ -1945,7 +1947,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
             StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
 
-            std::span<LChar> data;
+            std::span<Latin1Character> data;
             auto value = String::createUninitialized(header.value.len, data);
             memcpy(data.data(), header.value.ptr, header.value.len);
 
@@ -1978,8 +1980,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
     HTTPHeaderMap map = HTTPHeaderMap();
 
     for (const auto& header : req) {
-        StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(header.first.data()), header.first.length() });
-        std::span<LChar> data;
+        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(header.first.data()), header.first.length() });
+        std::span<Latin1Character> data;
         auto value = String::createUninitialized(header.second.length(), data);
         if (header.second.length() > 0)
             memcpy(data.data(), header.second.data(), header.second.length());
@@ -1998,6 +2000,28 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {
     arg0->deref();
+}
+
+WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
+    Vector<KeyValuePair<String, String>> pairs;
+    pairs.reserveCapacity(count);
+    ZigString buf = *arg3;
+    for (uint32_t i = 0; i < count; i++) {
+        WTF::String name = Zig::toStringCopy(buf, arg1[i]);
+        WTF::String value = Zig::toStringCopy(buf, arg2[i]);
+        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
+    }
+
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
+    if (throwScope.exception()) {
+        headers->deref();
+        return nullptr;
+    }
+    return headers;
 }
 
 JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
@@ -2019,8 +2043,9 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
 
     JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
     fetchHeaders->computeMemoryCost();
-    return JSC::JSValue::encode(value);
+    return JSC::JSValue::encode(fetchHeaders);
 }
+
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const ZigString* arg1, ZigString* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
@@ -2358,7 +2383,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         return 0;
     }
 
-    case WebCore::JSDOMWrapperType: {
+    case JSDOMWrapperType: {
         if (jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -3236,7 +3261,7 @@ JSC::EncodedJSValue ZigString__external(const ZigString* arg0, JSC::JSGlobalObje
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
     } else {
-        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
+        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
     }
 }
 
@@ -3248,7 +3273,7 @@ JSC::EncodedJSValue ZigString__toExternalValueWithCallback(const ZigString* arg0
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
     } else {
-        return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
+        return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
     }
 }
 
@@ -4362,7 +4387,7 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toStringOrNull(arg1);
 }
 
-bool JSC__JSValue__toMatch(JSC::EncodedJSValue regexValue, JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
+[[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__toMatch(JSC::EncodedJSValue regexValue, JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
 {
     ASSERT_NO_PENDING_EXCEPTION(global);
     JSC::JSValue regex = JSC::JSValue::decode(regexValue);
@@ -4621,6 +4646,15 @@ public:
             openingParentheses = WTF::notFound;
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+            // Special case: "unknown" frames don't have parentheses but are valid
+            // These appear in stack traces from certain error paths
+            if (line == "unknown"_s) {
+                frame.sourceURL = line;
+                frame.functionName = StringView();
+                return true;
+            }
+
+            // For any other frame without parentheses, terminate parsing as before
             offset = stack.length();
             return false;
         }
@@ -6007,6 +6041,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -6366,9 +6401,9 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObje
     return JSValue::encode(date);
 }
 
-extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const LChar* nullTerminatedChars)
+extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const Latin1Character* nullTerminatedChars)
 {
-    double dateSeconds = WTF::parseDate(std::span<const LChar>(nullTerminatedChars, strlen(reinterpret_cast<const char*>(nullTerminatedChars))));
+    double dateSeconds = WTF::parseDate(std::span<const Latin1Character>(nullTerminatedChars, strlen(reinterpret_cast<const char*>(nullTerminatedChars))));
     JSC::DateInstance* date = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), dateSeconds);
 
     return JSValue::encode(date);

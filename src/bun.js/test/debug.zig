@@ -34,8 +34,9 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
             group.beginMsg("{d} Sequence ({d}x)", .{ sequence_index, sequence.remaining_repeat_count });
             defer group.end();
 
-            for (sequence.entries(this), 0..) |entry, entry_index| {
-                group.log("{d} ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ entry_index, std.zig.fmtEscapes(entry.base.name orelse "(unnamed)"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
+            var current_entry = sequence.first_entry;
+            while (current_entry) |entry| : (current_entry = entry.next) {
+                group.log("ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.zig.fmtEscapes(entry.base.name orelse "(unnamed)"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
             }
         }
     }

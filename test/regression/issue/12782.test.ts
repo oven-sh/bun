@@ -34,20 +34,12 @@ test("12782", async () => {
     (fail) (unnamed)
 
     test/regression/issue/12782.bar.fixture.ts:
-    1 | import { beforeAll } from "bun:test";
-    2 | 
-    3 | const FOO = process.env.FOO ?? "";
-    4 | 
-    5 | beforeAll(() => {
-    6 |   if (!FOO) throw new Error("Environment variable FOO is not set");
-                                                                         ^
-    error: Environment variable FOO is not set
-        at <anonymous> (file:NN:NN)
-    (fail) (unnamed)
+    (pass) bar > should not run
+    (pass) bar > inner describe > should not run
 
-     0 pass
-     2 fail
-    Ran 2 tests across 2 files."
+     2 pass
+     1 fail
+    Ran 3 tests across 2 files."
   `);
   expect(exitCode).toBe(1);
 });

@@ -258,12 +258,12 @@ const std = @import("std");
 const bun = @import("bun");
 const JSError = bun.JSError;
 const String = bun.String;
+const logger = bun.logger;
 const strings = bun.strings;
+
+const E = bun.ast.E;
+const Expr = bun.ast.Expr;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-
-const logger = bun.logger;
-const E = bun.ast.E;
-const Expr = bun.ast.Expr;

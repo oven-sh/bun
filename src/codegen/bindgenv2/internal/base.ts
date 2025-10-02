@@ -1,7 +1,7 @@
 import util from "node:util";
 
 /** Default is "compact". */
-type CodeStyle = "compact" | "pretty";
+export type CodeStyle = "compact" | "pretty";
 
 export abstract class Type {
   abstract readonly idlType: string;

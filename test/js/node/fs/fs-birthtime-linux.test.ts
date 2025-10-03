@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { isLinux, tempDirWithFiles } from "harness";
-import { statSync, lstatSync, fstatSync, openSync, closeSync, writeFileSync, chmodSync } from "node:fs";
+import { chmodSync, closeSync, fstatSync, lstatSync, openSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("fs birthtime on Linux", () => {

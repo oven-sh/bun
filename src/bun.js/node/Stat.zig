@@ -44,6 +44,30 @@ pub fn StatType(comptime big: bool) type {
             }
         }
 
+        fn getBirthtime(stat_: *const bun.Stat) StatTimespec {
+            if (!Environment.isLinux) {
+                return stat_.birthtime();
+            }
+
+            // On Linux, birthtime is stored in the __unused fields via statx
+            if (comptime Environment.isX64) {
+                // __unused: [3]isize - tv_sec in [0], tv_nsec in [2]
+                return .{
+                    .sec = @intCast(stat_.__unused[0]),
+                    .nsec = @intCast(stat_.__unused[2]),
+                };
+            } else if (comptime Environment.isAarch64) {
+                // __pad: usize for tv_sec, __unused: [2]u32 for tv_nsec
+                return .{
+                    .sec = @intCast(stat_.__pad),
+                    .nsec = @intCast(stat_.__unused[0]),
+                };
+            } else {
+                // Unsupported architecture - return zero
+                return .{ .sec = 0, .nsec = 0 };
+            }
+        }
+
         pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             return statToJS(&this.value, globalObject);
         }
@@ -70,14 +94,15 @@ pub fn StatType(comptime big: bool) type {
             const size: i64 = clampedInt64(stat_.size);
             const blksize: i64 = clampedInt64(stat_.blksize);
             const blocks: i64 = clampedInt64(stat_.blocks);
+            const bTime = getBirthtime(stat_);
             const atime_ms: Float = toTimeMS(aTime);
             const mtime_ms: Float = toTimeMS(mTime);
             const ctime_ms: Float = toTimeMS(cTime);
+            const birthtime_ms: Float = toTimeMS(bTime);
             const atime_ns: u64 = if (big) toNanoseconds(aTime) else 0;
             const mtime_ns: u64 = if (big) toNanoseconds(mTime) else 0;
             const ctime_ns: u64 = if (big) toNanoseconds(cTime) else 0;
-            const birthtime_ms: Float = if (Environment.isLinux) 0 else toTimeMS(stat_.birthtime());
-            const birthtime_ns: u64 = if (big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0;
+            const birthtime_ns: u64 = if (big) toNanoseconds(bTime) else 0;
 
             if (big) {
                 return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{

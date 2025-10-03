@@ -3799,7 +3799,8 @@ pub const NodeFS = struct {
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
-        return switch (Syscall.fstat(args.fd)) {
+        const stat_fn = if (Environment.isLinux) Syscall.fstatx else Syscall.fstat;
+        return switch (stat_fn(args.fd, if (Environment.isLinux) &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks } else {})) {
             .result => |*result| .{ .result = .init(result, args.big_int) },
             .err => |err| .{ .err = err },
         };
@@ -3876,7 +3877,8 @@ pub const NodeFS = struct {
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
-        return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
+        const stat_fn = if (Environment.isLinux) Syscall.lstatx else Syscall.lstat;
+        return switch (stat_fn(args.path.sliceZ(&this.sync_error_buf), if (Environment.isLinux) &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks } else {})) {
             .result => |*result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
@@ -5705,7 +5707,8 @@ pub const NodeFS = struct {
             }
         }
 
-        return switch (Syscall.stat(path)) {
+        const stat_fn = if (Environment.isLinux) Syscall.statx else Syscall.stat;
+        return switch (stat_fn(path, if (Environment.isLinux) &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks } else {})) {
             .result => |*result| .{
                 .result = .{ .stats = .init(result, args.big_int) },
             },

@@ -53,7 +53,9 @@ pub const Snapshots = struct {
         return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
     }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
-        const bunTest = expect.bunTest() orelse return error.SnapshotFailed;
+        var buntest_strong = expect.bunTest() orelse return error.SnapshotFailed;
+        defer buntest_strong.deinit();
+        const bunTest = buntest_strong.get();
         switch (try this.getSnapshotFile(bunTest.file_id)) {
             .result => {},
             .err => |err| {

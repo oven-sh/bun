@@ -133,7 +133,7 @@ public:
             alignof(ExternElement) > MimallocMalloc::maxAlign
                 ? MimallocMalloc::alignedMalloc(newAllocSize, alignof(ExternElement))
                 : MimallocMalloc::malloc(newAllocSize));
-        for (std::size_t i = 0; i < cppValue.size(); ++i) {
+        for (std::size_t i = 0; i < length; ++i) {
             new (memory + i) ExternElement {
                 ExternTraits<T>::convertToExtern(std::move(cppValue[i])),
             };

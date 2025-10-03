@@ -187,6 +187,7 @@ pub const BunTest = struct {
     default_concurrent: bool,
     first_last: BunTestRoot.FirstLast,
     extra_execution_entries: std.ArrayList(*ExecutionEntry),
+    wants_wakeup: bool = false,
 
     phase: enum {
         collection,
@@ -465,7 +466,14 @@ pub const BunTest = struct {
         const done_callback_test = bun.new(RunTestsTask, .{ .weak = weak.clone(), .globalThis = globalThis, .phase = phase });
         errdefer bun.destroy(done_callback_test);
         const task = jsc.ManagedTask.New(RunTestsTask, RunTestsTask.call).init(done_callback_test);
-        jsc.VirtualMachine.get().enqueueTask(task);
+        const vm = globalThis.bunVM();
+        var strong = weak.clone().upgrade() orelse {
+            if (bun.Environment.ci_assert) bun.assert(false); // shouldn't be calling runNextTick after moving on to the next file
+            return; // but just in case
+        };
+        defer strong.deinit();
+        strong.get().wants_wakeup = true; // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
+        vm.enqueueTask(task);
     }
     pub const RunTestsTask = struct {
         weak: BunTestPtr.Weak,

@@ -102,7 +102,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto* structure = createJSBunRequestStructure(vm, defaultGlobalObject(globalObject));
+    auto* structure = defaultGlobalObject(globalObject)->m_JSBunRequestStructure.getInitializedOnMainThread(globalObject);
     auto* raw = Request__clone(this->wrapped(), globalObject);
     EXCEPTION_ASSERT(!!raw == !throwScope.exception());
     RETURN_IF_EXCEPTION(throwScope, nullptr);

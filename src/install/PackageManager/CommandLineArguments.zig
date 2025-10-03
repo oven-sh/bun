@@ -808,7 +808,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.lockfile_only = args.flag("--lockfile-only");
 
     if (args.option("--linker")) |linker| {
-        cli.node_linker = .fromStr(linker);
+        cli.node_linker = Options.NodeLinker.fromStr(linker) orelse {
+            Output.errGeneric("Expected --linker to be one of 'isolated' or 'hoisted'", .{});
+            Global.exit(1);
+        };
     }
 
     if (args.option("--cache-dir")) |cache_dir| {

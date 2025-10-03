@@ -69,11 +69,11 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   for (let i = text_len - 1; i >= 0; i--) {
     const char = text[i];
     switch (char) {
-      case " ": // Space
-      case "\n": // Line feed
-      case "\t": // Tab character
-      case "\r": // Carriage return
-      case "\f": // Form feed
+      case " ":
+      case "\n":
+      case "\t":
+      case "\r":
+      case "\f":
       case "\v": {
         switch (token) {
           case "INSERT": {

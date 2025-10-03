@@ -547,10 +547,10 @@ it("throws a validation error when passing invalid routes", () => {
         },
         "/path": {
           GET(req) {
-            return Response.json({ message: "Hello World" });
+            return Response.json({ message: "Hello Get" });
           },
           POST(req) {
-            return Response.json({ message: "Hello World" });
+            return Response.json({ message: "Hello Post" });
           },
         },
       },

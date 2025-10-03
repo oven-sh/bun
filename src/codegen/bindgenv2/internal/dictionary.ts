@@ -123,12 +123,12 @@ export function dictionary(
           )}
         };
         using IDL${name} = ::WebCore::IDLDictionary<${name}>;
-        struct FFI${name} {
+        struct Extern${name} {
           ${joinIndented(
             10,
             fullMembers.map((memberInfo, i) => {
               return `
-                using MemberType${i} = FFITraits<${name}::MemberType${i}>::FFIType;
+                using MemberType${i} = ExternTraits<${name}::MemberType${i}>::ExternType;
                 MemberType${i} ${memberInfo.internalName};
               `;
             }),
@@ -141,24 +141,24 @@ export function dictionary(
             extern "C" bool bindgenConvertJSTo${name}(
               ::JSC::JSGlobalObject* globalObject,
               ::JSC::EncodedJSValue value,
-              FFI${name}* result);
+              Extern${name}* result);
           `);
           return addIndent(8, "\n" + result);
         })()}
         }
 
-        template<> struct FFITraits<Generated::${name}> {
-          using FFIType = Generated::FFI${name};
-          static FFIType convertToFFI(Generated::${name}&& cppValue)
+        template<> struct ExternTraits<Generated::${name}> {
+          using ExternType = Generated::Extern${name};
+          static ExternType convertToExtern(Generated::${name}&& cppValue)
           {
-            return FFIType {
+            return ExternType {
               ${joinIndented(
                 14,
                 fullMembers.map((memberInfo, i) => {
                   const internalName = memberInfo.internalName;
                   const cppType = `Generated::${name}::MemberType${i}`;
                   const cppValue = `::std::move(cppValue.${internalName})`;
-                  return `.${internalName} = FFITraits<${cppType}>::convertToFFI(${cppValue}),`;
+                  return `.${internalName} = ExternTraits<${cppType}>::convertToExtern(${cppValue}),`;
                 }),
               )}
             };
@@ -232,7 +232,7 @@ export function dictionary(
             extern "C" bool bindgenConvertJSTo${name}(
               ::JSC::JSGlobalObject* globalObject,
               ::JSC::EncodedJSValue value,
-              FFI${name}* result)
+              Extern${name}* result)
             {
               ::JSC::VM& vm = globalObject->vm();
               auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -241,7 +241,7 @@ export function dictionary(
                 JSC::JSValue::decode(value)
               );
               RETURN_IF_EXCEPTION(throwScope, false);
-              *result = FFITraits<${name}>::convertToFFI(::std::move(convertedValue));
+              *result = ExternTraits<${name}>::convertToExtern(::std::move(convertedValue));
               return true;
             }
             }
@@ -283,10 +283,10 @@ export function dictionary(
                 var scope: jsc.ExceptionValidationScope = undefined;
                 scope.init(globalThis, @src());
                 defer scope.deinit();
-                var ffi_result: FFI${name} = undefined;
+                var ffi_result: Extern${name} = undefined;
                 const success = bindgenConvertJSTo${name}(globalThis, value, &ffi_result);
                 scope.assertExceptionPresenceMatches(!success);
-                return if (success) Bindgen${name}.convertFromFFI(ffi_result) else error.JSError;
+                return if (success) Bindgen${name}.convertFromExtern(ffi_result) else error.JSError;
               }
             `);
             return addIndent(10, "\n" + result);
@@ -296,15 +296,15 @@ export function dictionary(
         pub const Bindgen${name} = struct {
           const Self = @This();
           pub const ZigType = ${name};
-          pub const FFIType = FFI${name};
-          pub fn convertFromFFI(ffi_value: Self.FFIType) Self.ZigType {
+          pub const ExternType = Extern${name};
+          pub fn convertFromExtern(ffi_value: Self.ExternType) Self.ZigType {
             return .{
               ${joinIndented(
                 14,
                 fullMembers.map(memberInfo => {
                   const internalName = memberInfo.internalName;
                   const bindgenType = memberInfo.type.bindgenType;
-                  const rhs = `${bindgenType}.convertFromFFI(ffi_value.${internalName})`;
+                  const rhs = `${bindgenType}.convertFromExtern(ffi_value.${internalName})`;
                   return `.${internalName} = ${rhs},`;
                 }),
               )}
@@ -312,11 +312,11 @@ export function dictionary(
           }
         };
 
-        const FFI${name} = extern struct {
+        const Extern${name} = extern struct {
           ${joinIndented(
             10,
             fullMembers.map(memberInfo => {
-              return `${memberInfo.internalName}: ${memberInfo.type.bindgenType}.FFIType,`;
+              return `${memberInfo.internalName}: ${memberInfo.type.bindgenType}.ExternType,`;
             }),
           )}
         };
@@ -324,7 +324,7 @@ export function dictionary(
         extern fn bindgenConvertJSTo${name}(
           globalObject: *jsc.JSGlobalObject,
           value: jsc.JSValue,
-          result: *FFI${name},
+          result: *Extern${name},
         ) bool;
 
         const bindgen_generated = @import("bindgen_generated");

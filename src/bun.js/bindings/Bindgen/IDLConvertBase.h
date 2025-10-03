@@ -57,7 +57,7 @@ private:
 struct LiteralConversionContext : Detail::ContextBase<LiteralConversionContext> {
     using ElementContext = Detail::ElementOf<LiteralConversionContext>;
 
-    explicit LiteralConversionContext(WTF::ASCIILiteral name)
+    explicit consteval LiteralConversionContext(WTF::ASCIILiteral name)
         : m_name(name)
     {
     }
@@ -68,7 +68,7 @@ struct LiteralConversionContext : Detail::ContextBase<LiteralConversionContext> 
     }
 
 private:
-    WTF::ASCIILiteral m_name;
+    const WTF::ASCIILiteral m_name;
 };
 
 }

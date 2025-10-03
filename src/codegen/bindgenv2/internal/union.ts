@@ -156,15 +156,16 @@ export function union(
         pub const Bindgen${name} = struct {
           const Self = @This();
           pub const ZigType = ${name};
-          pub const FFIType = bindgen.FFITaggedUnion(&.{ ${alternatives
-            .map(a => a.bindgenType + ".FFIType")
+          pub const ExternType = bindgen.ExternTaggedUnion(&.{ ${alternatives
+            .map(a => a.bindgenType + ".ExternType")
             .join(", ")} });
-          pub fn convertFromFFI(ffi_value: Self.FFIType) Self.ZigType {
+          pub fn convertFromExtern(ffi_value: Self.ExternType) Self.ZigType {
             return switch (ffi_value.tag) {
               ${joinIndented(
                 14,
                 Object.entries(namedAlternatives).map(([altName, altType], i) => {
-                  const innerRhs = `${altType.bindgenType}.convertFromFFI(ffi_value.data.@"${i}")`;
+                  const bindgenType = altType.bindgenType;
+                  const innerRhs = `${bindgenType}.convertFromExtern(ffi_value.data.@"${i}")`;
                   return `${i} => .{ .${altName} = ${innerRhs} },`;
                 }),
               )}

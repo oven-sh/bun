@@ -72,7 +72,7 @@ export function enumeration(name: string, values: string[]): EnumType {
 
       return reindent(`
         #pragma once
-        #include "Bindgen/FFITraits.h"
+        #include "Bindgen/ExternTraits.h"
         #include "JSDOMConvertEnumeration.h"
 
         namespace Bun {
@@ -86,7 +86,7 @@ export function enumeration(name: string, values: string[]): EnumType {
         };
         using IDL${name} = ::WebCore::IDLEnumeration<Generated::${name}>;
         }
-        template<> struct FFITraits<Generated::${name}> : TrivialFFI<Generated::${name}> {};
+        template<> struct ExternTraits<Generated::${name}> : TrivialExtern<Generated::${name}> {};
         }
         template<>
         struct IDLHumanReadableName<::WebCore::IDLEnumeration<Bindgen::Generated::${name}>>

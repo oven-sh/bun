@@ -14,10 +14,10 @@
 namespace Bun::Bindgen {
 
 template<typename T>
-struct FFITraits;
+struct ExternTraits;
 
 template<typename T>
-struct FFIVector {
+struct ExternVector {
     T* data;
     // WTF::Vector stores the length and capacity as `unsigned`. We can save space by using that
     // instead of `std::size_t` here.
@@ -44,17 +44,17 @@ void asanSetBufferSizeToFullCapacity(T* buffer, std::size_t length, std::size_t 
 }
 
 template<typename T, typename OverflowHandler, std::size_t minCapacity>
-struct FFITraits<WTF::Vector<T, 0, OverflowHandler, minCapacity, MimallocMalloc>> {
+struct ExternTraits<WTF::Vector<T, 0, OverflowHandler, minCapacity, MimallocMalloc>> {
 private:
     using CPPType = WTF::Vector<T, 0, OverflowHandler, minCapacity, MimallocMalloc>;
-    using FFIElement = FFITraits<T>::FFIType;
+    using ExternElement = ExternTraits<T>::ExternType;
 
 public:
-    using FFIType = FFIVector<FFIElement>;
+    using ExternType = ExternVector<ExternElement>;
 
-    static FFIType convertToFFI(CPPType&& cppValue)
+    static ExternType convertToExtern(CPPType&& cppValue)
     {
-        if constexpr (std::is_same_v<T, FFIElement>) {
+        if constexpr (std::is_same_v<T, ExternElement>) {
             // We can reuse the allocation.
             alignas(CPPType) std::byte cppStorage[sizeof(CPPType)];
             // This prevents the contents from being freed or destructed.
@@ -64,13 +64,13 @@ public:
             const std::size_t capacity = vec->capacity();
             Detail::asanSetBufferSizeToFullCapacity(buffer, length, capacity);
 
-            return FFIType {
+            return ExternType {
                 .data = vec->mutableSpan().data(),
                 .length = static_cast<unsigned>(length),
                 .capacity = static_cast<unsigned>(capacity),
             };
-        } else if constexpr (
-            sizeof(FFIElement) <= sizeof(T) && alignof(FFIElement) <= MimallocMalloc::maxAlign) {
+        } else if constexpr (sizeof(ExternElement) <= sizeof(T)
+            && alignof(ExternElement) <= MimallocMalloc::maxAlign) {
 
             // We can reuse the allocation, but we still need to convert the elements.
             alignas(CPPType) std::byte cppStorage[sizeof(CPPType)];
@@ -86,36 +86,36 @@ public:
 
             std::size_t newCapacity = capacity;
             std::size_t newAllocSize = allocSize;
-            static constexpr bool newSizeIsMultiple = sizeof(T) % sizeof(FFIElement) == 0;
+            static constexpr bool newSizeIsMultiple = sizeof(T) % sizeof(ExternElement) == 0;
             if (!newSizeIsMultiple) {
-                newCapacity = allocSize / sizeof(FFIElement);
-                newAllocSize = newCapacity * sizeof(FFIElement);
+                newCapacity = allocSize / sizeof(ExternElement);
+                newAllocSize = newCapacity * sizeof(ExternElement);
                 if (newAllocSize != allocSize) {
-                    // Allocation isn't a multiple of `sizeof(FFIElement)`; we have to resize it.
+                    // Allocation isn't a multiple of `sizeof(ExternElement)`; we have to resize it.
                     storage = reinterpret_cast<std::byte*>(
-                        MimallocMalloc::realloc(storage, newCapacity * sizeof(FFIElement)));
+                        MimallocMalloc::realloc(storage, newCapacity * sizeof(ExternElement)));
                 }
             }
 
             // Convert the elements.
             for (std::size_t i = 0; i < length; ++i) {
                 T* oldPtr = std::launder(reinterpret_cast<T*>(storage + i * sizeof(T)));
-                FFIElement newElem { FFITraits<T>::convertToFFI(std::move(*oldPtr)) };
+                ExternElement newElem { ExternTraits<T>::convertToExtern(std::move(*oldPtr)) };
                 oldPtr->~T();
-                new (storage + i * sizeof(FFIElement)) FFIElement { std::move(newElem) };
+                new (storage + i * sizeof(ExternElement)) ExternElement { std::move(newElem) };
             }
 #if __cpp_lib_start_lifetime_as >= 202207L
-            FFIElement* data = std::start_lifetime_as_array<FFIElement>(storage, newCapacity);
+            ExternElement* data = std::start_lifetime_as_array<ExternElement>(storage, newCapacity);
 #else
             // We need to start the lifetime of an object of type "array of `capacity`
-            // `FFIElement`" without invalidating the object representation. Without
+            // `ExternElement`" without invalidating the object representation. Without
             // `std::start_lifetime_as_array`, one way to do this is to use a no-op `memmove`,
             // which implicitly creates objects, plus `std::launder` to obtain a pointer to
             // the created object.
             std::memmove(storage, storage, newAllocSize);
-            FFIElement* data = std::launder(reinterpret_cast<FFIElement*>(storage));
+            ExternElement* data = std::launder(reinterpret_cast<ExternElement*>(storage));
 #endif
-            return FFIType {
+            return ExternType {
                 .data = data,
                 .length = static_cast<unsigned>(length),
                 .capacity = static_cast<unsigned>(newCapacity),
@@ -123,15 +123,17 @@ public:
         }
 
         const std::size_t length = cppValue.size();
-        const std::size_t newAllocSize = sizeof(FFIElement) * length;
-        FFIElement* memory = reinterpret_cast<FFIElement*>(
-            alignof(FFIElement) > MimallocMalloc::maxAlign
-                ? MimallocMalloc::alignedMalloc(newAllocSize, alignof(FFIElement))
+        const std::size_t newAllocSize = sizeof(ExternElement) * length;
+        ExternElement* memory = reinterpret_cast<ExternElement*>(
+            alignof(ExternElement) > MimallocMalloc::maxAlign
+                ? MimallocMalloc::alignedMalloc(newAllocSize, alignof(ExternElement))
                 : MimallocMalloc::malloc(newAllocSize));
         for (std::size_t i = 0; i < cppValue.size(); ++i) {
-            new (memory + i) FFIElement { FFITraits<T>::convertToFFI(std::move(cppValue[i])) };
+            new (memory + i) ExternElement {
+                ExternTraits<T>::convertToExtern(std::move(cppValue[i])),
+            };
         }
-        return FFIType {
+        return ExternType {
             .data = memory,
             .length = static_cast<unsigned>(length),
             .capacity = static_cast<unsigned>(length),

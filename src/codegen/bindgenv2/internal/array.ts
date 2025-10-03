@@ -25,7 +25,7 @@ export function Array(elemType: Type): ArrayType {
       return [elemType];
     }
     getHeaders(result: Set<string>): void {
-      result.add("Bindgen/VectorFFITraits.h");
+      result.add("Bindgen/ExternVectorTraits.h");
       elemType.getHeaders(result);
     }
   })();

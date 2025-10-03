@@ -6,6 +6,6 @@
 #include <utility>
 #include <variant>
 #include <wtf/text/WTFString.h>
-#include "Bindgen/FFITraits.h"
+#include "Bindgen/ExternTraits.h"
 #include "Bindgen/IDLTypes.h"
 #include "Bindgen/IDLConvertBase.h"

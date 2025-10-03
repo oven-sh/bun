@@ -311,10 +311,8 @@ pub const BunTest = struct {
             bun.destroy(this);
             buntest_weak.deinit();
         }
-        pub fn bunTest(this: *RefData) ?*BunTest {
-            var buntest_strong = this.buntest_weak.cloneUpgrade() orelse return null;
-            defer buntest_strong.deinit();
-            return buntest_strong.get();
+        pub fn bunTest(this: *RefData) ?BunTestPtr {
+            return this.buntest_weak.cloneUpgrade() orelse return null;
         }
     };
     pub fn getCurrentStateData(this: *BunTest) RefDataValue {

@@ -51,6 +51,15 @@ pub const Command = struct {
         return buf.items;
     }
 
+    pub fn format(
+        this: Self,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        try this.write(writer);
+    }
+
     pub fn byteLength(self: *const Self) usize {
         return std.fmt.count("{}", .{self.*});
     }

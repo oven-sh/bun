@@ -199,10 +199,7 @@ pub const JsValkey = struct {
                 },
             }
 
-            Self.debug(
-                "JSRef State = {s}",
-                .{if (jsvlk._js_this.isStrong()) "strong" else "weak"},
-            );
+            Self.debug("JSRef = {s}", .{if (jsvlk._js_this.isStrong()) "strong" else "weak"});
         }
 
         const debug = bun.Output.scoped(.valkey_client_listener, .visible);

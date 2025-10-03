@@ -642,10 +642,10 @@ pub fn ValkeyClient(
                 },
                 else => {
                     Self.debug(
-                        "{*}.egressWrite invoked while in state {} which  does not support " ++
+                        "{*}.egressWrite invoked while in state {s} which does not support " ++
                             "direct egress writing. Data will be lost, and the connection may " ++
                             "be broken.",
-                        .{ self, self._state },
+                        .{ self, @tagName(self._state) },
                     );
 
                     // TODO(markovejnovic): Actually go and fix this issue.
@@ -661,7 +661,11 @@ pub fn ValkeyClient(
         /// - `.SubscriptionCompatibility` if the given command is not available in the current
         /// subscription mode.
         pub fn request(self: *Self, req: *Self.RequestType) !void {
-            Self.debug("{*}.request({s}, argc={})", .{ self, req.command, req.command.args.len() });
+            Self.debug("{*}.request({s}, argc={})", .{
+                self,
+                req.command.command.toString(),
+                req.command.args.len(),
+            });
 
             // TODO(markovejnovic): Handle automatically opening the connection.
             switch (self._state) {
@@ -759,15 +763,55 @@ pub fn ValkeyClient(
         }
 
         pub fn onAutoFlush(self: *Self) bool {
+            Self.debug("{*}.onAutoFlush()", .{self});
+
             if (!self.readyToTransmit()) {
                 self.auto_flusher.registered = false;
                 return false;
             }
 
-            /// NOTE TO MARKO!!!
-            /// YOU NEED TO IMPLEMENT THIS!!!
+            // Drain out the command queue
+            var have_more = false;
+            var total_bytelength: usize = 0;
 
-            return false;
+            const requests: []QueuedRequestType = brk: {
+                var to_process = @constCast(self._outbound_queue.readableSlice(0));
+                var total: usize = 0;
+
+                for (to_process) |*req| {
+                    if (!req.pipelinable) {
+                        break;
+                    }
+
+                    bun.handleOom(self._inflight_queue.writeItem(req.*));
+
+                    total += 1;
+                    total_bytelength += req.serialized_data.len;
+                }
+                break :brk to_process[0..total];
+            };
+
+            bun.debugAssert(self._state == .linked);
+            for (requests) |*req| {
+                // All the things that are left are not pipelinable, so we need to manually write
+                // them out.
+                _ = self.egressWrite(req.serialized_data) catch |err| {
+                    // TODO(markovejnovic): This catch block shouldn't be necessary and is simply
+                    // debt to accomodate the fact that egressWrite can return a wrong error code.
+                    // Should be bun.handleOom
+                    Self.debug("{*} Failed to write pipelined command: {any}", .{ self, err });
+                };
+                self._allocator.free(req.serialized_data);
+            }
+
+            self._outbound_queue.discard(requests.len);
+
+            self._state.flushEgressBuffer();
+
+            have_more = self._outbound_queue.readableLength() > 0;
+            self.auto_flusher.registered = have_more;
+
+            return have_more;
         }
 
         const debug = bun.Output.scoped(.valkey, .visible);
@@ -1528,10 +1572,14 @@ fn QueuedRequest(Context: type) type {
         serialized_data: []u8,
         context: Context,
 
+        // TODO(markovejnovic): These flags are hacks and shouldn't need to exist.
+        pipelinable: bool,
+
         pub fn init(req: *const Request(Context), allocator: std.mem.Allocator) !Self {
             return Self{
                 .serialized_data = try req.command.serialize(allocator),
                 .context = req.context,
+                .pipelinable = req.command.canBePipelined(),
             };
         }
     };

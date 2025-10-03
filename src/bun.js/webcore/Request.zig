@@ -68,8 +68,8 @@ pub export fn Request__setTimeout(this: *Request, seconds: jsc.JSValue, globalTh
     this.setTimeout(seconds.to(c_uint));
 }
 
-pub export fn Request__clone(this: *Request, globalThis: *jsc.JSGlobalObject) ?*Request {
-    return this.clone(bun.default_allocator, globalThis) catch null;
+pub export fn Request__clone(this: *Request, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue, tee: ?*[2]jsc.JSValue) ?*Request {
+    return this.clone(bun.default_allocator, globalThis, this_value, tee) catch null;
 }
 
 comptime {

@@ -268,23 +268,23 @@ pub fn doClone(
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
     const this_value = callframe.this();
-    const cloned = try this.clone(globalThis);
+    var readable_stream_tee: [2]jsc.JSValue = .{ .zero, .zero };
+    const cloned = try this.clone(globalThis, this_value, &readable_stream_tee);
 
     const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
 
     if (js_wrapper != .zero) {
-        if (cloned.body.value == .Locked) {
-            if (cloned.body.value.Locked.readable.get(.{ .Response = js_wrapper }, globalThis)) |readable| {
-                // If we are teed, then we need to update the cached .body
-                // value to point to the new readable stream
-                // We must do this on both the original and cloned response
-                // but especially the original response since it will have a stale .body value now.
-                js.bodySetCached(js_wrapper, globalThis, readable.value);
-                const this_js = this.this_jsvalue.tryGet() orelse .zero;
-                if (this.body.value.Locked.readable.get(if (this_js != .zero) .{ .Response = this_js } else .{ .empty = {} }, globalThis)) |other_readable| {
-                    js.bodySetCached(this_value, globalThis, other_readable.value);
-                }
-            }
+
+        // If we are teed, then we need to update the cached .body
+        // value to point to the new readable stream
+        // We must do this on both the original and cloned response
+        // but especially the original response since it will have a stale .body value now.
+        if (readable_stream_tee[0] != .zero) {
+            js.gc.body.set(this_value, globalThis, readable_stream_tee[0]);
+        }
+
+        if (readable_stream_tee[1] != .zero) {
+            js.gc.body.set(js_wrapper, globalThis, readable_stream_tee[1]);
         }
     }
 
@@ -629,7 +629,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
 
     response.calculateEstimatedByteSize();
     if (thisValue != .zero and readable_stream_value != .zero) {
-        response.body.value.Locked.readable.set(.{ .Response = thisValue }, response.body.value.Locked.global, readable_stream_value);
+        response.body.value.Locked.readable.setValue(.{ .Response = thisValue }, readable_stream_value, response.body.value.Locked.global);
     }
     return response;
 }

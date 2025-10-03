@@ -1198,6 +1198,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     bun.default_allocator,
                     ctx,
                     false,
+                    first_arg,
+                    null,
                 );
             } else {
                 const fetch_error = jsc.WebCore.Fetch.fetch_type_error_strings.get(bun.jsc.C.JSValueGetType(ctx, first_arg.asRef()));

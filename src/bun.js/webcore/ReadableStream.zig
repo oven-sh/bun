@@ -79,7 +79,7 @@ pub const Ref = union(Type) {
             },
             .strong => {
                 this.deinit();
-                this.* = .{ .strong = .init(stream_jsvalue, global) };
+                this.* = .{ .strong = .{ .held = .create(stream_jsvalue, global) } };
             },
             .empty => {},
         }

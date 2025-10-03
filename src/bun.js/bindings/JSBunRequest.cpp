@@ -96,14 +96,15 @@ JSObject* JSBunRequest::cookies() const
     return m_cookies.get();
 }
 
-extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
+extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue* readableStreamTee);
 
 JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto* structure = createJSBunRequestStructure(vm, defaultGlobalObject(globalObject));
-    auto* raw = Request__clone(this->wrapped(), globalObject);
+    JSC::EncodedJSValue readableStreamTee[2] { encodedJSValue(), encodedJSValue() };
+    auto* structure = defaultGlobalObject(globalObject)->m_JSBunRequestStructure.getInitializedOnMainThread(globalObject);
+    auto* raw = Request__clone(this->wrapped(), globalObject, JSValue::encode(this), readableStreamTee);
     EXCEPTION_ASSERT(!!raw == !throwScope.exception());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
     auto* clone = this->create(vm, structure, raw, nullptr);
@@ -134,7 +135,16 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
             auto cookieMapClone = cookieMap->clone();
             auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
             clone->setCookies(cookies.getObject());
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
         }
+    }
+
+    if (readableStreamTee[0] != encodedJSValue()) {
+        this->m_body.set(vm, clone, JSValue::decode(readableStreamTee[0]));
+    }
+
+    if (readableStreamTee[1] != encodedJSValue()) {
+        clone->m_body.set(vm, clone, JSValue::decode(readableStreamTee[1]));
     }
 
     RELEASE_AND_RETURN(throwScope, clone);

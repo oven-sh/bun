@@ -1867,7 +1867,9 @@ function testImpl(description: string, options: DevServerTest, NODE_ENV: "develo
     }
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
     devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
-    const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
+    const startupTimeout =
+      (options.timeoutMultiplier ?? 1) * (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 6 : 1);
+    const port = parseInt((await stream.waitForLine(/localhost:(\d+)/, startupTimeout))[1], 10);
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
     if (dev.nodeEnv === "development") {
       await dev.connectSocket();

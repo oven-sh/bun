@@ -3799,8 +3799,10 @@ pub const NodeFS = struct {
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
-        const stat_fn = if (Environment.isLinux) Syscall.fstatx else Syscall.fstat;
-        return switch (stat_fn(args.fd, if (Environment.isLinux) &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks } else {})) {
+        return switch (if (Environment.isLinux)
+            Syscall.fstatx(args.fd, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
+        else
+            Syscall.fstat(args.fd)) {
             .result => |*result| .{ .result = .init(result, args.big_int) },
             .err => |err| .{ .err = err },
         };
@@ -3877,8 +3879,10 @@ pub const NodeFS = struct {
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
-        const stat_fn = if (Environment.isLinux) Syscall.lstatx else Syscall.lstat;
-        return switch (stat_fn(args.path.sliceZ(&this.sync_error_buf), if (Environment.isLinux) &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks } else {})) {
+        return switch (if (Environment.isLinux)
+            Syscall.lstatx(args.path.sliceZ(&this.sync_error_buf), &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
+        else
+            Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
             .result => |*result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
@@ -5707,8 +5711,10 @@ pub const NodeFS = struct {
             }
         }
 
-        const stat_fn = if (Environment.isLinux) Syscall.statx else Syscall.stat;
-        return switch (stat_fn(path, if (Environment.isLinux) &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks } else {})) {
+        return switch (if (Environment.isLinux)
+            Syscall.statx(path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
+        else
+            Syscall.stat(path)) {
             .result => |*result| .{
                 .result = .{ .stats = .init(result, args.big_int) },
             },

@@ -28,10 +28,11 @@ test("describe/test", async () => {
     (fail) failing filterin
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     ..........
-     10 pass
-     10 skip
-     10 todo
-     3 fail
+
+    10 pass
+    10 skip
+    10 todo
+    3 fail
     Ran 33 tests across 1 file."
     ,
       "stdout": "bun test <version> (<revision>)",

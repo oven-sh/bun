@@ -7,7 +7,14 @@ const CurrentFile = struct {
     } = .{},
     has_printed_filename: bool = false,
 
-    pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+    pub fn set(
+        this: *CurrentFile,
+        title: string,
+        prefix: string,
+        repeat_count: u32,
+        repeat_index: u32,
+        reporter: *CommandLineReporter,
+    ) void {
         if (Output.isAIAgent()) {
             this.freeAndClear();
             this.title = bun.handleOom(bun.default_allocator.dupe(u8, title));
@@ -19,7 +26,7 @@ const CurrentFile = struct {
         }
 
         this.has_printed_filename = true;
-        print(title, prefix, repeat_count, repeat_index);
+        print(title, prefix, repeat_count, repeat_index, shouldPrependExtraNewline(reporter));
     }
 
     fn freeAndClear(this: *CurrentFile) void {
@@ -27,24 +34,49 @@ const CurrentFile = struct {
         bun.default_allocator.free(this.prefix);
     }
 
-    fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+    fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32, prepend_extra_newline: bool) void {
+        const enable_buffering = Output.enableBufferingScope();
+        defer enable_buffering.deinit();
+
+        Output.prettyError("<r>\n", .{});
+
+        if (prepend_extra_newline) {
+            Output.prettyError("\n", .{});
+        }
+
         if (repeat_count > 0) {
             if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
+                Output.prettyErrorln("{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
             } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+                Output.prettyErrorln("{s}{s}:\n", .{ prefix, title });
             }
         } else {
-            Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+            Output.prettyErrorln("{s}{s}:\n", .{ prefix, title });
         }
 
         Output.flush();
     }
 
-    pub fn printIfNeeded(this: *CurrentFile) void {
+    fn shouldPrependExtraNewline(reporter: *CommandLineReporter) bool {
+        if (reporter.last_printed_dot) {
+            reporter.last_printed_dot = false;
+            return true;
+        }
+
+        return false;
+    }
+
+    pub fn printIfNeeded(this: *CurrentFile, bun_test_: *const bun_test.BunTest) void {
         if (this.has_printed_filename) return;
         this.has_printed_filename = true;
-        print(this.title, this.prefix, this.repeat_info.count, this.repeat_info.index);
+
+        print(
+            this.title,
+            this.prefix,
+            this.repeat_info.count,
+            this.repeat_info.index,
+            if (bun_test_.reporter) |reporter| shouldPrependExtraNewline(reporter) else false,
+        );
     }
 };
 
@@ -494,3 +526,4 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 const ZigString = jsc.ZigString;
+const CommandLineReporter = @import("../../cli/test_command.zig").CommandLineReporter;

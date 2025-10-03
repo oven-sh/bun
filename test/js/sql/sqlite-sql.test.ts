@@ -1055,7 +1055,6 @@ describe("Template Literal Security", () => {
     await sql.close();
   });
 });
-
 describe("Transactions", () => {
   let sql: SQL;
 
@@ -1185,7 +1184,45 @@ describe("SQLite-specific features", () => {
     expect(results[0].id).toBe(1);
     expect(results[1].id).toBe(3);
   });
+  test("returning clause on insert statements", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`
+        create table users (
+            id integer primary key,
+            name text not null,
+            verified integer not null default 0,
+            created_at integer not null default (strftime('%s', 'now'))
+        )`;
 
+    const result =
+      await sql`insert into "users" ("id", "name", "verified", "created_at") values (null, ${"John"}, ${0}, strftime('%s', 'now')), (null, ${"Bruce"}, ${0}, strftime('%s', 'now')), (null, ${"Jane"}, ${0}, strftime('%s', 'now')), (null, ${"Austin"}, ${0},  strftime('%s', 'now')) returning "id", "name", "verified"`;
+
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("John");
+    expect(result[0].verified).toBe(0);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Bruce");
+    expect(result[1].verified).toBe(0);
+    expect(result[2].id).toBe(3);
+    expect(result[2].name).toBe("Jane");
+    expect(result[2].verified).toBe(0);
+    expect(result[3].id).toBe(4);
+    expect(result[3].name).toBe("Austin");
+    expect(result[3].verified).toBe(0);
+
+    const [{ 'upper("name")': upperName }] =
+      await sql`insert into "users" ("id", "name", "verified", "created_at") values (null, ${"John"}, ${0}, strftime('%s', 'now')) returning upper("name")`;
+    expect(upperName).toBe("JOHN");
+  });
+  test("dynamic limit", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE users (id INTEGER, name TEXT)`;
+    await sql`INSERT INTO users VALUES (1, 'John'), (2, 'Jane'), (3, 'Austin')`;
+    const result = await sql`delete from "users" where "users"."id" = ${1} order by "users"."name" asc limit ${1}`;
+    expect(result.count).toBe(1);
+    expect(result.command).toBe("DELETE");
+    expect(result.lastInsertRowid).toBe(3);
+  });
   test("last_insert_rowid()", async () => {
     await sql`CREATE TABLE rowid_test (id INTEGER PRIMARY KEY, value TEXT)`;
     await sql`INSERT INTO rowid_test (value) VALUES ('test')`;

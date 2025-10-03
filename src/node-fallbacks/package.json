@@ -12,7 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "assert": "^2.1.0",
-    "react-refresh": "0.17.0",
+    "react-refresh": "0.18.0",
     "browserify-zlib": "^0.2.0",
     "buffer": "^6.0.3",
     "console-browserify": "^1.2.0",

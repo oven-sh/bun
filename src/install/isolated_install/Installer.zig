@@ -1278,7 +1278,11 @@ pub const Installer = struct {
                         Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                     });
                     buf.append("node_modules");
-                    buf.append(pkg_name.slice(string_buf));
+                    if (pkg_name.isEmpty()) {
+                        buf.append(std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir));
+                    } else {
+                        buf.append(pkg_name.slice(string_buf));
+                    }
                 }
             },
             .workspace => {

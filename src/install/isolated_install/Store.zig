@@ -146,9 +146,13 @@ pub const Store = struct {
 
                 switch (pkg_res.tag) {
                     .root => {
-                        try writer.print("{}@root", .{
-                            pkg_name.fmtStorePath(string_buf),
-                        });
+                        if (pkg_name.isEmpty()) {
+                            try writer.writeAll(std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir));
+                        } else {
+                            try writer.print("{}@root", .{
+                                pkg_name.fmtStorePath(string_buf),
+                            });
+                        }
                     },
                     .folder => {
                         try writer.print("{}@file+{}", .{

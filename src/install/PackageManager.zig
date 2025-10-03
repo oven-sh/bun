@@ -875,6 +875,14 @@ pub fn init(
     };
     manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);
+
+    {
+        // make sure folder packages can find the root package without creating a new one
+        var normalized: bun.AbsPath(.{ .sep = .posix }) = .from(root_package_json_path);
+        defer normalized.deinit();
+        try manager.folders.put(manager.allocator, FolderResolution.hash(normalized.slice()), .{ .package_id = 0 });
+    }
+
     jsc.MiniEventLoop.global = &manager.event_loop.mini;
     if (!manager.options.enable.cache) {
         manager.options.enable.manifest_cache = false;

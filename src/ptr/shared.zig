@@ -285,8 +285,8 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
 
         const SharedNonOptional = WithOptions(NonOptionalPointer, options);
 
-        /// Clones this weak pointer and upgrades it to a shared pointer.
-        pub fn cloneUpgrade(self: Self) ?SharedNonOptional {
+        /// Clones this weak pointer and upgrades it to a shared pointer. You still need to `deinit` the weak pointer.
+        pub fn upgrade(self: Self) ?SharedNonOptional {
             const data = if (comptime info.isOptional())
                 self.getData() orelse return null
             else

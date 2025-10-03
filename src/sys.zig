@@ -600,92 +600,76 @@ pub const StatxField = enum(comptime_int) {
 // Linux Kernel v4.11
 pub var supports_statx_on_linux = std.atomic.Value(bool).init(true);
 
-fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, comptime fields: []const StatxField) Maybe(bun.Stat) {
+fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32) Maybe(bun.Stat) {
     if (comptime !Environment.isLinux) {
         @compileError("statx is only supported on Linux");
     }
 
-    var buf: linux.Statx = comptime mem.zeroes(linux.Statx);
+    var buf: linux.Statx = undefined;
 
-    const mask: u32 = comptime brk: {
-        var i: u32 = 0;
-        for (fields) |field| {
-            i |= @intFromEnum(field);
-        }
-        break :brk i;
-    };
+    while (true) {
+        const rc = linux.statx(@intCast(fd.cast()), if (path) |p| p else "", flags, mask, &buf);
 
-    const rc = linux.statx(@intCast(fd.cast()), if (path) |p| p else "", if (path != null) 0 else linux.AT.EMPTY_PATH, mask, &buf);
+        if (Maybe(bun.Stat).errnoSys(rc, .statx)) |err| {
+            // Retry on EINTR
+            if (err.getErrno() == .INTR) continue;
 
-    if (Maybe(bun.Stat).errnoSys(rc, .statx)) |err| return err;
-
-    var stat_ = mem.zeroes(bun.Stat);
-
-    stat_.dev = @as(u64, buf.dev_major) << 32 | buf.dev_minor;
-    stat_.ino = @intCast(buf.ino);
-    stat_.mode = @intCast(buf.mode);
-    stat_.nlink = @intCast(buf.nlink);
-    stat_.uid = @intCast(buf.uid);
-    stat_.gid = @intCast(buf.gid);
-    stat_.rdev = @as(u64, buf.rdev_major) << 32 | buf.rdev_minor;
-    stat_.size = @intCast(buf.size);
-    stat_.blksize = @intCast(buf.blksize);
-    stat_.blocks = @intCast(buf.blocks);
-    stat_.atim = .{ .sec = @intCast(buf.atime.sec), .nsec = @intCast(buf.atime.nsec) };
-    stat_.mtim = .{ .sec = @intCast(buf.mtime.sec), .nsec = @intCast(buf.mtime.nsec) };
-    stat_.ctim = .{ .sec = @intCast(buf.ctime.sec), .nsec = @intCast(buf.ctime.nsec) };
-
-    // Store birthtime in unused fields
-    if (buf.mask & linux.STATX_BTIME != 0) {
-        // Use the __unused fields to store birthtime
-        if (comptime Environment.isX64) {
-            // __unused: [3]isize
-            // Store tv_sec in first two elements, tv_nsec in third
-            stat_.__unused[0] = @intCast(buf.btime.sec);
-            stat_.__unused[1] = @intCast(buf.btime.sec >> 63); // sign extension for safety
-            stat_.__unused[2] = @intCast(buf.btime.nsec);
-        } else if (comptime Environment.isAarch64) {
-            // __unused: [2]u32 and __pad: usize
-            // Store tv_sec in __pad, tv_nsec in __unused[0]
-            stat_.__pad = @intCast(buf.btime.sec);
-            stat_.__unused[0] = buf.btime.nsec;
-            stat_.__unused[1] = 0;
-        }
-        // For other architectures, leave birthtime as zero
-        // This is acceptable as birthtime support varies by filesystem
-    }
-
-    return .{ .result = stat_ };
-}
-
-fn statxWrapper(fd: bun.FileDescriptor, path: ?[*:0]const u8, comptime fields: []const StatxField) Maybe(bun.Stat) {
-    return switch (statxImpl(fd, path, fields)) {
-        .err => |e| {
-            if (e.getErrno() == .NOSYS or e.getErrno() == .OPNOTSUPP) {
+            // Handle unsupported statx by setting flag and falling back
+            if (err.getErrno() == .NOSYS or err.getErrno() == .OPNOTSUPP) {
                 supports_statx_on_linux.store(false, .monotonic);
-                return if (path != null) stat(bun.span(path.?)) else fstat(fd);
+                if (path) |p| {
+                    const path_span = bun.span(p);
+                    return if (flags & linux.AT.SYMLINK_NOFOLLOW != 0) lstat(path_span) else stat(path_span);
+                } else {
+                    return fstat(fd);
+                }
             }
-            return .{ .err = e };
-        },
-        .result => |r| .{ .result = r },
-    };
+
+            return err;
+        }
+
+        // Convert statx buffer to stat structure
+        var stat_ = mem.zeroes(bun.Stat);
+
+        stat_.dev = @as(u64, buf.dev_major) << 32 | buf.dev_minor;
+        stat_.ino = buf.ino;
+        stat_.mode = buf.mode;
+        stat_.nlink = buf.nlink;
+        stat_.uid = buf.uid;
+        stat_.gid = buf.gid;
+        stat_.rdev = @as(u64, buf.rdev_major) << 32 | buf.rdev_minor;
+        stat_.size = @bitCast(buf.size);
+        stat_.blksize = @intCast(buf.blksize);
+        stat_.blocks = @bitCast(buf.blocks);
+        stat_.atim = .{ .sec = buf.atime.sec, .nsec = buf.atime.nsec };
+        stat_.mtim = .{ .sec = buf.mtime.sec, .nsec = buf.mtime.nsec };
+        stat_.ctim = .{ .sec = buf.ctime.sec, .nsec = buf.ctime.nsec };
+
+        // Store birthtime in unused fields
+        if (buf.mask & linux.STATX_BTIME != 0) {
+            // Use the __unused fields to store birthtime
+            if (comptime Environment.isX64) {
+                // __unused: [3]isize
+                // Store tv_sec in first two elements, tv_nsec in third
+                stat_.__unused[0] = buf.btime.sec;
+                stat_.__unused[1] = buf.btime.sec >> 63; // sign extension for safety
+                stat_.__unused[2] = @intCast(buf.btime.nsec);
+            } else if (comptime Environment.isAarch64) {
+                // __unused: [2]u32 and __pad: usize
+                // Store tv_sec in __pad, tv_nsec in __unused[0]
+                stat_.__pad = @intCast(buf.btime.sec);
+                stat_.__unused[0] = buf.btime.nsec;
+                stat_.__unused[1] = 0;
+            }
+            // For other architectures, leave birthtime as zero
+            // This is acceptable as birthtime support varies by filesystem
+        }
+
+        return .{ .result = stat_ };
+    }
 }
 
 pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(bun.Stat) {
-    return statxWrapper(fd, null, fields);
-}
-
-pub fn statx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(bun.Stat) {
-    return statxWrapper(bun.FD.fromNative(std.posix.AT.FDCWD), path, fields);
-}
-
-pub fn lstatx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(bun.Stat) {
-    if (comptime !Environment.isLinux) {
-        @compileError("lstatx is only supported on Linux");
-    }
-
-    var buf: linux.Statx = comptime mem.zeroes(linux.Statx);
-
     const mask: u32 = comptime brk: {
         var i: u32 = 0;
         for (fields) |field| {
@@ -693,47 +677,29 @@ pub fn lstatx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(bu
         }
         break :brk i;
     };
+    return statxImpl(fd, null, linux.AT.EMPTY_PATH, mask);
+}
 
-    const rc = linux.statx(std.posix.AT.FDCWD, path, linux.AT.SYMLINK_NOFOLLOW, mask, &buf);
-
-    if (Maybe(bun.Stat).errnoSys(rc, .statx)) |err| {
-        if (err.getErrno() == .NOSYS or err.getErrno() == .OPNOTSUPP) {
-            supports_statx_on_linux.store(false, .monotonic);
-            return lstat(bun.span(path));
+pub fn statx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(bun.Stat) {
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+        for (fields) |field| {
+            i |= @intFromEnum(field);
         }
-        return err;
-    }
+        break :brk i;
+    };
+    return statxImpl(bun.FD.fromNative(std.posix.AT.FDCWD), path, 0, mask);
+}
 
-    var stat_ = mem.zeroes(bun.Stat);
-
-    stat_.dev = @as(u64, buf.dev_major) << 32 | buf.dev_minor;
-    stat_.ino = @intCast(buf.ino);
-    stat_.mode = @intCast(buf.mode);
-    stat_.nlink = @intCast(buf.nlink);
-    stat_.uid = @intCast(buf.uid);
-    stat_.gid = @intCast(buf.gid);
-    stat_.rdev = @as(u64, buf.rdev_major) << 32 | buf.rdev_minor;
-    stat_.size = @intCast(buf.size);
-    stat_.blksize = @intCast(buf.blksize);
-    stat_.blocks = @intCast(buf.blocks);
-    stat_.atim = .{ .sec = @intCast(buf.atime.sec), .nsec = @intCast(buf.atime.nsec) };
-    stat_.mtim = .{ .sec = @intCast(buf.mtime.sec), .nsec = @intCast(buf.mtime.nsec) };
-    stat_.ctim = .{ .sec = @intCast(buf.ctime.sec), .nsec = @intCast(buf.ctime.nsec) };
-
-    // Store birthtime in unused fields
-    if (buf.mask & linux.STATX_BTIME != 0) {
-        if (comptime Environment.isX64) {
-            stat_.__unused[0] = @intCast(buf.btime.sec);
-            stat_.__unused[1] = @intCast(buf.btime.sec >> 63);
-            stat_.__unused[2] = @intCast(buf.btime.nsec);
-        } else if (comptime Environment.isAarch64) {
-            stat_.__pad = @intCast(buf.btime.sec);
-            stat_.__unused[0] = buf.btime.nsec;
-            stat_.__unused[1] = 0;
+pub fn lstatx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(bun.Stat) {
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+        for (fields) |field| {
+            i |= @intFromEnum(field);
         }
-    }
-
-    return .{ .result = stat_ };
+        break :brk i;
+    };
+    return statxImpl(bun.FD.fromNative(std.posix.AT.FDCWD), path, linux.AT.SYMLINK_NOFOLLOW, mask);
 }
 
 pub fn lutimes(path: [:0]const u8, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {

@@ -1370,6 +1370,20 @@ pub fn VisitExpr(
                         };
 
                         const macro_ref_data = p.macro.refs.get(ref).?;
+
+                        if (macro_ref_data.is_bun_module) {
+                            if (macro_ref_data.name) |name| {
+                                if (strings.eqlComptime(name, "ms")) {
+                                    const res = bun.handleOom(bun.api.ms.astFunction(p, e_, expr.loc));
+                                    if (res) |r| {
+                                        p.ignoreUsage(ref);
+                                        return r;
+                                    }
+                                    return expr;
+                                }
+                            }
+                        }
+
                         p.ignoreUsage(ref);
                         if (p.is_control_flow_dead) {
                             return p.newExpr(E.Undefined{}, e_.target.loc);
@@ -1503,8 +1517,7 @@ pub fn VisitExpr(
                         if (dot.target.data == .e_identifier and strings.eqlComptime(dot.name, "ms")) {
                             const symbol = &p.symbols.items[dot.target.data.e_identifier.ref.innerIndex()];
                             if (symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "Bun")) {
-                                const ms_module = @import("../bun.js/api/bun/ms.zig");
-                                const res = bun.handleOom(ms_module.astFunction(p, e_, expr.loc));
+                                const res = bun.handleOom(bun.api.ms.astFunction(p, e_, expr.loc));
                                 if (res) |r| return r;
                             }
                         }

@@ -5,25 +5,13 @@ pub fn parse(input: []const u8) ?f64 {
     var i: usize = 0;
 
     next: switch (input[i]) {
-        '-',
-        '.',
-        '0'...'9',
-        => {
+        '-', '.', '0'...'9' => {
             i += 1;
-            if (i < input.len) {
-                continue :next input[i];
-            }
+            if (i < input.len) continue :next input[i];
             break :next;
         },
-        ' ',
-        'a'...'z',
-        'A'...'Z',
-        => {
-            break :next;
-        },
-        else => {
-            return null;
-        },
+        ' ', 'a'...'z', 'A'...'Z' => break :next,
+        else => return null,
     }
 
     const value = std.fmt.parseFloat(f64, input[0..i]) catch return null;
@@ -39,6 +27,7 @@ pub fn parse(input: []const u8) ?f64 {
 }
 
 // Years (365.25 days to account for leap years)
+// (matching the `ms` package implementation)
 const ms_per_year = std.time.ms_per_day * 365.25;
 const ms_per_month = std.time.ms_per_day * (365.25 / 12.0);
 
@@ -97,7 +86,6 @@ const MultiplierMap = bun.ComptimeStringMap(f64, .{
 // To keep the behavior consistent with JavaScript, we can't use @round
 // Zig's @round uses "round half away from zero": ties round away from zero (2.5→3, -2.5→-3)
 // JavaScript's Math.round uses "round half toward +∞": ties round toward positive infinity (2.5→3, -2.5→-2)
-// This implementation: floor(x) + 1 if fractional part >= 0.5, else floor(x)
 fn jsMathRound(x: f64) i64 {
     const i: f64 = @ceil(x);
     if ((i - 0.5) > x) return @intFromFloat(i - 1.0);

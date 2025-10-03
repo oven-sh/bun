@@ -2776,6 +2776,7 @@ pub fn NewParser_(
                         try p.macro.refs.put(ref, .{
                             .import_record_id = stmt.import_record_index,
                             .name = item.alias,
+                            .is_bun_module = true,
                         });
                     }
                 }

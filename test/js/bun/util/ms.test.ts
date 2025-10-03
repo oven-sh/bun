@@ -347,12 +347,16 @@ export const values = {
     "bun.ts": `
 import { ms, sleep } from "bun";
 
+const dynamic = () => Math.random() > 0.5 ? 1 : 2;
+
 export const values = {
   import: ms("1s"),
   importLong: ms(1000, { long: true }),
   ms: Bun.ms(),
   mss: ms,
   sleep: sleep,
+  dynamic: ms(\`\${dynamic()}s\`),
+  dontBeWeird: abc.ms("1s"),
 };
 `,
   });
@@ -415,12 +419,14 @@ export const values = {
     "// @bun
     // bun.ts
     var {ms, sleep } = globalThis.Bun;
-    var values = {
+    var dynamic = () => Math.random() > 0.5 ? 1 : 2, values = {
       import: 1000,
       importLong: "1 second",
       ms: Bun.ms(),
       mss: ms,
-      sleep
+      sleep,
+      dynamic: ms(\`\${dynamic()}s\`),
+      dontBeWeird: abc.ms("1s")
     };
     export {
       values

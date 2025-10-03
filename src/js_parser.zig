@@ -125,6 +125,7 @@ const MacroRefData = struct {
     // if name is null the macro is imported as a namespace import
     // import * as macros from "./macros.js" with {type: "macro"};
     name: ?string = null,
+    is_bun_module: bool = false,
 };
 
 const MacroRefs = std.AutoArrayHashMap(Ref, MacroRefData);

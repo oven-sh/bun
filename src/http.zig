@@ -129,7 +129,12 @@ pub fn onOpen(
 ) !void {
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
-            assert(is_ssl == proxy.isHTTPS());
+            // For SOCKS5, SSL is based on target URL, not proxy URL
+            if (proxy.isSOCKS5()) {
+                assert(is_ssl == client.url.isHTTPS());
+            } else {
+                assert(is_ssl == proxy.isHTTPS());
+            }
         } else {
             assert(is_ssl == client.url.isHTTPS());
         }
@@ -150,7 +155,10 @@ pub fn onOpen(
         if (!ssl_ptr.isInitFinished()) {
             var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
-                _hostname = proxy.hostname;
+                // For SOCKS5, use target hostname for SSL, not proxy hostname
+                if (!proxy.isSOCKS5()) {
+                    _hostname = proxy.hostname;
+                }
             }
 
             var hostname: [:0]const u8 = "";
@@ -183,6 +191,18 @@ pub fn firstCall(
     if (comptime FeatureFlags.is_fetch_preconnect_supported) {
         if (client.flags.is_preconnect_only) {
             client.onPreconnect(is_ssl, socket);
+            return;
+        }
+    }
+
+    // Start SOCKS5 tunnel if needed
+    if (client.http_proxy) |proxy| {
+        if (proxy.isSOCKS5()) {
+            client.startSOCKS5Tunnel(is_ssl, socket) catch |err| {
+                log("Failed to start SOCKS5 tunnel: {s}", .{@errorName(err)});
+                client.closeAndFail(err, is_ssl, socket);
+                return;
+            };
             return;
         }
     }
@@ -415,12 +435,13 @@ pub const Flags = packed struct(u16) {
     force_last_modified: bool = false,
     redirected: bool = false,
     proxy_tunneling: bool = false,
+    socks5_tunneling: bool = false,
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
     upgrade_state: HTTPUpgradeState = .none,
-    _padding: u3 = 0,
+    _padding: u2 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -452,6 +473,7 @@ request_content_len_buf: ["-4294967295".len]u8 = undefined,
 http_proxy: ?URL = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
+socks5_tunnel: ?*SOCKS5Tunnel = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
@@ -469,6 +491,10 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
+    }
+    if (this.socks5_tunnel) |tunnel| {
+        this.socks5_tunnel = null;
+        tunnel.deref();
     }
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
@@ -772,6 +798,11 @@ pub fn doRedirect(
 /// **Not thread safe while request is in-flight**
 pub fn isHTTPS(this: *HTTPClient) bool {
     if (this.http_proxy) |proxy| {
+        // For SOCKS5 proxies, SSL is based on target URL, not proxy URL
+        if (proxy.isSOCKS5()) {
+            return this.url.isHTTPS();
+        }
+        // For HTTP CONNECT proxies, SSL is based on proxy URL
         if (proxy.isHTTPS()) {
             return true;
         }
@@ -926,8 +957,18 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
 
     const request = this.buildRequest(this.state.original_request_body.len());
 
-    if (this.http_proxy) |_| {
-        if (this.url.isHTTPS()) {
+    if (this.http_proxy) |proxy| {
+        if (proxy.isSOCKS5()) {
+            log("start socks5 tunneling", .{});
+            // SOCKS5 proxy - handshake will be done separately
+            // Don't send HTTP request yet
+            this.flags.socks5_tunneling = true;
+            return .{
+                .has_sent_headers = false,
+                .has_sent_body = false,
+                .try_sending_more_data = false,
+            };
+        } else if (this.url.isHTTPS()) {
             log("start proxy tunneling (https proxy)", .{});
             //DO the tunneling!
             this.flags.proxy_tunneling = true;
@@ -1349,6 +1390,79 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
     ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
 }
 
+/// Start SOCKS5 tunnel handshake
+fn startSOCKS5Tunnel(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) !void {
+    log("startSOCKS5Tunnel", .{});
+
+    const proxy = this.http_proxy orelse return error.NoProxy;
+
+    // Extract username/password from proxy URL if present
+    var username: ?[]const u8 = null;
+    var password: ?[]const u8 = null;
+    if (proxy.username.len > 0) {
+        username = proxy.username;
+        if (proxy.password.len > 0) {
+            password = proxy.password;
+        }
+    }
+
+    // Determine if we should resolve DNS on the proxy (socks5h://)
+    const resolve_on_proxy = strings.eqlComptime(proxy.protocol, "socks5h");
+
+    // Create SOCKS5 tunnel configuration
+    const config = SOCKS5Tunnel.Config{
+        .target_hostname = this.url.hostname,
+        .target_port = this.url.getPortAuto(),
+        .username = username,
+        .password = password,
+        .resolve_on_proxy = resolve_on_proxy,
+    };
+
+    // Create the tunnel
+    const tunnel = try SOCKS5Tunnel.create(bun.default_allocator, config);
+    errdefer tunnel.deref();
+
+    this.socks5_tunnel = tunnel;
+
+    // Start the SOCKS5 handshake
+    try tunnel.start(is_ssl, socket, this);
+}
+
+/// Called when SOCKS5 tunnel is successfully established
+pub fn onSOCKS5Connected(this: *HTTPClient, comptime is_ssl: bool) void {
+    log("onSOCKS5Connected", .{});
+
+    this.flags.socks5_tunneling = false;
+    this.state.request_stage = .opened;
+
+    // Get the socket from the SOCKS5 tunnel
+    if (this.socks5_tunnel) |tunnel| {
+        // Detach tunnel from socket - we'll use it directly now
+        defer tunnel.detachSocket();
+
+        // Start sending the actual HTTP request
+        if (is_ssl) {
+            switch (tunnel.socket) {
+                .ssl => |socket| {
+                    this.onWritable(true, true, socket);
+                },
+                else => {
+                    log("SOCKS5 tunnel expected SSL socket but got none", .{});
+                },
+            }
+        } else {
+            switch (tunnel.socket) {
+                .tcp => |socket| {
+                    this.onWritable(true, false, socket);
+                },
+                else => {
+                    log("SOCKS5 tunnel expected TCP socket but got none", .{});
+                },
+            }
+        }
+    }
+}
+
 inline fn handleShortRead(
     this: *HTTPClient,
     comptime is_ssl: bool,
@@ -1553,6 +1667,15 @@ pub fn onData(
         this.setTimeout(socket, 5);
         proxy.receiveData(incoming_data);
         return;
+    }
+
+    if (this.socks5_tunnel) |tunnel| {
+        // SOCKS5 tunnel is still in handshake phase
+        if (this.flags.socks5_tunneling) {
+            this.setTimeout(socket, 5);
+            tunnel.onData(is_ssl, socket, incoming_data);
+            return;
+        }
     }
 
     switch (this.state.response_stage) {
@@ -2534,6 +2657,7 @@ const string = []const u8;
 
 const HTTPCertError = @import("./http/HTTPCertError.zig");
 const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+const SOCKS5Tunnel = @import("./http/SOCKS5Tunnel.zig");
 const std = @import("std");
 const URL = @import("./url.zig").URL;
 

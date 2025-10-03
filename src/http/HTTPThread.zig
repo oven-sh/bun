@@ -254,7 +254,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             client.flags.disable_keepalive = true;
             if (client.http_proxy) |url| {
                 // https://github.com/oven-sh/bun/issues/11343
-                if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+                if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http") or strings.eqlComptime(url.protocol, "socks5") or strings.eqlComptime(url.protocol, "socks5h")) {
                     return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
                 }
                 return error.UnsupportedProxyProtocol;
@@ -265,7 +265,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
     if (client.http_proxy) |url| {
         if (url.href.len > 0) {
             // https://github.com/oven-sh/bun/issues/11343
-            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http") or strings.eqlComptime(url.protocol, "socks5") or strings.eqlComptime(url.protocol, "socks5h")) {
                 return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
             }
             return error.UnsupportedProxyProtocol;

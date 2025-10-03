@@ -442,7 +442,7 @@ pub fn get() *PackageManager {
 pub const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
 pub const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
 
-pub const debug = Output.scoped(.PackageManager, .hidden);
+pub const debug = Output.scoped(.PackageManager, .visible);
 
 pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
     return ensureTempNodeGypScriptOnce.call(.{this});
@@ -1176,7 +1176,9 @@ pub const enqueue = @import("./PackageManager/PackageManagerEnqueue.zig");
 pub const enqueueDependencyList = enqueue.enqueueDependencyList;
 pub const enqueueDependencyToRoot = enqueue.enqueueDependencyToRoot;
 pub const enqueueDependencyWithMain = enqueue.enqueueDependencyWithMain;
+pub const enqueueDependencyWithMainAndParent = enqueue.enqueueDependencyWithMainAndParent;
 pub const enqueueDependencyWithMainAndSuccessFn = enqueue.enqueueDependencyWithMainAndSuccessFn;
+pub const enqueueDependencyWithMainAndSuccessFnAndParent = enqueue.enqueueDependencyWithMainAndSuccessFnAndParent;
 pub const enqueueExtractNPMPackage = enqueue.enqueueExtractNPMPackage;
 pub const enqueueGitCheckout = enqueue.enqueueGitCheckout;
 pub const enqueueGitForCheckout = enqueue.enqueueGitForCheckout;

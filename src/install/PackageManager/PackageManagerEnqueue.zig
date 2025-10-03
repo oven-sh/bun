@@ -16,10 +16,32 @@ pub fn enqueueDependencyWithMain(
     );
 }
 
+pub fn enqueueDependencyWithMainAndParent(
+    this: *PackageManager,
+    id: DependencyID,
+    /// This must be a *const to prevent UB
+    dependency: *const Dependency,
+    resolution: PackageID,
+    parent_package_id: PackageID,
+    install_peer: bool,
+) !void {
+    return this.enqueueDependencyWithMainAndSuccessFnAndParent(
+        id,
+        dependency,
+        resolution,
+        parent_package_id,
+        install_peer,
+        assignResolution,
+        null,
+    );
+}
+
 pub fn enqueueDependencyList(
     this: *PackageManager,
+    parent_package_id: PackageID,
     dependencies_list: Lockfile.DependencySlice,
 ) void {
+    debug("enqueueDependencyList called with parent_package_id={d}, dependencies_list.len={d}", .{ parent_package_id, dependencies_list.len });
     this.task_queue.ensureUnusedCapacity(this.allocator, dependencies_list.len) catch unreachable;
     const lockfile = this.lockfile;
 
@@ -58,10 +80,11 @@ pub fn enqueueDependencyList(
     while (i < end) : (i += 1) {
         const dependency = lockfile.buffers.dependencies.items[i];
         const resolution = lockfile.buffers.resolutions.items[i];
-        this.enqueueDependencyWithMain(
+        this.enqueueDependencyWithMainAndParent(
             i,
             &dependency,
             resolution,
+            parent_package_id,
             false,
         ) catch |err| {
             const note = .{
@@ -431,6 +454,20 @@ pub fn enqueuePatchTaskPre(this: *PackageManager, task: *PatchTask) void {
     _ = this.pending_pre_calc_hashes.fetchAdd(1, .monotonic);
 }
 
+/// Find the parent package that contains a given dependency ID
+fn findParentPackageForDependency(pm: *PackageManager, dependency_id: DependencyID) ?PackageID {
+    const packages = pm.lockfile.packages.slice();
+    debug("findParentPackageForDependency: looking for dependency_id={d} in {d} packages", .{ dependency_id, packages.len });
+    for (packages.items(.dependencies), 0..) |dep_slice, pkg_id| {
+        if (dep_slice.contains(dependency_id)) {
+            debug("  found in package {d}", .{pkg_id});
+            return @intCast(pkg_id);
+        }
+    }
+    debug("  not found in any package", .{});
+    return null;
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueueDependencyWithMainAndSuccessFn(
@@ -439,6 +476,32 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     /// This must be a *const to prevent UB
     dependency: *const Dependency,
     resolution: PackageID,
+    install_peer: bool,
+    comptime successFn: SuccessFn,
+    comptime failFn: ?FailFn,
+) !void {
+    debug("enqueueDependencyWithMainAndSuccessFn: id={d}, looking for parent...", .{id});
+    // Try to find the parent package for nested override support
+    const parent_package_id = findParentPackageForDependency(this, id);
+    debug("enqueueDependencyWithMainAndSuccessFn: parent_package_id={?d}", .{parent_package_id});
+    return this.enqueueDependencyWithMainAndSuccessFnAndParent(
+        id,
+        dependency,
+        resolution,
+        parent_package_id,
+        install_peer,
+        successFn,
+        failFn,
+    );
+}
+
+pub fn enqueueDependencyWithMainAndSuccessFnAndParent(
+    this: *PackageManager,
+    id: DependencyID,
+    /// This must be a *const to prevent UB
+    dependency: *const Dependency,
+    resolution: PackageID,
+    parent_package_id: ?PackageID,
     install_peer: bool,
     comptime successFn: SuccessFn,
     comptime failFn: ?FailFn,
@@ -479,10 +542,22 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
         // if it's a workspaceOnly dependency
         if (!dependency.behavior.isWorkspace() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
             // Get parent package name hash for nested override lookup
-            const parent_name_hash: ?PackageNameHash = if (resolution != invalid_package_id and resolution < this.lockfile.packages.len)
-                this.lockfile.packages.get(resolution).name_hash
-            else
-                null;
+            const parent_name_hash: ?PackageNameHash = if (parent_package_id) |parent_id| blk: {
+                debug("parent_package_id = {d}, invalid_package_id = {d}, packages.len = {d}", .{ parent_id, invalid_package_id, this.lockfile.packages.len });
+                if (parent_id != invalid_package_id and parent_id < this.lockfile.packages.len) {
+                    const parent_pkg = this.lockfile.packages.get(parent_id);
+                    const parent_hash = parent_pkg.name_hash;
+                    const parent_name = this.lockfile.str(&parent_pkg.name);
+                    debug("parent package: {s} (hash: {x})", .{ parent_name, parent_hash });
+                    break :blk parent_hash;
+                } else {
+                    debug("parent_id is invalid or out of bounds", .{});
+                    break :blk null;
+                }
+            } else blk: {
+                debug("no parent_package_id provided", .{});
+                break :blk null;
+            };
 
             if (this.lockfile.overrides.get(name_hash, parent_name_hash)) |new| {
                 debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });

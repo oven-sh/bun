@@ -101,25 +101,43 @@ map: std.ArrayHashMapUnmanaged(PackageNameHash, OverrideValue, ArrayIdentityCont
 pub fn get(this: *const OverrideMap, name_hash: PackageNameHash, parent_name_hash: ?PackageNameHash) ?Dependency.Version {
     debug("looking up override for {x} (parent: {?x})", .{ name_hash, parent_name_hash });
     if (this.map.count() == 0) {
+        debug("override map is empty", .{});
         return null;
     }
 
-    const override_value = this.map.get(name_hash) orelse return null;
+    const override_value = this.map.get(name_hash) orelse {
+        debug("no override found for package hash {x}", .{name_hash});
+        return null;
+    };
 
     return switch (override_value) {
-        .global => |dep| dep.version,
+        .global => |dep| {
+            debug("found global override", .{});
+            return dep.version;
+        },
         .nested => |nested| {
+            debug("found nested override entry, parent_map has {d} entries", .{nested.parent_map.count()});
             // If parent is provided, check for parent-specific override first
             if (parent_name_hash) |parent_hash| {
                 if (nested.parent_map.get(parent_hash)) |dep| {
-                    debug("found nested override for parent {x}", .{parent_hash});
+                    debug("found parent-specific override for parent {x}", .{parent_hash});
                     return dep.version;
+                } else {
+                    debug("no match for parent {x} in parent_map", .{parent_hash});
+                    // Debug: print all parent hashes in the map
+                    for (nested.parent_map.keys()) |key| {
+                        debug("  parent_map contains: {x}", .{key});
+                    }
                 }
+            } else {
+                debug("no parent_name_hash provided", .{});
             }
             // Fall back to global override if present
             if (nested.global) |dep| {
+                debug("falling back to global override", .{});
                 return dep.version;
             }
+            debug("no global override available", .{});
             return null;
         },
     };

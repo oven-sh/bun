@@ -472,7 +472,7 @@ pub fn installWithManager(
             var iter = manager.lockfile.patched_dependencies.iterator();
             while (iter.next()) |entry| manager.enqueuePatchTaskPre(PatchTask.newCalcPatchHash(manager, entry.key_ptr.*, null));
         }
-        manager.enqueueDependencyList(root.dependencies);
+        manager.enqueueDependencyList(invalid_package_id, root.dependencies);
     } else {
         {
             var iter = manager.lockfile.patched_dependencies.iterator();

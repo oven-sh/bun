@@ -337,7 +337,7 @@ pub const AsyncModule = struct {
                             // we are only truly done if all the dependencies are done.
                             const current_tasks = pm.total_tasks;
                             // so if enqueuing all the dependencies produces no new tasks, we are done.
-                            pm.enqueueDependencyList(package.dependencies);
+                            pm.enqueueDependencyList(package_id, package.dependencies);
                             if (current_tasks == pm.total_tasks) {
                                 tags[tag_i] = .done;
                                 done_count += 1;

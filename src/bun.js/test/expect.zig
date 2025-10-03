@@ -32,7 +32,9 @@ pub const Expect = struct {
 
     pub fn incrementExpectCallCounter(this: *Expect) void {
         const parent = this.parent orelse return; // not in bun:test
-        const buntest = parent.bunTest() orelse return; // the test file this expect() call was for is no longer
+        var buntest_strong = parent.bunTest() orelse return; // the test file this expect() call was for is no longer
+        defer buntest_strong.deinit();
+        const buntest = buntest_strong.get();
         if (parent.phase.sequence(buntest)) |sequence| {
             // found active sequence
             sequence.expect_call_count +|= 1;
@@ -44,7 +46,7 @@ pub const Expect = struct {
         }
     }
 
-    pub fn bunTest(this: *Expect) ?*bun.jsc.Jest.bun_test.BunTest {
+    pub fn bunTest(this: *Expect) ?bun.jsc.Jest.bun_test.BunTestPtr {
         const parent = this.parent orelse return null;
         return parent.bunTest();
     }
@@ -275,7 +277,9 @@ pub const Expect = struct {
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
         const parent = this.parent orelse return error.NoTest;
-        const buntest = parent.bunTest() orelse return error.TestNotActive;
+        var buntest_strong = parent.bunTest() orelse return error.TestNotActive;
+        defer buntest_strong.deinit();
+        const buntest = buntest_strong.get();
         const execution_entry = parent.phase.entry(buntest) orelse return error.SnapshotInConcurrentGroup;
 
         const test_name = execution_entry.base.name orelse "(unnamed)";
@@ -748,10 +752,12 @@ pub const Expect = struct {
                     }
                 }
             }
-            const buntest = this.bunTest() orelse {
+            var buntest_strong = this.bunTest() orelse {
                 const signature = comptime getSignature(fn_name, "", false);
                 return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
             };
+            defer buntest_strong.deinit();
+            const buntest = buntest_strong.get();
 
             // 1. find the src loc of the snapshot
             const srcloc = callFrame.getCallerSrcLoc(globalThis);
@@ -825,7 +831,9 @@ pub const Expect = struct {
         const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.slice(), hint) catch |err| {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
-            const buntest = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
+            var buntest_strong = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
+            defer buntest_strong.deinit();
+            const buntest = buntest_strong.get();
             const test_file_path = Jest.runner.?.files.get(buntest.file_id).source.path.text;
             return switch (err) {
                 error.FailedToOpenSnapshotFile => globalThis.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),

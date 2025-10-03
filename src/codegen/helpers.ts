@@ -132,7 +132,7 @@ export function pascalCase(string: string) {
 }
 
 export function argParse(keys: string[]): any {
-  const options = {};
+  const options: { [key: string]: boolean | string } = {};
   for (const arg of process.argv.slice(2)) {
     if (!arg.startsWith("--")) {
       console.error("error: unknown argument: " + arg);

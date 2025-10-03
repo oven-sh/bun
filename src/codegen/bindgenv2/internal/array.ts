@@ -1,5 +1,5 @@
 import { hasRawAny } from "./any";
-import { Type } from "./base";
+import { CodeStyle, Type } from "./base";
 
 export abstract class ArrayType extends Type {}
 
@@ -14,7 +14,7 @@ export function Array(elemType: Type): ArrayType {
     get bindgenType() {
       return `bindgen.BindgenArray(${elemType.bindgenType})`;
     }
-    zigType(style?) {
+    zigType(style?: CodeStyle) {
       return `bun.collections.ArrayListDefault(${elemType.zigType(style)})`;
     }
     toCpp(value: any[]): string {

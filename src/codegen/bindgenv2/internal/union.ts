@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import {
+  CodeStyle,
   dedent,
   headersForTypes,
   joinIndented,
@@ -68,7 +69,7 @@ export function union(
       get bindgenType() {
         return `bindgen.BindgenUnion(&.{ ${alternatives.map(a => a.bindgenType).join(", ")} })`;
       }
-      zigType(style?) {
+      zigType(style?: CodeStyle) {
         if (style !== "pretty") {
           return `bun.meta.TaggedUnion(&.{ ${alternatives.map(a => a.zigType()).join(", ")} })`;
         }
@@ -105,7 +106,7 @@ export function union(
     get bindgenType() {
       return `bindgen_generated.internal.${name}`;
     }
-    zigType(style?) {
+    zigType(style?: CodeStyle) {
       return `bindgen_generated.${name}`;
     }
     get dependencies() {

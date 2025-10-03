@@ -1,6 +1,7 @@
 import { hasRawAny, isAny } from "./any";
 import {
   addIndent,
+  CodeStyle,
   dedent,
   headersForTypes,
   joinIndented,
@@ -72,7 +73,7 @@ export function dictionary(
     get bindgenType() {
       return `bindgen_generated.internal.${name}`;
     }
-    zigType(style?) {
+    zigType(style?: CodeStyle) {
       return `bindgen_generated.${name}`;
     }
     get dependencies() {

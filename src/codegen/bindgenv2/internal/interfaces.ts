@@ -1,4 +1,4 @@
-import { Type } from "./base";
+import { CodeStyle, Type } from "./base";
 
 export const ArrayBuffer = new (class extends Type {
   get idlType() {
@@ -7,10 +7,10 @@ export const ArrayBuffer = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenArrayBuffer`;
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return "bun.bun_js.jsc.JSCArrayBuffer.Ref";
   }
-  optionalZigType(style?) {
+  optionalZigType(style?: CodeStyle) {
     return this.zigType(style) + ".Optional";
   }
   toCpp(value: any): string {
@@ -25,10 +25,10 @@ export const Blob = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenBlob`;
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return "bun.bun_js.webcore.Blob.Ref";
   }
-  optionalZigType(style?) {
+  optionalZigType(style?: CodeStyle) {
     return this.zigType(style) + ".Optional";
   }
   toCpp(value: any): string {

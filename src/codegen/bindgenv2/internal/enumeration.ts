@@ -1,6 +1,13 @@
 import assert from "node:assert";
 import util from "node:util";
-import { joinIndented, NamedType, reindent, toASCIILiteral, toQuotedLiteral } from "./base";
+import {
+  CodeStyle,
+  joinIndented,
+  NamedType,
+  reindent,
+  toASCIILiteral,
+  toQuotedLiteral,
+} from "./base";
 
 abstract class EnumType extends NamedType {}
 
@@ -42,7 +49,7 @@ export function enumeration(name: string, values: string[]): EnumType {
     get bindgenType() {
       return `bindgen_generated.internal.${name}`;
     }
-    zigType(style?) {
+    zigType(style?: CodeStyle) {
       return `bindgen_generated.${name}`;
     }
     toCpp(value: string): string {
@@ -125,11 +132,11 @@ export function enumeration(name: string, values: string[]): EnumType {
             ${joinIndented(
               12,
               values
-                .map((value, i) => [value, i])
+                .map<[string, number]>((value, i) => [value, i])
                 .sort()
                 .map(([value, i]) => {
                   return `${pairType} {
-                    ${toASCIILiteral(value as string)},
+                    ${toASCIILiteral(value)},
                     ::${qualifiedName}::${cppMembers[i]},
                   },`;
                 }),

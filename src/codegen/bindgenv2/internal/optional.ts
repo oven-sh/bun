@@ -1,5 +1,5 @@
 import { isAny } from "./any";
-import { Type } from "./base";
+import { CodeStyle, Type } from "./base";
 
 export abstract class OptionalType extends Type {}
 
@@ -14,7 +14,7 @@ export function optional(payload: Type): OptionalType {
     get bindgenType() {
       return `bindgen.BindgenOptional(${payload.bindgenType})`;
     }
-    zigType(style?) {
+    zigType(style?: CodeStyle) {
       return payload.optionalZigType(style);
     }
     toCpp(value: any): string {
@@ -37,7 +37,7 @@ export function nullable(payload: Type): NullableType {
     get bindgenType() {
       return AsOptional.bindgenType;
     }
-    zigType(style?) {
+    zigType(style?: CodeStyle) {
       return AsOptional.zigType(style);
     }
     toCpp(value: any): string {
@@ -57,7 +57,7 @@ const Undefined = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenNull`;
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return "void";
   }
   toCpp(value: undefined): string {
@@ -73,7 +73,7 @@ const Null = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenNull`;
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return "void";
   }
   toCpp(value: null): string {

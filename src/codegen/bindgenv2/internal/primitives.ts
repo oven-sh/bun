@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import util from "node:util";
-import { Type } from "./base";
+import { CodeStyle, Type } from "./base";
 
 export const bool: Type = new (class extends Type {
   get idlType() {
@@ -9,7 +9,7 @@ export const bool: Type = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenBool`;
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return "bool";
   }
   toCpp(value: boolean): string {
@@ -27,7 +27,7 @@ function makeUnsignedType(width: number): Type {
     get bindgenType() {
       return `bindgen.BindgenU${width}`;
     }
-    zigType(style?) {
+    zigType(style?: CodeStyle) {
       return `u${width}`;
     }
     toCpp(value: number | bigint): string {
@@ -50,7 +50,7 @@ function makeSignedType(width: number): Type {
     get bindgenType() {
       return `bindgen.BindgenI${width}`;
     }
-    zigType(style?) {
+    zigType(style?: CodeStyle) {
       return `i${width}`;
     }
     toCpp(value: number | bigint): string {
@@ -90,7 +90,7 @@ export const f64: Type = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenF64`;
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return `f64`;
   }
   toCpp(value: number): string {
@@ -114,7 +114,7 @@ export const finiteF64: Type = new (class extends Type {
   get bindgenType() {
     return f64.bindgenType;
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return f64.zigType(style);
   }
   toCpp(value: number): string {

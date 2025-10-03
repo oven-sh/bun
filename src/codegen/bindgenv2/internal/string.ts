@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { Type, toASCIILiteral } from "./base";
+import { CodeStyle, Type, toASCIILiteral } from "./base";
 
 export const String: Type = new (class extends Type {
   get idlType() {
@@ -8,10 +8,10 @@ export const String: Type = new (class extends Type {
   get bindgenType() {
     return "bindgen.BindgenString";
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return "bun.string.WTFString";
   }
-  optionalZigType(style?) {
+  optionalZigType(style?: CodeStyle) {
     return this.zigType(style) + ".Optional";
   }
   toCpp(value: string): string {

@@ -1,4 +1,4 @@
-import { Type } from "./base";
+import { CodeStyle, Type } from "./base";
 
 export const RawAny: Type = new (class extends Type {
   get idlType() {
@@ -7,7 +7,7 @@ export const RawAny: Type = new (class extends Type {
   get bindgenType() {
     return "bindgen.BindgenRawAny";
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return "bun.bun_js.jsc.JSValue";
   }
   toCpp(value: any): string {
@@ -22,10 +22,10 @@ export const StrongAny: Type = new (class extends Type {
   get bindgenType() {
     return "bindgen.BindgenStrongAny";
   }
-  zigType(style?) {
+  zigType(style?: CodeStyle) {
     return "bun.bun_js.jsc.Strong";
   }
-  optionalZigType(style?) {
+  optionalZigType(style?: CodeStyle) {
     return this.zigType(style) + ".Optional";
   }
   toCpp(value: any): string {

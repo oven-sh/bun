@@ -1,10 +1,30 @@
+/// Q: Why is this needed?
+/// A: The dev server needs to attach its own callback when the request is
+///    aborted.
+///
+/// Q: Why can't the dev server just call `.setAbortHandler(...)` then?
+/// A: It can't, because that is *already* called by the RequestContext, setting
+///    the callback and the user data context pointer.
+///
+///    If it did, it would *overwrite* the user data context pointer (this
+///    is what it did before), causing segfaults.
+pub const AdditionalOnAbortCallback = struct {
+    cb: *const fn (this: *anyopaque) void,
+    data: *anyopaque,
+    deref_fn: *const fn (this: *anyopaque) void,
+
+    pub fn deref(this: AdditionalOnAbortCallback) void {
+        this.deref_fn(this.data);
+    }
+};
+
 pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
         const RequestContext = @This();
 
         const App = uws.NewApp(ssl_enabled);
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
-        pub const ResponseStream = JSC.WebCore.HTTPServerWritable(ssl_enabled);
+        pub const ResponseStream = jsc.WebCore.HTTPServerWritable(ssl_enabled);
 
         // This pre-allocates up to 2,048 RequestContext structs.
         // It costs about 655,632 bytes.
@@ -17,9 +37,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         allocator: std.mem.Allocator,
         req: ?*uws.Request,
         request_weakref: Request.WeakRef = .empty,
-        signal: ?*JSC.WebCore.AbortSignal = null,
+        signal: ?*jsc.WebCore.AbortSignal = null,
         method: HTTP.Method,
-        cookies: ?*JSC.WebCore.CookieMap = null,
+        cookies: ?*jsc.WebCore.CookieMap = null,
 
         flags: NewFlags(debug_mode) = .{},
 
@@ -27,23 +47,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
-        response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
+        response_jsvalue: jsc.JSValue = jsc.JSValue.zero,
         ref_count: u8 = 1,
 
-        response_ptr: ?*JSC.WebCore.Response = null,
-        blob: JSC.WebCore.Blob.Any = JSC.WebCore.Blob.Any{ .Blob = .{} },
+        response_ptr: ?*jsc.WebCore.Response = null,
+        blob: jsc.WebCore.Blob.Any = jsc.WebCore.Blob.Any{ .Blob = .{} },
 
         sendfile: SendfileContext = undefined,
 
-        request_body_readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
+        request_body_readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
         request_body: ?*WebCore.Body.Value.HiveRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
 
         sink: ?*ResponseStream.JSSink = null,
-        byte_stream: ?*JSC.WebCore.ByteStream = null,
+        byte_stream: ?*jsc.WebCore.ByteStream = null,
         // reference to the readable stream / byte_stream alive
-        readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
+        readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
 
         /// Used in errors
         pathname: bun.String = bun.String.empty,
@@ -55,8 +75,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         /// Defer finalization until after the request handler task is completed?
         defer_deinit_until_callback_completes: ?*bool = null,
 
+        additional_on_abort: ?AdditionalOnAbortCallback = null,
+
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
+
+        pub fn setSignalAborted(this: *RequestContext, reason: bun.jsc.CommonAbortReason) void {
+            if (this.signal) |signal| {
+                if (this.server) |server| {
+                    signal.signal(server.globalThis, reason);
+                }
+            }
+        }
+
+        pub fn devServer(this: *const RequestContext) ?*bun.bake.DevServer {
+            const server = this.server orelse return null;
+            return server.dev_server;
+        }
 
         pub fn memoryCost(this: *const RequestContext) usize {
             // The Sink and ByteStream aren't owned by this.
@@ -80,7 +115,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn setCookies(this: *RequestContext, cookie_map: ?*JSC.WebCore.CookieMap) void {
+        pub fn setCookies(this: *RequestContext, cookie_map: ?*jsc.WebCore.CookieMap) void {
             if (this.cookies) |cookies| cookies.deref();
             this.cookies = cookie_map;
             if (this.cookies) |cookies| cookies.ref();
@@ -94,7 +129,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn onResolve(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             ctxLog("onResolve", .{});
 
             const arguments = callframe.arguments_old(2);
@@ -108,11 +143,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return .js_undefined;
         }
 
-        fn renderMissingInvalidResponse(ctx: *RequestContext, value: JSC.JSValue) void {
+        fn renderMissingInvalidResponse(ctx: *RequestContext, value: jsc.JSValue) void {
             const class_name = value.getClassInfoName() orelse "";
 
             if (ctx.server) |server| {
-                const globalThis: *JSC.JSGlobalObject = server.globalThis;
+                const globalThis: *jsc.JSGlobalObject = server.globalThis;
 
                 Output.enableBuffering();
                 var writer = Output.errorWriter();
@@ -120,7 +155,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (bun.strings.eqlComptime(class_name, "Response")) {
                     Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
                 } else if (value != .zero and !globalThis.hasException()) {
-                    var formatter = JSC.ConsoleObject.Formatter{
+                    var formatter = jsc.ConsoleObject.Formatter{
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };
@@ -132,14 +167,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                 Output.flush();
                 if (!globalThis.hasException()) {
-                    JSC.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
+                    jsc.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
                 }
                 Output.flush();
             }
             ctx.renderMissing();
         }
 
-        fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
+        fn handleResolve(ctx: *RequestContext, value: jsc.JSValue) void {
             if (ctx.isAbortedOrEnded() or ctx.didUpgradeWebSocket()) {
                 return;
             }
@@ -153,7 +188,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            const response = value.as(JSC.WebCore.Response) orelse {
+            const response = value.as(jsc.WebCore.Response) orelse {
                 ctx.renderMissingInvalidResponse(value);
                 return;
             };
@@ -183,7 +218,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // 5 - is the only reference of the context
             // 6 - is not waiting for request body
             // 7 - did not call sendfile
-            return this.resp != null and !this.flags.aborted and !this.flags.has_marked_complete and !this.flags.has_marked_pending and this.ref_count == 1 and !this.flags.is_waiting_for_request_body and !this.flags.has_sendfile_ctx;
+            ctxLog("RequestContext(0x{x}).shouldRenderMissing {s} {s} {s} {s} {s} {s} {s}", .{
+                @intFromPtr(this),
+                if (this.resp != null) "has response" else "no response",
+                if (this.flags.aborted) "aborted" else "not aborted",
+                if (this.flags.has_marked_complete) "marked complete" else "not marked complete",
+                if (this.flags.has_marked_pending) "marked pending" else "not marked pending",
+                if (this.ref_count == 1) "only reference" else "not only reference",
+                if (this.flags.is_waiting_for_request_body) "waiting for request body" else "not waiting for request body",
+                if (this.flags.has_sendfile_ctx) "has sendfile context" else "no sendfile context",
+            });
+            return this.resp != null and
+                !this.flags.aborted and
+                !this.flags.has_marked_complete and
+                !this.flags.has_marked_pending and
+                this.ref_count == 1 and
+                !this.flags.is_waiting_for_request_body and
+                !this.flags.has_sendfile_ctx;
         }
 
         pub fn isDeadRequest(this: *RequestContext) bool {
@@ -201,6 +252,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
         pub fn deinit(this: *RequestContext) void {
+            ctxLog("deinit", .{});
             this.detachResponse();
             this.endRequestStreamingAndDrain();
             // TODO: has_marked_complete is doing something?
@@ -224,6 +276,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 this.request_body = null;
             }
 
+            if (this.additional_on_abort) |cb| {
+                cb.deref();
+                this.additional_on_abort = null;
+            }
+
             if (this.server) |server| {
                 this.server = null;
                 server.request_pool_allocator.put(this);
@@ -232,7 +289,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn deref(this: *RequestContext) void {
-            streamLog("deref", .{});
+            streamLog("deref {d} -> {d}", .{ this.ref_count, this.ref_count - 1 });
             assert(this.ref_count > 0);
             const ref_count = this.ref_count;
             this.ref_count -= 1;
@@ -243,11 +300,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn ref(this: *RequestContext) void {
-            streamLog("ref", .{});
+            streamLog("ref {d} -> {d}", .{ this.ref_count, this.ref_count + 1 });
             this.ref_count += 1;
         }
 
-        pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn onReject(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             ctxLog("onReject", .{});
 
             const arguments = callframe.arguments_old(2);
@@ -258,7 +315,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return .js_undefined;
         }
 
-        fn handleReject(ctx: *RequestContext, value: JSC.JSValue) void {
+        fn handleReject(ctx: *RequestContext, value: jsc.JSValue) void {
             if (ctx.isAbortedOrEnded()) {
                 return;
             }
@@ -337,6 +394,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn renderDefaultError(
             this: *RequestContext,
+            arena_allocator: std.mem.Allocator, // used for to allocate memory to render the fallback
             log: *logger.Log,
             err: anyerror,
             exceptions: []Api.JsException,
@@ -351,12 +409,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
             }
 
-            const allocator = this.allocator;
-
-            const fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
-            defer allocator.destroy(fallback_container);
+            const fallback_container = arena_allocator.create(Api.FallbackMessageContainer) catch unreachable;
+            defer arena_allocator.destroy(fallback_container);
             fallback_container.* = Api.FallbackMessageContainer{
-                .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
+                .message = std.fmt.allocPrint(arena_allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
                 .cwd = VirtualMachine.get().transpiler.fs.top_level_dir,
@@ -364,18 +420,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     .code = @as(u16, @truncate(@intFromError(err))),
                     .name = @errorName(err),
                     .exceptions = exceptions,
-                    .build = log.toAPI(allocator) catch unreachable,
+                    .build = log.toAPI(arena_allocator) catch unreachable,
                 },
             };
 
             if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args);
             Output.flush();
 
-            var bb = std.ArrayList(u8).init(allocator);
+            // Explicitly use `this.allocator` and *not* the arena
+            var bb = std.ArrayList(u8).init(this.allocator);
             const bb_writer = bb.writer();
 
             Fallback.renderBackend(
-                allocator,
+                arena_allocator,
                 fallback_container,
                 @TypeOf(bb_writer),
                 bb_writer,
@@ -436,6 +493,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn end(this: *RequestContext, data: []const u8, closeConnection: bool) void {
+            ctxLog("end", .{});
             if (this.resp) |resp| {
                 defer this.deref();
 
@@ -461,6 +519,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn endWithoutBody(this: *RequestContext, closeConnection: bool) void {
+            ctxLog("endWithoutBody", .{});
             if (this.resp) |resp| {
                 defer this.deref();
 
@@ -556,11 +615,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         }
 
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
+            ctxLog("onAbort", .{});
             assert(this.resp == resp);
             assert(!this.flags.aborted);
             assert(this.server != null);
             // mark request as aborted
             this.flags.aborted = true;
+            if (this.additional_on_abort) |abort| {
+                defer abort.deref();
+                this.additional_on_abort = null;
+                abort.cb(abort.data);
+            }
 
             this.detachResponse();
             var any_js_calls = false;
@@ -644,7 +709,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.response_jsvalue.unprotect();
                     this.flags.response_protected = false;
                 }
-                this.response_jsvalue = JSC.JSValue.zero;
+                this.response_jsvalue = jsc.JSValue.zero;
             }
 
             this.request_body_readable_stream_ref.deinit();
@@ -843,7 +908,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         // We tried open() in another thread for this
         // it was not faster due to the mountain of syscalls
-        pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
+        pub fn renderSendFile(this: *RequestContext, blob: jsc.WebCore.Blob) void {
             if (this.resp == null or this.server == null) return;
             const globalThis = this.server.?.globalThis;
             const resp = this.resp.?;
@@ -856,14 +921,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
-                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJSC(globalThis)),
+                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJS(globalThis)),
             };
 
             // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toJSC(globalThis));
+                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis));
                     if (auto_close) {
                         fd.close();
                     }
@@ -1024,7 +1089,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn doRenderWithBodyLocked(this: *anyopaque, value: *JSC.WebCore.Body.Value) void {
+        pub fn doRenderWithBodyLocked(this: *anyopaque, value: *jsc.WebCore.Body.Value) void {
             doRenderWithBody(bun.cast(*RequestContext, this), value);
         }
 
@@ -1042,7 +1107,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.doRenderBlob();
         }
 
-        const StreamPair = struct { this: *RequestContext, stream: JSC.WebCore.ReadableStream };
+        const StreamPair = struct { this: *RequestContext, stream: jsc.WebCore.ReadableStream };
 
         fn handleFirstStreamWrite(this: *@This()) void {
             if (!this.flags.has_written_status) {
@@ -1115,7 +1180,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (assignment_result.toError()) |err_value| {
                 streamLog("returned an error", .{});
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 this.sink = null;
                 response_stream.sink.destroy();
                 return this.handleReject(err_value);
@@ -1123,7 +1188,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (resp.hasResponded()) {
                 streamLog("done", .{});
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 this.sink = null;
                 response_stream.sink.destroy();
                 stream.done(globalThis);
@@ -1151,7 +1216,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             // TODO: should this timeout?
                             this.response_ptr.?.body.value = .{
                                 .Locked = .{
-                                    .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
+                                    .readable = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis),
                                     .global = globalThis,
                                 },
                             };
@@ -1191,7 +1256,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 } else {
                     // if is not a promise we treat it as Error
                     streamLog("returned an error", .{});
-                    response_stream.detach();
+                    response_stream.detach(globalThis);
                     this.sink = null;
                     response_stream.sink.destroy();
                     return this.handleReject(assignment_result);
@@ -1199,7 +1264,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
 
             if (this.isAbortedOrEnded()) {
-                response_stream.detach();
+                response_stream.detach(globalThis);
                 stream.cancel(globalThis);
                 defer this.readable_stream_ref.deinit();
 
@@ -1217,7 +1282,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 response_stream.sink.buffer.len == 0);
 
             if (!stream.isLocked(globalThis) and !is_in_progress) {
-                if (JSC.WebCore.ReadableStream.fromJS(stream.value, globalThis)) |comparator| {
+                if (jsc.WebCore.ReadableStream.fromJS(stream.value, globalThis) catch null) |comparator| { // TODO: properly propagate exception upwards
                     if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
                         streamLog("is not locked", .{});
                         this.renderMissing();
@@ -1229,13 +1294,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
             response_stream.sink.onFirstWrite = null;
             response_stream.sink.ctx = null;
-            response_stream.detach();
+            response_stream.detach(globalThis);
             stream.cancel(globalThis);
             response_stream.sink.markDone();
             this.renderMissing();
         }
 
-        const streamLog = Output.scoped(.ReadableStream, false);
+        const streamLog = Output.scoped(.ReadableStream, .visible);
 
         pub fn didUpgradeWebSocket(this: *RequestContext) bool {
             return @intFromPtr(this.upgrade_context) == std.math.maxInt(usize);
@@ -1344,7 +1409,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 resp.runCorkedWithType(*HeaderResponseSizePair, doRenderHeadResponseAfterS3SizeResolved, &pair);
             }
         }
-        const HeaderResponsePair = struct { this: *RequestContext, response: *JSC.WebCore.Response };
+        const HeaderResponsePair = struct { this: *RequestContext, response: *jsc.WebCore.Response };
 
         fn doRenderHeadResponse(pair: *HeaderResponsePair) void {
             var this = pair.this;
@@ -1483,7 +1548,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            if (response_value.as(JSC.WebCore.Response)) |response| {
+            if (response_value.as(jsc.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
@@ -1537,7 +1602,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
                         }
-                        var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
+                        var response = fulfilled_value.as(jsc.WebCore.Response) orelse {
                             ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
                         };
@@ -1587,7 +1652,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrote_anything = wrapper.sink.wrote > 0;
 
                 wrapper.sink.finalize();
-                wrapper.detach();
+                wrapper.detach(wrapper.sink.globalThis);
                 req.sink = null;
                 wrapper.sink.destroy();
             }
@@ -1616,7 +1681,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             req.endStream(req.shouldCloseConnection());
         }
 
-        pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onResolveStream", .{});
             var args = callframe.arguments_old(2);
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
@@ -1624,7 +1689,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             req.handleResolveStream();
             return .js_undefined;
         }
-        pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn onRejectStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             streamLog("onRejectStream", .{});
             const args = callframe.arguments_old(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
@@ -1635,7 +1700,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return .js_undefined;
         }
 
-        pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
+        pub fn handleRejectStream(req: *@This(), globalThis: *jsc.JSGlobalObject, err: JSValue) void {
             streamLog("handleRejectStream", .{});
 
             if (req.sink) |wrapper| {
@@ -1643,7 +1708,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 wrapper.sink.done = true;
                 req.flags.aborted = req.flags.aborted or wrapper.sink.aborted;
                 wrapper.sink.finalize();
-                wrapper.detach();
+                wrapper.detach(wrapper.sink.globalThis);
                 req.sink = null;
                 wrapper.sink.destroy();
             }
@@ -1675,13 +1740,63 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
                         defer exception_list.deinit();
                         server.vm.runErrorHandler(err, &exception_list);
+
+                        if (server.dev_server) |dev_server| {
+                            _ = dev_server;
+                            // Render the error fallback HTML page like renderDefaultError does
+                            if (!req.flags.has_written_status) {
+                                req.flags.has_written_status = true;
+                                if (req.resp) |resp| {
+                                    resp.writeStatus("500 Internal Server Error");
+                                    resp.writeHeader("content-type", MimeType.html.value);
+                                }
+                            }
+
+                            const allocator = req.allocator;
+                            const fallback_container = bun.handleOom(allocator.create(Api.FallbackMessageContainer));
+                            defer allocator.destroy(fallback_container);
+
+                            // Create error message for the stream rejection
+                            fallback_container.* = Api.FallbackMessageContainer{
+                                .message = "Stream error during server-side rendering",
+                                .router = null,
+                                .reason = .fetch_event_handler,
+                                .cwd = server.vm.transpiler.fs.top_level_dir,
+                                .problems = Api.Problems{
+                                    .code = 500,
+                                    .name = "StreamError",
+                                    .exceptions = exception_list.items,
+                                    .build = .{
+                                        .msgs = &.{},
+                                    },
+                                },
+                            };
+
+                            var bb = std.ArrayList(u8).init(allocator);
+                            defer bb.clearAndFree();
+                            const bb_writer = bb.writer();
+
+                            Fallback.renderBackend(
+                                allocator,
+                                fallback_container,
+                                @TypeOf(bb_writer),
+                                bb_writer,
+                            ) catch unreachable;
+
+                            if (req.resp) |resp| {
+                                _ = resp.write(bb.items);
+                            }
+
+                            req.endStream(req.shouldCloseConnection());
+                            return;
+                        }
                     }
                 }
             }
             req.endStream(req.shouldCloseConnection());
         }
 
-        pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
+        pub fn doRenderWithBody(this: *RequestContext, value: *jsc.WebCore.Body.Value) void {
             this.drainMicrotasks();
 
             // If a ReadableStream can trivially be converted to a Blob, do so.
@@ -1713,15 +1828,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     }
 
                     if (lock.readable.get(globalThis)) |stream_| {
-                        const stream: JSC.WebCore.ReadableStream = stream_;
+                        const stream: jsc.WebCore.ReadableStream = stream_;
                         // we hold the stream alive until we're done with it
                         this.readable_stream_ref = lock.readable;
                         value.* = .{ .Used = {} };
 
                         if (stream.isLocked(globalThis)) {
                             streamLog("was locked but it shouldn't be", .{});
-                            var err = JSC.SystemError{
-                                .code = bun.String.static(@tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE)),
+                            var err = jsc.SystemError{
+                                .code = bun.String.static(@tagName(jsc.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE)),
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
@@ -1760,17 +1875,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
-                                    this.blob = .fromArrayList(byte_stream.drain().listManaged(bun.default_allocator));
+                                    var byte_list = byte_stream.drain();
+                                    this.blob = .fromArrayList(byte_list.moveToListManaged(bun.default_allocator));
                                     this.readable_stream_ref.deinit();
                                     this.doRenderBlob();
                                     return;
                                 }
                                 this.ref();
-                                byte_stream.pipe = JSC.WebCore.Pipe.Wrap(@This(), onPipe).init(this);
-                                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis);
+                                byte_stream.pipe = jsc.WebCore.Pipe.Wrap(@This(), onPipe).init(this);
+                                this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;
-                                this.response_buf_owned = byte_stream.drain().list();
+                                var response_buf = byte_stream.drain();
+                                this.response_buf_owned = response_buf.moveToList();
 
                                 // we don't set size here because even if we have a hint
                                 // uWebSockets won't let us partially write streaming content
@@ -1790,7 +1907,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                     if (lock.onReceiveValue != null or lock.task != null) {
                         // someone else is waiting for the stream or waiting for `onStartStreaming`
-                        const readable = value.toReadableStream(globalThis);
+                        const readable = value.toReadableStream(globalThis) catch return; // TODO: properly propagate exception upwards
                         readable.ensureStillAlive();
                         this.doRenderWithBody(value);
                         return;
@@ -1808,16 +1925,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.doRenderBlob();
         }
 
-        pub fn onPipe(this: *RequestContext, stream: JSC.WebCore.streams.Result, allocator: std.mem.Allocator) void {
+        pub fn onPipe(this: *RequestContext, stream: jsc.WebCore.streams.Result, allocator: std.mem.Allocator) void {
+            var stream_ = stream;
             const stream_needs_deinit = stream == .owned or stream == .owned_and_done;
             const is_done = stream.isDone();
             defer {
                 if (is_done) this.deref();
                 if (stream_needs_deinit) {
-                    if (is_done) {
-                        stream.owned_and_done.listManaged(allocator).deinit();
-                    } else {
-                        stream.owned.listManaged(allocator).deinit();
+                    switch (stream_) {
+                        .owned_and_done => |*owned| owned.deinit(allocator),
+                        .owned => |*owned| owned.deinit(allocator),
+                        else => unreachable,
                     }
                 }
             }
@@ -1900,7 +2018,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn runErrorHandler(
             this: *RequestContext,
-            value: JSC.JSValue,
+            value: jsc.JSValue,
         ) void {
             runErrorHandlerWithStatusCode(this, value, 500);
         }
@@ -1938,12 +2056,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return false;
         }
 
-        fn finishRunningErrorHandler(this: *RequestContext, value: JSC.JSValue, status: u16) void {
+        fn finishRunningErrorHandler(this: *RequestContext, value: jsc.JSValue, status: u16) void {
             if (this.server == null) return this.renderProductionError(status);
-            var vm: *JSC.VirtualMachine = this.server.?.vm;
+            var vm: *jsc.VirtualMachine = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
             if (comptime debug_mode) {
-                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
+                var arena = std.heap.ArenaAllocator.init(this.allocator);
+                defer arena.deinit();
+                const allocator = arena.allocator();
+                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(allocator);
                 defer exception_list.deinit();
                 const prev_exception_list = vm.onUnhandledRejectionExceptionList;
                 vm.onUnhandledRejectionExceptionList = &exception_list;
@@ -1951,9 +2072,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 vm.onUnhandledRejectionExceptionList = prev_exception_list;
 
                 this.renderDefaultError(
+                    allocator,
                     vm.log,
                     error.ExceptionOcurred,
-                    exception_list.toOwnedSlice() catch @panic("TODO"),
+                    exception_list.items,
                     "<r><red>{s}<r> - <b>{}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
@@ -1969,16 +2091,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn runErrorHandlerWithStatusCodeDontCheckResponded(
             this: *RequestContext,
-            value: JSC.JSValue,
+            value: jsc.JSValue,
             status: u16,
         ) void {
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             if (this.server) |server| {
                 if (server.config.onError != .zero and !this.flags.has_called_error_handler) {
                     this.flags.has_called_error_handler = true;
                     const result = server.config.onError.call(
                         server.globalThis,
-                        server.js_value.get() orelse .js_undefined,
+                        server.js_value.tryGet() orelse .js_undefined,
                         &.{value},
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();
@@ -2002,9 +2124,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         fn processOnErrorPromise(
             ctx: *RequestContext,
-            promise_js: JSC.JSValue,
-            promise: JSC.AnyPromise,
-            value: JSC.JSValue,
+            promise_js: jsc.JSValue,
+            promise: jsc.AnyPromise,
+            value: jsc.JSValue,
             status: u16,
         ) void {
             assert(ctx.server != null);
@@ -2030,7 +2152,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     }
 
-                    var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
+                    var response = fulfilled_value.as(jsc.WebCore.Response) orelse {
                         ctx.finishRunningErrorHandler(value, status);
                         return;
                     };
@@ -2066,10 +2188,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         pub fn runErrorHandlerWithStatusCode(
             this: *RequestContext,
-            value: JSC.JSValue,
+            value: jsc.JSValue,
             status: u16,
         ) void {
-            JSC.markBinding(@src());
+            jsc.markBinding(@src());
             if (this.resp == null or this.resp.?.hasResponded()) return;
 
             runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status);
@@ -2079,7 +2201,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.resp == null) return;
             const resp = this.resp.?;
 
-            var response: *JSC.WebCore.Response = this.response_ptr.?;
+            var response: *jsc.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
             var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
 
@@ -2123,7 +2245,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.cookies) |cookies| {
                 this.cookies = null;
                 defer cookies.deref();
-                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?));
+                cookies.write(this.server.?.globalThis, ssl_enabled, @ptrCast(this.resp.?)) catch return; // TODO: properly propagate exception upwards
             }
 
             if (needs_content_type and
@@ -2205,7 +2327,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.deref();
         }
 
-        pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
+        pub fn render(this: *RequestContext, response: *jsc.WebCore.Response) void {
             ctxLog("render", .{});
             this.response_ptr = response;
 
@@ -2238,7 +2360,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 if (!last) {
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary = bun.ByteList.initConst(chunk),
+                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -2254,7 +2376,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     readable.value.ensureStillAlive();
                     readable.ptr.Bytes.onData(
                         .{
-                            .temporary_and_done = bun.ByteList.initConst(chunk),
+                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -2274,13 +2396,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                     const total = bytes.items.len + chunk.len;
                     getter: {
-                        // if (total <= JSC.WebCore.InlineBlob.available_bytes) {
+                        // if (total <= jsc.WebCore.InlineBlob.available_bytes) {
                         //     if (total == 0) {
                         //         body.value = .{ .Empty = {} };
                         //         break :getter;
                         //     }
 
-                        //     body.value = .{ .InlineBlob = JSC.WebCore.InlineBlob.concat(bytes.items, chunk) };
+                        //     body.value = .{ .InlineBlob = jsc.WebCore.InlineBlob.concat(bytes.items, chunk) };
                         //     this.request_body_buf.clearAndFree(this.allocator);
                         // } else {
                         bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
@@ -2319,10 +2441,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn onStartStreamingRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
+        pub fn onStartStreamingRequestBody(this: *RequestContext) jsc.WebCore.DrainResult {
             ctxLog("onStartStreamingRequestBody", .{});
             if (this.isAbortedOrEnded()) {
-                return JSC.WebCore.DrainResult{
+                return jsc.WebCore.DrainResult{
                     .aborted = {},
                 };
             }
@@ -2367,17 +2489,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn onRequestBodyReadableStreamAvailable(ptr: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
+        pub fn onRequestBodyReadableStreamAvailable(ptr: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
             var this = bun.cast(*RequestContext, ptr);
             bun.debugAssert(this.request_body_readable_stream_ref.held.impl == null);
-            this.request_body_readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
+            this.request_body_readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
         }
 
         pub fn onStartBufferingCallback(this: *anyopaque) void {
             onStartBuffering(bun.cast(*RequestContext, this));
         }
 
-        pub fn onStartStreamingRequestBodyCallback(this: *anyopaque) JSC.WebCore.DrainResult {
+        pub fn onStartStreamingRequestBodyCallback(this: *anyopaque) jsc.WebCore.DrainResult {
             return onStartStreamingRequestBody(bun.cast(*RequestContext, this));
         }
 
@@ -2409,10 +2531,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         comptime {
             const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
             if (bun.Environment.export_cpp_apis) {
-                @export(&JSC.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
-                @export(&JSC.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
-                @export(&JSC.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
-                @export(&JSC.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
+                @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" });
+                @export(&jsc.toJSHostFn(onReject), .{ .name = export_prefix ++ "__onReject" });
+                @export(&jsc.toJSHostFn(onResolveStream), .{ .name = export_prefix ++ "__onResolveStream" });
+                @export(&jsc.toJSHostFn(onRejectStream), .{ .name = export_prefix ++ "__onRejectStream" });
             }
         }
     };
@@ -2517,32 +2639,37 @@ fn writeHeaders(
     }
 }
 
-const WebCore = JSC.WebCore;
-const bun = @import("bun");
-const uws = bun.uws;
-const std = @import("std");
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Request = JSC.WebCore.Request;
-const Response = JSC.WebCore.Response;
-const FetchHeaders = JSC.WebCore.FetchHeaders;
-const Body = JSC.WebCore.Body;
-const Blob = JSC.WebCore.Blob;
-const MimeType = bun.http.MimeType;
-const HTTP = bun.http;
-const Output = bun.Output;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const String = bun.String;
-const JSError = bun.JSError;
-const linux = std.os.linux;
-const S3 = bun.S3;
-const logger = bun.logger;
-const assert = bun.assert;
-const ctxLog = Output.scoped(.RequestContext, false);
-const Api = bun.Schema.Api;
+const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
-const AnyRequestContext = JSC.API.AnyRequestContext;
-const VirtualMachine = JSC.VirtualMachine;
-const writeStatus = @import("../server.zig").writeStatus;
+
+const std = @import("std");
 const Fallback = @import("../../../runtime.zig").Fallback;
+const linux = std.os.linux;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSError = bun.JSError;
+const Output = bun.Output;
+const S3 = bun.S3;
+const String = bun.String;
+const assert = bun.assert;
+const logger = bun.logger;
+const uws = bun.uws;
+const Api = bun.schema.api;
+const writeStatus = bun.api.server.writeStatus;
+
+const HTTP = bun.http;
+const MimeType = bun.http.MimeType;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const AnyRequestContext = jsc.API.AnyRequestContext;
+
+const WebCore = jsc.WebCore;
+const Blob = jsc.WebCore.Blob;
+const Body = jsc.WebCore.Body;
+const FetchHeaders = jsc.WebCore.FetchHeaders;
+const Request = jsc.WebCore.Request;
+const Response = jsc.WebCore.Response;

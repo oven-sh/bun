@@ -161,7 +161,7 @@ The result of `fetch` is `Promise<Response>`, so it can be directly returned.
 
 ```ts#macro.ts
 export function getObject() {
-  return fetch("https://bun.sh")
+  return fetch("https://bun.com")
 }
 ```
 

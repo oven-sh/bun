@@ -68,6 +68,7 @@ server.listen(0, common.mustCall((res) => {
     buffer += data;
 
     const responseParts = buffer.trim().split('\r\n\r\n');
+
     if (responseParts.length === 8) {
       assertResponse(responseParts[0], responseParts[1]);
       assertResponse(responseParts[2], responseParts[3]);

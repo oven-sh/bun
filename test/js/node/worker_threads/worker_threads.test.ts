@@ -263,7 +263,7 @@ describe("execArgv option", async () => {
     });
     await proc.exited;
     expect(proc.exitCode).toBe(0);
-    expect(await new Response(proc.stdout).text()).toBe(expected);
+    expect(await proc.stdout.text()).toBe(expected);
   }
 
   it("inherits the parent's execArgv when falsy or unspecified", async () => {
@@ -289,7 +289,7 @@ test("eval does not leak source code", async () => {
     stdout: "ignore",
   });
   await proc.exited;
-  const errors = await new Response(proc.stderr).text();
+  const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
 });
@@ -343,7 +343,7 @@ describe("worker event", () => {
       stdout: "ignore",
     });
     await proc.exited;
-    const errors = await new Response(proc.stderr).text();
+    const errors = await proc.stderr.text();
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
   });
@@ -379,10 +379,10 @@ describe("environmentData", () => {
       stdout: "pipe",
     });
     await proc.exited;
-    const errors = await new Response(proc.stderr).text();
+    const errors = await proc.stderr.text();
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
-    const out = await new Response(proc.stdout).text();
+    const out = await proc.stdout.text();
     expect(out).toBe("foo\n".repeat(5));
   });
 
@@ -395,7 +395,7 @@ describe("environmentData", () => {
       stdout: "ignore",
     });
     await proc.exited;
-    const errors = await new Response(proc.stderr).text();
+    const errors = await proc.stderr.text();
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
   });

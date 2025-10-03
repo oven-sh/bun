@@ -52,6 +52,8 @@ In your root-level `package.json`, add a `catalog` or `catalogs` field within th
 }
 ```
 
+If you put `catalog` or `catalogs` at the top level of the `package.json` file, that will work too.
+
 ### 2. Reference Catalog Versions in Workspace Packages
 
 In your workspace packages, use the `catalog:` protocol to reference versions:

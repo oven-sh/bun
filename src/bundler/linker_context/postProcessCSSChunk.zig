@@ -31,7 +31,7 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
     const compile_results = chunk.compile_results_for_chunk;
 
     var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
-    compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
+    bun.handleOom(compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len));
 
     const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
     for (compile_results) |compile_result| {
@@ -93,7 +93,7 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
         worker.allocator,
         &j,
         @as(u32, @truncate(ctx.chunks.len)),
-    ) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
     // TODO: meta contents
 
     chunk.isolated_hash = c.generateIsolatedHash(chunk);
@@ -111,18 +111,17 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
     }
 }
 
-const bun = @import("bun");
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Index = bun.bundle_v2.Index;
 const std = @import("std");
 
+const bun = @import("bun");
 const Logger = bun.logger;
+const StringJoiner = bun.StringJoiner;
 const options = bun.options;
-const Chunk = bun.bundle_v2.Chunk;
 
-const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;
+const Chunk = bun.bundle_v2.Chunk;
+const CompileResultForSourceMap = bun.bundle_v2.CompileResultForSourceMap;
+const Index = bun.bundle_v2.Index;
 const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const StringJoiner = bun.StringJoiner;
-
-const CompileResultForSourceMap = bun.bundle_v2.CompileResultForSourceMap;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;

@@ -123,8 +123,8 @@ export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex = {}, debug
  */
 /* legacy: obj, showHidden, depth, colors*/
 export const inspect = /* @__PURE__ */ (i =>
+  // http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
   (
-    // http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
     (i.colors = {
       "bold": [1, 22],
       "italic": [3, 23],
@@ -947,3 +947,13 @@ export function callbackify(original) {
 
 export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
 export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
+export default {
+  TextEncoder,
+  TextDecoder,
+  promisify,
+  log,
+  inherits,
+  _extend,
+  callbackifyOnRejected,
+  callbackify,
+};

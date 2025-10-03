@@ -186,7 +186,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
     std::span<WTF::StringImpl*> execArgv = worker->m_options.execArgv
                                                .transform([](Vector<String>& vec) -> std::span<WTF::StringImpl*> {
-                                                   return { reinterpret_cast<WTF::StringImpl**>(vec.data()), vec.size() };
+                                                   return { reinterpret_cast<WTF::StringImpl**>(vec.begin()), vec.size() };
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
     void* impl = WebWorker__create(
@@ -200,12 +200,12 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         worker->m_options.mini,
         worker->m_options.unref,
         worker->m_options.evalMode,
-        reinterpret_cast<WTF::StringImpl**>(worker->m_options.argv.data()),
+        reinterpret_cast<WTF::StringImpl**>(worker->m_options.argv.begin()),
         worker->m_options.argv.size(),
         !worker->m_options.execArgv.has_value(),
         execArgv.data(),
         execArgv.size(),
-        preloadModules.data(),
+        preloadModules.begin(),
         preloadModules.size());
     // now referenced by Zig
     worker->ref();
@@ -248,7 +248,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 
-    this->postTaskToWorkerGlobalScope([message = messageWithMessagePorts](auto& context) mutable {
+    this->postTaskToWorkerGlobalScope([message = WTFMove(messageWithMessagePorts)](auto& context) mutable {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
 
         auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
@@ -417,9 +417,11 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
 
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) -> void {
         auto* globalObject = context.globalObject();
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         ErrorEvent::Init init;
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
-        if (!deserialized) return;
+        RETURN_IF_EXCEPTION(scope, );
         init.error = deserialized;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
@@ -474,8 +476,13 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         vm.setHasTerminationRequest();
 
         {
-            globalObject->esmRegistryMap()->clear(globalObject);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            auto* esmRegistryMap = globalObject->esmRegistryMap();
+            scope.exception(); // TODO: handle or assert none?
+            esmRegistryMap->clear(globalObject);
+            scope.exception(); // TODO: handle or assert none?
             globalObject->requireMap()->clear(globalObject);
+            scope.exception(); // TODO: handle or assert none?
             vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
             gcUnprotect(globalObject);
             globalObject = nullptr;
@@ -538,7 +545,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
-        return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject)));
     } else if (jsDynamicCast<JSBroadcastChannel*>(port)) {
         // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());
@@ -569,8 +576,9 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         ASSERT(pair->canGetIndexQuickly(1u));
         workerData = pair->getIndexQuickly(0);
         RETURN_IF_EXCEPTION(scope, {});
+        auto environmentDataValue = pair->getIndexQuickly(1);
         // it might not be a Map if the parent had not set up environmentData yet
-        environmentData = jsDynamicCast<JSMap*>(pair->getIndexQuickly(1));
+        environmentData = environmentDataValue ? jsDynamicCast<JSMap*>(environmentDataValue) : nullptr;
         RETURN_IF_EXCEPTION(scope, {});
 
         // Main thread starts at 1
@@ -611,8 +619,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     if (!context)
         return JSValue::encode(jsUndefined());
 
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
     JSC::JSValue value = callFrame->argument(0);
     JSC::JSValue options = callFrame->argument(1);
 
@@ -621,11 +627,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     if (options.isObject()) {
         JSC::JSObject* optionsObject = options.getObject();
         JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+        RETURN_IF_EXCEPTION(scope, {});
         if (transferListValue.isObject()) {
             JSC::JSObject* transferListObject = transferListValue.getObject();
             if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
                 for (unsigned i = 0; i < transferListArray->length(); i++) {
                     JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
                     if (transferListValue.isObject()) {
                         JSC::JSObject* transferListObject = transferListValue.getObject();
                         transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
@@ -638,15 +646,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     Vector<RefPtr<MessagePort>> ports;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
-        return JSValue::encode(jsUndefined());
+        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        RELEASE_AND_RETURN(scope, {});
     }
+    scope.assertNoException();
 
     ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTFMove(ports));
     if (disentangledPorts.hasException()) {
-        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
-        return JSValue::encode(jsUndefined());
+        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        RELEASE_AND_RETURN(scope, {});
     }
+    scope.assertNoException();
 
     MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
 

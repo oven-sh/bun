@@ -38,6 +38,7 @@ const server = tls.createServer(options, common.mustNotCall());
 
 server.listen(0, common.mustCall(function() {
   const c = net.createConnection(this.address().port);
+  console.log(server.requestCert, server.rejectUnauthorized);
 
   c.on('data', function() {
     // We must consume all data sent by the server. Otherwise the

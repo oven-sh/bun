@@ -2,6 +2,7 @@
 #include "NodeValidator.h"
 #include "KeyObject.h"
 #include "JSVerify.h"
+#include <openssl/rsa.h>
 
 using namespace JSC;
 using namespace ncrypto;
@@ -32,7 +33,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
 
     if (!ctx->m_verifyResult) {
         throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "verify operation failed"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     return JSValue::encode(jsBoolean(*ctx->m_verifyResult));
@@ -60,7 +61,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
 
     if (!ctx->m_signResult) {
         throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "sign operation failed"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     auto& result = ctx->m_signResult.value();
@@ -69,6 +70,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     auto sigBuf = ArrayBuffer::createUninitialized(result.size(), 1);
     memcpy(sigBuf->data(), result.data(), result.size());
     auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuf), 0, result.size());
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(signature);
 }
 
@@ -113,15 +115,26 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 
     int32_t padding = m_padding.value_or(key.getDefaultSignPadding());
 
-    if (key.isRsaVariant() && !EVPKeyCtxPointer::setRsaPadding(*ctx, padding, m_saltLength)) {
-        m_opensslError = ERR_get_error();
-        return;
+    if (key.isRsaVariant()) {
+        std::optional<int> effective_salt_len = m_saltLength;
+
+        // For PSS padding without explicit salt length, use RSA_PSS_SALTLEN_AUTO
+        // BoringSSL changed the default from AUTO to DIGEST in commit b01d7bbf7 (June 2025)
+        // for FIPS compliance, but Node.js expects the old AUTO behavior
+        if (padding == RSA_PKCS1_PSS_PADDING && !m_saltLength.has_value()) {
+            effective_salt_len = RSA_PSS_SALTLEN_AUTO;
+        }
+
+        if (!EVPKeyCtxPointer::setRsaPadding(*ctx, padding, effective_salt_len)) {
+            m_opensslError = ERR_get_error();
+            return;
+        }
     }
 
     switch (m_mode) {
     case Mode::Sign: {
         auto dataBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_data.data(),
+            .data = m_data.begin(),
             .len = m_data.size(),
         };
 
@@ -176,11 +189,11 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     }
     case Mode::Verify: {
         auto dataBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_data.data(),
+            .data = m_data.begin(),
             .len = m_data.size(),
         };
         auto sigBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_signature.data(),
+            .data = m_signature.begin(),
             .len = m_signature.size(),
         };
         m_verifyResult = context.verify(dataBuf, sigBuf);
@@ -198,8 +211,8 @@ extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* glob
 }
 void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (m_mode) {
     case Mode::Sign: {
@@ -214,6 +227,7 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
         memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
         auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuf), 0, m_signResult->size());
+        RETURN_IF_EXCEPTION(scope, );
 
         Bun__EventLoop__runCallback2(
             lexicalGlobalObject,
@@ -346,6 +360,50 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         if (!digest) {
             ERR::CRYPTO_INVALID_DIGEST(scope, globalObject, algorithmView);
             return {};
+        }
+    } else {
+        // OpenSSL v3 Default Digest Behavior for RSA Keys
+        // ================================================
+        // When Node.js calls crypto.sign() or crypto.verify() with a null/undefined algorithm,
+        // it passes NULL to OpenSSL's EVP_DigestSignInit/EVP_DigestVerifyInit functions.
+        //
+        // OpenSSL v3 then automatically provides a default digest for RSA keys through the
+        // following mechanism:
+        //
+        // 1. In crypto/evp/m_sigver.c:215-220 (do_sigver_init function):
+        //    When mdname is NULL and type is NULL, OpenSSL calls:
+        //    evp_keymgmt_util_get_deflt_digest_name(tmp_keymgmt, provkey, locmdname, sizeof(locmdname))
+        //
+        // 2. In crypto/evp/keymgmt_lib.c:533-571 (evp_keymgmt_util_get_deflt_digest_name function):
+        //    This queries the key management provider for OSSL_PKEY_PARAM_DEFAULT_DIGEST
+        //
+        // 3. In providers/implementations/keymgmt/rsa_kmgmt.c:
+        //    - Line 54: #define RSA_DEFAULT_MD "SHA256"
+        //    - Lines 351-355: For RSA keys (non-PSS), it returns RSA_DEFAULT_MD ("SHA256")
+        //      if ((p = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_DEFAULT_DIGEST)) != NULL
+        //          && (rsa_type != RSA_FLAG_TYPE_RSASSAPSS
+        //              || ossl_rsa_pss_params_30_is_unrestricted(pss_params))) {
+        //          if (!OSSL_PARAM_set_utf8_string(p, RSA_DEFAULT_MD))
+        //              return 0;
+        //      }
+        //
+        // BoringSSL Difference:
+        // =====================
+        // BoringSSL (used by Bun) does not have this automatic default mechanism.
+        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA keys,
+        // BoringSSL returns error 0x06000077 (NO_DEFAULT_DIGEST).
+        //
+        // This Fix:
+        // =========
+        // To achieve Node.js/OpenSSL compatibility, we explicitly set SHA256 as the
+        // default digest for RSA keys when no algorithm is specified, matching the
+        // OpenSSL behavior documented above.
+        //
+        // For Ed25519/Ed448 keys (one-shot variants), we intentionally leave digest
+        // as null since these algorithms perform their own hashing internally and
+        // don't require a separate digest algorithm.
+        if (keyObject.asymmetricKey().isRsaVariant()) {
+            digest = Digest::FromName("SHA256"_s);
         }
     }
 

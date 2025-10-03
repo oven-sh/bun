@@ -70,7 +70,7 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForImportMeta = std::forward<decltype(space)>(space); });
     }
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake = false);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static JSValue getPrototype(JSObject*, JSC::JSGlobalObject* globalObject);
 

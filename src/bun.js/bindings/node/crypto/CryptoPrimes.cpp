@@ -107,7 +107,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
     if (!candidate) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     auto res = candidate.isPrime(checks, [](int32_t a, int32_t b) -> bool {
@@ -126,11 +126,11 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
     JSValue candidateValue = callFrame->argument(0);
     if (candidateValue.isBigInt()) {
         candidateValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, candidateValue, "candidate"_s);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue optionsValue = callFrame->argument(1);
     JSValue callback = callFrame->argument(2);
@@ -140,29 +140,29 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
     }
 
     V::validateFunction(scope, lexicalGlobalObject, callback, "callback"_s);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     int32_t checks = 0;
     if (optionsValue.isObject()) {
         JSObject* options = optionsValue.getObject();
         JSValue checksValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "checks"_s));
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (!checksValue.isUndefined()) {
             V::validateInt32(scope, lexicalGlobalObject, checksValue, "options.checks"_s, jsNumber(0), jsUndefined(), &checks);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
     ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
     if (!candidate) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     CheckPrimeJob::createAndSchedule(lexicalGlobalObject, WTFMove(candidate), checks, callback);
@@ -206,8 +206,8 @@ void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject, JSValue callba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
-    ASSERT(result.isEmpty() == !!scope.exception());
-    if (scope.exception()) {
+    EXCEPTION_ASSERT(result.isEmpty() == !!scope.exception());
+    if (scope.exception()) [[unlikely]] {
         auto* err = scope.exception();
         scope.clearException();
         Bun__EventLoop__runCallback1(
@@ -379,12 +379,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrime, (JSC::JSGlobalObject * lexicalGlobalOb
     if (add) {
         if (ncrypto::BignumPointer::GetBitCount(add.get()) > size) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.add"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         if (rem && add <= rem) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.rem"_s);
-            return JSValue::encode({});
+            return {};
         }
     }
 
@@ -480,12 +480,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
     if (add) {
         if (ncrypto::BignumPointer::GetBitCount(add.get()) > size) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.add"_s);
-            return JSValue::encode({});
+            return {};
         }
 
         if (rem && add <= rem) [[unlikely]] {
             throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.rem"_s);
-            return JSValue::encode({});
+            return {};
         }
     }
 

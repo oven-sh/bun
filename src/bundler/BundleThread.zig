@@ -41,7 +41,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             // Blocks the calling thread until the bun build thread is created.
             // std.once also blocks other callers of this function until the first caller is done.
             fn loadOnceImpl() void {
-                const bundle_thread = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                const bundle_thread = bun.handleOom(bun.default_allocator.create(Self));
                 bundle_thread.* = uninitialized;
                 instance = bundle_thread;
 
@@ -92,7 +92,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 instance.generation +|= 1;
 
                 if (has_bundled) {
-                    bun.Mimalloc.mi_collect(false);
+                    bun.mimalloc.mi_collect(false);
                     has_bundled = false;
                 }
 
@@ -102,7 +102,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
         /// This is called from `Bun.build` in JavaScript.
         fn generateInNewThread(completion: *CompletionStruct, generation: bun.Generation) !void {
-            var heap = try ThreadlocalArena.init();
+            var heap = ThreadLocalArena.init();
             defer heap.deinit();
 
             const allocator = heap.allocator();
@@ -121,9 +121,9 @@ pub fn BundleThread(CompletionStruct: type) type {
                 transpiler,
                 null, // TODO: Kit
                 allocator,
-                JSC.AnyEventLoop.init(allocator),
+                jsc.AnyEventLoop.init(allocator),
                 false,
-                JSC.WorkPool.get(),
+                jsc.WorkPool.get(),
                 heap,
             );
 
@@ -135,7 +135,6 @@ pub fn BundleThread(CompletionStruct: type) type {
             completion.transpiler = this;
 
             defer {
-                this.graph.pool.reset();
                 ast_memory_allocator.pop();
                 this.deinitWithoutFreeingArena();
             }
@@ -146,7 +145,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 this.linker.source_maps.quoted_contents_wait_group.wait();
 
                 var out_log = Logger.Log.init(bun.default_allocator);
-                this.transpiler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+                bun.handleOom(this.transpiler.log.appendToWithRecycled(&out_log, true));
                 completion.log = out_log;
             }
 
@@ -155,36 +154,39 @@ pub fn BundleThread(CompletionStruct: type) type {
             } };
 
             var out_log = Logger.Log.init(bun.default_allocator);
-            this.transpiler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+            bun.handleOom(this.transpiler.log.appendToWithRecycled(&out_log, true));
             completion.log = out_log;
             completion.completeOnBundleThread();
         }
     };
 }
 
-const Transpiler = bun.Transpiler;
-const bun = @import("bun");
-const Output = bun.Output;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
+pub const Ref = bun.ast.Ref;
 
-const std = @import("std");
-const Logger = @import("../logger.zig");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-const linker = @import("../linker.zig");
-pub const Ref = @import("../ast/base.zig").Ref;
-const ThreadlocalArena = @import("../allocators/mimalloc_arena.zig").Arena;
-const allocators = @import("../allocators.zig");
-const Timer = @import("../system_timer.zig");
-
-pub const Index = @import("../ast/base.zig").Index;
-const JSC = bun.JSC;
-const Async = bun.Async;
-const bake = bun.bake;
-const bundler = bun.bundle_v2;
-const BundleV2 = bundler.BundleV2;
+pub const Index = bun.ast.Index;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const Logger = @import("../logger.zig");
+const Timer = @import("../system_timer.zig");
+const linker = @import("../linker.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Async = bun.Async;
+const Environment = bun.Environment;
+const Output = bun.Output;
+const Transpiler = bun.Transpiler;
+const bake = bun.bake;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const jsc = bun.jsc;
+
+const allocators = bun.allocators;
+const ThreadLocalArena = bun.allocators.MimallocArena;
+
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;

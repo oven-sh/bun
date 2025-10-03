@@ -56,11 +56,11 @@ static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key, cons
     }
 
     size_t signatureLen;
-    if (EVP_PKEY_sign(ctx.get(), nullptr, &signatureLen, toSign.data(), toSign.size()) <= 0)
+    if (EVP_PKEY_sign(ctx.get(), nullptr, &signatureLen, toSign.begin(), toSign.size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> signature(signatureLen);
-    if (EVP_PKEY_sign(ctx.get(), signature.data(), &signatureLen, toSign.data(), toSign.size()) <= 0)
+    if (EVP_PKEY_sign(ctx.get(), signature.begin(), &signatureLen, toSign.begin(), toSign.size()) <= 0)
         return Exception { OperationError };
     signature.shrink(signatureLen);
 
@@ -109,7 +109,7 @@ static ExceptionOr<bool> verifyWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD*
     if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
         return Exception { OperationError };
 
-    int ret = EVP_PKEY_verify(ctx.get(), signature.data(), signature.size(), digest->data(), digest->size());
+    int ret = EVP_PKEY_verify(ctx.get(), signature.begin(), signature.size(), digest->begin(), digest->size());
 
     return ret == 1;
 }
@@ -145,11 +145,11 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyRec
         return Exception { OperationError };
 
     size_t plaintextLen;
-    if (EVP_PKEY_verify_recover(ctx.get(), nullptr, &plaintextLen, signature.data(), signature.size()) <= 0)
+    if (EVP_PKEY_verify_recover(ctx.get(), nullptr, &plaintextLen, signature.begin(), signature.size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> plaintext(plaintextLen);
-    if (EVP_PKEY_verify_recover(ctx.get(), plaintext.data(), &plaintextLen, signature.data(), signature.size()) <= 0)
+    if (EVP_PKEY_verify_recover(ctx.get(), plaintext.begin(), &plaintextLen, signature.begin(), signature.size()) <= 0)
         return Exception { OperationError };
     plaintext.shrink(plaintextLen);
 

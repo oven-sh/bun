@@ -133,23 +133,23 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
 
 JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    VM& vm = lexicalGlobalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue optionsValue = callFrame->argument(0);
     V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     JSObject* options = optionsValue.getObject();
 
     JSValue callbackValue = callFrame->argument(1);
     if (!callbackValue.isUndefined()) {
         V::validateFunction(scope, lexicalGlobalObject, callbackValue, "callback"_s);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     std::optional<DhJobCtx> ctx = DhJobCtx::fromJS(lexicalGlobalObject, scope, options);
-    ASSERT(ctx.has_value() == !scope.exception());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
         DhJob::createAndSchedule(lexicalGlobalObject, WTFMove(*ctx), callbackValue);
@@ -162,7 +162,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject,
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "diffieHellman operation failed"_s);
     }
 
-    return JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, ctx->m_result.span()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(lexicalGlobalObject, ctx->m_result.span())));
 }
 
 } // namespace Bun

@@ -7,7 +7,7 @@ pub noinline fn computeChunks(
 
     bun.assert(this.dev_server == null); // use
 
-    var stack_fallback = std.heap.stackFallback(4096, this.allocator);
+    var stack_fallback = std.heap.stackFallback(4096, this.allocator());
     const stack_all = stack_fallback.get();
     var arena = bun.ArenaAllocator.init(stack_all);
     defer arena.deinit();
@@ -25,8 +25,11 @@ pub noinline fn computeChunks(
     const css_chunking = this.options.css_chunking;
     var html_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
     const loaders = this.parse_graph.input_files.items(.loader);
+    const ast_targets = this.graph.ast.items(.target);
 
     const code_splitting = this.graph.code_splitting;
+    const could_be_browser_target_from_server_build = this.options.target.isServerSide() and this.parse_graph.html_imports.html_source_indices.len > 0;
+    const has_server_html_imports = this.parse_graph.html_imports.server_source_indices.len > 0;
 
     // Create chunks for entry points
     for (entry_source_indices, 0..) |source_index, entry_id_| {
@@ -60,7 +63,8 @@ pub noinline fn computeChunks(
                     },
                     .entry_bits = entry_bits.*,
                     .content = .html,
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                    .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                 };
             }
         }
@@ -90,11 +94,12 @@ pub noinline fn computeChunks(
                     .content = .{
                         .css = .{
                             .imports_in_chunk_in_order = order,
-                            .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                            .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                         },
                     },
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
                     .has_html_chunk = has_html_chunk,
+                    .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                 };
             }
 
@@ -115,7 +120,8 @@ pub noinline fn computeChunks(
                 .javascript = .{},
             },
             .has_html_chunk = has_html_chunk,
-            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+            .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
         };
 
         {
@@ -129,7 +135,8 @@ pub noinline fn computeChunks(
             if (css_source_indices.len > 0) {
                 const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
 
-                const hash_to_use = if (!css_chunking)
+                const use_content_based_key = css_chunking or has_server_html_imports;
+                const hash_to_use = if (!use_content_based_key)
                     bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
                 else brk: {
                     var hasher = std.hash.Wyhash.init(5);
@@ -140,7 +147,7 @@ pub noinline fn computeChunks(
 
                 const css_chunk_entry = try css_chunks.getOrPut(hash_to_use);
 
-                js_chunk_entry.value_ptr.content.javascript.css_chunks = try this.allocator.dupe(u32, &.{
+                js_chunk_entry.value_ptr.content.javascript.css_chunks = try this.allocator().dupe(u32, &.{
                     @intCast(css_chunk_entry.index),
                 });
                 js_chunks_with_css += 1;
@@ -149,7 +156,7 @@ pub noinline fn computeChunks(
                     var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
-                            css_files_with_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                            bun.handleOom(css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}));
                         }
                     }
                     css_chunk_entry.value_ptr.* = .{
@@ -162,12 +169,13 @@ pub noinline fn computeChunks(
                         .content = .{
                             .css = .{
                                 .imports_in_chunk_in_order = order,
-                                .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                                .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                             },
                         },
                         .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
-                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
                         .has_html_chunk = has_html_chunk,
+                        .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
                     };
                 }
             }
@@ -200,6 +208,7 @@ pub noinline fn computeChunks(
                         var js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
 
                         if (!js_chunk_entry.found_existing) {
+                            const is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index.get()] == .browser;
                             js_chunk_entry.value_ptr.* = .{
                                 .entry_bits = entry_bits.*,
                                 .entry_point = .{
@@ -208,15 +217,16 @@ pub noinline fn computeChunks(
                                 .content = .{
                                     .javascript = .{},
                                 },
-                                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                                .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build,
                             };
                         }
 
-                        _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(source_index.get()))) catch unreachable;
+                        _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
                     } else {
                         var handler = Handler{
                             .chunks = js_chunks.values(),
-                            .allocator = this.allocator,
+                            .allocator = this.allocator(),
                             .source_id = source_index.get(),
                         };
                         entry_bits.forEach(Handler, &handler, Handler.next);
@@ -229,7 +239,7 @@ pub noinline fn computeChunks(
     // Sort the chunks for determinism. This matters because we use chunk indices
     // as sorting keys in a few places.
     const chunks: []Chunk = sort_chunks: {
-        var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count() + html_chunks.count());
+        var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator(), js_chunks.count() + css_chunks.count() + html_chunks.count());
 
         var sorted_keys = try BabyList(string).initCapacity(temp_allocator, js_chunks.count());
 
@@ -276,7 +286,7 @@ pub noinline fn computeChunks(
         }
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
-        try sorted_chunks.append(this.allocator, html_chunks.values());
+        try sorted_chunks.appendSlice(this.allocator(), html_chunks.values());
 
         break :sort_chunks sorted_chunks.slice();
     };
@@ -287,6 +297,12 @@ pub noinline fn computeChunks(
     // to look up the path for this chunk to use with the import.
     for (chunks, 0..) |*chunk, chunk_id| {
         if (chunk.entry_point.is_entry_point) {
+            // JS entry points that import CSS files generate two chunks, a JS chunk
+            // and a CSS chunk. Don't link the CSS chunk to the JS file since the CSS
+            // chunk is secondary (the JS chunk is primary).
+            if (chunk.content == .css and css_asts[chunk.entry_point.source_index] == null) {
+                continue;
+            }
             entry_point_chunk_indices[chunk.entry_point.source_index] = @intCast(chunk_id);
         }
     }
@@ -294,17 +310,24 @@ pub noinline fn computeChunks(
     // Determine the order of JS files (and parts) within the chunk ahead of time
     try this.findAllImportedPartsInJSOrder(temp_allocator, chunks);
 
+    // Handle empty chunks case
+    if (chunks.len == 0) {
+        this.unique_key_buf = "";
+        return chunks;
+    }
+
     const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
-    var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len * chunks.len);
+    var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator(), unique_key_item_len * chunks.len);
     this.unique_key_buf = unique_key_builder.allocatedSlice();
 
     errdefer {
-        unique_key_builder.deinit(this.allocator);
+        unique_key_builder.deinit(this.allocator());
         this.unique_key_buf = "";
     }
 
     const kinds = this.graph.files.items(.entry_point_kind);
     const output_paths = this.graph.entry_points.items(.output_path);
+    const bv2: *bundler.BundleV2 = @fieldParentPtr("linker", this);
     for (chunks, 0..) |*chunk, chunk_id| {
         // Assign a unique key to each chunk. This key encodes the index directly so
         // we can easily recover it later without needing to look it up in a map. The
@@ -317,21 +340,27 @@ pub noinline fn computeChunks(
             (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
         {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
-            if (this.parse_graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.entry_naming.len == 0) {
+            if (has_server_html_imports and bv2.transpiler.options.entry_naming.len == 0) {
                 chunk.template = PathTemplate.fileWithTarget;
             } else {
                 chunk.template = PathTemplate.file;
-                if (this.resolver.opts.entry_naming.len > 0)
-                    chunk.template.data = this.resolver.opts.entry_naming;
+                if (chunk.is_browser_chunk_from_server_build) {
+                    chunk.template.data = bv2.transpilerForTarget(.browser).options.entry_naming;
+                } else {
+                    chunk.template.data = bv2.transpiler.options.entry_naming;
+                }
             }
         } else {
-            if (this.parse_graph.html_imports.server_source_indices.len > 0 and this.resolver.opts.chunk_naming.len == 0) {
+            if (has_server_html_imports and bv2.transpiler.options.chunk_naming.len == 0) {
                 chunk.template = PathTemplate.chunkWithTarget;
             } else {
                 chunk.template = PathTemplate.chunk;
+                if (chunk.is_browser_chunk_from_server_build) {
+                    chunk.template.data = bv2.transpilerForTarget(.browser).options.chunk_naming;
+                } else {
+                    chunk.template.data = bv2.transpiler.options.chunk_naming;
+                }
             }
-            if (this.resolver.opts.chunk_naming.len > 0)
-                chunk.template.data = this.resolver.opts.chunk_naming;
         }
 
         const pathname = Fs.PathName.init(output_paths[chunk.entry_point.entry_point_id].slice());
@@ -340,7 +369,6 @@ pub noinline fn computeChunks(
 
         if (chunk.template.needs(.target)) {
             // Determine the target from the AST of the entry point source
-            const ast_targets = this.graph.ast.items(.target);
             const chunk_target = ast_targets[chunk.entry_point.source_index];
             chunk.template.placeholder.target = switch (chunk_target) {
                 .browser => "browser",
@@ -361,10 +389,13 @@ pub noinline fn computeChunks(
                 };
                 defer dir.close();
 
-                break :dir try dir.getFdPath(&real_path_buf);
+                break :dir dir.getFdPath(&real_path_buf) catch |err| {
+                    try this.log.addErrorFmt(null, .Empty, this.allocator(), "{s}: Failed to get full path for directory '{s}'", .{ @errorName(err), dir_path });
+                    return error.BuildFailed;
+                };
             };
 
-            chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, dir);
+            chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator(), this.resolver.opts.root_dir, dir);
         }
     }
 
@@ -381,25 +412,25 @@ const JSChunkKeyFormatter = struct {
     }
 };
 
-const bun = @import("bun");
-const resolve_path = bun.bundle_v2.resolve_path;
-const Fs = bun.bundle_v2.Fs;
-const options = bun.options;
-const BabyList = bun.BabyList;
-const Index = bun.bundle_v2.Index;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
-const string = bun.string;
-
-const std = @import("std");
-const sourcemap = bun.sourcemap;
-
-const AutoBitSet = bun.bit_set.AutoBitSet;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const options = bun.options;
+const sourcemap = bun.sourcemap;
+const AutoBitSet = bun.bit_set.AutoBitSet;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
-const PathTemplate = bundler.PathTemplate;
 const EntryPoint = bundler.EntryPoint;
+const Fs = bun.bundle_v2.Fs;
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const PathTemplate = bundler.PathTemplate;
+const resolve_path = bun.bundle_v2.resolve_path;

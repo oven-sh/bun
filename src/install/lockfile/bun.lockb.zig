@@ -1,3 +1,5 @@
+const Serializer = @This();
+
 pub const version = "bun-lockfile-format-v0\n";
 const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
@@ -251,6 +253,7 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
 
 pub const SerializerLoadResult = struct {
     packages_need_update: bool = false,
+    migrated_from_lockb_v2: bool = false,
 };
 
 pub fn load(
@@ -269,9 +272,20 @@ pub fn load(
         return error.InvalidLockfile;
     }
 
+    var migrate_from_v2 = false;
     const format = try reader.readInt(u32, .little);
-    if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
-        return error.@"Outdated lockfile version";
+    if (format > @intFromEnum(Lockfile.FormatVersion.current)) {
+        return error.@"Unexpected lockfile version";
+    }
+
+    if (format < @intFromEnum(Lockfile.FormatVersion.current)) {
+
+        // we only allow migrating from v2 to v3 or above
+        if (format != @intFromEnum(Lockfile.FormatVersion.v2)) {
+            return error.@"Outdated lockfile version";
+        }
+
+        migrate_from_v2 = true;
     }
 
     lockfile.format = Lockfile.FormatVersion.current;
@@ -288,10 +302,13 @@ pub fn load(
         stream,
         total_buffer_size,
         allocator,
+        migrate_from_v2,
     );
 
     lockfile.packages = packages_load_result.list;
+
     res.packages_need_update = packages_load_result.needs_update;
+    res.migrated_from_lockb_v2 = migrate_from_v2;
 
     lockfile.buffers = try Lockfile.Buffers.load(
         stream,
@@ -320,11 +337,30 @@ pub fn load(
                     );
                     defer workspace_package_name_hashes.deinit(allocator);
 
-                    var workspace_versions_list = try Lockfile.Buffers.readArray(
-                        stream,
-                        allocator,
-                        std.ArrayListUnmanaged(Semver.Version),
-                    );
+                    var workspace_versions_list = workspace_versions_list: {
+                        if (!migrate_from_v2) {
+                            break :workspace_versions_list try Lockfile.Buffers.readArray(
+                                stream,
+                                allocator,
+                                std.ArrayListUnmanaged(Semver.Version),
+                            );
+                        }
+
+                        var old_versions_list = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(Semver.VersionType(u32)),
+                        );
+                        defer old_versions_list.deinit(allocator);
+
+                        var versions_list: std.ArrayListUnmanaged(Semver.Version) = try .initCapacity(allocator, old_versions_list.items.len);
+                        for (old_versions_list.items) |old_version| {
+                            versions_list.appendAssumeCapacity(old_version.migrate());
+                        }
+
+                        break :workspace_versions_list versions_list;
+                    };
+
                     comptime {
                         if (PackageNameHash != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).key)) {
                             @compileError("VersionHashMap must be in sync with serialization");
@@ -554,28 +590,32 @@ pub fn load(
     return res;
 }
 
+const string = []const u8;
+
+const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Dependency = install.Dependency;
+
+const bun = @import("bun");
 const Environment = bun.Environment;
-const Lockfile = install.Lockfile;
+const assert = bun.assert;
+const logger = bun.logger;
+const strings = bun.strings;
+const z_allocator = bun.z_allocator;
+
+const Semver = bun.Semver;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const Dependency = install.Dependency;
 const PackageID = install.PackageID;
-const PackageIndex = Lockfile.PackageIndex;
 const PackageManager = install.PackageManager;
 const PackageNameAndVersionHash = install.PackageNameAndVersionHash;
 const PackageNameHash = install.PackageNameHash;
 const PatchedDep = install.PatchedDep;
-const Semver = bun.Semver;
-const Serializer = @This();
+const alignment_bytes_to_repeat_buffer = install.alignment_bytes_to_repeat_buffer;
+
+const Lockfile = install.Lockfile;
+const PackageIndex = Lockfile.PackageIndex;
 const Stream = Lockfile.Stream;
-const String = bun.Semver.String;
 const StringPool = Lockfile.StringPool;
 const VersionHashMap = Lockfile.VersionHashMap;
-const alignment_bytes_to_repeat_buffer = install.alignment_bytes_to_repeat_buffer;
-const assert = bun.assert;
-const bun = @import("bun");
-const install = bun.install;
-const logger = bun.logger;
-const std = @import("std");
-const string = []const u8;
-const strings = bun.strings;
-const z_allocator = bun.z_allocator;

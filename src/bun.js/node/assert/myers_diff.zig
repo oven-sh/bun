@@ -5,12 +5,6 @@
 //! This file has tests defined in it which _cannot_ be run if `@import("bun")` is used!
 //!
 //! Run tests with `:zig test %`
-const std = @import("std");
-const builtin = @import("builtin");
-const mem = std.mem;
-const Allocator = mem.Allocator;
-const stackFallback = std.heap.stackFallback;
-const assert = std.debug.assert;
 
 /// Comptime diff configuration. Defaults are usually sufficient.
 pub const Options = struct {
@@ -50,7 +44,7 @@ const int = i64; // must be large enough to hold all valid values of `uint` w/o 
 ///
 /// ## Example
 /// ```zig
-/// const myers_diff = @import("inode/assert/myers_diff.zig");
+/// const myers_diff = @import("./inode/assert/myers_diff.zig");
 /// const StrDiffer = myers_diff.Differ([]const u8, .{});
 /// const actual = &[_][]const u8{
 ///   "foo",
@@ -419,7 +413,6 @@ pub fn DiffList(comptime T: type) type {
 
 // =============================================================================
 
-const t = std.testing;
 test areLinesEqual {
     // check_comma_disparity is never respected when comparing chars
     try t.expect(areLinesEqual(u8, 'a', 'a', false));
@@ -625,3 +618,13 @@ pub fn split(
 
     return lines;
 }
+
+const builtin = @import("builtin");
+
+const std = @import("std");
+const t = std.testing;
+const assert = std.debug.assert;
+const stackFallback = std.heap.stackFallback;
+
+const mem = std.mem;
+const Allocator = mem.Allocator;

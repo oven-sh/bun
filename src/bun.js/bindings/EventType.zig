@@ -1,6 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-
 pub const EventType = enum(u8) {
     Event,
     MessageEvent,
@@ -29,3 +26,7 @@ pub const EventType = enum(u8) {
         };
     }
 };
+
+const string = []const u8;
+
+const bun = @import("bun");

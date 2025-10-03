@@ -8,8 +8,8 @@ if (!common.hasCrypto) { common.skip('missing crypto'); }
 // Capitalized headers
 
 const http2 = require('http2');
-const { throws, strictEqual } = require('assert');
-const { once } = require('events');
+const { throws } = require('assert');
+
 {
   const server = http2.createServer(common.mustCall((req, res) => {
     throws(() => {
@@ -28,8 +28,8 @@ const { once } = require('events');
     res.end();
   }));
 
-  server.listen(0, "127.0.0.1", common.mustCall(() => {
-    const session = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  server.listen(0, common.mustCall(() => {
+    const session = http2.connect(`http://localhost:${server.address().port}`);
     session.request({ 'test_': 123, 'TEST': 123 })
       .on('end', common.mustCall(() => {
         session.close();
@@ -40,53 +40,42 @@ const { once } = require('events');
 
 {
   const server = http2.createServer();
-  server.listen(0, "127.0.0.1", common.mustCall(async () => {
-    const session = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    await once(session, 'connect');
-    session.on('error', common.mustCall((e) => {
-      
-      strictEqual(e.code, 'ERR_INVALID_HTTP_TOKEN');
-      session.close()
-      server.close();
-    }));
+  server.listen(0, common.mustCall(() => {
+    const session = http2.connect(`http://localhost:${server.address().port}`);
     throws(() => {
       session.request({ 't est': 123 });
     }, {
       code: 'ERR_INVALID_HTTP_TOKEN'
     });
+    session.close();
+    server.close();
   }));
 }
 
-
 {
   const server = http2.createServer();
-  server.listen(0, "127.0.0.1", common.mustCall(async () => {
-    const session = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    await once(session, 'connect');
-    session.on('error', common.mustCall((e) => {
-      strictEqual(e.code, 'ERR_INVALID_HTTP_TOKEN');
-      session.close();
-      server.close();
-    }));
+  server.listen(0, common.mustCall(() => {
+    const session = http2.connect(`http://localhost:${server.address().port}`);
     throws(() => {
       session.request({ ' test': 123 });
     }, {
       code: 'ERR_INVALID_HTTP_TOKEN'
     });
+    session.close();
+    server.close();
   }));
 }
 
 {
   const server = http2.createServer();
-  server.listen(0, "127.0.0.1", common.mustCall(async () => {
-    const session4 = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    await once(session4, 'connect');
+  server.listen(0, common.mustCall(() => {
+    const session = http2.connect(`http://localhost:${server.address().port}`);
     throws(() => {
-      session4.request({ ':test': 123 });
+      session.request({ ':test': 123 });
     }, {
       code: 'ERR_HTTP2_INVALID_PSEUDOHEADER'
     });
-    session4.close();
+    session.close();
     server.close();
   }));
 }

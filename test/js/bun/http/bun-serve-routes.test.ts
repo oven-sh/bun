@@ -561,7 +561,7 @@ it("throws a validation error when passing invalid routes", () => {
     });
     \`\`\`
 
-    See https://bun.sh/docs/api/http for more information."
+    See https://bun.com/docs/api/http for more information."
   `);
 });
 
@@ -586,7 +586,7 @@ it("throws a validation error when routes object is empty and fetch is not speci
            return new Response("Hello")
          }
 
-    Learn more at https://bun.sh/docs/api/http"
+    Learn more at https://bun.com/docs/api/http"
   `);
 });
 
@@ -611,7 +611,7 @@ it("throws a validation error when routes object is undefined and fetch is not s
            return new Response("Hello")
          }
 
-    Learn more at https://bun.sh/docs/api/http"
+    Learn more at https://bun.com/docs/api/http"
   `);
 });
 

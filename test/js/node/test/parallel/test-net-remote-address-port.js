@@ -34,8 +34,10 @@ const remoteAddrCandidates = [ common.localhostIPv4,
 const remoteFamilyCandidates = ['IPv4', 'IPv6'];
 
 const server = net.createServer(common.mustCall(function(socket) {
-  assert.ok(remoteAddrCandidates.includes(socket.remoteAddress), `Invalid remoteAddress: ${socket.remoteAddress}`);
-  assert.ok(remoteFamilyCandidates.includes(socket.remoteFamily), `Invalid remoteFamily: ${socket.remoteFamily}`);
+  assert.ok(remoteAddrCandidates.includes(socket.remoteAddress),
+            `Invalid remoteAddress: ${socket.remoteAddress}`);
+  assert.ok(remoteFamilyCandidates.includes(socket.remoteFamily),
+            `Invalid remoteFamily: ${socket.remoteFamily}`);
   assert.ok(socket.remotePort);
   assert.notStrictEqual(socket.remotePort, this.address().port);
   socket.on('end', function() {
@@ -60,26 +62,22 @@ server.listen(0, function() {
   assert.strictEqual(client2.remotePort, undefined);
 
   client.on('connect', function() {
-    console.log(1, !!client._handle, client.remoteAddress, client.remoteFamily, client.remotePort);
     assert.ok(remoteAddrCandidates.includes(client.remoteAddress));
     assert.ok(remoteFamilyCandidates.includes(client.remoteFamily));
     assert.strictEqual(client.remotePort, server.address().port);
     client.end();
   });
   client.on('close', function() {
-    console.log(2, !!client._handle, client.remoteAddress, client.remoteFamily);
     assert.ok(remoteAddrCandidates.includes(client.remoteAddress));
     assert.ok(remoteFamilyCandidates.includes(client.remoteFamily));
   });
   client2.on('connect', function() {
-    console.log(3, !!client2._handle, client2.remoteAddress, client2.remoteFamily, client2.remotePort);
     assert.ok(remoteAddrCandidates.includes(client2.remoteAddress));
     assert.ok(remoteFamilyCandidates.includes(client2.remoteFamily));
     assert.strictEqual(client2.remotePort, server.address().port);
     client2.end();
   });
   client2.on('close', function() {
-    console.log(4, !!client2._handle, client2.remoteAddress, client2.remoteFamily);
     assert.ok(remoteAddrCandidates.includes(client2.remoteAddress));
     assert.ok(remoteFamilyCandidates.includes(client2.remoteFamily));
   });

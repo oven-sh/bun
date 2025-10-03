@@ -1,38 +1,5 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-
-const FileSystem = @import("../fs.zig").FileSystem;
-const options = @import("../options.zig");
-const js_ast = bun.JSAst;
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const Command = @import("../cli.zig").Command;
-
-const DotEnv = @import("../env_loader.zig");
-const which = @import("../which.zig").which;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
-const PathString = bun.PathString;
-const HTTPThread = bun.http.HTTPThread;
-
-const JSC = bun.JSC;
-const jest = JSC.Jest;
-const TestRunner = JSC.Jest.TestRunner;
-const Snapshots = JSC.Snapshot.Snapshots;
-const Test = TestRunner.Test;
-const coverage = bun.sourcemap.coverage;
-const CodeCoverageReport = coverage.Report;
-const uws = bun.uws;
-
-const Scanner = @import("test/Scanner.zig");
 
 fn escapeXml(str: string, writer: anytype) !void {
     var last: usize = 0;
@@ -72,35 +39,37 @@ fn escapeXml(str: string, writer: anytype) !void {
         try writer.writeAll(str[last..]);
     }
 }
-fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_color: bool) []const u8 {
-    comptime {
-        // emoji and color might be split into two different options in the future
-        // some terminals support color, but not emoji.
-        // For now, they are the same.
-        return switch (emoji_or_color) {
-            true => switch (status) {
-                .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
-                .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
-                .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
-                .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
-                else => @compileError("Invalid status " ++ @tagName(status)),
-            },
-            else => switch (status) {
-                .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
-                .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
-                .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
-                .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
-                else => @compileError("Invalid status " ++ @tagName(status)),
-            },
-        };
-    }
+fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []const u8 {
+    // emoji and color might be split into two different options in the future
+    // some terminals support color, but not emoji.
+    // For now, they are the same.
+    return switch (emoji_or_color) {
+        true => switch (status.basicResult()) {
+            .pending => Output.prettyFmt("<r><d>…<r>", emoji_or_color),
+            .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
+            .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
+            .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
+            .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
+        },
+        else => switch (status.basicResult()) {
+            .pending => Output.prettyFmt("<r><d>(pending)<r>", emoji_or_color),
+            .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
+            .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
+            .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
+            .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
+        },
+    };
 }
 
-fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
-    if (Output.enable_ansi_colors_stderr)
-        writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
-    else
-        writer.print(fmtStatusTextLine(status, false), .{}) catch unreachable;
+pub fn writeTestStatusLine(comptime status: bun_test.Execution.Result, writer: anytype) void {
+    // When using AI agents, only print failures
+    if (Output.isAIAgent() and status != .fail) {
+        return;
+    }
+
+    switch (Output.enable_ansi_colors_stderr) {
+        inline else => |enable_ansi_colors_stderr| writer.print(comptime fmtStatusTextLine(status, enable_ansi_colors_stderr), .{}) catch unreachable,
+    }
 }
 
 // Remaining TODOs:
@@ -114,6 +83,9 @@ pub const JunitReporter = struct {
     offset_of_testsuite_value: usize = 0,
     current_file: string = "",
     properties_list_to_repeat_in_every_test_suite: ?[]const u8 = null,
+
+    suite_stack: std.ArrayListUnmanaged(SuiteInfo) = .{},
+    current_depth: u32 = 0,
 
     hostname_value: ?string = null,
 
@@ -145,6 +117,20 @@ pub const JunitReporter = struct {
         return null;
     }
 
+    const SuiteInfo = struct {
+        name: string,
+        offset_of_attributes: usize,
+        metrics: Metrics = .{},
+        is_file_suite: bool = false,
+        line_number: u32 = 0,
+
+        pub fn deinit(this: *SuiteInfo, allocator: std.mem.Allocator) void {
+            if (!this.is_file_suite and this.name.len > 0) {
+                allocator.free(this.name);
+            }
+        }
+    };
+
     const Metrics = struct {
         test_cases: u32 = 0,
         assertions: u32 = 0,
@@ -159,13 +145,35 @@ pub const JunitReporter = struct {
             this.skipped += other.skipped;
         }
     };
+
     pub fn init() *JunitReporter {
         return JunitReporter.new(
-            .{ .contents = .{}, .total_metrics = .{} },
+            .{ .contents = .{}, .total_metrics = .{}, .suite_stack = .{} },
         );
     }
 
     pub const new = bun.TrivialNew(JunitReporter);
+
+    pub fn deinit(this: *JunitReporter) void {
+        for (this.suite_stack.items) |*suite_info| {
+            suite_info.deinit(bun.default_allocator);
+        }
+        this.suite_stack.deinit(bun.default_allocator);
+
+        this.contents.deinit(bun.default_allocator);
+
+        if (this.hostname_value) |hostname| {
+            if (hostname.len > 0) {
+                bun.default_allocator.free(hostname);
+            }
+        }
+
+        if (this.properties_list_to_repeat_in_every_test_suite) |properties| {
+            if (properties.len > 0) {
+                bun.default_allocator.free(properties);
+            }
+        }
+    }
 
     fn generatePropertiesList(this: *JunitReporter) !void {
         const PropertiesList = struct {
@@ -253,7 +261,18 @@ pub const JunitReporter = struct {
         this.properties_list_to_repeat_in_every_test_suite = buffer.items;
     }
 
+    fn getIndent(depth: u32) []const u8 {
+        const spaces = "                                                                                ";
+        const indent_size = 2;
+        const total_spaces = (depth + 1) * indent_size;
+        return spaces[0..@min(total_spaces, spaces.len)];
+    }
+
     pub fn beginTestSuite(this: *JunitReporter, name: string) !void {
+        return this.beginTestSuiteWithLine(name, 0, true);
+    }
+
+    pub fn beginTestSuiteWithLine(this: *JunitReporter, name: string, line_number: u32, is_file_suite: bool) !void {
         if (this.contents.items.len == 0) {
             try this.contents.appendSlice(bun.default_allocator,
                 \\<?xml version="1.0" encoding="UTF-8"?>
@@ -265,39 +284,68 @@ pub const JunitReporter = struct {
             try this.contents.appendSlice(bun.default_allocator, ">\n");
         }
 
-        try this.contents.appendSlice(bun.default_allocator,
-            \\  <testsuite name="
-        );
-
+        const indent = getIndent(this.current_depth);
+        try this.contents.appendSlice(bun.default_allocator, indent);
+        try this.contents.appendSlice(bun.default_allocator, "<testsuite name=\"");
         try escapeXml(name, this.contents.writer(bun.default_allocator));
+        try this.contents.appendSlice(bun.default_allocator, "\"");
 
-        try this.contents.appendSlice(bun.default_allocator, "\" ");
-        this.offset_of_testsuite_value = this.contents.items.len;
-        try this.contents.appendSlice(bun.default_allocator, ">\n");
-
-        if (this.properties_list_to_repeat_in_every_test_suite == null) {
-            try this.generatePropertiesList();
+        if (is_file_suite) {
+            try this.contents.appendSlice(bun.default_allocator, " file=\"");
+            try escapeXml(name, this.contents.writer(bun.default_allocator));
+            try this.contents.appendSlice(bun.default_allocator, "\"");
+        } else if (this.current_file.len > 0) {
+            try this.contents.appendSlice(bun.default_allocator, " file=\"");
+            try escapeXml(this.current_file, this.contents.writer(bun.default_allocator));
+            try this.contents.appendSlice(bun.default_allocator, "\"");
         }
 
-        if (this.properties_list_to_repeat_in_every_test_suite) |properties_list| {
-            if (properties_list.len > 0) {
-                try this.contents.appendSlice(bun.default_allocator, properties_list);
+        if (line_number > 0) {
+            try this.contents.writer(bun.default_allocator).print(" line=\"{d}\"", .{line_number});
+        }
+
+        try this.contents.appendSlice(bun.default_allocator, " ");
+        const offset_of_attributes = this.contents.items.len;
+        try this.contents.appendSlice(bun.default_allocator, ">\n");
+
+        if (is_file_suite) {
+            if (this.properties_list_to_repeat_in_every_test_suite == null) {
+                try this.generatePropertiesList();
+            }
+
+            if (this.properties_list_to_repeat_in_every_test_suite) |properties_list| {
+                if (properties_list.len > 0) {
+                    try this.contents.appendSlice(bun.default_allocator, properties_list);
+                }
             }
         }
 
-        this.current_file = name;
+        try this.suite_stack.append(bun.default_allocator, SuiteInfo{
+            .name = if (is_file_suite) name else try bun.default_allocator.dupe(u8, name),
+            .offset_of_attributes = offset_of_attributes,
+            .is_file_suite = is_file_suite,
+            .line_number = line_number,
+        });
+
+        this.current_depth += 1;
+        if (is_file_suite) {
+            this.current_file = name;
+        }
     }
 
     pub fn endTestSuite(this: *JunitReporter) !void {
+        if (this.suite_stack.items.len == 0) return;
+
+        this.current_depth -= 1;
+        var suite_info = this.suite_stack.swapRemove(this.suite_stack.items.len - 1);
+        defer suite_info.deinit(bun.default_allocator);
+
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(4096, arena.allocator());
         const allocator = stack_fallback_allocator.get();
 
-        const metrics = &this.testcases_metrics;
-        this.total_metrics.add(metrics);
-
-        const elapsed_time_ms = metrics.elapsed_time;
+        const elapsed_time_ms = suite_info.metrics.elapsed_time;
         const elapsed_time_ms_f64: f64 = @floatFromInt(elapsed_time_ms);
         const elapsed_time_seconds = elapsed_time_ms_f64 / std.time.ms_per_s;
 
@@ -305,34 +353,50 @@ pub const JunitReporter = struct {
         const summary = try std.fmt.allocPrint(allocator,
             \\tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}" hostname="{s}"
         , .{
-            metrics.test_cases,
-            metrics.assertions,
-            metrics.failures,
-            metrics.skipped,
+            suite_info.metrics.test_cases,
+            suite_info.metrics.assertions,
+            suite_info.metrics.failures,
+            suite_info.metrics.skipped,
             elapsed_time_seconds,
             this.getHostname() orelse "",
         });
-        this.testcases_metrics = .{};
-        this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuite_value, summary) catch bun.outOfMemory();
 
-        try this.contents.appendSlice(bun.default_allocator, "  </testsuite>\n");
+        bun.handleOom(this.contents.insertSlice(bun.default_allocator, suite_info.offset_of_attributes, summary));
+
+        const indent = getIndent(this.current_depth);
+        try this.contents.appendSlice(bun.default_allocator, indent);
+        try this.contents.appendSlice(bun.default_allocator, "</testsuite>\n");
+
+        if (this.suite_stack.items.len > 0) {
+            this.suite_stack.items[this.suite_stack.items.len - 1].metrics.add(&suite_info.metrics);
+        } else {
+            this.total_metrics.add(&suite_info.metrics);
+        }
     }
 
     pub fn writeTestCase(
         this: *JunitReporter,
-        status: TestRunner.Test.Status,
+        status: bun.jsc.Jest.bun_test.Execution.Result,
         file: string,
         name: string,
         class_name: string,
         assertions: u32,
         elapsed_ns: u64,
+        line_number: u32,
     ) !void {
         const elapsed_ns_f64: f64 = @floatFromInt(elapsed_ns);
         const elapsed_ms = elapsed_ns_f64 / std.time.ns_per_ms;
-        this.testcases_metrics.elapsed_time +|= @as(u64, @intFromFloat(elapsed_ms));
-        this.testcases_metrics.test_cases += 1;
 
-        try this.contents.appendSlice(bun.default_allocator, "    <testcase");
+        if (this.suite_stack.items.len > 0) {
+            var current_suite = &this.suite_stack.items[this.suite_stack.items.len - 1];
+            current_suite.metrics.elapsed_time +|= @as(u64, @intFromFloat(elapsed_ms));
+            current_suite.metrics.test_cases += 1;
+            current_suite.metrics.assertions += assertions;
+        }
+
+        const indent = getIndent(this.current_depth);
+        try this.contents.appendSlice(bun.default_allocator, indent);
+        try this.contents.appendSlice(bun.default_allocator, "<testcase");
         try this.contents.appendSlice(bun.default_allocator, " name=\"");
         try escapeXml(name, this.contents.writer(bun.default_allocator));
         try this.contents.appendSlice(bun.default_allocator, "\" classname=\"");
@@ -346,65 +410,113 @@ pub const JunitReporter = struct {
         try escapeXml(file, this.contents.writer(bun.default_allocator));
         try this.contents.appendSlice(bun.default_allocator, "\"");
 
-        try this.contents.writer(bun.default_allocator).print(" assertions=\"{d}\"", .{assertions});
+        if (line_number > 0) {
+            try this.contents.writer(bun.default_allocator).print(" line=\"{d}\"", .{line_number});
+        }
 
-        this.testcases_metrics.assertions += assertions;
+        try this.contents.writer(bun.default_allocator).print(" assertions=\"{d}\"", .{assertions});
 
         switch (status) {
             .pass => {
                 try this.contents.appendSlice(bun.default_allocator, " />\n");
             },
             .fail => {
-                this.testcases_metrics.failures += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <failure type=\"AssertionError\" />\n    </testcase>\n");
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
+                }
                 // TODO: add the failure message
                 // if (failure_message) |msg| {
                 //     try this.contents.appendSlice(bun.default_allocator, " message=\"");
                 //     try escapeXml(msg, this.contents.writer(bun.default_allocator));
                 //     try this.contents.appendSlice(bun.default_allocator, "\"");
                 // }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "  <failure type=\"AssertionError\" />\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
             .fail_because_failing_test_passed => {
-                this.testcases_metrics.failures += 1;
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
+                }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
                 try this.contents.writer(bun.default_allocator).print(
-                    \\>
-                    \\      <failure message="test marked with .failing() did not throw" type="AssertionError"/>
-                    \\    </testcase>
+                    \\  <failure message="test marked with .failing() did not throw" type="AssertionError"/>
+                    \\
                 , .{});
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
             .fail_because_expected_assertion_count => {
-                this.testcases_metrics.failures += 1;
-                // TODO: add the failure message
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
+                }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
                 try this.contents.writer(bun.default_allocator).print(
-                    \\>
-                    \\      <failure message="Expected more assertions, but only received {d}" type="AssertionError"/>
-                    \\    </testcase>
+                    \\  <failure message="Expected more assertions, but only received {d}" type="AssertionError"/>
+                    \\
                 , .{assertions});
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
             .fail_because_todo_passed => {
-                this.testcases_metrics.failures += 1;
-                // TODO: add the failure message
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
+                }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
                 try this.contents.writer(bun.default_allocator).print(
-                    \\>
-                    \\      <failure message="TODO passed" type="AssertionError"/>
-                    \\    </testcase>
+                    \\  <failure message="TODO passed" type="AssertionError"/>
+                    \\
                 , .{});
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
             .fail_because_expected_has_assertions => {
-                this.testcases_metrics.failures += 1;
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
+                }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
                 try this.contents.writer(bun.default_allocator).print(
-                    \\>
-                    \\      <failure message="Expected to have assertions, but none were run" type="AssertionError"/>
-                    \\    </testcase>
+                    \\  <failure message="Expected to have assertions, but none were run" type="AssertionError"/>
+                    \\
                 , .{});
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
-            .skip => {
-                this.testcases_metrics.skipped += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped />\n    </testcase>\n");
+            .skipped_because_label, .skip => {
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.skipped += 1;
+                }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "  <skipped />\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
             .todo => {
-                this.testcases_metrics.skipped += 1;
-                try this.contents.appendSlice(bun.default_allocator, ">\n      <skipped message=\"TODO\" />\n    </testcase>\n");
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.skipped += 1;
+                }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "  <skipped message=\"TODO\" />\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
+            },
+            .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_hook_timeout, .fail_because_hook_timeout_with_done_callback => {
+                if (this.suite_stack.items.len > 0) {
+                    this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
+                }
+                try this.contents.appendSlice(bun.default_allocator, ">\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "  <failure type=\"TimeoutError\" />\n");
+                try this.contents.appendSlice(bun.default_allocator, indent);
+                try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
             .pending => unreachable,
         }
@@ -412,6 +524,11 @@ pub const JunitReporter = struct {
 
     pub fn writeToFile(this: *JunitReporter, path: string) !void {
         if (this.contents.items.len == 0) return;
+
+        while (this.suite_stack.items.len > 0) {
+            try this.endTestSuite();
+        }
+
         {
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
@@ -428,8 +545,8 @@ pub const JunitReporter = struct {
                 metrics.skipped,
                 elapsed_time,
             });
-            this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuites_value, summary) catch bun.outOfMemory();
-            this.contents.appendSlice(bun.default_allocator, "</testsuites>\n") catch bun.outOfMemory();
+            bun.handleOom(this.contents.insertSlice(bun.default_allocator, this.offset_of_testsuites_value, summary));
+            bun.handleOom(this.contents.appendSlice(bun.default_allocator, "</testsuites>\n"));
         }
 
         var junit_path_buf: bun.PathBuffer = undefined;
@@ -452,17 +569,11 @@ pub const JunitReporter = struct {
             },
         }
     }
-
-    pub fn deinit(this: *JunitReporter) void {
-        this.contents.deinit(bun.default_allocator);
-    }
 };
 
 pub const CommandLineReporter = struct {
     jest: TestRunner,
-    callback: TestRunner.Callback,
     last_dot: u32 = 0,
-    summary: Summary = Summary{},
     prev_file: u64 = 0,
     repeat_count: u32 = 1,
 
@@ -474,15 +585,6 @@ pub const CommandLineReporter = struct {
 
     pub const FileReporter = union(enum) {
         junit: *JunitReporter,
-    };
-
-    pub const Summary = struct {
-        pass: u32 = 0,
-        expectations: u32 = 0,
-        skip: u32 = 0,
-        todo: u32 = 0,
-        fail: u32 = 0,
-        files: u32 = 0,
     };
 
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
@@ -499,72 +601,118 @@ pub const CommandLineReporter = struct {
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
     fn printTestLine(
-        status: TestRunner.Test.Status,
-        label: string,
+        comptime status: bun_test.Execution.Result,
+        buntest: *bun_test.BunTest,
+        sequence: *bun_test.Execution.ExecutionSequence,
+        test_entry: *bun_test.ExecutionEntry,
         elapsed_ns: u64,
-        parent: ?*jest.DescribeScope,
-        assertions: u32,
-        comptime skip: bool,
         writer: anytype,
-        file: string,
-        file_reporter: ?FileReporter,
+        comptime dim: bool,
     ) void {
-        var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
-        var parent_ = parent;
+        var scopes_stack = bun.BoundedArray(*bun_test.DescribeScope, 64).init(0) catch unreachable;
+        var parent_: ?*bun_test.DescribeScope = test_entry.base.parent;
+        const assertions = sequence.expect_call_count;
+        const line_number = test_entry.base.line_no;
+
+        const file: []const u8 = if (bun.jsc.Jest.Jest.runner) |runner| runner.files.get(buntest.file_id).source.path.text else "";
 
         while (parent_) |scope| {
             scopes_stack.append(scope) catch break;
-            parent_ = scope.parent;
+            parent_ = scope.base.parent;
         }
 
-        const scopes: []*jest.DescribeScope = scopes_stack.slice();
+        const scopes: []*bun_test.DescribeScope = scopes_stack.slice();
+        const display_label = test_entry.base.name orelse "(unnamed)";
 
-        const display_label = if (label.len > 0) label else "test";
+        // Quieter output when claude code is in use.
+        if (!Output.isAIAgent() or !status.isPass(.pending_is_fail)) {
+            const color_code, const line_color_code = switch (dim) {
+                true => .{ "<d>", "<r><d>" },
+                false => .{ "", "<r><b>" },
+            };
 
-        const color_code = comptime if (skip) "<d>" else "";
-
-        if (Output.enable_ansi_colors_stderr) {
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
-
-                writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
-            }
-        } else {
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
-            }
-        }
-
-        const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
-
-        if (Output.enable_ansi_colors_stderr)
-            writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
-        else
-            writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
-
-        if (elapsed_ns > (std.time.ns_per_us * 10)) {
-            writer.print(" {any}", .{
-                Output.ElapsedFormatter{
-                    .colors = Output.enable_ansi_colors_stderr,
-                    .duration_ns = elapsed_ns,
+            switch (Output.enable_ansi_colors_stderr) {
+                inline else => |_| switch (status) {
+                    .fail_because_expected_assertion_count => {
+                        // not sent to writer so it doesn't get printed twice
+                        const expected_count = if (sequence.expect_assertions == .exact) sequence.expect_assertions.exact else 12345;
+                        Output.err(error.AssertionError, "expected <green>{d} assertion{s}<r>, but test ended with <red>{d} assertion{s}<r>\n", .{
+                            expected_count,
+                            if (expected_count == 1) "" else "s",
+                            sequence.expect_call_count,
+                            if (sequence.expect_call_count == 1) "" else "s",
+                        });
+                        Output.flush();
+                    },
+                    .fail_because_expected_has_assertions => {
+                        Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
+                        Output.flush();
+                    },
+                    .fail_because_timeout, .fail_because_hook_timeout, .fail_because_timeout_with_done_callback, .fail_because_hook_timeout_with_done_callback => if (Output.is_github_action) {
+                        Output.printError("::error title=error: Test \"{s}\" timed out after {d}ms::\n", .{ display_label, test_entry.timeout });
+                        Output.flush();
+                    },
+                    else => {},
                 },
-            }) catch unreachable;
+            }
+
+            if (Output.enable_ansi_colors_stderr) {
+                for (scopes, 0..) |_, i| {
+                    const index = (scopes.len - 1) - i;
+                    const scope = scopes[index];
+                    const name: []const u8 = scope.base.name orelse "";
+                    if (name.len == 0) continue;
+                    writer.writeAll(" ") catch unreachable;
+
+                    writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
+                    writer.writeAll(name) catch unreachable;
+                    writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
+                    writer.writeAll(" >") catch unreachable;
+                }
+            } else {
+                for (scopes, 0..) |_, i| {
+                    const index = (scopes.len - 1) - i;
+                    const scope = scopes[index];
+                    const name: []const u8 = scope.base.name orelse "";
+                    if (name.len == 0) continue;
+                    writer.writeAll(" ") catch unreachable;
+                    writer.writeAll(name) catch unreachable;
+                    writer.writeAll(" >") catch unreachable;
+                }
+            }
+
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
+
+            if (elapsed_ns > (std.time.ns_per_us * 10)) {
+                writer.print(" {any}", .{
+                    Output.ElapsedFormatter{
+                        .colors = Output.enable_ansi_colors_stderr,
+                        .duration_ns = elapsed_ns,
+                    },
+                }) catch unreachable;
+            }
+
+            writer.writeAll("\n") catch unreachable;
+
+            switch (Output.enable_ansi_colors_stderr) {
+                inline else => |colors| switch (status) {
+                    .pending, .pass, .skip, .skipped_because_label, .todo, .fail => {},
+
+                    .fail_because_failing_test_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)) catch {},
+                    .fail_because_todo_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)) catch {},
+                    .fail_because_expected_assertion_count, .fail_because_expected_has_assertions => {}, // printed above
+                    .fail_because_timeout => writer.print(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out after {d}ms.<r>\n", colors), .{test_entry.timeout}) catch {},
+                    .fail_because_hook_timeout => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n", colors)) catch {},
+                    .fail_because_timeout_with_done_callback => writer.print(comptime Output.prettyFmt("  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n", colors), .{test_entry.timeout}) catch {},
+                    .fail_because_hook_timeout_with_done_callback => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors)) catch {},
+                },
+            }
         }
 
-        writer.writeAll("\n") catch unreachable;
-
-        if (file_reporter) |reporter| {
+        if (buntest.reporter) |cmd_reporter| if (cmd_reporter.file_reporter) |reporter| {
             switch (reporter) {
                 .junit => |junit| {
                     const filename = brk: {
@@ -574,12 +722,89 @@ pub const CommandLineReporter = struct {
                             break :brk file;
                         }
                     };
+
                     if (!strings.eql(junit.current_file, filename)) {
-                        if (junit.current_file.len > 0) {
-                            junit.endTestSuite() catch bun.outOfMemory();
+                        while (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                            bun.handleOom(junit.endTestSuite());
                         }
 
-                        junit.beginTestSuite(filename) catch bun.outOfMemory();
+                        if (junit.current_file.len > 0) {
+                            bun.handleOom(junit.endTestSuite());
+                        }
+
+                        bun.handleOom(junit.beginTestSuite(filename));
+                    }
+
+                    // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
+                    // This assumes that the scopes are in the correct order.
+                    var needed_suites = std.ArrayList(*bun_test.DescribeScope).init(bun.default_allocator);
+                    defer needed_suites.deinit();
+
+                    for (scopes, 0..) |_, i| {
+                        const index = (scopes.len - 1) - i;
+                        const scope = scopes[index];
+                        if (scope.base.name) |name| if (name.len > 0) {
+                            bun.handleOom(needed_suites.append(scope));
+                        };
+                    }
+
+                    var current_suite_depth: u32 = 0;
+                    if (junit.suite_stack.items.len > 0) {
+                        for (junit.suite_stack.items) |suite_info| {
+                            if (!suite_info.is_file_suite) {
+                                current_suite_depth += 1;
+                            }
+                        }
+                    }
+
+                    while (current_suite_depth > needed_suites.items.len) {
+                        if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                            bun.handleOom(junit.endTestSuite());
+                            current_suite_depth -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    var suites_to_close: u32 = 0;
+                    var suite_index: usize = 0;
+                    for (junit.suite_stack.items) |suite_info| {
+                        if (suite_info.is_file_suite) continue;
+
+                        if (suite_index < needed_suites.items.len) {
+                            const needed_scope = needed_suites.items[suite_index];
+                            if (!strings.eql(suite_info.name, needed_scope.base.name orelse "")) {
+                                suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
+                                break;
+                            }
+                        } else {
+                            suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
+                            break;
+                        }
+                        suite_index += 1;
+                    }
+
+                    while (suites_to_close > 0) {
+                        if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                            bun.handleOom(junit.endTestSuite());
+                            current_suite_depth -= 1;
+                            suites_to_close -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    var describe_suite_index: usize = 0;
+                    for (junit.suite_stack.items) |suite_info| {
+                        if (!suite_info.is_file_suite) {
+                            describe_suite_index += 1;
+                        }
+                    }
+
+                    while (describe_suite_index < needed_suites.items.len) {
+                        const scope = needed_suites.items[describe_suite_index];
+                        bun.handleOom(junit.beginTestSuiteWithLine(scope.base.name orelse "", scope.base.line_no, false));
+                        describe_suite_index += 1;
                     }
 
                     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -591,127 +816,107 @@ pub const CommandLineReporter = struct {
                     {
                         const initial_length = concatenated_describe_scopes.items.len;
                         for (scopes) |scope| {
-                            if (scope.label.len > 0) {
+                            if (scope.base.name) |name| if (name.len > 0) {
                                 if (initial_length != concatenated_describe_scopes.items.len) {
-                                    concatenated_describe_scopes.appendSlice(" &gt; ") catch bun.outOfMemory();
+                                    bun.handleOom(concatenated_describe_scopes.appendSlice(" &gt; "));
                                 }
 
-                                escapeXml(scope.label, concatenated_describe_scopes.writer()) catch bun.outOfMemory();
-                            }
+                                bun.handleOom(escapeXml(name, concatenated_describe_scopes.writer()));
+                            };
                         }
                     }
 
-                    junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns) catch bun.outOfMemory();
+                    bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
                 },
             }
-        }
+        };
     }
 
-    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        const writer_ = Output.errorWriter();
-        var buffered_writer = std.io.bufferedWriter(writer_);
-        var writer = buffered_writer.writer();
-        defer buffered_writer.flush() catch unreachable;
-
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
-
-        writeTestStatusLine(.pass, &writer);
-
-        printTestLine(.pass, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
-
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
-        this.summary.pass += 1;
-        this.summary.expectations += expectations;
+    pub inline fn summary(this: *CommandLineReporter) *TestRunner.Summary {
+        return &this.jest.summary;
     }
 
-    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriter();
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
+    pub fn handleTestCompleted(buntest: *bun_test.BunTest, sequence: *bun_test.Execution.ExecutionSequence, test_entry: *bun_test.ExecutionEntry, elapsed_ns: u64) void {
+        var output_buf: std.ArrayListUnmanaged(u8) = .empty;
+        defer output_buf.deinit(buntest.gpa);
 
-        // when the tests fail, we want to repeat the failures at the end
-        // so that you can see them better when there are lots of tests that ran
-        const initial_length = this.failures_to_repeat_buf.items.len;
-        var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
+        const initial_length = output_buf.items.len;
+        const base_writer = output_buf.writer(buntest.gpa);
+        var writer = base_writer;
 
-        writeTestStatusLine(.fail, &writer);
-        printTestLine(.fail, label, elapsed_ns, parent, expectations, false, writer, file, this.file_reporter);
-
-        // We must always reset the colors because (skip) will have set them to <d>
-        if (Output.enable_ansi_colors_stderr) {
-            writer.writeAll(Output.prettyFmt("<r>", true)) catch unreachable;
+        switch (sequence.result) {
+            inline else => |result| {
+                if (result != .skipped_because_label or buntest.reporter != null and buntest.reporter.?.file_reporter != null) {
+                    writeTestStatusLine(result, &writer);
+                    const dim = switch (comptime result.basicResult()) {
+                        .todo => if (bun.jsc.Jest.Jest.runner) |runner| !runner.run_todo else true,
+                        .skip, .pending => true,
+                        .pass, .fail => false,
+                    };
+                    switch (dim) {
+                        inline else => |dim_comptime| printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer, dim_comptime),
+                    }
+                }
+            },
         }
 
-        writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
+        const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
+        output_writer.writeAll(output_buf.items[initial_length..]) catch {};
 
-        Output.flush();
+        var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 
-        // this.updateDots();
-        this.summary.fail += 1;
-        this.summary.expectations += expectations;
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
-
-        if (this.jest.bail == this.summary.fail) {
-            this.printSummary();
-            Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
-            Global.exit(1);
-        }
-    }
-
-    pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriter();
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
-
-        // If you do it.only, don't report the skipped tests because its pretty noisy
-        if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
-            // when the tests skip, we want to repeat the failures at the end
-            // so that you can see them better when there are lots of tests that ran
-            const initial_length = this.skips_to_repeat_buf.items.len;
-            var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
-
-            writeTestStatusLine(.skip, &writer);
-            printTestLine(.skip, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter);
-
-            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
-            Output.flush();
+        switch (sequence.result.basicResult()) {
+            .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
+            .todo => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
+            .fail => bun.handleOom(this.failures_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
+            .pass, .pending => {},
         }
 
-        // this.updateDots();
-        this.summary.skip += 1;
-        this.summary.expectations += expectations;
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
-    }
+        switch (sequence.result) {
+            .pending => {},
+            .pass => this.summary().pass += 1,
+            .skip => this.summary().skip += 1,
+            .todo => this.summary().todo += 1,
+            .skipped_because_label => this.summary().skipped_because_label += 1,
 
-    pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_ = Output.errorWriter();
+            .fail,
+            .fail_because_failing_test_passed,
+            .fail_because_todo_passed,
+            .fail_because_expected_has_assertions,
+            .fail_because_expected_assertion_count,
+            .fail_because_timeout,
+            .fail_because_timeout_with_done_callback,
+            .fail_because_hook_timeout,
+            .fail_because_hook_timeout_with_done_callback,
+            => {
+                this.summary().fail += 1;
 
-        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
-
-        // when the tests skip, we want to repeat the failures at the end
-        // so that you can see them better when there are lots of tests that ran
-        const initial_length = this.todos_to_repeat_buf.items.len;
-        var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
-
-        writeTestStatusLine(.todo, &writer);
-        printTestLine(.todo, label, elapsed_ns, parent, expectations, true, writer, file, this.file_reporter);
-
-        writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
-        Output.flush();
-
-        // this.updateDots();
-        this.summary.todo += 1;
-        this.summary.expectations += expectations;
-        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
+                if (this.summary().fail == this.jest.bail) {
+                    this.printSummary();
+                    Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
+                    Global.exit(1);
+                }
+            },
+        }
+        this.summary().expectations +|= sequence.expect_call_count;
     }
 
     pub fn printSummary(this: *CommandLineReporter) void {
-        const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
-        const files = this.summary.files;
+        const summary_ = this.summary();
+        const tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
+        const files = summary_.files;
 
-        Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
+        Output.prettyError("Ran {d} test{s} across {d} file{s}. ", .{
+            tests,
+            if (tests == 1) "" else "s",
+            files,
+            if (files == 1) "" else "s",
+        });
+
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 
-    pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
+    pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *jsc.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
         if (comptime !reporters.text and !reporters.lcov) {
             return;
         }
@@ -740,7 +945,7 @@ pub const CommandLineReporter = struct {
 
     pub fn printCodeCoverage(
         _: *CommandLineReporter,
-        vm: *JSC.VirtualMachine,
+        vm: *jsc.VirtualMachine,
         opts: *TestCommand.CodeCoverageOptions,
         byte_ranges: []bun.sourcemap.coverage.ByteRangeMapping,
         comptime reporters: TestCommand.Reporters,
@@ -768,7 +973,24 @@ pub const CommandLineReporter = struct {
             var len = "All files".len;
             for (byte_ranges) |*entry| {
                 const utf8 = entry.source_url.slice();
-                len = @max(bun.path.relative(relative_dir, utf8).len, len);
+                const relative_path = bun.path.relative(relative_dir, utf8);
+
+                // Check if this file should be ignored based on coveragePathIgnorePatterns
+                if (opts.ignore_patterns.len > 0) {
+                    var should_ignore = false;
+                    for (opts.ignore_patterns) |pattern| {
+                        if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                            should_ignore = true;
+                            break;
+                        }
+                    }
+
+                    if (should_ignore) {
+                        continue;
+                    }
+                }
+
+                len = @max(relative_path.len, len);
             }
 
             break :brk len;
@@ -809,11 +1031,11 @@ pub const CommandLineReporter = struct {
             if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
 
             // Ensure the directory exists
-            var fs = bun.JSC.Node.fs.NodeFS{};
+            var fs = bun.jsc.Node.fs.NodeFS{};
             _ = fs.mkdirRecursive(
                 .{
-                    .path = bun.JSC.Node.PathLike{
-                        .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                    .path = bun.jsc.Node.PathLike{
+                        .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
                     },
                     .always_return_none = true,
                 },
@@ -870,6 +1092,24 @@ pub const CommandLineReporter = struct {
         // --- LCOV ---
 
         for (byte_ranges) |*entry| {
+            // Check if this file should be ignored based on coveragePathIgnorePatterns
+            if (opts.ignore_patterns.len > 0) {
+                const utf8 = entry.source_url.slice();
+                const relative_path = bun.path.relative(relative_dir, utf8);
+
+                var should_ignore = false;
+                for (opts.ignore_patterns) |pattern| {
+                    if (bun.glob.match(bun.default_allocator, pattern, relative_path).matches()) {
+                        should_ignore = true;
+                        break;
+                    }
+                }
+
+                if (should_ignore) {
+                    continue;
+                }
+            }
+
             var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
             defer report.deinit(bun.default_allocator);
 
@@ -898,15 +1138,27 @@ pub const CommandLineReporter = struct {
 
         if (comptime reporters.text) {
             {
-                avg.functions /= avg_count;
-                avg.lines /= avg_count;
-                avg.stmts /= avg_count;
+                if (avg_count == 0) {
+                    avg.functions = 0;
+                    avg.lines = 0;
+                    avg.stmts = 0;
+                } else {
+                    avg.functions /= avg_count;
+                    avg.lines /= avg_count;
+                    avg.stmts /= avg_count;
+                }
+
+                const failed = if (avg_count > 0) base_fraction else bun.sourcemap.coverage.Fraction{
+                    .functions = 0,
+                    .lines = 0,
+                    .stmts = 0,
+                };
 
                 try CodeCoverageReport.Text.writeFormatWithValues(
                     "All files",
                     max_filepath_length,
                     avg,
-                    base_fraction,
+                    failed,
                     failing,
                     console,
                     false,
@@ -948,7 +1200,7 @@ pub const CommandLineReporter = struct {
 };
 
 export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.C) bool {
-    var zig_slice: bun.JSC.ZigString.Slice = .{};
+    var zig_slice: bun.jsc.ZigString.Slice = .{};
     defer zig_slice.deinit();
 
     // In this particular case, we don't actually care about non-ascii latin1 characters.
@@ -964,7 +1216,7 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
     }
 
     const ext = std.fs.path.extension(slice);
-    const loader_by_ext = JSC.VirtualMachine.get().transpiler.options.loader(ext);
+    const loader_by_ext = jsc.VirtualMachine.get().transpiler.options.loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if (!(loader_by_ext.isJavaScriptLike() or loader_by_ext == .file)) {
@@ -995,6 +1247,7 @@ pub const TestCommand = struct {
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
+        ignore_patterns: []const string = &.{},
     };
     pub const Reporter = enum {
         text,
@@ -1024,27 +1277,42 @@ pub const TestCommand = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-        bun.JSC.initialize(false);
+        bun.jsc.initialize(false);
         HTTPThread.init(&.{});
+
+        const enable_random = ctx.test_options.randomize;
+        const seed: u32 = if (enable_random) ctx.test_options.seed orelse @truncate(bun.fastRandom()) else 0; // seed is limited to u32 so storing it in js doesn't lose precision
+        var random_instance: ?std.Random.DefaultPrng = if (enable_random) std.Random.DefaultPrng.init(seed) else null;
+        const random = if (random_instance) |*instance| instance.random() else null;
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
-        JSC.VirtualMachine.isBunTest = true;
+        jsc.VirtualMachine.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
+        defer {
+            if (reporter.file_reporter) |*file_reporter| {
+                switch (file_reporter.*) {
+                    .junit => |junit_reporter| {
+                        junit_reporter.deinit();
+                    },
+                }
+            }
+        }
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
                 .allocator = ctx.allocator,
-                .log = ctx.log,
-                .callback = undefined,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
+                .concurrent = ctx.test_options.concurrent,
+                .randomize = random,
+                .concurrent_test_glob = ctx.test_options.concurrent_test_glob,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
                 .bail = ctx.test_options.bail,
+                .max_concurrency = ctx.test_options.max_concurrency,
                 .filter_regex = ctx.test_options.test_filter_regex,
-                .filter_buffer = bun.MutableString.init(ctx.allocator, 0) catch unreachable,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -1053,19 +1321,10 @@ pub const TestCommand = struct {
                     .counts = &snapshot_counts,
                     .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
+                .bun_test_root = .init(ctx.allocator),
             },
-            .callback = undefined,
-        };
-        reporter.callback = TestRunner.Callback{
-            .onUpdateCount = CommandLineReporter.handleUpdateCount,
-            .onTestStart = CommandLineReporter.handleTestStart,
-            .onTestPass = CommandLineReporter.handleTestPass,
-            .onTestFail = CommandLineReporter.handleTestFail,
-            .onTestSkip = CommandLineReporter.handleTestSkip,
-            .onTestTodo = CommandLineReporter.handleTestTodo,
         };
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
-        reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
         reporter.jest.test_options = &ctx.test_options;
 
@@ -1077,7 +1336,7 @@ pub const TestCommand = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var vm = try JSC.VirtualMachine.init(
+        var vm = try jsc.VirtualMachine.init(
             .{
                 .allocator = ctx.allocator,
                 .args = ctx.args,
@@ -1092,7 +1351,6 @@ pub const TestCommand = struct {
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
                 .is_main_thread = true,
-                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             },
         );
         vm.argv = ctx.passthrough;
@@ -1113,7 +1371,7 @@ pub const TestCommand = struct {
 
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
-        JSC.VirtualMachine.is_main_thread_vm = true;
+        jsc.VirtualMachine.is_main_thread_vm = true;
 
         if (ctx.test_options.coverage.enabled) {
             vm.transpiler.options.code_coverage = true;
@@ -1135,7 +1393,7 @@ pub const TestCommand = struct {
         }
 
         if (TZ_NAME.len > 0) {
-            _ = vm.global.setTimeZone(&JSC.ZigString.init(TZ_NAME));
+            _ = vm.global.setTimeZone(&jsc.ZigString.init(TZ_NAME));
         }
 
         // Start the debugger before we scan for files
@@ -1143,7 +1401,7 @@ pub const TestCommand = struct {
         //
         try vm.ensureDebugger(false);
 
-        var scanner = Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len) catch bun.outOfMemory();
+        var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
@@ -1162,8 +1420,14 @@ pub const TestCommand = struct {
                     // don't error if multiple are passed; one might fail
                     // but the others may not
                     error.DoesNotExist => if (file_or_dirnames.len == 1) {
-                        Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
-                        Global.exit(1);
+                        if (Output.isAIAgent()) {
+                            Output.prettyErrorln("Test filter <b>{}<r> had no matches in --cwd={}", .{ bun.fmt.quote(arg), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
+                        } else {
+                            Output.prettyErrorln("Test filter <b>{}<r> had no matches", .{bun.fmt.quote(arg)});
+                        }
+                        vm.exit_handler.exit_code = 1;
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                     },
                 };
             }
@@ -1200,22 +1464,33 @@ pub const TestCommand = struct {
             scanner.scan(dir_to_scan) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.DoesNotExist => {
-                    Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {s}", .{dir_to_scan});
-                    Global.exit(1);
+                    if (Output.isAIAgent()) {
+                        Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}", .{ bun.fmt.quote(dir_to_scan), bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
+                    } else {
+                        Output.prettyErrorln("<red>Failed to scan non-existent root directory for tests:<r> {}", .{bun.fmt.quote(dir_to_scan)});
+                    }
+                    vm.exit_handler.exit_code = 1;
+                    vm.is_shutting_down = true;
+                    vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                 },
             };
         }
 
-        const test_files = scanner.takeFoundTestFiles() catch bun.outOfMemory();
+        const test_files = bun.handleOom(scanner.takeFoundTestFiles());
         defer ctx.allocator.free(test_files);
         const search_count = scanner.search_count;
 
         if (test_files.len > 0) {
+            // Randomize the order of test files if --randomize flag is set
+            if (random) |rand| {
+                rand.shuffle(PathString, test_files);
+            }
+
             vm.hot_reload = ctx.debug.hot_reload;
 
             switch (vm.hot_reload) {
-                .hot => JSC.hot_reloader.HotReloader.enableHotModuleReloading(vm),
-                .watch => JSC.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
+                .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
+                .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
                 else => {},
             }
 
@@ -1225,53 +1500,69 @@ pub const TestCommand = struct {
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
         var coverage_options = ctx.test_options.coverage;
-        if (reporter.summary.pass > 20) {
-            if (reporter.summary.skip > 0) {
-                Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary.skip});
+        if (reporter.summary().pass > 20 and !Output.isAIAgent()) {
+            if (reporter.summary().skip > 0) {
+                Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
-                error_writer.writeAll(reporter.skips_to_repeat_buf.items) catch unreachable;
+                error_writer.writeAll(reporter.skips_to_repeat_buf.items) catch {};
             }
 
-            if (reporter.summary.todo > 0) {
-                if (reporter.summary.skip > 0) {
+            if (reporter.summary().todo > 0) {
+                if (reporter.summary().skip > 0) {
                     Output.prettyError("\n", .{});
                 }
 
-                Output.prettyError("\n<r><d>{d} tests todo:<r>\n", .{reporter.summary.todo});
+                Output.prettyError("\n<r><d>{d} tests todo:<r>\n", .{reporter.summary().todo});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
-                error_writer.writeAll(reporter.todos_to_repeat_buf.items) catch unreachable;
+                error_writer.writeAll(reporter.todos_to_repeat_buf.items) catch {};
             }
 
-            if (reporter.summary.fail > 0) {
-                if (reporter.summary.skip > 0 or reporter.summary.todo > 0) {
+            if (reporter.summary().fail > 0) {
+                if (reporter.summary().skip > 0 or reporter.summary().todo > 0) {
                     Output.prettyError("\n", .{});
                 }
 
-                Output.prettyError("\n<r><d>{d} tests failed:<r>\n", .{reporter.summary.fail});
+                Output.prettyError("\n<r><d>{d} tests failed:<r>\n", .{reporter.summary().fail});
                 Output.flush();
 
                 var error_writer = Output.errorWriter();
-                error_writer.writeAll(reporter.failures_to_repeat_buf.items) catch unreachable;
+                error_writer.writeAll(reporter.failures_to_repeat_buf.items) catch {};
             }
         }
 
         Output.flush();
 
+        var failed_to_find_any_tests = false;
+
         if (test_files.len == 0) {
-            if (ctx.positionals.len == 0) {
-                Output.prettyErrorln(
-                    \\<yellow>No tests found!<r>
-                    \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                    \\
-                , .{});
+            failed_to_find_any_tests = true;
+
+            // "bun test" - positionals[0] == "test"
+            // Therefore positionals starts at [1].
+            if (ctx.positionals.len < 2) {
+                if (Output.isAIAgent()) {
+                    // Be very clear to ai.
+                    Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                } else {
+                    // Be friendlier to humans.
+                    Output.prettyErrorln(
+                        \\<yellow>No tests found!<r>
+                        \\
+                        \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                        \\
+                    , .{});
+                }
             } else {
-                Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
+                if (Output.isAIAgent()) {
+                    Output.prettyErrorln("<yellow>The following filters did not match any test files in --cwd={}:<r>", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                } else {
+                    Output.prettyErrorln("<yellow>The following filters did not match any test files:<r>", .{});
+                }
                 var has_file_like: ?usize = null;
-                Output.prettyError(" ", .{});
                 for (ctx.positionals[1..], 1..) |filter, i| {
                     Output.prettyError(" {s}", .{filter});
 
@@ -1302,10 +1593,12 @@ pub const TestCommand = struct {
                     , .{ ctx.positionals[i], ctx.positionals[i] });
                 }
             }
-            Output.prettyError(
-                \\
-                \\Learn more about the test runner: <magenta>https://bun.sh/docs/cli/test<r>
-            , .{});
+            if (!Output.isAIAgent()) {
+                Output.prettyError(
+                    \\
+                    \\Learn more about bun test: <magenta>https://bun.com/docs/cli/test<r>
+                , .{});
+            }
         } else {
             Output.prettyError("\n", .{});
 
@@ -1321,76 +1614,97 @@ pub const TestCommand = struct {
                 }
             }
 
-            if (reporter.summary.pass > 0) {
-                Output.prettyError("<r><green>", .{});
-            }
+            const summary = reporter.summary();
+            const did_label_filter_out_all_tests = summary.didLabelFilterOutAllTests() and reporter.jest.unhandled_errors_between_tests == 0;
 
-            Output.prettyError(" {d:5>} pass<r>\n", .{reporter.summary.pass});
-
-            if (reporter.summary.skip > 0) {
-                Output.prettyError(" <r><yellow>{d:5>} skip<r>\n", .{reporter.summary.skip});
-            }
-
-            if (reporter.summary.todo > 0) {
-                Output.prettyError(" <r><magenta>{d:5>} todo<r>\n", .{reporter.summary.todo});
-            }
-
-            if (reporter.summary.fail > 0) {
-                Output.prettyError("<r><red>", .{});
-            } else {
-                Output.prettyError("<r><d>", .{});
-            }
-
-            Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
-            if (reporter.jest.unhandled_errors_between_tests > 0) {
-                Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
-            }
-
-            var print_expect_calls = reporter.summary.expectations > 0;
-            if (reporter.jest.snapshots.total > 0) {
-                const passed = reporter.jest.snapshots.passed;
-                const failed = reporter.jest.snapshots.failed;
-                const added = reporter.jest.snapshots.added;
-
-                var first = true;
-                if (print_expect_calls and added == 0 and failed == 0) {
-                    print_expect_calls = false;
-                    Output.prettyError(" {d:5>} snapshots, {d:5>} expect() calls", .{ reporter.jest.snapshots.total, reporter.summary.expectations });
-                } else {
-                    Output.prettyError(" <d>snapshots:<r> ", .{});
-
-                    if (passed > 0) {
-                        Output.prettyError("<d>{d} passed<r>", .{passed});
-                        first = false;
-                    }
-
-                    if (added > 0) {
-                        if (first) {
-                            first = false;
-                            Output.prettyError("<b>+{d} added<r>", .{added});
-                        } else {
-                            Output.prettyError("<b>, {d} added<r>", .{added});
-                        }
-                    }
-
-                    if (failed > 0) {
-                        if (first) {
-                            first = false;
-                            Output.prettyError("<red>{d} failed<r>", .{failed});
-                        } else {
-                            Output.prettyError(", <red>{d} failed<r>", .{failed});
-                        }
-                    }
+            if (!did_label_filter_out_all_tests) {
+                // Display the random seed if tests were randomized
+                if (random != null) {
+                    Output.prettyError(" <r>--seed={d}<r>\n", .{seed});
                 }
 
-                Output.prettyError("\n", .{});
-            }
+                if (summary.pass > 0) {
+                    Output.prettyError("<r><green>", .{});
+                }
 
-            if (print_expect_calls) {
-                Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
-            }
+                Output.prettyError(" {d:5>} pass<r>\n", .{summary.pass});
 
-            reporter.printSummary();
+                if (summary.skip > 0) {
+                    Output.prettyError(" <r><yellow>{d:5>} skip<r>\n", .{summary.skip});
+                } else if (summary.skipped_because_label > 0) {
+                    Output.prettyError(" <r><d>{d:5>} filtered out<r>\n", .{summary.skipped_because_label});
+                }
+
+                if (summary.todo > 0) {
+                    Output.prettyError(" <r><magenta>{d:5>} todo<r>\n", .{summary.todo});
+                }
+
+                if (summary.fail > 0) {
+                    Output.prettyError("<r><red>", .{});
+                } else {
+                    Output.prettyError("<r><d>", .{});
+                }
+
+                Output.prettyError(" {d:5>} fail<r>\n", .{summary.fail});
+                if (reporter.jest.unhandled_errors_between_tests > 0) {
+                    Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+                }
+
+                var print_expect_calls = reporter.summary().expectations > 0;
+                if (reporter.jest.snapshots.total > 0) {
+                    const passed = reporter.jest.snapshots.passed;
+                    const failed = reporter.jest.snapshots.failed;
+                    const added = reporter.jest.snapshots.added;
+
+                    var first = true;
+                    if (print_expect_calls and added == 0 and failed == 0) {
+                        print_expect_calls = false;
+                        Output.prettyError(" {d:5>} snapshots, {d:5>} expect() calls", .{ reporter.jest.snapshots.total, reporter.summary().expectations });
+                    } else {
+                        Output.prettyError(" <d>snapshots:<r> ", .{});
+
+                        if (passed > 0) {
+                            Output.prettyError("<d>{d} passed<r>", .{passed});
+                            first = false;
+                        }
+
+                        if (added > 0) {
+                            if (first) {
+                                first = false;
+                                Output.prettyError("<b>+{d} added<r>", .{added});
+                            } else {
+                                Output.prettyError("<b>, {d} added<r>", .{added});
+                            }
+                        }
+
+                        if (failed > 0) {
+                            if (first) {
+                                first = false;
+                                Output.prettyError("<red>{d} failed<r>", .{failed});
+                            } else {
+                                Output.prettyError(", <red>{d} failed<r>", .{failed});
+                            }
+                        }
+                    }
+
+                    Output.prettyError("\n", .{});
+                }
+
+                if (print_expect_calls) {
+                    Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary().expectations});
+                }
+
+                reporter.printSummary();
+            } else {
+                Output.prettyError("<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {d} file{s} (skipping {d} test{s}) ", .{
+                    bun.fmt.quote(ctx.test_options.test_filter_pattern.?),
+                    summary.files,
+                    if (summary.files == 1) "" else "s",
+                    summary.skipped_because_label,
+                    if (summary.skipped_because_label == 1) "" else "s",
+                });
+                Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+            }
         }
 
         Output.prettyError("\n", .{});
@@ -1408,19 +1722,20 @@ pub const TestCommand = struct {
         }
 
         if (vm.hot_reload == .watch) {
-            vm.runWithAPILock(JSC.VirtualMachine, vm, runEventLoopForWatch);
+            vm.runWithAPILock(jsc.VirtualMachine, vm, runEventLoopForWatch);
         }
+        const summary = reporter.summary();
 
-        if (reporter.summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
-            Global.exit(1);
+        if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
+            vm.exit_handler.exit_code = 1;
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
-            Global.exit(reporter.jest.unhandled_errors_between_tests);
-        } else {
-            vm.runWithAPILock(JSC.VirtualMachine, vm, JSC.VirtualMachine.globalExit);
+            vm.exit_handler.exit_code = 1;
         }
+        vm.is_shutting_down = true;
+        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
     }
 
-    fn runEventLoopForWatch(vm: *JSC.VirtualMachine) void {
+    fn runEventLoopForWatch(vm: *jsc.VirtualMachine) void {
         vm.eventLoop().tickPossiblyForever();
 
         while (true) {
@@ -1435,35 +1750,34 @@ pub const TestCommand = struct {
 
     pub fn runAllTests(
         reporter_: *CommandLineReporter,
-        vm_: *JSC.VirtualMachine,
+        vm_: *jsc.VirtualMachine,
         files_: []const PathString,
         allocator_: std.mem.Allocator,
     ) void {
         const Context = struct {
             reporter: *CommandLineReporter,
-            vm: *JSC.VirtualMachine,
+            vm: *jsc.VirtualMachine,
             files: []const PathString,
             allocator: std.mem.Allocator,
             pub fn begin(this: *@This()) void {
                 const reporter = this.reporter;
                 const vm = this.vm;
                 var files = this.files;
-                const allocator = this.allocator;
                 bun.assert(files.len > 0);
 
                 if (files.len > 1) {
-                    for (files[0 .. files.len - 1]) |file_name| {
-                        TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                    for (files[0 .. files.len - 1], 0..) |file_name, i| {
+                        TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator, true) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{ .first = files.len == 1, .last = true }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
             }
         };
 
-        var arena = bun.MimallocArena.init() catch @panic("Unexpected error in mimalloc");
+        var arena = bun.MimallocArena.init();
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();
@@ -1475,10 +1789,9 @@ pub const TestCommand = struct {
 
     pub fn run(
         reporter: *CommandLineReporter,
-        vm: *JSC.VirtualMachine,
+        vm: *jsc.VirtualMachine,
         file_name: string,
-        _: std.mem.Allocator,
-        is_last: bool,
+        first_last: bun_test.BunTestRoot.FirstLast,
     ) !void {
         defer {
             js_ast.Expr.Data.Store.reset();
@@ -1497,12 +1810,12 @@ pub const TestCommand = struct {
         const prev_only = reporter.jest.only;
         defer reporter.jest.only = prev_only;
 
-        const file_start = reporter.jest.files.len;
         const resolution = try vm.transpiler.resolveEntryPoint(file_name);
-        vm.clearEntryPoint();
+        try vm.clearEntryPoint();
 
-        const file_path = resolution.path_pair.primary.text;
+        const file_path = bun.handleOom(bun.fs.FileSystem.instance.filename_store.append([]const u8, resolution.path_pair.primary.text));
         const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
+        const file_id = bun.jsc.Jest.Jest.runner.?.getOrPutFile(file_path).file_id;
 
         // In Github Actions, append a special prefix that will group
         // subsequent log lines into a collapsable group.
@@ -1512,29 +1825,46 @@ pub const TestCommand = struct {
         const repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         vm.onUnhandledRejectionCtx = null;
-        vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
+        vm.onUnhandledRejection = jest.on_unhandled_rejection.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
-            } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
+            // Clear the module cache before re-running (except for the first run)
+            if (repeat_index > 0) {
+                try vm.clearEntryPoint();
+                var entry = jsc.ZigString.init(file_path);
+                try vm.global.deleteModuleRegistryEntry(&entry);
             }
-            Output.flush();
 
+            var bun_test_root = &jest.Jest.runner.?.bun_test_root;
+            // Determine if this file should run tests concurrently based on glob pattern
+            const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);
+            bun_test_root.enterFile(file_id, reporter, should_run_concurrent, first_last);
+            defer bun_test_root.exitFile();
+
+            reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
+
+            bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
+
+            // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
+            vm.wakeup();
             var promise = try vm.loadEntryPointForTestRunner(file_path);
-            reporter.summary.files += 1;
+            // Only count the file once, not once per repeat
+            if (repeat_index == 0) {
+                reporter.summary().files += 1;
+            }
 
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
-                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
-                    reporter.summary.fail += 1;
+                    vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
+                    reporter.summary().fail += 1;
 
-                    if (reporter.jest.bail == reporter.summary.fail) {
+                    if (reporter.jest.bail == reporter.summary().fail) {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
 
-                        Global.exit(1);
+                        vm.exit_handler.exit_code = 1;
+                        vm.is_shutting_down = true;
+                        vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
                     }
 
                     return;
@@ -1542,41 +1872,36 @@ pub const TestCommand = struct {
                 else => {},
             }
 
-            {
-                vm.drainMicrotasks();
-                var count = vm.unhandled_error_counter;
-                vm.global.handleRejectedPromises();
-                while (vm.unhandled_error_counter > count) {
-                    count = vm.unhandled_error_counter;
-                    vm.drainMicrotasks();
-                    vm.global.handleRejectedPromises();
+            vm.eventLoop().tick();
+
+            blk: {
+
+                // Check if bun_test is available and has tests to run
+                var buntest_strong = bun_test_root.cloneActiveFile() orelse {
+                    bun.assert(false);
+                    break :blk;
+                };
+                defer buntest_strong.deinit();
+                const buntest = buntest_strong.get();
+
+                // Automatically execute bun_test tests
+                if (buntest.result_queue.readableLength() == 0) {
+                    buntest.addResult(.start);
                 }
-            }
+                try bun.jsc.Jest.bun_test.BunTest.run(buntest_strong, vm.global);
 
-            const file_end = reporter.jest.files.len;
-
-            for (file_start..file_end) |module_id| {
-                const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
-
-                vm.onUnhandledRejectionCtx = null;
-                vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
-                module.runTests(vm.global);
+                // Process event loop while bun_test tests are running
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
-                while (vm.active_tasks > 0) {
-                    if (!jest.Jest.runner.?.has_pending_tests) {
-                        jest.Jest.runner.?.drain();
+                while (buntest.phase != .done) {
+                    if (buntest.wants_wakeup) {
+                        buntest.wants_wakeup = false;
+                        vm.wakeup();
                     }
+                    vm.eventLoop().autoTick();
+                    if (buntest.phase == .done) break;
                     vm.eventLoop().tick();
-
-                    while (jest.Jest.runner.?.has_pending_tests) {
-                        vm.eventLoop().autoTick();
-                        if (!jest.Jest.runner.?.has_pending_tests) break;
-                        vm.eventLoop().tick();
-                    } else {
-                        vm.eventLoop().tickImmediateTasks(vm);
-                    }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
                         vm.global.handleRejectedPromises();
@@ -1585,24 +1910,9 @@ pub const TestCommand = struct {
                 }
 
                 vm.eventLoop().tickImmediateTasks(vm);
-
-                switch (vm.aggressive_garbage_collection) {
-                    .none => {},
-                    .mild => {
-                        _ = vm.global.vm().collectAsync();
-                    },
-                    .aggressive => {
-                        _ = vm.global.vm().runGC(false);
-                    },
-                }
             }
 
             vm.global.handleRejectedPromises();
-            if (repeat_index > 0) {
-                vm.clearEntryPoint();
-                var entry = JSC.ZigString.init(file_path);
-                vm.global.deleteModuleRegistryEntry(&entry);
-            }
 
             if (Output.is_github_action) {
                 Output.prettyErrorln("<r>\n::endgroup::\n", .{});
@@ -1612,14 +1922,6 @@ pub const TestCommand = struct {
             // Ensure these never linger across files.
             vm.auto_killer.clear();
             vm.auto_killer.disable();
-        }
-
-        if (is_last) {
-            if (jest.Jest.runner != null) {
-                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
-                    _ = vm.uncaughtException(vm.global, err, true);
-                }
-            }
         }
     }
 };
@@ -1636,3 +1938,37 @@ fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
 pub fn @"export"() void {
     _ = &Scanner.BunTest__shouldGenerateCodeCoverage;
 }
+
+const string = []const u8;
+
+const DotEnv = @import("../env_loader.zig");
+const Scanner = @import("./test/Scanner.zig");
+const bun_test = @import("../bun.js/test/bun_test.zig");
+const options = @import("../options.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const FileSystem = @import("../fs.zig").FileSystem;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const PathString = bun.PathString;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const strings = bun.strings;
+const uws = bun.uws;
+const HTTPThread = bun.http.HTTPThread;
+
+const jsc = bun.jsc;
+const jest = jsc.Jest;
+const Snapshots = jsc.Snapshot.Snapshots;
+
+const TestRunner = jsc.Jest.TestRunner;
+const Test = TestRunner.Test;
+
+const coverage = bun.sourcemap.coverage;
+const CodeCoverageReport = coverage.Report;

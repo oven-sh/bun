@@ -1,9 +1,12 @@
 /// A task created from C++ code, usually via ScriptExecutionContext.
 pub const CppTask = opaque {
-    extern fn Bun__performTask(globalObject: *JSC.JSGlobalObject, task: *CppTask) void;
-    pub fn run(this: *CppTask, global: *JSC.JSGlobalObject) void {
-        JSC.markBinding(@src());
-        Bun__performTask(global, this);
+    extern fn Bun__performTask(globalObject: *jsc.JSGlobalObject, task: *CppTask) void;
+    pub fn run(this: *CppTask, global: *jsc.JSGlobalObject) void {
+        jsc.markBinding(@src());
+        // TODO: properly propagate exception upwards
+        bun.jsc.fromJSHostCallGeneric(global, @src(), Bun__performTask, .{ global, this }) catch |err| {
+            _ = global.reportUncaughtException(global.takeException(err).asException(global.vm()).?);
+        };
     }
 };
 
@@ -12,7 +15,7 @@ pub const ConcurrentCppTask = struct {
     pub const new = bun.TrivialNew(@This());
 
     cpp_task: *EventLoopTaskNoContext,
-    workpool_task: JSC.WorkPoolTask = .{ .callback = &runFromWorkpool },
+    workpool_task: jsc.WorkPoolTask = .{ .callback = &runFromWorkpool },
 
     const EventLoopTaskNoContext = opaque {
         extern fn Bun__EventLoopTaskNoContext__performTask(task: *EventLoopTaskNoContext) void;
@@ -29,7 +32,7 @@ pub const ConcurrentCppTask = struct {
         }
     };
 
-    pub fn runFromWorkpool(task: *JSC.WorkPoolTask) void {
+    pub fn runFromWorkpool(task: *jsc.WorkPoolTask) void {
         const this: *ConcurrentCppTask = @fieldParentPtr("workpool_task", task);
         // Extract all the info we need from `this` and `cpp_task` before we call functions that
         // free them
@@ -43,12 +46,12 @@ pub const ConcurrentCppTask = struct {
     }
 
     pub export fn ConcurrentCppTask__createAndRun(cpp_task: *EventLoopTaskNoContext) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         if (cpp_task.getVM()) |vm| {
             vm.event_loop.refConcurrently();
         }
         const cpp = ConcurrentCppTask.new(.{ .cpp_task = cpp_task });
-        JSC.WorkPool.schedule(&cpp.workpool_task);
+        jsc.WorkPool.schedule(&cpp.workpool_task);
     }
 };
 
@@ -57,5 +60,6 @@ comptime {
 }
 
 const bun = @import("bun");
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;

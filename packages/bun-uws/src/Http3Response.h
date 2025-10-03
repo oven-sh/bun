@@ -77,7 +77,7 @@ namespace uWS {
 
             /* If not already written */
             writeStatus("200 OK");
-            
+
             // has body is determined by the ending so this is perfect here
             us_quic_socket_context_send_headers(nullptr, (us_quic_stream_t *) this, responseData->headerOffset, data.length() > 0);
 

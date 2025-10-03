@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, readFile, rm, writeFile } from "fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { join } from "path";
 import {
@@ -323,10 +323,10 @@ it("lockfile should not be modified when there are no version changes, issue#588
     env,
   });
   expect(await exited).toBe(0);
-  const err1 = await new Response(stderr).text();
+  const err1 = await stderr.text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  const out1 = await new Response(stdout).text();
+  const out1 = await stdout.text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -368,4 +368,114 @@ it("lockfile should not be modified when there are no version changes, issue#588
 
   // Assert we actually made a request to the registry for each update
   expect(urls).toHaveLength(count);
+});
+
+it("should support catalog versions in update", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+
+  // Create a monorepo with catalog
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      catalog: {
+        "no-deps": "^1.0.0",
+      },
+      workspaces: ["packages/*"],
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "workspace-a"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "workspace-a", "package.json"),
+    JSON.stringify({
+      name: "workspace-a",
+      dependencies: {
+        "no-deps": "catalog:",
+      },
+    }),
+  );
+
+  // Test that update works with catalog dependencies
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--dry-run"],
+    cwd: join(package_dir, "packages", "workspace-a"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  const out = await new Response(stdout).text();
+
+  // Should not crash with catalog dependencies
+  expect(err).not.toContain("panic");
+  expect(err).not.toContain("segfault");
+
+  // Verify catalog reference is preserved in package.json
+  const pkg = await file(join(package_dir, "packages", "workspace-a", "package.json")).json();
+  expect(pkg.dependencies["no-deps"]).toBe("catalog:");
+});
+
+it("should support --recursive flag", async () => {
+  // First verify the flag appears in help
+  const {
+    stdout: helpOut,
+    stderr: helpErr,
+    exited: helpExited,
+  } = spawn({
+    cmd: [bunExe(), "update", "--help"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const help = (await new Response(helpOut).text()) + (await new Response(helpErr).text());
+  expect(await helpExited).toBe(0);
+  expect(help).toContain("--recursive");
+  expect(help).toContain("-r");
+
+  // Now test that --recursive actually works
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: {
+        "no-deps": "^1.0.0",
+      },
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "pkg1"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg1", "package.json"),
+    JSON.stringify({
+      name: "pkg1",
+      dependencies: {
+        "no-deps": "^1.0.0",
+      },
+    }),
+  );
+
+  // Test recursive update (might fail without lockfile, but shouldn't crash)
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--recursive", "--dry-run"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const out = await new Response(stdout).text();
+  const err = await new Response(stderr).text();
+
+  // Should not crash
+  expect(err).not.toContain("panic");
+  expect(err).not.toContain("segfault");
+
+  // Should recognize the flag (either process workspaces or show error about missing lockfile)
+  expect(out + err).toMatch(/bun update|missing lockfile|nothing to update/);
 });

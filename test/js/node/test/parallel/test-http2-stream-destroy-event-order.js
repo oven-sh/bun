@@ -19,7 +19,7 @@ server.on('stream', common.mustCall((stream) => {
   req.close(2);
 }));
 server.listen(0, common.mustCall(() => {
-  client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client = http2.connect(`http://localhost:${server.address().port}`);
   req = client.request();
   req.resume();
   req.on('error', common.mustCall(() => {

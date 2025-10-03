@@ -52,7 +52,7 @@ public:
         if (key.length() < 2) {
             return true;
         }
-    
+
         ScrambleArea s = getFeatures(key);
         s.val = perfectHash(s.val);
         return filter[s.p[0]] &&

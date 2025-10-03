@@ -41,14 +41,12 @@ console.log({
   fullPathLength: fullPath.length
 });
 
-console.log(1);
 fs.writeFile(fullPath, 'ok', common.mustSucceed(() => {
-  console.log(2);
   fs.stat(fullPath, common.mustSucceed());
 
   // Tests https://github.com/nodejs/node/issues/39721
-  // fs.realpath.native(fullPath, common.mustSucceed());
+  fs.realpath.native(fullPath, common.mustSucceed());
 
   // Tests https://github.com/nodejs/node/issues/51031
-  // fs.promises.realpath(fullPath).then(common.mustCall(), common.mustNotCall());
+  fs.promises.realpath(fullPath).then(common.mustCall(), common.mustNotCall());
 }));

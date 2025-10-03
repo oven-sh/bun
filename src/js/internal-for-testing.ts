@@ -78,7 +78,7 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
   closeTempDirHandle: () => void;
 };
 
-export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings.generate") as {
+export const install_test_helpers = $zig("install_binding.zig", "bun_install_js_bindings.generate") as {
   /**
    * Returns the lockfile at the given path as an object.
    */
@@ -193,3 +193,13 @@ interface setSocketOptionsFn {
 }
 
 export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);
+type SerializationContext = "worker" | "window" | "postMessage" | "default";
+export const structuredCloneAdvanced: (
+  value: any,
+  transferList: any[],
+  forTransfer: boolean,
+  forStorage: boolean,
+  serializationContext: SerializationContext,
+) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
+
+export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);

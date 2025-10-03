@@ -24,11 +24,10 @@ server.on('stream', common.mustCall(function(stream) {
 }));
 
 server.listen(0, function() {
-  const client = http2.connect(`https://127.0.0.1:${server.address().port}`,
+  const client = http2.connect(`https://localhost:${server.address().port}`,
                                { rejectUnauthorized: false }
   );
   client_stream = client.request({ ':method': 'POST' });
-  
   client_stream.on('close', common.mustCall(() => {
     client.close();
     server.close();

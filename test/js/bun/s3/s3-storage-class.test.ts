@@ -175,7 +175,7 @@ describe("s3 - Storage class", () => {
     const smallFile = Buffer.alloc(10 * 1024);
 
     for (let i = 0; i < 10; i++) {
-      await writer.write(smallFile);
+      writer.write(smallFile);
     }
     await writer.end();
 
@@ -249,7 +249,7 @@ describe("s3 - Storage class", () => {
       const bigFile = Buffer.alloc(10 * 1024 * 1024);
 
       for (let i = 0; i < 10; i++) {
-        await writer.write(bigFile);
+        writer.write(bigFile);
       }
       await writer.end();
 

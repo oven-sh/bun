@@ -2,6 +2,8 @@
 //!
 //! N args => returns absolute path of each separated by newline, if any path is not found, exit code becomes 1, but continues execution until all args are processed
 
+const Which = @This();
+
 state: union(enum) {
     idle,
     one_arg,
@@ -15,25 +17,23 @@ state: union(enum) {
         },
     },
     done,
-    err: JSC.SystemError,
+    err: jsc.SystemError,
 } = .idle,
 
-pub fn start(this: *Which) Maybe(void) {
+pub fn start(this: *Which) Yield {
     const args = this.bltn().argsSlice();
     if (args.len == 0) {
         if (this.bltn().stdout.needsIO()) |safeguard| {
             this.state = .one_arg;
-            this.bltn().stdout.enqueue(this, "\n", safeguard);
-            return Maybe(void).success;
+            return this.bltn().stdout.enqueue(this, "\n", safeguard);
         }
         _ = this.bltn().writeNoIO(.stdout, "\n");
-        this.bltn().done(1);
-        return Maybe(void).success;
+        return this.bltn().done(1);
     }
 
     if (this.bltn().stdout.needsIO() == null) {
-        const path_buf = bun.PathBufferPool.get();
-        defer bun.PathBufferPool.put(path_buf);
+        const path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(path_buf);
         const PATH = this.bltn().parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
         var had_not_found = false;
         for (args) |arg_raw| {
@@ -47,8 +47,7 @@ pub fn start(this: *Which) Maybe(void) {
 
             _ = this.bltn().writeNoIO(.stdout, resolved);
         }
-        this.bltn().done(@intFromBool(had_not_found));
-        return Maybe(void).success;
+        return this.bltn().done(@intFromBool(had_not_found));
     }
 
     this.state = .{
@@ -58,63 +57,56 @@ pub fn start(this: *Which) Maybe(void) {
             .state = .none,
         },
     };
-    this.next();
-    return Maybe(void).success;
+    return this.next();
 }
 
-pub fn next(this: *Which) void {
+pub fn next(this: *Which) Yield {
     var multiargs = &this.state.multi_args;
     if (multiargs.arg_idx >= multiargs.args_slice.len) {
         // Done
-        this.bltn().done(@intFromBool(multiargs.had_not_found));
-        return;
+        return this.bltn().done(@intFromBool(multiargs.had_not_found));
     }
 
     const arg_raw = multiargs.args_slice[multiargs.arg_idx];
     const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-    const path_buf = bun.PathBufferPool.get();
-    defer bun.PathBufferPool.put(path_buf);
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
     const PATH = this.bltn().parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
     const resolved = which(path_buf, PATH.slice(), this.bltn().parentCmd().base.shell.cwdZ(), arg) orelse {
         multiargs.had_not_found = true;
         if (this.bltn().stdout.needsIO()) |safeguard| {
             multiargs.state = .waiting_write;
-            this.bltn().stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg}, safeguard);
-            // yield execution
-            return;
+            return this.bltn().stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg}, safeguard);
         }
 
         const buf = this.bltn().fmtErrorArena(null, "{s} not found\n", .{arg});
         _ = this.bltn().writeNoIO(.stdout, buf);
-        this.argComplete();
-        return;
+        return this.argComplete();
     };
 
     if (this.bltn().stdout.needsIO()) |safeguard| {
         multiargs.state = .waiting_write;
-        this.bltn().stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved}, safeguard);
-        return;
+        return this.bltn().stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved}, safeguard);
     }
 
     const buf = this.bltn().fmtErrorArena(null, "{s}\n", .{resolved});
     _ = this.bltn().writeNoIO(.stdout, buf);
-    this.argComplete();
-    return;
+    return this.argComplete();
 }
 
-fn argComplete(this: *Which) void {
+fn argComplete(this: *Which) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .multi_args and this.state.multi_args.state == .waiting_write);
     }
 
     this.state.multi_args.arg_idx += 1;
     this.state.multi_args.state = .none;
-    this.next();
+    return this.next();
 }
 
-pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) void {
+pub fn onIOWriterChunk(this: *Which, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .one_arg or
             (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
@@ -122,17 +114,15 @@ pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) void {
 
     if (e != null) {
         this.state = .{ .err = e.? };
-        this.bltn().done(e.?.getErrno());
-        return;
+        return this.bltn().done(e.?.getErrno());
     }
 
     if (this.state == .one_arg) {
         // Calling which with on arguments returns exit code 1
-        this.bltn().done(1);
-        return;
+        return this.bltn().done(1);
     }
 
-    this.argComplete();
+    return this.argComplete();
 }
 
 pub fn deinit(this: *Which) void {
@@ -146,18 +136,20 @@ pub inline fn bltn(this: *Which) *Builtin {
 }
 
 // --
-const log = bun.Output.scoped(.which, true);
-const Which = @This();
+const log = bun.Output.scoped(.which, .hidden);
 
 const std = @import("std");
-const bun = @import("bun");
-const shell = bun.shell;
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const assert = bun.assert;
 
 const interpreter = @import("../interpreter.zig");
+const EnvStr = interpreter.EnvStr;
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const EnvStr = interpreter.EnvStr;
+
+const bun = @import("bun");
+const assert = bun.assert;
+const jsc = bun.jsc;
 const which = bun.which;
+
+const shell = bun.shell;
+const Yield = bun.shell.Yield;

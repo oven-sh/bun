@@ -49,7 +49,7 @@ function depromise<T>(_promise: Promise<T>): T {
 
   tsd.expectType(proc.pid).is<number>();
 
-  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBufferLike>>>();
+  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
   tsd.expectType(proc.stderr).is<undefined>();
   tsd.expectType(proc.stdin).is<undefined>();
 }
@@ -59,7 +59,7 @@ function depromise<T>(_promise: Promise<T>): T {
     stdin: depromise(fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js")),
   });
 
-  const text = depromise(new Response(proc.stdout).text());
+  const text = depromise(proc.stdout.text());
   console.log(text); // "const input = "hello world".repeat(400); ..."
 }
 
@@ -74,8 +74,8 @@ function depromise<T>(_promise: Promise<T>): T {
   tsd.expectType(proc.stdio[3]).is<number | undefined>();
 
   tsd.expectType(proc.stdin).is<FileSink>();
-  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array>>();
-  tsd.expectType(proc.stderr).is<ReadableStream<Uint8Array>>();
+  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+  tsd.expectType(proc.stderr).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
 }
 
 {
@@ -104,7 +104,7 @@ function depromise<T>(_promise: Promise<T>): T {
 
 {
   const proc = Bun.spawn(["echo", "hello"]);
-  const text = depromise(new Response(proc.stdout).text());
+  const text = depromise(proc.stdout.text());
   console.log(text); // => "hello"
 }
 

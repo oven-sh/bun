@@ -21,7 +21,7 @@ const countdown = new Countdown(2, () => server.close());
 
 server.listen(0, common.mustCall(() => {
   {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const client = http2.connect(`http://localhost:${server.address().port}`);
     const req = client.request();
 
     req.resume();
@@ -34,7 +34,7 @@ server.listen(0, common.mustCall(() => {
     }));
   }
   {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const client = http2.connect(`http://localhost:${server.address().port}`);
     const req = client.request({ ':method': 'POST' });
 
     req.resume();

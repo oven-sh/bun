@@ -11,8 +11,8 @@ const fs = require('fs');
   const errObj = {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    // message: 'The "fd" argument must be of type number.' +
-    //          common.invalidArgTypeHelper(input)
+    message: 'The "fd" argument must be of type number.' +
+             common.invalidArgTypeHelper(input)
   };
   assert.throws(() => fs.close(input), errObj);
   assert.throws(() => fs.closeSync(input), errObj);

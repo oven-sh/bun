@@ -1,5 +1,5 @@
 'use strict';
-const common = require('../common');
+require('../common');
 const assert = require('assert');
 const zlib = require('zlib');
 
@@ -10,7 +10,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "options.flush" property must be of type number.' + common.invalidArgTypeHelper('foobar')
+    message: 'The "options.flush" property must be of type number. ' +
+             "Received type string ('foobar')"
   }
 );
 
@@ -31,7 +32,8 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "options.finishFlush" property must be of type number.' + common.invalidArgTypeHelper('foobar')
+    message: 'The "options.finishFlush" property must be of type number. ' +
+             "Received type string ('foobar')"
   }
 );
 

@@ -38,22 +38,12 @@
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 //!
 //! Questions about this file should be directed at @paperclover.
-const builtin = @import("builtin");
 const dbg = builtin.mode == .Debug;
-
-const std = @import("std");
-const w = std.os.windows;
-const assert = std.debug.assert;
-const fmt16 = std.unicode.fmtUtf16Le;
 
 const is_standalone = @import("root") == @This();
 const bun = if (!is_standalone) @import("bun") else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
-const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
+const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, .hidden);
 const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline else bun.callmod_inline;
-
-const Flags = @import("./BinLinkingShim.zig").Flags;
-
-const wliteral = std.unicode.utf8ToUtf16LeStringLiteral;
 
 /// A copy of all ntdll declarations this program uses
 const nt = struct {
@@ -203,7 +193,7 @@ const FailReason = enum {
                     .InterpreterNotFoundBun =>
                     \\Please run the following command, or double check %PATH% is right.
                     \\
-                    \\    powershell -c "irm bun.sh/install.ps1|iex"
+                    \\    powershell -c "irm bun.com/install.ps1|iex"
                     \\
                     \\
                     ,
@@ -887,7 +877,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 }
 
 pub const FromBunRunContext = struct {
-    const CommandContext = bun.CLI.Command.Context;
+    const CommandContext = bun.cli.Command.Context;
 
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
     base_path: []u16,
@@ -964,3 +954,12 @@ pub inline fn main() noreturn {
     comptime assert(!builtin.link_libcpp);
     launcher(.launch, {});
 }
+
+const builtin = @import("builtin");
+const std = @import("std");
+const Flags = @import("./BinLinkingShim.zig").Flags;
+const assert = std.debug.assert;
+const w = std.os.windows;
+
+const fmt16 = std.unicode.fmtUtf16Le;
+const wliteral = std.unicode.utf8ToUtf16LeStringLiteral;

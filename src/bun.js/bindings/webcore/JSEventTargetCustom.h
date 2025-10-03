@@ -32,7 +32,7 @@ namespace WebCore {
 
 // Wrapper type for JSEventTarget's castedThis because JSDOMWindow and JSWorkerGlobalScope do not inherit JSEventTarget.
 class JSEventTargetWrapper {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSEventTargetWrapper);
 
 public:
     JSEventTargetWrapper(EventTarget& wrapped, JSC::JSObject& wrapper)
@@ -64,7 +64,7 @@ public:
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
-        auto thisObject = jsEventTargetCast(vm, thisValue.isUndefinedOrNull() ? JSC::JSValue(&lexicalGlobalObject) : thisValue);
+        auto thisObject = jsEventTargetCast(vm, thisValue.isUndefinedOrNull() ? &lexicalGlobalObject : thisValue);
         if (!thisObject) [[unlikely]] {
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventTarget", operationName);
         }

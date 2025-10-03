@@ -183,7 +183,9 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         auto buffer = array->possiblySharedBuffer();
         auto off = array->byteOffset();
         JSC::JSUint8Array* retArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off, n);
+        RETURN_IF_EXCEPTION(throwScope, {});
         JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off + n, len - n);
+        RETURN_IF_EXCEPTION(throwScope, {});
         m_deque.first().set(vm, this, newArray);
         RELEASE_AND_RETURN(throwScope, retArray);
     }
@@ -210,6 +212,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
             auto buffer = array->possiblySharedBuffer();
             auto off = array->byteOffset();
             JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, off + n, len - n);
+            RETURN_IF_EXCEPTION(throwScope, {});
             element.set(vm, this, newArray);
             offset += n;
             break;

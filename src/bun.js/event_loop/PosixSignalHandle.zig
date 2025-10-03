@@ -9,7 +9,7 @@ tail: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
 // Consumer index (main thread reads).
 head: std.atomic.Value(u16) = std.atomic.Value(u16).init(0),
 
-const log = bun.Output.scoped(.PosixSignalHandle, true);
+const log = bun.Output.scoped(.PosixSignalHandle, .hidden);
 
 pub const new = bun.TrivialNew(@This());
 
@@ -76,11 +76,11 @@ pub fn dequeue(this: *PosixSignalHandle) ?u8 {
 
 /// Drain as many signals as possible and enqueue them as tasks in the event loop.
 /// Called by the main thread.
-pub fn drain(this: *PosixSignalHandle, event_loop: *JSC.EventLoop) void {
+pub fn drain(this: *PosixSignalHandle, event_loop: *jsc.EventLoop) void {
     while (this.dequeue()) |signal| {
         // Example: wrap the signal into a Task structure
         var posix_signal_task: PosixSignalTask = undefined;
-        var task = JSC.Task.init(&posix_signal_task);
+        var task = jsc.Task.init(&posix_signal_task);
         task.setUintptr(signal);
         event_loop.enqueueTask(task);
     }
@@ -88,10 +88,10 @@ pub fn drain(this: *PosixSignalHandle, event_loop: *JSC.EventLoop) void {
 
 pub const PosixSignalTask = struct {
     number: u8,
-    extern "c" fn Bun__onSignalForJS(number: i32, globalObject: *JSC.JSGlobalObject) void;
+    extern "c" fn Bun__onSignalForJS(number: i32, globalObject: *jsc.JSGlobalObject) void;
 
     pub const new = bun.TrivialNew(@This());
-    pub fn runFromJSThread(number: u8, globalObject: *JSC.JSGlobalObject) void {
+    pub fn runFromJSThread(number: u8, globalObject: *jsc.JSGlobalObject) void {
         Bun__onSignalForJS(number, globalObject);
     }
 };
@@ -116,7 +116,9 @@ comptime {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
 const Environment = bun.Environment;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;

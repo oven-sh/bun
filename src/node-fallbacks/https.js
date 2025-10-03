@@ -17,3 +17,5 @@ export var {
   validateHeaderName,
   validateHeaderValue,
 } = https;
+
+export default https;

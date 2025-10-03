@@ -557,13 +557,11 @@ For production builds, the function uses frequency-based minification for optima
 _Algorithm steps_:
 
 1. **Character Frequency Analysis**:
-
    - Analyzes character usage across all files in the chunk
    - Builds frequency map to generate shortest possible identifiers
    - Common patterns get shorter names (e.g., `a`, `b`, `c` for most used symbols)
 
 2. **Symbol Usage Counting**:
-
    - Counts how often each symbol is used throughout the chunk
    - Prioritizes frequently-used symbols for shortest names
    - Includes special handling for `exports` and `module` references
@@ -879,7 +877,6 @@ When bundling modules, Bun often needs to wrap module code in runtime functions 
 1. **Module Wrapper Management**: Determines which statements can be placed inside wrapper functions vs. which must remain at the top level
 
 2. **Import/Export Statement Processing**: Transforms import/export syntax based on output format and bundling context
-
    - Converts `export * from 'path'` to import statements when needed
    - Strips export keywords when bundling (since internal modules don't need exports)
    - Handles re-export runtime function calls

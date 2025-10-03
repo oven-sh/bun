@@ -1,13 +1,13 @@
 pub const WriteFileResultType = SystemError.Maybe(SizeType);
 pub const WriteFileOnWriteFileCallback = *const fn (ctx: *anyopaque, count: WriteFileResultType) void;
-pub const WriteFileTask = JSC.WorkTask(WriteFile);
+pub const WriteFileTask = jsc.WorkTask(WriteFile);
 
 pub const WriteFile = struct {
     file_blob: Blob,
     bytes_blob: Blob,
 
     opened_fd: bun.FileDescriptor = invalid_fd,
-    system_error: ?JSC.SystemError = null,
+    system_error: ?jsc.SystemError = null,
     errno: ?anyerror = null,
     task: bun.ThreadPool.Task = undefined,
     io_task: ?*WriteFileTask = null,
@@ -38,7 +38,7 @@ pub const WriteFile = struct {
     pub fn onReady(this: *WriteFile) void {
         bloblog("WriteFile.onReady()", .{});
         this.task = .{ .callback = &doWriteLoopTask };
-        JSC.WorkPool.schedule(&this.task);
+        jsc.WorkPool.schedule(&this.task);
     }
 
     pub fn onIOError(this: *WriteFile, err: bun.sys.Error) void {
@@ -46,7 +46,7 @@ pub const WriteFile = struct {
         this.errno = bun.errnoToZigErr(err.errno);
         this.system_error = err.toSystemError();
         this.task = .{ .callback = &doWriteLoopTask };
-        JSC.WorkPool.schedule(&this.task);
+        jsc.WorkPool.schedule(&this.task);
     }
 
     pub fn onRequestWritable(request: *io.Request) io.Action {
@@ -122,7 +122,7 @@ pub const WriteFile = struct {
         const fd = this.opened_fd;
         bun.assert(fd != invalid_fd);
 
-        const result: JSC.Maybe(usize) =
+        const result: bun.sys.Maybe(usize) =
             // We do not use pwrite() because the file may not be
             // seekable (such as stdout)
             //
@@ -161,7 +161,7 @@ pub const WriteFile = struct {
         return true;
     }
 
-    pub fn then(this: *WriteFile, _: *JSC.JSGlobalObject) void {
+    pub fn then(this: *WriteFile, _: *jsc.JSGlobalObject) void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 
@@ -280,7 +280,7 @@ pub const WriteFile = struct {
         this.doWriteLoop();
     }
 
-    fn doWriteLoopTask(task: *JSC.WorkPoolTask) void {
+    fn doWriteLoopTask(task: *jsc.WorkPoolTask) void {
         var this: *WriteFile = @fieldParentPtr("task", task);
         // On macOS, we use one-shot mode, so we don't need to unregister.
         if (comptime Environment.isMac) {
@@ -337,7 +337,6 @@ pub const WriteFile = struct {
     }
 };
 
-const uv = bun.windows.libuv;
 pub const WriteFileWindows = struct {
     io_request: uv.fs_t,
     file_blob: Blob,
@@ -350,16 +349,16 @@ pub const WriteFileWindows = struct {
     fd: uv.uv_file = -1,
     err: ?bun.sys.Error = null,
     total_written: usize = 0,
-    event_loop: *JSC.EventLoop,
+    event_loop: *jsc.EventLoop,
 
     owned_fd: bool = false,
 
-    const log = bun.Output.scoped(.WriteFile, true);
+    const log = bun.Output.scoped(.WriteFile, .hidden);
 
     pub fn createWithCtx(
         file_blob: Blob,
         bytes_blob: Blob,
-        event_loop: *bun.JSC.EventLoop,
+        event_loop: *bun.jsc.EventLoop,
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
@@ -480,7 +479,7 @@ pub const WriteFileWindows = struct {
         this.event_loop.refConcurrently();
 
         const path = this.file_blob.store.?.data.file.pathlike.path.slice();
-        JSC.Node.fs.Async.AsyncMkdirp.new(.{
+        jsc.Node.fs.Async.AsyncMkdirp.new(.{
             .completion = @ptrCast(&onMkdirpCompleteConcurrent),
             .completion_ctx = this,
             .path = bun.Dirname.dirname(u8, path)
@@ -503,11 +502,11 @@ pub const WriteFileWindows = struct {
         this.open();
     }
 
-    fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: JSC.Maybe(void)) void {
+    fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: bun.sys.Maybe(void)) void {
         log("mkdirp complete", .{});
         bun.assert(this.err == null);
         this.err = if (err_ == .err) err_.err else null;
-        this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
+        this.event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
     }
 
     fn onWriteComplete(req: *uv.fs_t) callconv(.C) void {
@@ -558,7 +557,7 @@ pub const WriteFileWindows = struct {
         this.onFinish();
     }
 
-    pub fn toSystemError(this: *WriteFileWindows) ?JSC.SystemError {
+    pub fn toSystemError(this: *WriteFileWindows) ?jsc.SystemError {
         if (this.err) |err| {
             var sys_err = err;
             if (this.owned_fd) {
@@ -617,7 +616,7 @@ pub const WriteFileWindows = struct {
     }
 
     pub fn create(
-        event_loop: *JSC.EventLoop,
+        event_loop: *jsc.EventLoop,
         file_blob: Blob,
         bytes_blob: Blob,
         comptime Context: type,
@@ -650,7 +649,7 @@ pub const WriteFilePromise = struct {
                 promise.reject(globalThis, err.toErrorInstance(globalThis));
             },
             .result => |wrote| {
-                promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(wrote));
+                promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(wrote));
             },
         }
     }
@@ -659,7 +658,7 @@ pub const WriteFilePromise = struct {
 pub const WriteFileWaitFromLockedValueTask = struct {
     file_blob: Blob,
     globalThis: *JSGlobalObject,
-    promise: JSC.JSPromise.Strong,
+    promise: jsc.JSPromise.Strong,
     mkdirp_if_not_exists: bool = false,
 
     pub fn thenWrap(this: *anyopaque, value: *Body.Value) void {
@@ -693,7 +692,13 @@ pub const WriteFileWaitFromLockedValueTask = struct {
             => {
                 var blob = value.use();
                 // TODO: this should be one promise not two!
-                const new_promise = Blob.writeFileWithSourceDestination(globalThis, &blob, &file_blob, .{ .mkdirp_if_not_exists = this.mkdirp_if_not_exists });
+                const new_promise = Blob.writeFileWithSourceDestination(globalThis, &blob, &file_blob, .{ .mkdirp_if_not_exists = this.mkdirp_if_not_exists }) catch |err| {
+                    file_blob.detach();
+                    this.promise.deinit();
+                    bun.destroy(this);
+                    promise.reject(globalThis, err);
+                    return;
+                };
                 if (new_promise.asAnyPromise()) |p| {
                     switch (p.unwrap(globalThis.vm(), .mark_handled)) {
                         // Fulfill the new promise using the pending promise
@@ -716,23 +721,25 @@ pub const WriteFileWaitFromLockedValueTask = struct {
     }
 };
 
-const Body = JSC.WebCore.Body;
+const bloblog = bun.Output.scoped(.WriteFile, .hidden);
+
+const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
-const std = @import("std");
-const Blob = JSC.WebCore.Blob;
-const invalid_fd = bun.invalid_fd;
-
-const SystemError = JSC.SystemError;
-const SizeType = Blob.SizeType;
-const io = bun.io;
-const FileOpener = Blob.FileOpener;
-const FileCloser = Blob.FileCloser;
 const Environment = bun.Environment;
-const bloblog = bun.Output.scoped(.WriteFile, true);
-const JSPromise = JSC.JSPromise;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
+const invalid_fd = bun.invalid_fd;
+const io = bun.io;
+const uv = bun.windows.libuv;
 
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSPromise = jsc.JSPromise;
+const SystemError = jsc.SystemError;
+const ZigString = jsc.ZigString;
+const Body = jsc.WebCore.Body;
+
+const Blob = jsc.WebCore.Blob;
 const ClosingState = Blob.ClosingState;
+const FileCloser = Blob.FileCloser;
+const FileOpener = Blob.FileOpener;
+const SizeType = Blob.SizeType;

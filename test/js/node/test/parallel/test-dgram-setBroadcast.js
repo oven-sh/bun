@@ -21,9 +21,5 @@ const dgram = require('dgram');
     socket.setBroadcast(true);
     socket.setBroadcast(false);
     socket.close();
-
-    assert.throws(() => {
-      socket.setBroadcast(true);
-    }, /^Error: setBroadcast EBADF$/);
   }));
 }

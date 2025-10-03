@@ -1,10 +1,3 @@
-const bun = @import("bun");
-const std = @import("std");
-const JSC = bun.JSC;
-const boring = bun.BoringSSL.c;
-const hmac = @import("hmac.zig");
-const string = @import("string.zig");
-
 /// CSRF Token implementation for Bun
 /// It provides protection against Cross-Site Request Forgery attacks
 /// by generating and validating tokens using HMAC signatures
@@ -14,7 +7,7 @@ pub const CSRF = @This();
 pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// Default HMAC algorithm used for token signing
-pub const DEFAULT_ALGORITHM: JSC.API.Bun.Crypto.EVP.Algorithm = .sha256;
+pub const DEFAULT_ALGORITHM: jsc.API.Bun.Crypto.EVP.Algorithm = .sha256;
 
 /// Error types for CSRF operations
 pub const Error = error{
@@ -33,7 +26,7 @@ pub const GenerateOptions = struct {
     /// Format to encode the token in
     encoding: TokenFormat = .base64url,
     /// Algorithm to use for signing
-    algorithm: JSC.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM,
+    algorithm: jsc.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM,
 };
 
 /// Options for validating CSRF tokens
@@ -47,7 +40,7 @@ pub const VerifyOptions = struct {
     /// Encoding to use for the token
     encoding: TokenFormat = .base64url,
     /// Algorithm to use for signing
-    algorithm: JSC.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM,
+    algorithm: jsc.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM,
 };
 
 /// Token encoding format
@@ -56,7 +49,7 @@ pub const TokenFormat = enum {
     base64url,
     hex,
 
-    pub fn toNodeEncoding(self: TokenFormat) JSC.Node.Encoding {
+    pub fn toNodeEncoding(self: TokenFormat) jsc.Node.Encoding {
         return switch (self) {
             .base64 => .base64,
             .base64url => .base64url,
@@ -69,7 +62,7 @@ pub const TokenFormat = enum {
 ///
 /// Parameters:
 /// - options: Configuration for token generation
-/// - vm: The JSC virtual machine context
+/// - vm: The jsc virtual machine context
 ///
 /// Returns: A string.Slice containing the encoded token
 pub fn generate(
@@ -217,20 +210,20 @@ pub fn verify(options: VerifyOptions) bool {
 
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
-pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    if (bun.Analytics.Features.csrf_generate < std.math.maxInt(usize))
-        bun.Analytics.Features.csrf_generate += 1;
+pub fn csrf__generate_impl(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (bun.analytics.Features.csrf_generate < std.math.maxInt(usize))
+        bun.analytics.Features.csrf_generate += 1;
 
     // We should have at least one argument (secret)
     const args = callframe.arguments();
-    var secret: ?JSC.ZigString.Slice = null;
+    var secret: ?jsc.ZigString.Slice = null;
     if (args.len >= 1) {
         const jsSecret = args[0];
         // Extract the secret (required)
         if (jsSecret.isEmptyOrUndefinedOrNull()) {
             return globalObject.throwInvalidArguments("Secret is required", .{});
         }
-        if (!jsSecret.isString() or jsSecret.getLength(globalObject) == 0) {
+        if (!jsSecret.isString() or try jsSecret.getLength(globalObject) == 0) {
             return globalObject.throwInvalidArguments("Secret must be a non-empty string", .{});
         }
         secret = try jsSecret.toSlice(globalObject, bun.default_allocator);
@@ -240,7 +233,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
     // Default values
     var expires_in: u64 = DEFAULT_EXPIRATION_MS;
     var encoding: TokenFormat = .base64url;
-    var algorithm: JSC.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM;
+    var algorithm: jsc.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM;
 
     // Check if we have options object
     if (args.len > 1 and args[1].isObject()) {
@@ -253,7 +246,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
 
         // Extract encoding (optional)
         if (try options_value.get(globalObject, "encoding")) |encoding_js| {
-            const encoding_enum = try JSC.Node.Encoding.fromJSWithDefaultOnEmpty(encoding_js, globalObject, .base64url) orelse {
+            const encoding_enum = try jsc.Node.Encoding.fromJSWithDefaultOnEmpty(encoding_js, globalObject, .base64url) orelse {
                 return globalObject.throwInvalidArguments("Invalid format: must be 'base64', 'base64url', or 'hex'", .{});
             };
             encoding = switch (encoding_enum) {
@@ -268,7 +261,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
             if (!algorithm_js.isString()) {
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
-            algorithm = try JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
+            algorithm = try jsc.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
                 return globalObject.throwInvalidArguments("Algorithm not supported", .{});
             };
             switch (algorithm) {
@@ -298,44 +291,44 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
     return encoding.toNodeEncoding().encodeWithMaxSize(globalObject, boring.EVP_MAX_MD_SIZE + 32, token_bytes);
 }
 
-pub const csrf__generate = JSC.toJSHostFn(csrf__generate_impl);
+pub const csrf__generate = jsc.toJSHostFn(csrf__generate_impl);
 
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
-pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    if (bun.Analytics.Features.csrf_verify < std.math.maxInt(usize)) {
-        bun.Analytics.Features.csrf_verify += 1;
+pub fn csrf__verify_impl(globalObject: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (bun.analytics.Features.csrf_verify < std.math.maxInt(usize)) {
+        bun.analytics.Features.csrf_verify += 1;
     }
     // We should have at least one argument (token)
     const args = call_frame.arguments();
     if (args.len < 1) {
         return globalObject.throwInvalidArguments("Missing required token parameter", .{});
     }
-    const jsToken: JSC.JSValue = args[0];
+    const jsToken: jsc.JSValue = args[0];
     // Extract the token (required)
     if (jsToken.isUndefinedOrNull()) {
         return globalObject.throwInvalidArguments("Token is required", .{});
     }
-    if (!jsToken.isString() or jsToken.getLength(globalObject) == 0) {
+    if (!jsToken.isString() or try jsToken.getLength(globalObject) == 0) {
         return globalObject.throwInvalidArguments("Token must be a non-empty string", .{});
     }
     const token = try jsToken.toSlice(globalObject, bun.default_allocator);
     defer token.deinit();
 
     // Default values
-    var secret: ?JSC.ZigString.Slice = null;
+    var secret: ?jsc.ZigString.Slice = null;
     defer if (secret) |s| s.deinit();
     var max_age: u64 = DEFAULT_EXPIRATION_MS;
     var encoding: TokenFormat = .base64url;
 
-    var algorithm: JSC.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM;
+    var algorithm: jsc.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM;
 
     // Check if we have options object
     if (args.len > 1 and args[1].isObject()) {
         const options_value = args[1];
 
         // Extract the secret (required)
-        if (try options_value.getOptional(globalObject, "secret", JSC.ZigString.Slice)) |secretSlice| {
+        if (try options_value.getOptional(globalObject, "secret", jsc.ZigString.Slice)) |secretSlice| {
             if (secretSlice.len == 0) {
                 return globalObject.throwInvalidArguments("Secret must be a non-empty string", .{});
             }
@@ -349,7 +342,7 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
 
         // Extract encoding (optional)
         if (try options_value.get(globalObject, "encoding")) |encoding_js| {
-            const encoding_enum = try JSC.Node.Encoding.fromJSWithDefaultOnEmpty(encoding_js, globalObject, .base64url) orelse {
+            const encoding_enum = try jsc.Node.Encoding.fromJSWithDefaultOnEmpty(encoding_js, globalObject, .base64url) orelse {
                 return globalObject.throwInvalidArguments("Invalid format: must be 'base64', 'base64url', or 'hex'", .{});
             };
             encoding = switch (encoding_enum) {
@@ -363,7 +356,7 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
             if (!algorithm_js.isString()) {
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
-            algorithm = try JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
+            algorithm = try jsc.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
                 return globalObject.throwInvalidArguments("Algorithm not supported", .{});
             };
             switch (algorithm) {
@@ -381,7 +374,15 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
         .algorithm = algorithm,
     });
 
-    return JSC.JSValue.jsBoolean(is_valid);
+    return jsc.JSValue.jsBoolean(is_valid);
 }
 
-pub const csrf__verify = JSC.toJSHostFn(csrf__verify_impl);
+pub const csrf__verify = jsc.toJSHostFn(csrf__verify_impl);
+
+const hmac = @import("./hmac.zig");
+const std = @import("std");
+const string = @import("./string.zig");
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const boring = bun.BoringSSL.c;

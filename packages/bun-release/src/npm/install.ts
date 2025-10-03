@@ -1,7 +1,7 @@
 import { unzipSync } from "zlib";
 import { debug, error } from "../console";
 import { fetch } from "../fetch";
-import { chmod, join, rename, rm, tmp, write } from "../fs";
+import { chmod, join, link, rename, rm, tmp, write } from "../fs";
 import type { Platform } from "../platform";
 import { abi, arch, os, supportedPlatforms } from "../platform";
 import { spawn } from "../spawn";
@@ -122,9 +122,10 @@ async function downloadBun(platform: Platform, dst: string): Promise<void> {
 
 export function optimizeBun(path: string): void {
   const installScript =
-    os === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
+    os === "win32" ? 'powershell -c "irm bun.com/install.ps1 | iex"' : "curl -fsSL https://bun.com/install | bash";
   try {
     rename(path, join(__dirname, "bin", "bun.exe"));
+    link(join(__dirname, "bin", "bun.exe"), join(__dirname, "bin", "bunx.exe"));
     return;
   } catch (error) {
     debug("optimizeBun failed", error);

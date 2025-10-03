@@ -487,8 +487,8 @@ declare module "bun" {
      *       // Process text chunk by chunk
      *     }
      */
-    readonly readable: ReadableStream;
-    stream(): ReadableStream;
+    readonly readable: ReadableStream<Uint8Array<ArrayBuffer>>;
+    stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
 
     /**
      * The name or path of the file in the bucket.

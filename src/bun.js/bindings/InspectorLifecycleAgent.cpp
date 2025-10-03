@@ -61,7 +61,7 @@ InspectorLifecycleAgent::~InspectorLifecycleAgent()
     }
 }
 
-void InspectorLifecycleAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorLifecycleAgent::didCreateFrontendAndBackend()
 {
 }
 
@@ -146,11 +146,8 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     auto* global = defaultGlobalObject(&m_globalObject);
     auto* esmMap = global->esmRegistryMap();
+    if (!esmMap) return makeUnexpected(ErrorString("Module graph not available"_s));
     auto* cjsMap = global->requireMap();
-
-    if (!esmMap || !cjsMap) {
-        return makeUnexpected(ErrorString("Module graph not available"_s));
-    }
 
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
     {
@@ -161,6 +158,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
             esm->addItem(value.toWTFString(global));
             RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to esm array"_s)));
         }
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to iterate over esm map"_s)));
     }
 
     Ref<JSON::ArrayOf<String>> cjs = JSON::ArrayOf<String>::create();
@@ -172,6 +170,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
             cjs->addItem(value.toWTFString(global));
             RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to cjs array"_s)));
         }
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to iterate over cjs map"_s)));
     }
 
     auto* process = global->processObject();

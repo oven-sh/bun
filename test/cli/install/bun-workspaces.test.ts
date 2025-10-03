@@ -244,7 +244,7 @@ test("adding workspace in workspace edits package.json with correct version (wor
     stderr: "inherit",
     env,
   });
-  const out = await Bun.readableStreamToText(stdout);
+  const out = await stdout.text();
 
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
@@ -477,7 +477,7 @@ describe("workspace aliases", async () => {
         env,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = await stderr.text();
       if (version === "workspace:@org/b") {
         expect(err).toContain('Workspace dependency "a1" not found');
       } else {
@@ -593,7 +593,7 @@ describe("relative tarballs", async () => {
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
+    const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).not.toContain("failed to resolve");
     expect(await exited).toBe(0);
@@ -700,7 +700,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
     stderr: "inherit",
     env,
   });
-  let out = await Bun.readableStreamToText(stdout);
+  let out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -727,7 +727,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
     stderr: "inherit",
     env,
   }));
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -757,7 +757,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
     stderr: "inherit",
     env,
   }));
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -780,7 +780,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
     stderr: "inherit",
     env,
   }));
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -833,7 +833,7 @@ test("adding packages in workspaces", async () => {
     env,
   });
 
-  let out = await Bun.readableStreamToText(stdout);
+  let out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
@@ -857,7 +857,7 @@ test("adding packages in workspaces", async () => {
     env,
   }));
 
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -886,7 +886,7 @@ test("adding packages in workspaces", async () => {
     env,
   }));
 
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -923,7 +923,7 @@ test("adding packages in workspaces", async () => {
     env,
   }));
 
-  out = await Bun.readableStreamToText(stdout);
+  out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
@@ -980,7 +980,7 @@ test("it should detect duplicate workspace dependencies", async () => {
     env,
   });
 
-  var err = await new Response(stderr).text();
+  var err = await stderr.text();
   expect(err).toContain('Workspace name "pkg1" already exists');
   expect(await exited).toBe(1);
 
@@ -996,7 +996,7 @@ test("it should detect duplicate workspace dependencies", async () => {
     env,
   }));
 
-  err = await new Response(stderr).text();
+  err = await stderr.text();
   expect(err).toContain('Workspace name "pkg1" already exists');
   expect(await exited).toBe(1);
 });
@@ -1045,8 +1045,8 @@ for (const rootVersion of versions) {
         env,
       });
 
-      var err = await new Response(stderr).text();
-      var out = await new Response(stdout).text();
+      var err = await stderr.text();
+      var out = await stdout.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1069,8 +1069,8 @@ for (const rootVersion of versions) {
         env,
       }));
 
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
+      err = await stderr.text();
+      out = await stdout.text();
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1094,8 +1094,8 @@ for (const rootVersion of versions) {
         env,
       }));
 
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
+      err = await stderr.text();
+      out = await stdout.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1118,8 +1118,8 @@ for (const rootVersion of versions) {
         env,
       }));
 
-      err = await new Response(stderr).text();
-      out = await new Response(stdout).text();
+      err = await stderr.text();
+      out = await stdout.text();
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -1165,8 +1165,8 @@ for (const version of versions) {
       env,
     });
 
-    var err = await new Response(stderr).text();
-    var out = await new Response(stdout).text();
+    var err = await stderr.text();
+    var out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("already exists");
     expect(err).not.toContain("not found");
@@ -1197,8 +1197,8 @@ for (const version of versions) {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("already exists");
@@ -1231,8 +1231,8 @@ for (const version of versions) {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("already exists");
     expect(err).not.toContain("not found");
@@ -1259,8 +1259,8 @@ for (const version of versions) {
       env,
     }));
 
-    err = await new Response(stderr).text();
-    out = await new Response(stdout).text();
+    err = await stderr.text();
+    out = await stdout.text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("already exists");
     expect(err).not.toContain("not found");
@@ -1749,8 +1749,8 @@ registry = "${verdaccio.registryUrl()}"
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
-    const out = await Bun.readableStreamToText(stdout);
+    const err = await stderr.text();
+    const out = await stdout.text();
 
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
@@ -1799,8 +1799,8 @@ registry = "${verdaccio.registryUrl()}"
       env,
     });
 
-    const err = await Bun.readableStreamToText(stderr);
-    const out = await Bun.readableStreamToText(stdout);
+    const err = await stderr.text();
+    const out = await stdout.text();
 
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
@@ -1816,4 +1816,97 @@ registry = "${verdaccio.registryUrl()}"
     // Verify that the dependency linked to the bar package is the workspace version (using the workspace: prefix), not the npm version
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("workspace");
   });
+});
+
+test("matching workspace devDependency and npm peerDependency", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        devDependencies: {
+          "no-deps": "workspace:*", // resolves to ./packages/pkg2
+        },
+        peerDependencies: {
+          "no-deps": "2.0.0", // npm peerDependency
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "no-deps",
+        version: "1.0.0",
+      }),
+    ),
+  ]);
+
+  // first install should resolve both
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await exited).toBe(0);
+
+  // both dependencies should be included in the lockfile
+  expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"))
+    .toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 1,
+      "workspaces": {
+        "": {
+          "name": "foo",
+        },
+        "packages/pkg1": {
+          "name": "pkg1",
+          "version": "1.0.0",
+          "devDependencies": {
+            "no-deps": "workspace:*",
+          },
+          "peerDependencies": {
+            "no-deps": "2.0.0",
+          },
+        },
+        "packages/pkg2": {
+          "name": "no-deps",
+          "version": "1.0.0",
+        },
+      },
+      "packages": {
+        "no-deps": ["no-deps@workspace:packages/pkg2"],
+
+        "pkg1": ["pkg1@workspace:packages/pkg1"],
+      }
+    }
+    "
+  `);
+
+  // another install does not think there's a diff between lockfile and package.jsons
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--verbose"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  expect(await exited).toBe(0);
+
+  const out = await stdout.text();
+  const err = await stderr.text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("updated");
+  expect(out).toContain("no changes");
 });

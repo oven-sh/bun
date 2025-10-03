@@ -44,11 +44,11 @@ pub fn StatType(comptime big: bool) type {
             }
         }
 
-        pub fn toJS(this: *const @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             return statToJS(&this.value, globalObject);
         }
 
-        pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn getConstructor(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
             return if (big) Bun__JSBigIntStatsObjectConstructor(globalObject) else Bun__JSStatsObjectConstructor(globalObject);
         }
 
@@ -56,7 +56,7 @@ pub fn StatType(comptime big: bool) type {
             return @intCast(@min(@max(value, 0), std.math.maxInt(i64)));
         }
 
-        fn statToJS(stat_: *const bun.Stat, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        fn statToJS(stat_: *const bun.Stat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
@@ -80,7 +80,7 @@ pub fn StatType(comptime big: bool) type {
             const birthtime_ns: u64 = if (big and !Environment.isLinux) toNanoseconds(stat_.birthtime()) else 0;
 
             if (big) {
-                return Bun__createJSBigIntStatsObject(
+                return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__createJSBigIntStatsObject, .{
                     globalObject,
                     dev,
                     ino,
@@ -100,7 +100,7 @@ pub fn StatType(comptime big: bool) type {
                     mtime_ns,
                     ctime_ns,
                     birthtime_ns,
-                );
+                });
             }
 
             return Bun__createJSStatsObject(
@@ -129,11 +129,11 @@ pub fn StatType(comptime big: bool) type {
         }
     };
 }
-extern fn Bun__JSBigIntStatsObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
-extern fn Bun__JSStatsObjectConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+extern fn Bun__JSBigIntStatsObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
+extern fn Bun__JSStatsObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
 
 extern fn Bun__createJSStatsObject(
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     dev: i64,
     ino: i64,
     mode: i64,
@@ -148,10 +148,10 @@ extern fn Bun__createJSStatsObject(
     mtimeMs: f64,
     ctimeMs: f64,
     birthtimeMs: f64,
-) JSC.JSValue;
+) jsc.JSValue;
 
 extern fn Bun__createJSBigIntStatsObject(
-    globalObject: *JSC.JSGlobalObject,
+    globalObject: *jsc.JSGlobalObject,
     dev: i64,
     ino: i64,
     mode: i64,
@@ -170,7 +170,7 @@ extern fn Bun__createJSBigIntStatsObject(
     mtimeNs: u64,
     ctimeNs: u64,
     birthtimeNs: u64,
-) JSC.JSValue;
+) jsc.JSValue;
 
 pub const StatsSmall = StatType(false);
 pub const StatsBig = StatType(true);
@@ -188,14 +188,14 @@ pub const Stats = union(enum) {
         }
     }
 
-    pub fn toJSNewlyCreated(this: *const Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const Stats, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return switch (this.*) {
             .big => this.big.toJS(globalObject),
             .small => this.small.toJS(globalObject),
         };
     }
 
-    pub inline fn toJS(this: *Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub inline fn toJS(this: *Stats, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         _ = this;
         _ = globalObject;
 
@@ -203,7 +203,8 @@ pub const Stats = union(enum) {
     }
 };
 
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Environment = bun.Environment;
 const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const jsc = bun.jsc;

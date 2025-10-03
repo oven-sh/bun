@@ -32,6 +32,7 @@
 //!
 //! The manifest is generated during the linking phase and serialized as a JSON string
 //! that gets embedded directly into the JavaScript output.
+
 const HTMLImportManifest = @This();
 
 index: u32,
@@ -54,7 +55,7 @@ fn writeEntryItem(
     path: []const u8,
     hash: u64,
     loader: options.Loader,
-    kind: bun.JSC.API.BuildArtifact.OutputKind,
+    kind: bun.jsc.API.BuildArtifact.OutputKind,
 ) !void {
     try writer.writeAll("{");
 
@@ -128,13 +129,26 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
 
     try writer.writeAll("{");
 
+    const inject_compiler_filesystem_prefix = bv2.transpiler.options.compile;
+    // Use the server-side public path here.
+    const public_path = bv2.transpiler.options.public_path;
+    var temp_buffer = std.ArrayList(u8).init(bun.default_allocator);
+    defer temp_buffer.deinit();
+
     for (chunks) |*ch| {
         if (ch.entry_point.source_index == browser_source_index and ch.entry_point.is_entry_point) {
             entry_point_bits.set(ch.entry_point.entry_point_id);
 
             if (ch.content == .html) {
                 try writer.writeAll("\"index\":");
-                try bun.js_printer.writeJSONString(ch.final_rel_path, @TypeOf(writer), writer, .utf8);
+                if (inject_compiler_filesystem_prefix) {
+                    temp_buffer.clearRetainingCapacity();
+                    try temp_buffer.appendSlice(public_path);
+                    try temp_buffer.appendSlice(bun.strings.removeLeadingDotSlash(ch.final_rel_path));
+                    try bun.js_printer.writeJSONString(temp_buffer.items, @TypeOf(writer), writer, .utf8);
+                } else {
+                    try bun.js_printer.writeJSONString(ch.final_rel_path, @TypeOf(writer), writer, .utf8);
+                }
                 try writer.writeAll(",");
             }
         }
@@ -167,13 +181,20 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
                         .posix,
                         false,
                     );
-                    if (path_for_key.len > 2 and strings.eqlComptime(path_for_key[0..2], "./")) {
-                        path_for_key = path_for_key[2..];
-                    }
+
+                    path_for_key = bun.strings.removeLeadingDotSlash(path_for_key);
 
                     break :brk path_for_key;
                 },
-                ch.final_rel_path,
+                brk: {
+                    if (inject_compiler_filesystem_prefix) {
+                        temp_buffer.clearRetainingCapacity();
+                        try temp_buffer.appendSlice(public_path);
+                        try temp_buffer.appendSlice(bun.strings.removeLeadingDotSlash(ch.final_rel_path));
+                        break :brk temp_buffer.items;
+                    }
+                    break :brk ch.final_rel_path;
+                },
                 ch.isolated_hash,
                 ch.content.loader(),
                 if (ch.entry_point.is_entry_point)
@@ -203,14 +224,20 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
                     .posix,
                     false,
                 );
-                if (path_for_key.len > 2 and strings.eqlComptime(path_for_key[0..2], "./")) {
-                    path_for_key = path_for_key[2..];
-                }
+                path_for_key = bun.strings.removeLeadingDotSlash(path_for_key);
 
                 try writeEntryItem(
                     writer,
                     path_for_key,
-                    output_file.dest_path,
+                    brk: {
+                        if (inject_compiler_filesystem_prefix) {
+                            temp_buffer.clearRetainingCapacity();
+                            try temp_buffer.appendSlice(public_path);
+                            try temp_buffer.appendSlice(bun.strings.removeLeadingDotSlash(output_file.dest_path));
+                            break :brk temp_buffer.items;
+                        }
+                        break :brk output_file.dest_path;
+                    },
                     output_file.hash,
                     output_file.loader,
                     output_file.output_kind,
@@ -222,18 +249,18 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     try writer.writeAll("]}");
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
 const std = @import("std");
-const options = @import("../options.zig");
 
+const options = @import("../options.zig");
 const Loader = options.Loader;
+
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
+
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;
+const Chunk = bundler.Chunk;
 const Graph = bundler.Graph;
 const LinkerGraph = bundler.LinkerGraph;
-
-const Chunk = bundler.Chunk;

@@ -60,6 +60,7 @@ JSArray* JSConnectionsList::all(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
 
     auto iter = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), all, IterationKind::Keys);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue item;
     size_t i = 0;
@@ -85,6 +86,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
 
     auto iter = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), all, IterationKind::Keys);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue item;
     size_t i = 0;
@@ -112,6 +114,7 @@ JSArray* JSConnectionsList::active(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
 
     auto iter = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), active, IterationKind::Keys);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue item;
     size_t i = 0;
@@ -137,6 +140,7 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     RETURN_IF_EXCEPTION(scope, {});
 
     auto iter = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), active, IterationKind::Keys);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue item = iter->next(vm);
     size_t i = 0;

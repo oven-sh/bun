@@ -1,5 +1,6 @@
 const MemoryReportingAllocator = @This();
-const log = bun.Output.scoped(.MEM, false);
+
+const log = bun.Output.scoped(.MEM, .visible);
 
 child_allocator: std.mem.Allocator,
 memory_cost: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
@@ -76,6 +77,10 @@ pub inline fn assert(this: *const MemoryReportingAllocator) void {
     }
 }
 
+pub fn isInstance(allocator_: std.mem.Allocator) bool {
+    return allocator_.vtable == &VTable;
+}
+
 pub const VTable = std.mem.Allocator.VTable{
     .alloc = &alloc,
     .resize = &resize,
@@ -84,7 +89,8 @@ pub const VTable = std.mem.Allocator.VTable{
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Environment = bun.Environment;
 const Output = bun.Output;
+const jsc = bun.jsc;

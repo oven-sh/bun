@@ -29,7 +29,7 @@ interface ImportMeta {
    * However, this check is usually not needed as Bun will dead-code-eliminate
    * calls to all of the HMR APIs in production builds.
    *
-   * https://bun.sh/docs/bundler/hmr
+   * https://bun.com/docs/bundler/hmr
    */
   hot: {
     /**
@@ -167,7 +167,7 @@ interface ImportMeta {
      *
      * For compatibility with Vite, event names are also available via vite:* prefix instead of bun:*.
      *
-     * https://bun.sh/docs/bundler/hmr#import-meta-hot-on-and-off
+     * https://bun.com/docs/bundler/hmr#import-meta-hot-on-and-off
      * @param event The event to listen to
      * @param callback The callback to call when the event is emitted
      */
@@ -178,7 +178,7 @@ interface ImportMeta {
      *
      * For compatibility with Vite, event names are also available via vite:* prefix instead of bun:*.
      *
-     * https://bun.sh/docs/bundler/hmr#import-meta-hot-on-and-off
+     * https://bun.com/docs/bundler/hmr#import-meta-hot-on-and-off
      * @param event The event to stop listening to
      * @param callback The callback to stop listening to
      */

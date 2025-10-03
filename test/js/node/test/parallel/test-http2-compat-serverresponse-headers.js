@@ -105,7 +105,7 @@ server.listen(0, common.mustCall(function() {
       {
         code: 'ERR_INVALID_HTTP_TOKEN',
         name: 'TypeError',
-        // message: 'Header name must be a valid HTTP token [""]'
+        message: 'Header name must be a valid HTTP token [""]'
       }
     );
 
@@ -136,6 +136,7 @@ server.listen(0, common.mustCall(function() {
         () => response.setHeader(real, expectedValue),
         {
           code: 'ERR_HTTP2_HEADERS_SENT',
+          name: 'Error',
           message: 'Response has already been initiated.'
         }
       );
@@ -143,6 +144,7 @@ server.listen(0, common.mustCall(function() {
         () => response.removeHeader(real, expectedValue),
         {
           code: 'ERR_HTTP2_HEADERS_SENT',
+          name: 'Error',
           message: 'Response has already been initiated.'
         }
       );
@@ -152,6 +154,7 @@ server.listen(0, common.mustCall(function() {
           () => response.setHeader(real, expectedValue),
           {
             code: 'ERR_HTTP2_HEADERS_SENT',
+            name: 'Error',
             message: 'Response has already been initiated.'
           }
         );
@@ -159,6 +162,7 @@ server.listen(0, common.mustCall(function() {
           () => response.removeHeader(real, expectedValue),
           {
             code: 'ERR_HTTP2_HEADERS_SENT',
+            name: 'Error',
             message: 'Response has already been initiated.'
           }
         );

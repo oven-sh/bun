@@ -266,7 +266,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMIteratorPrototype<JSWrapper, I
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Cannot call next() on a non-Iterator object"_s);
     }
 
-    return JSC::JSValue::encode(iterator->next(*globalObject));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(iterator->next(*globalObject)));
 }
 
 template<typename JSWrapper, typename IteratorTraits>

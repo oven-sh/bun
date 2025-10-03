@@ -1,16 +1,11 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const std = @import("std");
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ErrorableString = JSC.ErrorableString;
+export const NodeModuleModule__findPath = jsc.host_fn.wrap3(findPath);
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
-pub export fn NodeModuleModule__findPath(
+fn findPath(
     global: *JSGlobalObject,
     request_bun_str: bun.String,
-    paths_maybe: ?*JSC.JSArray,
-) JSValue {
+    paths_maybe: ?*jsc.JSArray,
+) bun.JSError!JSValue {
     var stack_buf = std.heap.stackFallback(8192, bun.default_allocator);
     const alloc = stack_buf.get();
 
@@ -25,12 +20,9 @@ pub export fn NodeModuleModule__findPath(
 
     // for each path
     const found = if (paths_maybe) |paths| found: {
-        var iter = paths.iterator(global);
-        while (iter.next()) |path| {
-            const cur_path = bun.String.fromJS(path, global) catch |err| switch (err) {
-                error.JSError => return .zero,
-                error.OutOfMemory => return global.throwOutOfMemoryValue(),
-            };
+        var iter = try paths.iterator(global);
+        while (try iter.next()) |path| {
+            const cur_path = try bun.String.fromJS(path, global);
             defer cur_path.deref();
 
             if (findPathInner(request_bun_str, cur_path, global)) |found| {
@@ -54,7 +46,7 @@ fn findPathInner(
     global: *JSGlobalObject,
 ) ?bun.String {
     var errorable: ErrorableString = undefined;
-    JSC.VirtualMachine.resolveMaybeNeedsTrailingSlash(
+    jsc.VirtualMachine.resolveMaybeNeedsTrailingSlash(
         &errorable,
         global,
         request,
@@ -65,7 +57,7 @@ fn findPathInner(
         true,
     ) catch |err| switch (err) {
         error.JSError => {
-            global.clearException();
+            global.clearException(); // TODO sus
             return null;
         },
         else => return null,
@@ -84,17 +76,17 @@ pub fn _stat(path: []const u8) i32 {
 
 pub const CustomLoader = union(enum) {
     loader: bun.options.Loader,
-    custom: JSC.Strong,
+    custom: jsc.Strong,
 };
 
-extern fn JSCommonJSExtensions__appendFunction(global: *JSC.JSGlobalObject, value: JSC.JSValue) u32;
-extern fn JSCommonJSExtensions__setFunction(global: *JSC.JSGlobalObject, index: u32, value: JSC.JSValue) void;
+extern fn JSCommonJSExtensions__appendFunction(global: *jsc.JSGlobalObject, value: jsc.JSValue) u32;
+extern fn JSCommonJSExtensions__setFunction(global: *jsc.JSGlobalObject, index: u32, value: jsc.JSValue) void;
 /// Returns the index of the last value, which must have it's references updated to `index`
-extern fn JSCommonJSExtensions__swapRemove(global: *JSC.JSGlobalObject, index: u32) u32;
+extern fn JSCommonJSExtensions__swapRemove(global: *jsc.JSGlobalObject, index: u32) u32;
 
 // Memory management is complicated because JSValues are stored in gc-visitable
 // WriteBarriers in C++ but the hash map for extensions is in Zig for flexibility.
-fn onRequireExtensionModify(global: *JSC.JSGlobalObject, str: []const u8, kind: i32, value: JSC.JSValue) !void {
+fn onRequireExtensionModify(global: *jsc.JSGlobalObject, str: []const u8, kind: i32, value: jsc.JSValue) !void {
     bun.assert(kind >= -1 and kind <= 4);
     const vm = global.bunVM();
     const list = &vm.commonjs_custom_extensions;
@@ -151,7 +143,7 @@ fn onRequireExtensionModify(global: *JSC.JSGlobalObject, str: []const u8, kind: 
     }
 }
 
-pub fn findLongestRegisteredExtension(vm: *JSC.VirtualMachine, filename: []const u8) ?CustomLoader {
+pub fn findLongestRegisteredExtension(vm: *jsc.VirtualMachine, filename: []const u8) ?CustomLoader {
     const basename = std.fs.path.basename(filename);
     var next: usize = 0;
     while (bun.strings.indexOfCharPos(basename, '.', next)) |i| {
@@ -166,10 +158,10 @@ pub fn findLongestRegisteredExtension(vm: *JSC.VirtualMachine, filename: []const
 }
 
 fn onRequireExtensionModifyBinding(
-    global: *JSC.JSGlobalObject,
+    global: *jsc.JSGlobalObject,
     str: *const bun.String,
     kind: i32,
-    value: JSC.JSValue,
+    value: jsc.JSValue,
 ) callconv(.c) void {
     var sfa_state = std.heap.stackFallback(8192, bun.default_allocator);
     const alloc = sfa_state.get();
@@ -183,3 +175,11 @@ fn onRequireExtensionModifyBinding(
 comptime {
     @export(&onRequireExtensionModifyBinding, .{ .name = "NodeModuleModule__onRequireExtensionModify" });
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const jsc = bun.jsc;
+const ErrorableString = jsc.ErrorableString;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

@@ -856,11 +856,13 @@ pub const CommandLineReporter = struct {
                                 .fail => writer.print(comptime Output.prettyFmt("<r><red>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                             },
                         }
+                        buntest.reporter.?.last_printed_dot = true;
                     } else {
                         // If dots mode is on and we're about to print non-dot output (failure),
                         // and the last thing we printed was a dot, print a newline first
                         if (buntest.reporter != null and buntest.reporter.?.reporters.dots and buntest.reporter.?.last_printed_dot) {
                             writer.writeAll("\n") catch {};
+                            buntest.reporter.?.last_printed_dot = false;
                         }
 
                         writeTestStatusLine(result, &writer);
@@ -881,12 +883,6 @@ pub const CommandLineReporter = struct {
         output_writer.writeAll(output_buf.items[initial_length..]) catch {};
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
-
-        // Track whether we just printed a dot
-        this.last_printed_dot = this.reporters.dots and (switch (sequence.result.basicResult()) {
-            .pass, .skip, .todo, .pending => true,
-            .fail => false,
-        });
 
         if (!this.reporters.dots) switch (sequence.result.basicResult()) {
             .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),

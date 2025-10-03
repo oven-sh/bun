@@ -294,12 +294,28 @@ pub const Framework = struct {
     ///   the above react configuration.
     /// The provided allocator is not stored.
     pub fn auto(
-        _: std.mem.Allocator,
-        _: *bun.resolver.Resolver,
-        _: []FileSystemRouterType,
+        arena: std.mem.Allocator,
+        resolver: *bun.resolver.Resolver,
+        file_system_router_types: []FileSystemRouterType,
     ) !Framework {
-        // Auto is not implemented, currently only used at src/bun.js/api/server/ServerConfig.zig:672
-        return Framework.none;
+        var fw: Framework = Framework.none;
+        fw.file_system_router_types = file_system_router_types;
+
+        if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
+            fw.react_fast_refresh = .{ .import_source = rfr };
+        } else if (resolveOrNull(resolver, "react")) |_| {
+            fw.react_fast_refresh = .{ .import_source = "react-refresh/runtime/index.js" };
+            try fw.built_in_modules.put(
+                arena,
+                "react-refresh/runtime/index.js",
+                if (Environment.codegen_embed)
+                    .{ .code = @embedFile("node-fallbacks/react-refresh.js") }
+                else
+                    .{ .code = bun.runtimeEmbedFile(.codegen, "node-fallbacks/react-refresh.js") },
+            );
+        }
+
+        return fw;
     }
 
     /// Unopiniated default.

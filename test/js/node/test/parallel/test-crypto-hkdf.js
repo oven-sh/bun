@@ -224,3 +224,18 @@ if (!hasOpenSSL3) {
       assert(hkdfSync(hash, 'key', 'salt', 'info', 5));
     });
 }
+
+// Test that callback receives null (not undefined) for error on success
+// https://github.com/oven-sh/bun/issues/23211
+{
+  const secret = new Uint8Array([7, 158, 216, 197, 25, 77, 201, 5, 73, 119]);
+  const salt = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 1]);
+  const info = new Uint8Array([67, 111, 109, 112, 114, 101, 115, 115, 101, 100]);
+  const length = 8;
+
+  hkdf('sha256', secret, salt, info, length, common.mustCall((error, key) => {
+    // Node.js passes null for error on success, not undefined
+    assert.strictEqual(error, null);
+    assert(key instanceof ArrayBuffer);
+  }));
+}

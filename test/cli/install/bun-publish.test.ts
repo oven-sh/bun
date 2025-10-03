@@ -849,6 +849,66 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
   expect(exitCode).toBe(0);
 });
 
+test.only("tarball is created properly", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await rm(join(registry.packagesPath, "publish-pkg-tarball-test"), { recursive: true, force: true });
+
+  await write(join(packageDir, "bunfig.toml"), await registry.authBunfig("check-tarball"));
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "publish-pkg-tarball-test",
+      version: "1.2.3",
+    }),
+  );
+  let { out, exitCode } = await publish(env, packageDir);
+  expect(exitCode).toBe(0);
+  expect(out).toContain("+ publish-pkg-tarball-test");
+
+  const versions = (await file(join(registry.packagesPath, "publish-pkg-tarball-test/package.json")).json()).versions;
+
+  expect(replaceRegistryUrls(versions)).toMatchInlineSnapshot(`
+    {
+      "1.2.3": {
+        "_id": "publish-pkg-tarball-test@1.2.3",
+        "_integrity": "sha512-4TZniDJ86iVpuDHLjaefCE3LjgbymU9XYUhQPCeCv8MDRDB5cTQPRovhGIh2PGfrx9RQunpBPR+qblKBsn4NFQ==",
+        "_nodeVersion": "24.3.0",
+        "_npmVersion": "10.8.3",
+        "contributors": [],
+        "dist": {
+          "integrity": "sha512-4TZniDJ86iVpuDHLjaefCE3LjgbymU9XYUhQPCeCv8MDRDB5cTQPRovhGIh2PGfrx9RQunpBPR+qblKBsn4NFQ==",
+          "shasum": "5b15f85ecd0e83c37131654879a9592ea2a2a660",
+          "tarball": "http://http://localhost:1234/publish-pkg-tarball-test/-/publish-pkg-tarball-test-1.2.3.tgz",
+        },
+        "integrity": "sha512-4TZniDJ86iVpuDHLjaefCE3LjgbymU9XYUhQPCeCv8MDRDB5cTQPRovhGIh2PGfrx9RQunpBPR+qblKBsn4NFQ==",
+        "name": "publish-pkg-tarball-test",
+        "shasum": "5b15f85ecd0e83c37131654879a9592ea2a2a660",
+        "version": "1.2.3",
+      },
+    }
+  `);
+
+  await rm(join(registry.packagesPath, "publish-pkg-tarball-test"), { recursive: true, force: true });
+});
+
+function replaceRegistryUrls(obj: any): any {
+  if (typeof obj === "string") {
+    return obj.replaceAll(/localhost:\d+/g, "localhost:1234");
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(item => replaceRegistryUrls(item));
+  }
+  if (obj && typeof obj === "object") {
+    const result: any = {};
+    for (const key in obj) {
+      result[key] = replaceRegistryUrls(obj[key]);
+    }
+    return result;
+  }
+  return obj;
+}
+
 describe("--tolerate-republish", async () => {
   test("republishing normally fails", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

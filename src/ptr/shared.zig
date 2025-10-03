@@ -452,7 +452,7 @@ fn FullData(comptime Child: type, comptime options: Options) type {
             // .acq_rel because we need to make sure other threads are done using the object before
             // we free it.
             if ((comptime !options.allow_weak) or self.weak_count.decrement() == 0) {
-                if (bun.Environment.ci_assert) bun.assert(self.strong_count.value == 0);
+                if (bun.Environment.ci_assert) bun.assert(self.strong_count.get(.monotonic) == 0);
                 self.destroy();
             }
         }

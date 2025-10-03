@@ -80,9 +80,6 @@ export function dictionary(
     }
 
     toCpp(value: DictionaryInstance): string {
-      for (const memberName of Object.keys(members)) {
-        if (!(memberName in value)) throw RangeError(`missing key: ${memberName}`);
-      }
       for (const memberName of Object.keys(value)) {
         if (!(memberName in members)) throw RangeError(`unexpected key: ${memberName}`);
       }
@@ -90,8 +87,16 @@ export function dictionary(
         ${joinIndented(
           8,
           fullMembers.map(memberInfo => {
+            let memberValue;
+            if (Object.hasOwn(value, memberInfo.name)) {
+              memberValue = value[memberInfo.name];
+            } else if (memberInfo.hasDefault) {
+              memberValue = memberInfo.default;
+            } else if (!permitsUndefined(memberInfo.type)) {
+              throw RangeError(`missing key: ${memberInfo.name}`);
+            }
             const internalName = memberInfo.internalName;
-            return `.${internalName} = ${memberInfo.type.toCpp(value[memberInfo.name])},`;
+            return `.${internalName} = ${memberInfo.type.toCpp(memberValue)},`;
           }),
         )}
       }`);

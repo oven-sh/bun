@@ -138,7 +138,19 @@ pub const OutKind = union(enum) {
         return switch (this) {
             .fd => |val| brk: {
                 shellio.* = val.writer.refSelf();
-                break :brk if (val.captured) |cap| .{ .capture = .{ .buf = cap, .fd = val.writer.fd } } else .{ .fd = val.writer.fd };
+                break :brk if (val.captured) |cap| .{
+                    .capture = .{
+                        .buf = cap,
+                    },
+                } else if (val.writer.fd.get()) |fd| .{
+                    // We have a valid fd that hasn't been moved to libuv
+                    .fd = fd,
+                } else .{
+                    // On Windows, the fd might have been moved to libuv
+                    // In this case, the subprocess should inherit the stdio
+                    // since libuv is already managing it
+                    .inherit = {},
+                };
             },
             .pipe => .pipe,
             .ignore => .ignore,

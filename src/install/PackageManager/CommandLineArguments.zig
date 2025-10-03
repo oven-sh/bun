@@ -22,6 +22,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
     clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
     clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
+    clap.parseParam("-P, --prod") catch unreachable,
     clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
     clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
     clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
@@ -49,6 +50,8 @@ const shared_params = [_]ParamType{
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
+    clap.parseParam("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)") catch unreachable,
+    clap.parseParam("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -133,6 +136,8 @@ const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
 const audit_params: []const ParamType = &([_]ParamType{
     clap.parseParam("<POS> ...                              Check installed packages for vulnerabilities") catch unreachable,
     clap.parseParam("--json                                 Output in JSON format") catch unreachable,
+    clap.parseParam("--audit-level <STR>                    Only print advisories with severity greater than or equal to <level> (low, moderate, high, critical)") catch unreachable,
+    clap.parseParam("--ignore <STR>...                      Ignore specific CVE IDs from audit") catch unreachable,
 });
 
 const info_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -155,6 +160,7 @@ const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
     clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
+    clap.parseParam("--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number") catch unreachable,
 });
 
 const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -215,6 +221,8 @@ registry: string = "",
 
 publish_config: Options.PublishConfig = .{},
 
+tolerate_republish: bool = false,
+
 ca: []const string = &.{},
 ca_file_name: string = "",
 
@@ -233,6 +241,37 @@ message: ?string = null,
 // `bun pm why` options
 top_only: bool = false,
 depth: ?usize = null,
+
+// `bun audit` options
+audit_level: ?AuditLevel = null,
+audit_ignore_list: []const string = &.{},
+
+// CPU and OS overrides for optional dependencies
+cpu: Npm.Architecture = Npm.Architecture.current,
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+
+pub const AuditLevel = enum {
+    low,
+    moderate,
+    high,
+    critical,
+
+    const Map = bun.ComptimeStringMap(AuditLevel, .{
+        .{ "low", .low },
+        .{ "moderate", .moderate },
+        .{ "high", .high },
+        .{ "critical", .critical },
+    });
+
+    pub fn fromString(str: []const u8) ?AuditLevel {
+        return Map.get(str);
+    }
+
+    pub fn shouldIncludeSeverity(self: AuditLevel, severity: []const u8) bool {
+        const severity_level = AuditLevel.fromString(severity) orelse .moderate;
+        return @intFromEnum(severity_level) >= @intFromEnum(self);
+    }
+};
 
 const PatchOpts = union(enum) {
     nothing: struct {},
@@ -575,6 +614,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
                 \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
                 \\
+                \\  <d>Publish without failing when republishing over an existing version.<r>
+                \\  <b><green>bun publish<r> <cyan>--tolerate-republish<r>
+                \\
                 \\Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
                 \\
             ;
@@ -672,6 +714,35 @@ pub fn printHelp(subcommand: Subcommand) void {
             Output.pretty(outro_text, .{});
             Output.flush();
         },
+        .scan => {
+            const intro_text =
+                \\
+                \\<b>Usage<r>: <b><green>bun pm scan<r> <cyan>[flags]<r>
+                \\
+                \\  Scan all packages in lockfile for security vulnerabilities.
+                \\
+                \\<b>Flags:<r>
+            ;
+
+            const outro_text =
+                \\
+                \\
+                \\<b>Examples:<r>
+                \\  <d>Scan all packages for vulnerabilities<r>
+                \\  <b><green>bun pm scan<r>
+                \\
+                \\  <d>Output results as JSON<r>
+                \\  <b><green>bun pm scan<r> <cyan>--json<r>
+                \\
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
+                \\
+            ;
+
+            Output.pretty(intro_text, .{});
+            clap.simpleHelp(pm_params);
+            Output.pretty(outro_text, .{});
+            Output.flush();
+        },
     }
 }
 
@@ -697,6 +768,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         // are not included in the help text
         .audit => shared_params ++ audit_params,
         .info => info_params,
+        .scan => pm_params, // scan uses the same params as pm command
     };
 
     var diag = clap.Diagnostic{};
@@ -718,7 +790,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     var cli = CommandLineArguments{};
     cli.positionals = args.positionals();
     cli.yarn = args.flag("--yarn");
-    cli.production = args.flag("--production");
+    cli.production = args.flag("--production") or args.flag("--prod");
     cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
@@ -830,6 +902,8 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
                 Global.crash();
             };
         }
+
+        cli.tolerate_republish = args.flag("--tolerate-republish");
     }
 
     // link and unlink default to not saving, all others default to
@@ -862,8 +936,67 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         };
     }
 
+    if (comptime subcommand == .audit) {
+        if (args.option("--audit-level")) |level| {
+            cli.audit_level = AuditLevel.fromString(level) orelse {
+                Output.errGeneric("invalid `--audit-level` value: '{s}'. Valid values are: low, moderate, high, critical", .{level});
+                Global.crash();
+            };
+        }
+
+        cli.audit_ignore_list = args.options("--ignore");
+    }
+
     if (args.option("--config")) |opt| {
         cli.config = opt;
+    }
+
+    // Parse multiple --cpu flags and combine them using Negatable
+    const cpu_values = args.options("--cpu");
+    if (cpu_values.len > 0) {
+        var cpu_negatable = Npm.Architecture.none.negatable();
+        for (cpu_values) |cpu_str| {
+            // apply() already handles "any" as wildcard and negation with !
+            cpu_negatable.apply(cpu_str);
+
+            // Support * as an alias for "any"
+            if (strings.eqlComptime(cpu_str, "*")) {
+                cpu_negatable.had_wildcard = true;
+                cpu_negatable.had_unrecognized_values = false;
+            } else if (cpu_negatable.had_unrecognized_values and
+                !strings.eqlComptime(cpu_str, "any") and
+                !strings.eqlComptime(cpu_str, "none"))
+            {
+                // Only error for truly unrecognized values (not "any" or "none")
+                Output.errGeneric("Invalid CPU architecture: '{s}'. Valid values are: *, any, arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64. Use !name to negate.", .{cpu_str});
+                Global.crash();
+            }
+        }
+        cli.cpu = cpu_negatable.combine();
+    }
+
+    // Parse multiple --os flags and combine them using Negatable
+    const os_values = args.options("--os");
+    if (os_values.len > 0) {
+        var os_negatable = Npm.OperatingSystem.none.negatable();
+        for (os_values) |os_str| {
+            // apply() already handles "any" as wildcard and negation with !
+            os_negatable.apply(os_str);
+
+            // Support * as an alias for "any"
+            if (strings.eqlComptime(os_str, "*")) {
+                os_negatable.had_wildcard = true;
+                os_negatable.had_unrecognized_values = false;
+            } else if (os_negatable.had_unrecognized_values and
+                !strings.eqlComptime(os_str, "any") and
+                !strings.eqlComptime(os_str, "none"))
+            {
+                // Only error for truly unrecognized values (not "any" or "none")
+                Output.errGeneric("Invalid operating system: '{s}'. Valid values are: *, any, aix, darwin, freebsd, linux, openbsd, sunos, win32, android. Use !name to negate.", .{os_str});
+                Global.crash();
+            }
+        }
+        cli.os = os_negatable.combine();
     }
 
     if (comptime subcommand == .add or subcommand == .install) {
@@ -990,6 +1123,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
 const string = []const u8;
 
+const Npm = @import("../npm.zig");
 const Options = @import("./PackageManagerOptions.zig");
 const std = @import("std");
 const PackageManagerCommand = @import("../../cli/package_manager_command.zig").PackageManagerCommand;

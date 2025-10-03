@@ -18,13 +18,14 @@ function getHeapStats() {
 }
 const gc = globalThis.gc || globalThis.Bun?.gc || (() => {});
 const sleep = dur => new Promise(resolve => setTimeout(resolve, dur));
+const ASAN_MULTIPLIER = process.env.ASAN_OPTIONS ? 1 / 10 : 1;
 
 // X iterations should be enough to detect a leak
-const ITERATIONS = 20;
+const ITERATIONS = 20 * ASAN_MULTIPLIER;
 // lets send a bigish payload
 // const PAYLOAD = Buffer.from("BUN".repeat((1024 * 128) / 3));
 const PAYLOAD = Buffer.alloc(1024 * 128, "b");
-const MULTIPLEX = 50;
+const MULTIPLEX = 50 * ASAN_MULTIPLIER;
 
 async function main() {
   let info;

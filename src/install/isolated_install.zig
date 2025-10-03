@@ -6,10 +6,16 @@ pub fn installIsolatedPackages(
     command_ctx: Command.Context,
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
+    packages_to_install: ?[]const PackageID,
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
-    const store: Store = try .create(manager, install_root_dependencies, workspace_filters);
+    const store: Store = try .create(
+        manager,
+        install_root_dependencies,
+        workspace_filters,
+        packages_to_install,
+    );
 
     const cwd = FD.cwd();
 
@@ -156,7 +162,6 @@ pub fn installIsolatedPackages(
 
         // add the pending task count upfront
         manager.incrementPendingTasks(@intCast(store.entries.len));
-
         for (0..store.entries.len) |_entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
 
@@ -309,6 +314,7 @@ pub fn installIsolatedPackages(
 
                     const dep_id = node_dep_ids[node_id.get()];
                     const dep = lockfile.buffers.dependencies.items[dep_id];
+
                     switch (pkg_res_tag) {
                         .npm => {
                             manager.enqueuePackageForDownload(

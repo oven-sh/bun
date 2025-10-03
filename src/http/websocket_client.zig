@@ -260,7 +260,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     var outstring = jsc.ZigString.Empty;
                     if (utf16_bytes_) |utf16| {
                         outstring = jsc.ZigString.from16Slice(utf16);
-                        outstring.mark();
+                        outstring.markGlobal();
                         jsc.markBinding(@src());
                         out.didReceiveText(false, &outstring);
                     } else {
@@ -1185,8 +1185,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return null;
             }
 
-            ws.send_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
-            ws.receive_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
+            bun.handleOom(ws.send_buffer.ensureTotalCapacity(2048));
+            bun.handleOom(ws.receive_buffer.ensureTotalCapacity(2048));
             ws.poll_ref.ref(globalThis.bunVM());
 
             const buffered_slice: []u8 = buffered_data[0..buffered_data_len];

@@ -131,7 +131,7 @@ pub fn processNamesArray(
         if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
         if (Glob.detectGlobSyntax(input_path)) {
-            workspace_globs.append(input_path) catch bun.outOfMemory();
+            bun.handleOom(workspace_globs.append(input_path));
             continue;
         }
 
@@ -220,7 +220,7 @@ pub fn processNamesArray(
 
             const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
                 const parts = [_][]const u8{ user_pattern, "package.json" };
-                break :brk arena.allocator().dupe(u8, bun.path.join(parts, .auto)) catch bun.outOfMemory();
+                break :brk bun.handleOom(arena.allocator().dupe(u8, bun.path.join(parts, .auto)));
             };
 
             var walker: GlobWalker = .{};

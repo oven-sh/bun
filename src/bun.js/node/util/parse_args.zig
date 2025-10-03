@@ -272,10 +272,10 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         } else {
             var value_list = try JSValue.createEmptyArray(globalThis, 1);
             try value_list.putIndex(globalThis, 0, new_value);
-            values.putMayBeIndex(globalThis, &key, value_list);
+            try values.putMayBeIndex(globalThis, &key, value_list);
         }
     } else {
-        values.putMayBeIndex(globalThis, &key, new_value);
+        try values.putMayBeIndex(globalThis, &key, new_value);
     }
 }
 
@@ -659,9 +659,9 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
     // Phase 0.B: Parse and validate config
 
-    const config_strict: JSValue = (if (config) |c| try c.getOwn(globalThis, "strict") else null) orelse JSValue.jsBoolean(true);
+    const config_strict: JSValue = (if (config) |c| try c.getOwn(globalThis, "strict") else null) orelse .true;
     var config_allow_positionals: JSValue = if (config) |c| try c.getOwn(globalThis, "allowPositionals") orelse .jsBoolean(!config_strict.toBoolean()) else .jsBoolean(!config_strict.toBoolean());
-    const config_return_tokens: JSValue = (if (config) |c| try c.getOwn(globalThis, "tokens") else null) orelse JSValue.jsBoolean(false);
+    const config_return_tokens: JSValue = (if (config) |c| try c.getOwn(globalThis, "tokens") else null) orelse .false;
     const config_allow_negative: JSValue = if (config) |c| try c.getOwn(globalThis, "allowNegative") orelse .false else .false;
     const config_options: JSValue = if (config) |c| try c.getOwn(globalThis, "options") orelse .js_undefined else .js_undefined;
 
@@ -723,7 +723,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             if (!option.long_name.eqlComptime("__proto__")) {
                 if (try state.values.getOwn(globalThis, option.long_name) == null) {
                     log("  Setting \"{}\" to default value", .{option.long_name});
-                    state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
+                    try state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
                 }
             }
         }

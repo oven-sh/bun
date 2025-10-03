@@ -55,6 +55,7 @@ pub const Store = struct {
         manager: *PackageManager,
         install_root_dependencies: bool,
         workspace_filters: []const WorkspaceFilter,
+        packages_to_install: ?[]const PackageID,
     ) OOM!Store {
         var timer = std.time.Timer.start() catch unreachable;
 
@@ -311,38 +312,64 @@ pub const Store = struct {
             );
 
             peer_dep_ids_buf.clearRetainingCapacity();
-            for (dep_ids_sort_buf.items) |dep_id| {
-                if (Tree.isFilteredDependencyOrWorkspace(
-                    dep_id,
-                    next_node.pkg_id,
-                    workspace_filters,
-                    install_root_dependencies,
-                    manager,
-                    manager.lockfile,
-                )) {
-                    continue;
+            queue_deps: {
+                if (packages_to_install) |packages| {
+                    if (node_id == .root) { // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
+                        for (dep_ids_sort_buf.items) |dep_id| {
+                            const pkg_id = ctx.esolutions[dep_id];
+                            if (pkg_id == invalid_package_id) {
+                                continue;
+                            }
+
+                            for (packages) |package_to_install| {
+                                if (package_to_install == pkg_id) {
+                                    ctx.node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
+                                    try next_node_stack.append(.{
+                                        .parent_id = node_id,
+                                        .dep_id = dep_id,
+                                        .pkg_id = pkg_id,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                        break :queue_deps;
+                    }
                 }
 
-                const pkg_id = ctx.resolutions[dep_id];
-                const dep = ctx.dependencies[dep_id];
+                for (dep_ids_sort_buf.items) |dep_id| {
+                    if (Tree.isFilteredDependencyOrWorkspace(
+                        dep_id,
+                        next_node.pkg_id,
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        manager.lockfile,
+                    )) {
+                        continue;
+                    }
 
-                // TODO: handle duplicate dependencies. should be similar logic
-                // like we have for dev dependencies in `hoistDependency`
+                    const pkg_id = ctx.resolutions[dep_id];
+                    const dep = ctx.dependencies[dep_id];
 
-                if (dep.behavior.isPeer()) {
-                    try peer_dep_ids_buf.append(dep_id);
-                    continue;
+                    // TODO: handle duplicate dependencies. should be similar logic
+                    // like we have for dev dependencies in `hoistDependency`
+
+                    if (dep.behavior.isPeer()) {
+                        try peer_dep_ids_buf.append(dep_id);
+                        continue;
+                    }
+
+                    // simple case:
+                    // - add it as a dependency
+                    // - queue it
+                    ctx.node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
+                    try next_node_stack.append(.{
+                        .parent_id = node_id,
+                        .dep_id = dep_id,
+                        .pkg_id = pkg_id,
+                    });
                 }
-
-                // simple case:
-                // - add it as a dependency
-                // - queue it
-                ctx.node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
-                try next_node_stack.append(.{
-                    .parent_id = node_id,
-                    .dep_id = dep_id,
-                    .pkg_id = pkg_id,
-                });
             }
 
             for (peer_dep_ids_buf.items) |peer_dep_id| {
@@ -636,7 +663,7 @@ pub const Store = struct {
             if (parent_id == maybe_parent_id) {
                 return true;
             }
-            parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+            bun.handleOom(parent_dedupe.put(parent_id, {}));
         }
 
         len = parent_dedupe.count();
@@ -648,7 +675,7 @@ pub const Store = struct {
                 if (parent_id == maybe_parent_id) {
                     return true;
                 }
-                parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+                bun.handleOom(parent_dedupe.put(parent_id, {}));
                 len = parent_dedupe.count();
             }
             i += 1;
@@ -755,7 +782,7 @@ pub const Store = struct {
                 if (parent_id == .invalid) {
                     continue;
                 }
-                parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                bun.handleOom(parents.put(bun.default_allocator, parent_id, {}));
             }
 
             len = parents.count();
@@ -764,7 +791,7 @@ pub const Store = struct {
                     if (parent_id == .invalid) {
                         continue;
                     }
-                    parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                    bun.handleOom(parents.put(bun.default_allocator, parent_id, {}));
                     len = parents.count();
                 }
                 i += 1;

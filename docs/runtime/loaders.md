@@ -52,14 +52,17 @@ Hello world!
 
 {% /codetabs %}
 
-## JSON and TOML
+## JSON, TOML, and YAML
 
-JSON and TOML files can be directly imported from a source file. The contents will be loaded and returned as a JavaScript object.
+JSON, TOML, and YAML files can be directly imported from a source file. The contents will be loaded and returned as a JavaScript object.
 
 ```ts
 import pkg from "./package.json";
 import data from "./data.toml";
+import config from "./config.yaml";
 ```
+
+For more details on YAML support, see the [YAML API documentation](/docs/api/yaml).
 
 ## WASI
 

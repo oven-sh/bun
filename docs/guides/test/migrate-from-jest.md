@@ -35,7 +35,7 @@ Add this directive to _just one file_ in your project, such as:
 - Any single `.ts` file that TypeScript includes in your compilation
 
 ```ts
-/// <reference types="bun/test-globals" />
+/// <reference types="bun-types/test-globals" />
 ```
 
 ---

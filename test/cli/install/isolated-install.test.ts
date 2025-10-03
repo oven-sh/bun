@@ -226,6 +226,41 @@ test("handles cyclic dependencies", async () => {
   });
 });
 
+test("package with dependency on previous self works", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-transitive-self-dep",
+      dependencies: {
+        "self-dep": "1.0.2",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(
+    await Promise.all([
+      file(join(packageDir, "node_modules", "self-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "self-dep", "node_modules", "self-dep", "package.json")).json(),
+    ]),
+  ).toEqual([
+    {
+      name: "self-dep",
+      version: "1.0.2",
+      dependencies: {
+        "self-dep": "1.0.1",
+      },
+    },
+    {
+      name: "self-dep",
+      version: "1.0.1",
+    },
+  ]);
+});
+
 test("can install folder dependencies", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 

@@ -62,11 +62,6 @@ fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []
 }
 
 pub fn writeTestStatusLine(comptime status: bun_test.Execution.Result, writer: anytype) void {
-    // When using AI agents, only print failures
-    if (Output.isAIAgent() and status != .fail) {
-        return;
-    }
-
     switch (Output.enable_ansi_colors_stderr) {
         inline else => |enable_ansi_colors_stderr| writer.print(comptime fmtStatusTextLine(status, enable_ansi_colors_stderr), .{}) catch unreachable,
     }
@@ -602,7 +597,6 @@ pub const CommandLineReporter = struct {
 
     fn printTestLine(
         comptime status: bun_test.Execution.Result,
-        buntest: *bun_test.BunTest,
         sequence: *bun_test.Execution.ExecutionSequence,
         test_entry: *bun_test.ExecutionEntry,
         elapsed_ns: u64,
@@ -611,10 +605,6 @@ pub const CommandLineReporter = struct {
     ) void {
         var scopes_stack = bun.BoundedArray(*bun_test.DescribeScope, 64).init(0) catch unreachable;
         var parent_: ?*bun_test.DescribeScope = test_entry.base.parent;
-        const assertions = sequence.expect_call_count;
-        const line_number = test_entry.base.line_no;
-
-        const file: []const u8 = if (bun.jsc.Jest.Jest.runner) |runner| runner.files.get(buntest.file_id).source.path.text else "";
 
         while (parent_) |scope| {
             scopes_stack.append(scope) catch break;
@@ -711,9 +701,32 @@ pub const CommandLineReporter = struct {
                 },
             }
         }
+    }
 
+    fn maybePrintJunitLine(
+        comptime status: bun_test.Execution.Result,
+        buntest: *bun_test.BunTest,
+        sequence: *bun_test.Execution.ExecutionSequence,
+        test_entry: *bun_test.ExecutionEntry,
+        elapsed_ns: u64,
+    ) void {
         if (buntest.reporter) |cmd_reporter| {
             if (cmd_reporter.reporters.junit) |junit| {
+                var scopes_stack = bun.BoundedArray(*bun_test.DescribeScope, 64).init(0) catch unreachable;
+                var parent_: ?*bun_test.DescribeScope = test_entry.base.parent;
+                const assertions = sequence.expect_call_count;
+                const line_number = test_entry.base.line_no;
+
+                const file: []const u8 = if (bun.jsc.Jest.Jest.runner) |runner| runner.files.get(buntest.file_id).source.path.text else "";
+
+                while (parent_) |scope| {
+                    scopes_stack.append(scope) catch break;
+                    parent_ = scope.base.parent;
+                }
+
+                const scopes: []*bun_test.DescribeScope = scopes_stack.slice();
+                const display_label = test_entry.base.name orelse "(unnamed)";
+
                 {
                     const filename = brk: {
                         if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
@@ -846,7 +859,7 @@ pub const CommandLineReporter = struct {
 
         switch (sequence.result) {
             inline else => |result| {
-                if (result != .skipped_because_label or buntest.reporter != null and buntest.reporter.?.reporters.junit != null) {
+                if (result != .skipped_because_label) {
                     if (buntest.reporter != null and buntest.reporter.?.reporters.dots and (comptime switch (result.basicResult()) {
                         .pass, .skip, .todo, .pending => true,
                         .fail => false,
@@ -861,6 +874,8 @@ pub const CommandLineReporter = struct {
                             },
                         }
                         buntest.reporter.?.last_printed_dot = true;
+                    } else if (Output.isAIAgent() and (comptime result.basicResult()) != .fail) {
+                        // when using AI agents, only print failures
                     } else {
                         buntest.bun_test_root.onBeforePrint();
 
@@ -871,10 +886,12 @@ pub const CommandLineReporter = struct {
                             .pass, .fail => false,
                         };
                         switch (dim) {
-                            inline else => |dim_comptime| printTestLine(result, buntest, sequence, test_entry, elapsed_ns, &writer, dim_comptime),
+                            inline else => |dim_comptime| printTestLine(result, sequence, test_entry, elapsed_ns, &writer, dim_comptime),
                         }
                     }
                 }
+                // always print junit if needed
+                maybePrintJunitLine(result, buntest, sequence, test_entry, elapsed_ns);
             },
         }
 

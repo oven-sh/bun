@@ -2400,6 +2400,13 @@ pub const JSValue = enum(i64) {
     };
 
     pub const backing_int = @typeInfo(JSValue).@"enum".tag_type;
+
+    /// Equivalent to `JSC::JSValue::decode`.
+    pub fn decode(self: JSValue) jsc.DecodedJSValue {
+        var decoded: jsc.DecodedJSValue = undefined;
+        decoded.u.asInt64 = self;
+        return decoded;
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;

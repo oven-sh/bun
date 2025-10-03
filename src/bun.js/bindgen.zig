@@ -165,18 +165,7 @@ pub fn BindgenArray(comptime Child: type) type {
             {
                 // We can reuse the allocation, but we still need to convert the elements.
                 var storage: []u8 = @ptrCast(unmanaged.allocatedSlice());
-                var new_capacity = unmanaged.capacity;
-                if (comptime @sizeOf(Child.ExternType) % @sizeOf(Child.ZigType) != 0) {
-                    new_capacity = storage.len / @sizeOf(Child.ZigType);
-                    const new_alloc_size = new_capacity * @sizeOf(Child.ZigType);
-                    if (new_alloc_size != storage.len) {
-                        // Allocation isn't a multiple of `@sizeOf(Child.ZigType)`; we have to
-                        // resize it.
-                        storage = bun.handleOom(
-                            bun.default_allocator.realloc(storage, new_alloc_size),
-                        );
-                    }
-                }
+
                 // Convert the elements.
                 for (0..length) |i| {
                     // Zig doesn't have a formal aliasing model, so we should be maximally
@@ -192,9 +181,30 @@ pub fn BindgenArray(comptime Child: type) type {
                         std.mem.asBytes(&new_elem),
                     );
                 }
+
+                const new_size_is_multiple =
+                    comptime @sizeOf(Child.ExternType) % @sizeOf(Child.ZigType) == 0;
+                const new_capacity = if (comptime new_size_is_multiple)
+                    capacity * (@sizeOf(Child.ExternType) / @sizeOf(Child.ZigType))
+                else blk: {
+                    const new_capacity = storage.len / @sizeOf(Child.ZigType);
+                    const new_alloc_size = new_capacity * @sizeOf(Child.ZigType);
+                    if (new_alloc_size != storage.len) {
+                        // Allocation isn't a multiple of `@sizeOf(Child.ZigType)`; we have to
+                        // resize it.
+                        storage = bun.handleOom(
+                            bun.default_allocator.realloc(storage, new_alloc_size),
+                        );
+                    }
+                    break :blk new_capacity;
+                };
+
                 const items_ptr: [*]Child.ZigType = @ptrCast(@alignCast(storage.ptr));
-                const items = items_ptr[0..length];
-                return .fromOwnedSlice(.{}, items);
+                const new_unmanaged: std.ArrayListUnmanaged(Child.ZigType) = .{
+                    .items = items_ptr[0..length],
+                    .capacity = new_capacity,
+                };
+                return .fromUnmanaged(.{}, new_unmanaged);
             }
 
             defer unmanaged.deinit(

@@ -84,25 +84,29 @@ public:
             Detail::asanSetBufferSizeToFullCapacity(buffer, length, capacity);
             std::byte* storage = reinterpret_cast<std::byte*>(buffer);
 
-            std::size_t newCapacity = capacity;
-            std::size_t newAllocSize = allocSize;
-            static constexpr bool newSizeIsMultiple = sizeof(T) % sizeof(ExternElement) == 0;
-            if (!newSizeIsMultiple) {
-                newCapacity = allocSize / sizeof(ExternElement);
-                newAllocSize = newCapacity * sizeof(ExternElement);
-                if (newAllocSize != allocSize) {
-                    // Allocation isn't a multiple of `sizeof(ExternElement)`; we have to resize it.
-                    storage = reinterpret_cast<std::byte*>(
-                        MimallocMalloc::realloc(storage, newCapacity * sizeof(ExternElement)));
-                }
-            }
-
             // Convert the elements.
             for (std::size_t i = 0; i < length; ++i) {
                 T* oldPtr = std::launder(reinterpret_cast<T*>(storage + i * sizeof(T)));
                 ExternElement newElem { ExternTraits<T>::convertToExtern(std::move(*oldPtr)) };
                 oldPtr->~T();
                 new (storage + i * sizeof(ExternElement)) ExternElement { std::move(newElem) };
+            }
+
+            std::size_t newCapacity {};
+            std::size_t newAllocSize {};
+
+            static constexpr bool newSizeIsMultiple = sizeof(T) % sizeof(ExternElement) == 0;
+            if (newSizeIsMultiple) {
+                newCapacity = capacity * (sizeof(T) / sizeof(ExternElement));
+                newAllocSize = allocSize;
+            } else {
+                newCapacity = allocSize / sizeof(ExternElement);
+                newAllocSize = newCapacity * sizeof(ExternElement);
+                if (newAllocSize != allocSize) {
+                    // Allocation isn't a multiple of `sizeof(ExternElement)`; we have to resize it.
+                    storage = static_cast<std::byte*>(
+                        MimallocMalloc::realloc(storage, newCapacity * sizeof(ExternElement)));
+                }
             }
 #if __cpp_lib_start_lifetime_as >= 202207L
             ExternElement* data = std::start_lifetime_as_array<ExternElement>(storage, newCapacity);

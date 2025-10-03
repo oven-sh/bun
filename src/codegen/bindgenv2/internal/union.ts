@@ -58,7 +58,7 @@ export function union(
   }
 
   if (typeof alternativesOrName !== "string") {
-    alternatives = alternativesOrName;
+    alternatives = alternativesOrName.slice();
     validateAlternatives();
     // anonymous union (neither union nor fields are named)
     return new (class extends AnonymousUnionType {

@@ -30,7 +30,7 @@ const enum SQLCommand {
 interface SQLParsedInfo {
   command: SQLCommand;
   lastToken?: string;
-  isMultipleStatements: boolean;
+  canReturnRows: boolean;
 }
 
 function commandToString(command: SQLCommand, lastToken?: string): string {
@@ -54,7 +54,7 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
  * Parse the SQL query and return the command and the last token
  * @param query - The SQL query to parse
  * @param partial - Whether to stop on the first command we find
- * @returns The command, the last token, and whether it's a multiple statements query
+ * @returns The command, the last token, and whether it can return rows
  */
 function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   const text = query.toUpperCase().trim();
@@ -63,7 +63,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   let token = "";
   let command = SQLCommand.none;
   let lastToken = "";
-  let isMultipleStatements = false;
+  let canReturnRows = false;
   let quoted: false | "'" | '"' = false;
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
@@ -83,7 +83,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.insert, lastToken, isMultipleStatements };
+              return { command: SQLCommand.insert, lastToken, canReturnRows };
             }
             continue;
           }
@@ -94,7 +94,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.update, lastToken, isMultipleStatements };
+              return { command: SQLCommand.update, lastToken, canReturnRows };
             }
             continue;
           }
@@ -105,7 +105,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.where, lastToken, isMultipleStatements };
+              return { command: SQLCommand.where, lastToken, canReturnRows };
             }
             continue;
           }
@@ -116,7 +116,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.updateSet, lastToken, isMultipleStatements };
+              return { command: SQLCommand.updateSet, lastToken, canReturnRows };
             }
             continue;
           }
@@ -127,7 +127,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.in, lastToken, isMultipleStatements };
+              return { command: SQLCommand.in, lastToken, canReturnRows };
             }
             continue;
           }
@@ -137,7 +137,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
           case "EXPLAIN":
           case "RETURNING": {
             lastToken = token;
-            isMultipleStatements = true;
+            canReturnRows = true;
             token = "";
             continue;
           }
@@ -195,7 +195,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
       case "WITH":
       case "EXPLAIN":
       case "RETURNING": {
-        isMultipleStatements = true;
+        canReturnRows = true;
         break;
       }
       default:
@@ -203,7 +203,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         break;
     }
   }
-  return { command, lastToken, isMultipleStatements };
+  return { command, lastToken, canReturnRows };
 }
 
 class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -237,7 +237,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       const command = parsedInfo.command;
       // For SELECT queries, we need to use a prepared statement
       // For other queries, we can check if there are multiple statements and use db.run() if so
-      if (parsedInfo.isMultipleStatements) {
+      if (parsedInfo.canReturnRows) {
         // SELECT queries must use prepared statements for results
         const stmt = db.prepare(sql);
         let result: unknown[] | undefined;

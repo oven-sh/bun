@@ -549,10 +549,6 @@ const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const invalid_dependency_id = install.invalid_dependency_id;
-const invalid_package_id = install.invalid_package_id;
 
 const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
-const PackageManager = install.PackageManager;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const Tree = Lockfile.Tree;

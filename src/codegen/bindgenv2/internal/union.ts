@@ -159,13 +159,13 @@ export function union(
           pub const ExternType = bindgen.ExternTaggedUnion(&.{ ${alternatives
             .map(a => a.bindgenType + ".ExternType")
             .join(", ")} });
-          pub fn convertFromExtern(ffi_value: Self.ExternType) Self.ZigType {
-            return switch (ffi_value.tag) {
+          pub fn convertFromExtern(extern_value: Self.ExternType) Self.ZigType {
+            return switch (extern_value.tag) {
               ${joinIndented(
                 14,
                 Object.entries(namedAlternatives).map(([altName, altType], i) => {
                   const bindgenType = altType.bindgenType;
-                  const innerRhs = `${bindgenType}.convertFromExtern(ffi_value.data.@"${i}")`;
+                  const innerRhs = `${bindgenType}.convertFromExtern(extern_value.data.@"${i}")`;
                   return `${i} => .{ .${altName} = ${innerRhs} },`;
                 }),
               )}

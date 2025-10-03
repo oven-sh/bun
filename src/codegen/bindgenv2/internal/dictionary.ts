@@ -155,10 +155,10 @@ export function dictionary(
               ${joinIndented(
                 14,
                 fullMembers.map((memberInfo, i) => {
-                  const internalName = memberInfo.internalName;
                   const cppType = `Generated::${name}::MemberType${i}`;
-                  const cppValue = `::std::move(cppValue.${internalName})`;
-                  return `.${internalName} = ExternTraits<${cppType}>::convertToExtern(${cppValue}),`;
+                  const cppValue = `::std::move(cppValue.${memberInfo.internalName})`;
+                  const rhs = `ExternTraits<${cppType}>::convertToExtern(${cppValue})`;
+                  return `.${memberInfo.internalName} = ${rhs},`;
                 }),
               )}
             };
@@ -283,10 +283,13 @@ export function dictionary(
                 var scope: jsc.ExceptionValidationScope = undefined;
                 scope.init(globalThis, @src());
                 defer scope.deinit();
-                var ffi_result: Extern${name} = undefined;
-                const success = bindgenConvertJSTo${name}(globalThis, value, &ffi_result);
+                var extern_result: Extern${name} = undefined;
+                const success = bindgenConvertJSTo${name}(globalThis, value, &extern_result);
                 scope.assertExceptionPresenceMatches(!success);
-                return if (success) Bindgen${name}.convertFromExtern(ffi_result) else error.JSError;
+                return if (success)
+                  Bindgen${name}.convertFromExtern(extern_result)
+                else
+                  error.JSError;
               }
             `);
             return addIndent(10, "\n" + result);
@@ -297,14 +300,14 @@ export function dictionary(
           const Self = @This();
           pub const ZigType = ${name};
           pub const ExternType = Extern${name};
-          pub fn convertFromExtern(ffi_value: Self.ExternType) Self.ZigType {
+          pub fn convertFromExtern(extern_value: Self.ExternType) Self.ZigType {
             return .{
               ${joinIndented(
                 14,
                 fullMembers.map(memberInfo => {
                   const internalName = memberInfo.internalName;
                   const bindgenType = memberInfo.type.bindgenType;
-                  const rhs = `${bindgenType}.convertFromExtern(ffi_value.${internalName})`;
+                  const rhs = `${bindgenType}.convertFromExtern(extern_value.${internalName})`;
                   return `.${internalName} = ${rhs},`;
                 }),
               )}

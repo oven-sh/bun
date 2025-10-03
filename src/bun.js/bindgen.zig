@@ -3,8 +3,8 @@ pub fn BindgenTrivial(comptime T: type) type {
         pub const ZigType = T;
         pub const ExternType = T;
 
-        pub fn convertFromExtern(ffi_value: ExternType) ZigType {
-            return ffi_value;
+        pub fn convertFromExtern(extern_value: ExternType) ZigType {
+            return extern_value;
         }
     };
 }
@@ -27,12 +27,12 @@ pub const BindgenStrongAny = struct {
     pub const OptionalZigType = ZigType.Optional;
     pub const OptionalExternType = ExternType;
 
-    pub fn convertFromExtern(ffi_value: ExternType) ZigType {
-        return .{ .impl = ffi_value.? };
+    pub fn convertFromExtern(extern_value: ExternType) ZigType {
+        return .{ .impl = extern_value.? };
     }
 
-    pub fn convertOptionalFromExtern(ffi_value: OptionalExternType) OptionalZigType {
-        return .{ .impl = ffi_value };
+    pub fn convertOptionalFromExtern(extern_value: OptionalExternType) OptionalZigType {
+        return .{ .impl = extern_value };
     }
 };
 
@@ -41,8 +41,8 @@ pub const BindgenNull = struct {
     pub const ZigType = void;
     pub const ExternType = u8;
 
-    pub fn convertFromExtern(ffi_value: ExternType) ZigType {
-        _ = ffi_value;
+    pub fn convertFromExtern(extern_value: ExternType) ZigType {
+        _ = extern_value;
     }
 };
 
@@ -58,15 +58,15 @@ pub fn BindgenOptional(comptime Child: type) type {
         else
             ExternTaggedUnion(&.{ u8, Child.ExternType });
 
-        pub fn convertFromExtern(ffi_value: ExternType) ZigType {
+        pub fn convertFromExtern(extern_value: ExternType) ZigType {
             if (comptime @hasDecl(Child, "OptionalExternType")) {
-                return Child.convertOptionalFromExtern(ffi_value);
+                return Child.convertOptionalFromExtern(extern_value);
             }
-            if (ffi_value.tag == 0) {
+            if (extern_value.tag == 0) {
                 return null;
             }
-            bun.assert_eql(ffi_value.tag, 1);
-            return Child.convertFromExtern(ffi_value.data.@"1");
+            bun.assert_eql(extern_value.tag, 1);
+            return Child.convertFromExtern(extern_value.data.@"1");
         }
     };
 }
@@ -77,12 +77,12 @@ pub const BindgenString = struct {
     pub const OptionalZigType = ZigType.Optional;
     pub const OptionalExternType = ExternType;
 
-    pub fn convertFromExtern(ffi_value: ExternType) ZigType {
-        return .adopt(ffi_value.?);
+    pub fn convertFromExtern(extern_value: ExternType) ZigType {
+        return .adopt(extern_value.?);
     }
 
-    pub fn convertOptionalFromExtern(ffi_value: OptionalExternType) OptionalZigType {
-        return .adopt(ffi_value);
+    pub fn convertOptionalFromExtern(extern_value: OptionalExternType) OptionalZigType {
+        return .adopt(extern_value);
     }
 };
 
@@ -97,20 +97,20 @@ pub fn BindgenUnion(comptime children: []const type) type {
     const tagged_field_types_const = tagged_field_types;
     const untagged_field_types_const = untagged_field_types;
     const zig_type = bun.meta.TaggedUnion(&tagged_field_types_const);
-    const ffi_type = ExternTaggedUnion(&untagged_field_types_const);
+    const extern_type = ExternTaggedUnion(&untagged_field_types_const);
 
     return struct {
         pub const ZigType = zig_type;
-        pub const ExternType = ffi_type;
+        pub const ExternType = extern_type;
 
-        pub fn convertFromExtern(ffi_value: ExternType) ZigType {
-            const tag: std.meta.Tag(ZigType) = @enumFromInt(ffi_value.tag);
+        pub fn convertFromExtern(extern_value: ExternType) ZigType {
+            const tag: std.meta.Tag(ZigType) = @enumFromInt(extern_value.tag);
             return switch (tag) {
                 inline else => |t| @unionInit(
                     ZigType,
                     @tagName(t),
                     children[@intFromEnum(t)].convertFromExtern(
-                        @field(ffi_value.data, @tagName(t)),
+                        @field(extern_value.data, @tagName(t)),
                     ),
                 ),
             };
@@ -141,11 +141,11 @@ pub fn BindgenArray(comptime Child: type) type {
         pub const ZigType = bun.collections.ArrayListDefault(Child.ZigType);
         pub const ExternType = ExternArrayList(Child.ExternType);
 
-        pub fn convertFromExtern(ffi_value: ExternType) ZigType {
-            const length: usize = @intCast(ffi_value.length);
-            const capacity: usize = @intCast(ffi_value.capacity);
+        pub fn convertFromExtern(extern_value: ExternType) ZigType {
+            const length: usize = @intCast(extern_value.length);
+            const capacity: usize = @intCast(extern_value.capacity);
 
-            const data = ffi_value.data orelse return .init();
+            const data = extern_value.data orelse return .init();
             bun.assertf(
                 length <= capacity,
                 "length ({d}) should not exceed capacity ({d})",
@@ -234,12 +234,12 @@ fn BindgenExternalShared(comptime T: type) type {
         pub const OptionalZigType = ZigType.Optional;
         pub const OptionalExternType = ExternType;
 
-        pub fn convertFromExtern(ffi_value: ExternType) ZigType {
-            return .adopt(ffi_value.?);
+        pub fn convertFromExtern(extern_value: ExternType) ZigType {
+            return .adopt(extern_value.?);
         }
 
-        pub fn convertOptionalFromExtern(ffi_value: OptionalExternType) OptionalZigType {
-            return .adopt(ffi_value);
+        pub fn convertOptionalFromExtern(extern_value: OptionalExternType) OptionalZigType {
+            return .adopt(extern_value);
         }
     };
 }

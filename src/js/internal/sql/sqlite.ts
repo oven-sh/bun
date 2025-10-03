@@ -76,7 +76,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
       case "\f": // Form feed
       case "\v": {
         switch (token) {
-          case "insert": {
+          case "INSERT": {
             if (command === SQLCommand.none) {
               command = SQLCommand.insert;
             }

@@ -33,7 +33,7 @@ export const StrongAny: Type = new (class extends Type {
   }
 })();
 
-export function isAny(type: Type): boolean {
+export function isAny(type: Type): type is (typeof RawAny | typeof StrongAny) {
   return type === RawAny || type === StrongAny;
 }
 

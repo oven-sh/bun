@@ -268,6 +268,48 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
+test("can install folder dependencies on root package", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root-file-dep",
+        workspaces: ["packages/*"],
+        dependencies: {
+          self: "file:.",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          root: "file:../..",
+        },
+      }),
+    ),
+  ]);
+
+  console.log({ packageDir });
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(
+    await Promise.all([
+      readlink(join(packageDir, "node_modules", "self")),
+      readlink(join(packageDir, "packages", "pkg1", "node_modules", "root")),
+      file(join(packageDir, "node_modules", "self", "package.json")).json(),
+    ]),
+  ).toEqual([
+    join(".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+    join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+    await file(packageJson).json(),
+  ]);
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });

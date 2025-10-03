@@ -421,16 +421,18 @@ pub const Installer = struct {
                             };
                         },
 
-                        // the folder does not exist in the cache. xdev is per folder dependency
                         .folder, .root => {
-                            const folder_dir = switch (pkg_res.tag) {
-                                .folder => switch (bun.openDirForIteration(FD.cwd(), pkg_res.value.folder.slice(string_buf))) {
-                                    .result => |fd| fd,
-                                    .err => |err| return .failure(.{ .link_package = err }),
-                                },
-                                .root => FD.cwd(),
+                            const path = switch (pkg_res.tag) {
+                                .folder => pkg_res.value.folder.slice(string_buf),
+                                .root => ".",
                                 else => unreachable,
                             };
+                            // the folder does not exist in the cache. xdev is per folder dependency
+                            const folder_dir = switch (bun.openDirForIteration(FD.cwd(), path)) {
+                                .result => |fd| fd,
+                                .err => |err| return .failure(.{ .link_package = err }),
+                            };
+                            defer folder_dir.close();
 
                             backend: switch (PackageInstall.Method.hardlink) {
                                 .hardlink => {

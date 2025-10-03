@@ -640,11 +640,11 @@ extern "C" napi_status napi_is_typedarray(napi_env env, napi_value value, bool* 
 // it doesn't copy the string
 // but it's only safe to use if we are not setting a property
 // because we can't guarantee the lifetime of it
-#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                            \
-    size_t utf8Len = strlen(utf8Name);                                                                                     \
+#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                                      \
+    size_t utf8Len = strlen(utf8Name);                                                                                               \
     WTF::String&& nameString = WTF::charactersAreAllASCII(std::span { reinterpret_cast<const Latin1Character*>(utf8Name), utf8Len }) \
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                        \
-        : WTF::String::fromUTF8(utf8Name);                                                                                 \
+        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                                  \
+        : WTF::String::fromUTF8(utf8Name);                                                                                           \
     const JSC::PropertyName identifierName = JSC::Identifier::fromString(vm, nameString);
 
 extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,

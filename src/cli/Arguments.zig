@@ -457,7 +457,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.crash();
                 }
                 ctx.test_options.reporters.junit = true;
-            } else if (strings.eqlComptime(reporter, "dots")) {
+            } else if (strings.eqlComptime(reporter, "dots") or strings.eqlComptime(reporter, "dot")) {
                 ctx.test_options.reporters.dots = true;
             } else {
                 Output.errGeneric("unsupported reporter format '{s}'. Available options: 'junit' (for XML test results), 'dots'", .{reporter});

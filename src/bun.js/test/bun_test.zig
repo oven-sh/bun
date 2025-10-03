@@ -169,10 +169,25 @@ pub const BunTestRoot = struct {
         first: bool,
         last: bool,
     };
+
+    pub fn onBeforePrint(this: *BunTestRoot) void {
+        if (this.active_file.get()) |active_file| {
+            if (active_file.reporter) |reporter| {
+                if (reporter.last_printed_dot and reporter.reporters.dots) {
+                    bun.Output.prettyError("<r>\n", .{});
+                    bun.Output.flush();
+                    reporter.last_printed_dot = false;
+                }
+                if (bun.jsc.Jest.Jest.runner) |runner| {
+                    runner.current_file.printIfNeeded();
+                }
+            }
+        }
+    }
 };
 
 pub const BunTest = struct {
-    buntest: *BunTestRoot,
+    bun_test_root: *BunTestRoot,
     in_run_loop: bool,
     allocation_scope: bun.AllocationScope,
     gpa: std.mem.Allocator,
@@ -207,7 +222,7 @@ pub const BunTest = struct {
         this.arena = this.arena_allocator.allocator();
 
         this.* = .{
-            .buntest = bunTest,
+            .bun_test_root = bunTest,
             .in_run_loop = false,
             .allocation_scope = this.allocation_scope,
             .gpa = this.gpa,
@@ -571,10 +586,10 @@ pub const BunTest = struct {
                 });
                 defer order.deinit();
 
-                const beforeall_order: Order.AllOrderResult = if (this.first_last.first) try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items) else .empty;
+                const beforeall_order: Order.AllOrderResult = if (this.first_last.first) try order.generateAllOrder(this.bun_test_root.hook_scope.beforeAll.items) else .empty;
                 try order.generateOrderDescribe(this.collection.root_scope);
                 beforeall_order.setFailureSkipTo(&order);
-                const afterall_order: Order.AllOrderResult = if (this.first_last.last) try order.generateAllOrder(this.buntest.hook_scope.afterAll.items) else .empty;
+                const afterall_order: Order.AllOrderResult = if (this.first_last.last) try order.generateAllOrder(this.bun_test_root.hook_scope.afterAll.items) else .empty;
                 afterall_order.setFailureSkipTo(&order);
 
                 try this.execution.loadFromOrder(&order);
@@ -705,6 +720,7 @@ pub const BunTest = struct {
         if (handle_status == .hide_error) return; // do not print error, it was already consumed
         if (exception == null) return; // the exception should not be visible (eg m_terminationException)
 
+        this.bun_test_root.onBeforePrint();
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             this.reporter.?.jest.unhandled_errors_between_tests += 1;
             bun.Output.prettyErrorln(
@@ -714,12 +730,6 @@ pub const BunTest = struct {
                 \\
             , .{});
             bun.Output.flush();
-        } else if (this.reporter) |reporter| {
-            if (reporter.last_printed_dot and reporter.reporters.dots) {
-                bun.Output.prettyError("<r>\n", .{});
-                reporter.last_printed_dot = false;
-                bun.Output.flush();
-            }
         }
 
         globalThis.bunVM().runErrorHandler(exception.?, null);

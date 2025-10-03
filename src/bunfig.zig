@@ -248,7 +248,7 @@ pub const Bunfig = struct {
                                 this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
                             }
                         }
-                        if (expr.get("dots")) |dots_expr| {
+                        if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
                             try this.expect(dots_expr, .e_boolean);
                             this.ctx.test_options.reporters.dots = dots_expr.data.e_boolean.value;
                         }

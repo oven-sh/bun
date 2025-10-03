@@ -15,7 +15,7 @@ const CurrentFile = struct {
         repeat_index: u32,
         reporter: *CommandLineReporter,
     ) void {
-        if (Output.isAIAgent()) {
+        if (Output.isAIAgent() or reporter.reporters.dots) {
             this.freeAndClear();
             this.title = bun.handleOom(bun.default_allocator.dupe(u8, title));
             this.prefix = bun.handleOom(bun.default_allocator.dupe(u8, prefix));
@@ -26,7 +26,7 @@ const CurrentFile = struct {
         }
 
         this.has_printed_filename = true;
-        print(title, prefix, repeat_count, repeat_index, shouldPrependExtraNewline(reporter));
+        print(title, prefix, repeat_count, repeat_index);
     }
 
     fn freeAndClear(this: *CurrentFile) void {
@@ -34,15 +34,11 @@ const CurrentFile = struct {
         bun.default_allocator.free(this.prefix);
     }
 
-    fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32, prepend_extra_newline: bool) void {
+    fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
         const enable_buffering = Output.enableBufferingScope();
         defer enable_buffering.deinit();
 
         Output.prettyError("<r>\n", .{});
-
-        if (prepend_extra_newline) {
-            Output.prettyError("\n", .{});
-        }
 
         if (repeat_count > 0) {
             if (repeat_count > 1) {
@@ -57,26 +53,11 @@ const CurrentFile = struct {
         Output.flush();
     }
 
-    fn shouldPrependExtraNewline(reporter: *CommandLineReporter) bool {
-        if (reporter.last_printed_dot) {
-            reporter.last_printed_dot = false;
-            return true;
-        }
-
-        return false;
-    }
-
-    pub fn printIfNeeded(this: *CurrentFile, bun_test_: *const bun_test.BunTest) void {
+    pub fn printIfNeeded(this: *CurrentFile) void {
         if (this.has_printed_filename) return;
         this.has_printed_filename = true;
 
-        print(
-            this.title,
-            this.prefix,
-            this.repeat_info.count,
-            this.repeat_info.index,
-            if (bun_test_.reporter) |reporter| shouldPrependExtraNewline(reporter) else false,
-        );
+        print(this.title, this.prefix, this.repeat_info.count, this.repeat_info.index);
     }
 };
 

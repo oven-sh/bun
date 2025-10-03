@@ -712,120 +712,124 @@ pub const CommandLineReporter = struct {
             }
         }
 
-        if (buntest.reporter) |cmd_reporter| if (cmd_reporter.reporters.junit) |junit| {
-            const filename = brk: {
-                if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
-                    break :brk strings.withoutLeadingPathSeparator(file[bun.fs.FileSystem.instance.top_level_dir.len..]);
-                } else {
-                    break :brk file;
-                }
-            };
+        if (buntest.reporter) |cmd_reporter| {
+            if (cmd_reporter.reporters.junit) |junit| {
+                {
+                    const filename = brk: {
+                        if (strings.hasPrefix(file, bun.fs.FileSystem.instance.top_level_dir)) {
+                            break :brk strings.withoutLeadingPathSeparator(file[bun.fs.FileSystem.instance.top_level_dir.len..]);
+                        } else {
+                            break :brk file;
+                        }
+                    };
 
-            if (!strings.eql(junit.current_file, filename)) {
-                while (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                    bun.handleOom(junit.endTestSuite());
-                }
-
-                if (junit.current_file.len > 0) {
-                    bun.handleOom(junit.endTestSuite());
-                }
-
-                bun.handleOom(junit.beginTestSuite(filename));
-            }
-
-            // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
-            // This assumes that the scopes are in the correct order.
-            var needed_suites = std.ArrayList(*bun_test.DescribeScope).init(bun.default_allocator);
-            defer needed_suites.deinit();
-
-            for (scopes, 0..) |_, i| {
-                const index = (scopes.len - 1) - i;
-                const scope = scopes[index];
-                if (scope.base.name) |name| if (name.len > 0) {
-                    bun.handleOom(needed_suites.append(scope));
-                };
-            }
-
-            var current_suite_depth: u32 = 0;
-            if (junit.suite_stack.items.len > 0) {
-                for (junit.suite_stack.items) |suite_info| {
-                    if (!suite_info.is_file_suite) {
-                        current_suite_depth += 1;
-                    }
-                }
-            }
-
-            while (current_suite_depth > needed_suites.items.len) {
-                if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                    bun.handleOom(junit.endTestSuite());
-                    current_suite_depth -= 1;
-                } else {
-                    break;
-                }
-            }
-
-            var suites_to_close: u32 = 0;
-            var suite_index: usize = 0;
-            for (junit.suite_stack.items) |suite_info| {
-                if (suite_info.is_file_suite) continue;
-
-                if (suite_index < needed_suites.items.len) {
-                    const needed_scope = needed_suites.items[suite_index];
-                    if (!strings.eql(suite_info.name, needed_scope.base.name orelse "")) {
-                        suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
-                        break;
-                    }
-                } else {
-                    suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
-                    break;
-                }
-                suite_index += 1;
-            }
-
-            while (suites_to_close > 0) {
-                if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
-                    bun.handleOom(junit.endTestSuite());
-                    current_suite_depth -= 1;
-                    suites_to_close -= 1;
-                } else {
-                    break;
-                }
-            }
-
-            var describe_suite_index: usize = 0;
-            for (junit.suite_stack.items) |suite_info| {
-                if (!suite_info.is_file_suite) {
-                    describe_suite_index += 1;
-                }
-            }
-
-            while (describe_suite_index < needed_suites.items.len) {
-                const scope = needed_suites.items[describe_suite_index];
-                bun.handleOom(junit.beginTestSuiteWithLine(scope.base.name orelse "", scope.base.line_no, false));
-                describe_suite_index += 1;
-            }
-
-            var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-            defer arena.deinit();
-            var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
-            const allocator = stack_fallback.get();
-            var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
-
-            {
-                const initial_length = concatenated_describe_scopes.items.len;
-                for (scopes) |scope| {
-                    if (scope.base.name) |name| if (name.len > 0) {
-                        if (initial_length != concatenated_describe_scopes.items.len) {
-                            bun.handleOom(concatenated_describe_scopes.appendSlice(" &gt; "));
+                    if (!strings.eql(junit.current_file, filename)) {
+                        while (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                            bun.handleOom(junit.endTestSuite());
                         }
 
-                        bun.handleOom(escapeXml(name, concatenated_describe_scopes.writer()));
-                    };
+                        if (junit.current_file.len > 0) {
+                            bun.handleOom(junit.endTestSuite());
+                        }
+
+                        bun.handleOom(junit.beginTestSuite(filename));
+                    }
+
+                    // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
+                    // This assumes that the scopes are in the correct order.
+                    var needed_suites = std.ArrayList(*bun_test.DescribeScope).init(bun.default_allocator);
+                    defer needed_suites.deinit();
+
+                    for (scopes, 0..) |_, i| {
+                        const index = (scopes.len - 1) - i;
+                        const scope = scopes[index];
+                        if (scope.base.name) |name| if (name.len > 0) {
+                            bun.handleOom(needed_suites.append(scope));
+                        };
+                    }
+
+                    var current_suite_depth: u32 = 0;
+                    if (junit.suite_stack.items.len > 0) {
+                        for (junit.suite_stack.items) |suite_info| {
+                            if (!suite_info.is_file_suite) {
+                                current_suite_depth += 1;
+                            }
+                        }
+                    }
+
+                    while (current_suite_depth > needed_suites.items.len) {
+                        if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                            bun.handleOom(junit.endTestSuite());
+                            current_suite_depth -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    var suites_to_close: u32 = 0;
+                    var suite_index: usize = 0;
+                    for (junit.suite_stack.items) |suite_info| {
+                        if (suite_info.is_file_suite) continue;
+
+                        if (suite_index < needed_suites.items.len) {
+                            const needed_scope = needed_suites.items[suite_index];
+                            if (!strings.eql(suite_info.name, needed_scope.base.name orelse "")) {
+                                suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
+                                break;
+                            }
+                        } else {
+                            suites_to_close = @as(u32, @intCast(current_suite_depth)) - @as(u32, @intCast(suite_index));
+                            break;
+                        }
+                        suite_index += 1;
+                    }
+
+                    while (suites_to_close > 0) {
+                        if (junit.suite_stack.items.len > 0 and !junit.suite_stack.items[junit.suite_stack.items.len - 1].is_file_suite) {
+                            bun.handleOom(junit.endTestSuite());
+                            current_suite_depth -= 1;
+                            suites_to_close -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    var describe_suite_index: usize = 0;
+                    for (junit.suite_stack.items) |suite_info| {
+                        if (!suite_info.is_file_suite) {
+                            describe_suite_index += 1;
+                        }
+                    }
+
+                    while (describe_suite_index < needed_suites.items.len) {
+                        const scope = needed_suites.items[describe_suite_index];
+                        bun.handleOom(junit.beginTestSuiteWithLine(scope.base.name orelse "", scope.base.line_no, false));
+                        describe_suite_index += 1;
+                    }
+
+                    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+                    defer arena.deinit();
+                    var stack_fallback = std.heap.stackFallback(4096, arena.allocator());
+                    const allocator = stack_fallback.get();
+                    var concatenated_describe_scopes = std.ArrayList(u8).init(allocator);
+
+                    {
+                        const initial_length = concatenated_describe_scopes.items.len;
+                        for (scopes) |scope| {
+                            if (scope.base.name) |name| if (name.len > 0) {
+                                if (initial_length != concatenated_describe_scopes.items.len) {
+                                    bun.handleOom(concatenated_describe_scopes.appendSlice(" &gt; "));
+                                }
+
+                                bun.handleOom(escapeXml(name, concatenated_describe_scopes.writer()));
+                            };
+                        }
+                    }
+
+                    bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
                 }
             }
-
-            bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
-        };
+        }
     }
 
     pub inline fn summary(this: *CommandLineReporter) *TestRunner.Summary {
@@ -858,12 +862,7 @@ pub const CommandLineReporter = struct {
                         }
                         buntest.reporter.?.last_printed_dot = true;
                     } else {
-                        // If dots mode is on and we're about to print non-dot output (failure),
-                        // and the last thing we printed was a dot, print a newline first
-                        if (buntest.reporter != null and buntest.reporter.?.reporters.dots and buntest.reporter.?.last_printed_dot) {
-                            writer.writeAll("\n") catch {};
-                            buntest.reporter.?.last_printed_dot = false;
-                        }
+                        buntest.bun_test_root.onBeforePrint();
 
                         writeTestStatusLine(result, &writer);
                         const dim = switch (comptime result.basicResult()) {
@@ -1640,7 +1639,7 @@ pub const TestCommand = struct {
                     }
                 };
 
-                const indenter = DotIndenter{ .indent = !(ctx.test_options.reporters.dots and reporter.last_printed_dot) };
+                const indenter = DotIndenter{ .indent = !ctx.test_options.reporters.dots };
                 if (!indenter.indent) {
                     Output.prettyError("\n", .{});
                 }

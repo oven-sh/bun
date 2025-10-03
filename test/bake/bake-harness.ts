@@ -1786,7 +1786,7 @@ function testImpl(description: string, options: DevServerTest, NODE_ENV: "develo
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
       dedent`
-        import appConfig from "./bun.app.ts";
+        import appConfig from ${JSON.stringify(path.join(mainDir, "bun.app.ts"))};
         import { fullGC } from "bun:jsc";
 
         const routes = appConfig.static ?? (appConfig.routes ??= {});

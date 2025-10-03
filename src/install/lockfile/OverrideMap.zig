@@ -331,17 +331,17 @@ pub fn parseFromOverrides(
 
     for (expr.data.e_object.properties.slice()) |prop| {
         const key = prop.key.?;
-        const child_name = key.asString(lockfile.allocator).?;
-        if (child_name.len == 0) {
-            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Missing overridden package name", .{});
+        const package_name = key.asString(lockfile.allocator).?;
+        if (package_name.len == 0) {
+            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Missing package name in overrides", .{});
             continue;
         }
 
-        const child_name_hash = String.Builder.stringHash(child_name);
         const value_expr = prop.value.?;
 
-        // Handle simple string override: "pkg": "1.0.0"
+        // Handle simple string override: "pkg": "1.0.0" (global override)
         if (value_expr.data == .e_string) {
+            const package_name_hash = String.Builder.stringHash(package_name);
             const version_str = value_expr.data.e_string.slice(lockfile.allocator);
             if (strings.hasPrefixComptime(version_str, "patch:")) {
                 try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
@@ -356,107 +356,82 @@ pub fn parseFromOverrides(
                 source,
                 value_expr.loc,
                 log,
-                child_name,
+                package_name,
                 version_str,
                 builder,
             )) |dep| {
-                this.map.putAssumeCapacity(child_name_hash, .{ .global = dep });
+                this.map.putAssumeCapacity(package_name_hash, .{ .global = dep });
             }
             continue;
         }
 
-        // Handle nested overrides: "child-pkg": { ".": "1.0.0", "parent-pkg": { "child-pkg": "2.0.0" } }
-        // The "." key provides a global override, other keys are parent package names
+        // Handle object: could be either "parent": { "child": "version" } or global package with "."
         if (value_expr.data == .e_object) {
-            var nested = NestedOverrides{};
-            errdefer nested.deinit(lockfile.allocator);
-
+            const parent_name = package_name;
+            const parent_name_hash = String.Builder.stringHash(parent_name);
             const nested_props = value_expr.data.e_object.properties.slice();
-            try nested.parent_map.ensureTotalCapacity(lockfile.allocator, nested_props.len);
 
-            for (nested_props) |nested_prop| {
-                const nested_key = nested_prop.key.?;
-                const nested_key_str = nested_key.asString(lockfile.allocator).?;
+            // Iterate through children of this parent
+            for (nested_props) |child_prop| {
+                const child_key = child_prop.key.?;
+                const child_name = child_key.asString(lockfile.allocator).?;
 
-                // Handle "." which is the global override for this child package
-                if (strings.eqlComptime(nested_key_str, ".")) {
-                    if (nested_prop.value.?.data != .e_string) {
-                        try log.addWarningFmt(source, nested_prop.value.?.loc, lockfile.allocator, "Invalid override value for \".\"", .{});
-                        continue;
-                    }
+                if (child_prop.value.?.data != .e_string) {
+                    try log.addWarningFmt(source, child_prop.value.?.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{child_name});
+                    continue;
+                }
 
-                    const nested_version_str = nested_prop.value.?.data.e_string.slice(lockfile.allocator);
-                    if (strings.hasPrefixComptime(nested_version_str, "patch:")) {
-                        try log.addWarningFmt(source, nested_key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
-                        continue;
-                    }
+                const child_version_str = child_prop.value.?.data.e_string.slice(lockfile.allocator);
+                if (strings.hasPrefixComptime(child_version_str, "patch:")) {
+                    try log.addWarningFmt(source, child_key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
+                    continue;
+                }
 
-                    if (try parseOverrideValue(
-                        "override",
-                        lockfile,
-                        pm,
-                        root_package,
-                        source,
-                        nested_prop.value.?.loc,
-                        log,
-                        child_name,
-                        nested_version_str,
-                        builder,
-                    )) |dep| {
-                        nested.global = dep;
-                    }
-                } else {
-                    // nested_key_str is a parent package name
-                    // The value must be an object with child-pkg as a key
-                    const parent_name = nested_key_str;
-                    const parent_name_hash = String.Builder.stringHash(parent_name);
+                const child_name_hash = String.Builder.stringHash(child_name);
 
-                    if (nested_prop.value.?.data != .e_object) {
-                        try log.addWarningFmt(source, nested_prop.value.?.loc, lockfile.allocator, "Invalid nested override for parent \"{s}\", expected object", .{parent_name});
-                        continue;
-                    }
-
-                    // Look for the child package in the parent's overrides
-                    if (nested_prop.value.?.asProperty(child_name)) |child_override| {
-                        if (child_override.expr.data != .e_string) {
-                            try log.addWarningFmt(source, child_override.expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{child_name});
-                            continue;
-                        }
-
-                        const override_version_str = child_override.expr.data.e_string.slice(lockfile.allocator);
-                        if (strings.hasPrefixComptime(override_version_str, "patch:")) {
-                            try log.addWarningFmt(source, child_override.expr.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
-                            continue;
-                        }
-
-                        if (try parseOverrideValue(
-                            "override",
-                            lockfile,
-                            pm,
-                            root_package,
-                            source,
-                            child_override.expr.loc,
-                            log,
-                            child_name,
-                            override_version_str,
-                            builder,
-                        )) |dep| {
-                            nested.parent_map.putAssumeCapacity(parent_name_hash, dep);
+                if (try parseOverrideValue(
+                    "override",
+                    lockfile,
+                    pm,
+                    root_package,
+                    source,
+                    child_prop.value.?.loc,
+                    log,
+                    child_name,
+                    child_version_str,
+                    builder,
+                )) |dep| {
+                    // Get or create the nested override entry for this child
+                    const gop = try this.map.getOrPut(lockfile.allocator, child_name_hash);
+                    if (!gop.found_existing) {
+                        // Create new nested override
+                        var nested = NestedOverrides{};
+                        try nested.parent_map.ensureTotalCapacity(lockfile.allocator, 1);
+                        nested.parent_map.putAssumeCapacity(parent_name_hash, dep);
+                        gop.value_ptr.* = .{ .nested = nested };
+                    } else {
+                        // Update existing entry
+                        switch (gop.value_ptr.*) {
+                            .global => |global_dep| {
+                                // Convert global to nested, keeping the global as fallback
+                                var nested = NestedOverrides{};
+                                nested.global = global_dep;
+                                try nested.parent_map.ensureTotalCapacity(lockfile.allocator, 1);
+                                nested.parent_map.putAssumeCapacity(parent_name_hash, dep);
+                                gop.value_ptr.* = .{ .nested = nested };
+                            },
+                            .nested => |*nested| {
+                                // Add this parent-specific override
+                                try nested.parent_map.put(lockfile.allocator, parent_name_hash, dep);
+                            },
                         }
                     }
                 }
             }
-
-            // Only add to map if we have at least a global or some nested overrides
-            if (nested.global != null or nested.parent_map.count() > 0) {
-                this.map.putAssumeCapacity(child_name_hash, .{ .nested = nested });
-            } else {
-                nested.deinit(lockfile.allocator);
-            }
             continue;
         }
 
-        try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{child_name});
+        try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{package_name});
     }
 }
 

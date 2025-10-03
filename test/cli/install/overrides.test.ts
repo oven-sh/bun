@@ -249,7 +249,7 @@ test("overrides do not apply to workspaces", async () => {
 });
 
 // NPM-style nested overrides tests
-test("nested overrides - npm format with global and parent-specific", async () => {
+test("nested overrides - npm format parent-specific", async () => {
   const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
@@ -258,11 +258,8 @@ test("nested overrides - npm format with global and parent-specific", async () =
         express: "4.18.2",
       },
       overrides: {
-        bytes: {
-          ".": "2.0.0",
-          express: {
-            bytes: "1.0.0",
-          },
+        express: {
+          bytes: "1.0.0",
         },
       },
     }),
@@ -275,7 +272,7 @@ test("nested overrides - npm format with global and parent-specific", async () =
   ensureLockfileDoesntChangeOnBunI(tmp);
 });
 
-test("nested overrides - npm format with only parent-specific override", async () => {
+test("nested overrides - npm format with global and parent-specific", async () => {
   const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
@@ -284,40 +281,16 @@ test("nested overrides - npm format with only parent-specific override", async (
         express: "4.18.2",
       },
       overrides: {
-        bytes: {
-          express: {
-            bytes: "1.0.0",
-          },
+        bytes: "2.0.0", // global
+        express: {
+          bytes: "1.0.0", // override for express's bytes dependency
         },
       },
     }),
   );
   install(tmp, ["install"]);
 
-  // bytes is overridden when required by express
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
-
-  ensureLockfileDoesntChangeOnBunI(tmp);
-});
-
-test("nested overrides - npm format with only global override in object", async () => {
-  const tmp = tmpdirSync();
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      dependencies: {
-        express: "4.18.2",
-      },
-      overrides: {
-        bytes: {
-          ".": "1.0.0",
-        },
-      },
-    }),
-  );
-  install(tmp, ["install"]);
-
-  // Global override via "."
+  // Express depends on bytes, should get the parent-specific override (1.0.0)
   expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
 
   ensureLockfileDoesntChangeOnBunI(tmp);
@@ -397,22 +370,19 @@ test("nested overrides with multiple parents", async () => {
         "body-parser": "1.20.1",
       },
       overrides: {
-        bytes: {
-          express: {
-            bytes: "1.0.0",
-          },
-          "body-parser": {
-            bytes: "2.0.0",
-          },
+        express: {
+          bytes: "1.0.0",
+        },
+        "body-parser": {
+          bytes: "2.0.0",
         },
       },
     }),
   );
   install(tmp, ["install"]);
 
-  // Both express and body-parser depend on bytes
+  // Both express and body-parser depend on bytes with different overrides
   // The actual version will depend on which parent is resolved first
-  // but the override should apply to at least one of them
   const bytesVersion = versionOf(tmp, "node_modules/bytes/package.json");
   expect(["1.0.0", "2.0.0"]).toContain(bytesVersion);
 

@@ -462,7 +462,7 @@ pub fn load(
                     .package_manager = manager,
                 };
                 for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
-                    map.putAssumeCapacity(name, Dependency.toDependency(value, context));
+                    map.putAssumeCapacity(name, .{ .global = Dependency.toDependency(value, context) });
                 }
             } else {
                 stream.pos -= 8;

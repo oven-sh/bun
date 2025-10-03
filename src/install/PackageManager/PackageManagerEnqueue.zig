@@ -478,7 +478,13 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
         if (!dependency.behavior.isWorkspace() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
-            if (this.lockfile.overrides.get(name_hash)) |new| {
+            // Get parent package name hash for nested override lookup
+            const parent_name_hash: ?PackageNameHash = if (resolution != invalid_package_id and resolution < this.lockfile.packages.len)
+                this.lockfile.packages.get(resolution).name_hash
+            else
+                null;
+
+            if (this.lockfile.overrides.get(name_hash, parent_name_hash)) |new| {
                 debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
 
                 name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, new);

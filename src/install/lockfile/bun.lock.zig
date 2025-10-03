@@ -302,12 +302,32 @@ pub const Stringifier = struct {
                     \\
                 );
                 indent.* += 1;
-                for (lockfile.overrides.map.values()) |override_dep| {
-                    try writeIndent(writer, indent);
-                    try writer.print(
-                        \\{}: {},
-                        \\
-                    , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+                for (lockfile.overrides.map.values()) |override_value| {
+                    switch (override_value) {
+                        .global => |dep| {
+                            try writeIndent(writer, indent);
+                            try writer.print(
+                                \\{}: {},
+                                \\
+                            , .{ dep.name.fmtJson(buf, .{}), dep.version.literal.fmtJson(buf, .{}) });
+                        },
+                        .nested => |nested| {
+                            if (nested.global) |dep| {
+                                try writeIndent(writer, indent);
+                                try writer.print(
+                                    \\{}: {},
+                                    \\
+                                , .{ dep.name.fmtJson(buf, .{}), dep.version.literal.fmtJson(buf, .{}) });
+                            }
+                            for (nested.parent_map.values()) |dep| {
+                                try writeIndent(writer, indent);
+                                try writer.print(
+                                    \\{}: {},
+                                    \\
+                                , .{ dep.name.fmtJson(buf, .{}), dep.version.literal.fmtJson(buf, .{}) });
+                            }
+                        },
+                    }
                 }
 
                 try decIndent(writer, indent);
@@ -1248,7 +1268,7 @@ pub fn parseIntoBinaryLockfile(
                 },
             };
 
-            try lockfile.overrides.map.put(allocator, name_hash, dep);
+            try lockfile.overrides.map.put(allocator, name_hash, .{ .global = dep });
         }
     }
 

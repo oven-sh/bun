@@ -180,7 +180,7 @@ pub fn migratePnpmLockfile(
                     },
                 };
 
-                try lockfile.overrides.map.put(allocator, name_hash, dep);
+                try lockfile.overrides.map.put(allocator, name_hash, .{ .global = dep });
             }
         }
 

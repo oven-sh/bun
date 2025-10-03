@@ -1,8 +1,7 @@
 // https://github.com/oven-sh/bun/issues/23183
 // Test that accessing process.title doesn't crash on Windows
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, isWindows } from "harness";
-import { join } from "path";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 test("process.title should not crash on Windows", async () => {
   const proc = Bun.spawn({

@@ -146,38 +146,38 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
         try writer.writeAll("\"");
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.init.status_text});
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         formatter.resetLine();

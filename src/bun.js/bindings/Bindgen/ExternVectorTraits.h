@@ -84,9 +84,16 @@ public:
             Detail::asanSetBufferSizeToFullCapacity(buffer, length, capacity);
             std::byte* storage = reinterpret_cast<std::byte*>(buffer);
 
+            // Convert the elements.
+            for (std::size_t i = 0; i < length; ++i) {
+                T* oldPtr = std::launder(reinterpret_cast<T*>(storage + i * sizeof(T)));
+                ExternElement newElem { ExternTraits<T>::convertToExtern(std::move(*oldPtr)) };
+                oldPtr->~T();
+                new (storage + i * sizeof(ExternElement)) ExternElement { std::move(newElem) };
+            }
+
             std::size_t newCapacity {};
             std::size_t newAllocSize {};
-            std::optional<T> last;
 
             static constexpr bool newSizeIsMultiple = sizeof(T) % sizeof(ExternElement) == 0;
             if (newSizeIsMultiple) {
@@ -96,29 +103,10 @@ public:
                 newCapacity = allocSize / sizeof(ExternElement);
                 newAllocSize = newCapacity * sizeof(ExternElement);
                 if (newAllocSize != allocSize) {
-                    // Allocation isn't a multiple of `sizeof(ExternElement)`; we have to resize it.
-                    if (capacity == length) {
-                        // Save the last element; we'll lose it by resizing. Note that `length`
-                        // cannot be 0 if `newAllocSize != allocSize && capacity == length`.
-                        last = std::move(buffer[length - 1]);
-                        buffer[length - 1].~T();
-                    }
+                    static_assert(std::is_trivially_copyable_v<ExternElement>);
                     storage = static_cast<std::byte*>(
                         MimallocMalloc::realloc(storage, newCapacity * sizeof(ExternElement)));
                 }
-            }
-
-            // Convert the elements.
-            for (std::size_t i = 0; i < length; ++i) {
-                const auto dest = storage + i * sizeof(ExternElement);
-                if (i + 1 == length && last.has_value()) {
-                    new (dest) ExternElement { ExternTraits<T>::convertToExtern(std::move(*last)) };
-                    continue;
-                }
-                T* oldPtr = std::launder(reinterpret_cast<T*>(storage + i * sizeof(T)));
-                ExternElement newElem { ExternTraits<T>::convertToExtern(std::move(*oldPtr)) };
-                oldPtr->~T();
-                new (storage + i * sizeof(ExternElement)) ExternElement { std::move(newElem) };
             }
 
 #if __cpp_lib_start_lifetime_as >= 202207L

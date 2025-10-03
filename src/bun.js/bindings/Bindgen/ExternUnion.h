@@ -14,7 +14,7 @@
         BUN_BINDGEN_DETAIL_FOREACH(                                \
             BUN_BINDGEN_DETAIL_EXTERN_UNION_FIELD,                 \
             T0 __VA_OPT__(, ) __VA_ARGS__)                         \
-        explicit ExternUnion(                                      \
+        void initFromVariant(                                      \
             std::variant<T0 __VA_OPT__(, ) __VA_ARGS__>&& variant) \
         {                                                          \
             const std::size_t index = variant.index();             \
@@ -29,7 +29,9 @@
     }
 
 #define BUN_BINDGEN_DETAIL_EXTERN_UNION_TEMPLATE_PARAM(Type) , typename Type
-#define BUN_BINDGEN_DETAIL_EXTERN_UNION_FIELD(Type) Type alternative##Type;
+#define BUN_BINDGEN_DETAIL_EXTERN_UNION_FIELD(Type)    \
+    static_assert(std::is_trivially_copyable_v<Type>); \
+    Type alternative##Type;
 #define BUN_BINDGEN_DETAIL_EXTERN_UNION_VISIT(Type)           \
     if constexpr (std::is_same_v<Arg, Type>) {                \
         if (index == ::Bun::Bindgen::Detail::indexOf##Type) { \

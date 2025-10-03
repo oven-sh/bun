@@ -2404,7 +2404,7 @@ pub const JSValue = enum(i64) {
     /// Equivalent to `JSC::JSValue::decode`.
     pub fn decode(self: JSValue) jsc.DecodedJSValue {
         var decoded: jsc.DecodedJSValue = undefined;
-        decoded.u.asInt64 = @enumFromInt(self);
+        decoded.u.asInt64 = @intFromEnum(self);
         return decoded;
     }
 };

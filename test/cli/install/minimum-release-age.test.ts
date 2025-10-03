@@ -921,6 +921,82 @@ registry = "${mockRegistryUrl}"`,
       // With 0, should get latest
       expect(lockfile).toContain("regular-package@3.0.0");
     });
+
+    test("global bunfig.toml configuration works", async () => {
+      // Create a fake home directory with global bunfig
+      using globalConfigDir = tempDir("global-config", {
+        ".bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+registry = "${mockRegistryUrl}"`,
+      });
+
+      // Create project directory (no local bunfig)
+      using dir = tempDir("project-with-global-config", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          // XDG_CONFIG_HOME works on all platforms in Bun as an override
+          XDG_CONFIG_HOME: String(globalConfigDir),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Should respect global bunfig setting (5 days)
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("local bunfig overrides global bunfig", async () => {
+      // Create a fake home directory with global bunfig
+      using globalConfigDir = tempDir("global-config-override", {
+        ".bunfig.toml": `[install]
+minimumReleaseAge = ${10 * SECONDS_PER_DAY}
+registry = "${mockRegistryUrl}"`,
+      });
+
+      // Create project directory with local bunfig
+      using dir = tempDir("project-overrides-global", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+registry = "${mockRegistryUrl}"`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          // XDG_CONFIG_HOME works on all platforms in Bun as an override
+          XDG_CONFIG_HOME: String(globalConfigDir),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Should use local bunfig setting (5 days), not global (10 days)
+      expect(lockfile).toContain("regular-package@2.1.0");
+      // With 10 days, would have gotten 2.0.0
+      expect(lockfile).not.toContain("regular-package@2.0.0");
+    });
   });
 
   describe("verbose logging", () => {

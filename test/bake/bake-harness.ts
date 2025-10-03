@@ -11,7 +11,7 @@
 import { $, BunFile, Subprocess } from "bun";
 import * as Bake from "bun:app";
 import { expect, Matchers } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, runBunInstall, tempDirWithFiles } from "harness";
+import { bunEnv, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
 import assert from "node:assert";
 import { EventEmitter } from "node:events";
 import fs, { readFileSync, realpathSync } from "node:fs";
@@ -1400,8 +1400,10 @@ async function installReactWithCache(root: string) {
       }
     }
   } else {
-    // Install fresh and populate cache
-    await Bun.$`${bunExe()} i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install`
+    await Bun.$`
+      cd ${bunFrameworkReactProjectRoot} && bun pm pack --filename=bun-framework-react.tgz
+      cd ${root} && bun add bun-framework-react@${bunFrameworkReactProjectRoot}/bun-framework-react.tgz
+    `
       .cwd(root)
       .env({ ...bunEnv })
       .throws(true);
@@ -1686,15 +1688,10 @@ export function indexHtmlScript(htmlFiles: string[]) {
 
 const skipTargets = [process.platform, isCI ? "ci" : null].filter(Boolean);
 
-function testImpl<T extends DevServerTest>(
-  description: string,
-  options: T,
-  NODE_ENV: "development" | "production",
-  caller: string,
-): T {
+function testImpl(description: string, options: DevServerTest, NODE_ENV: "development" | "production", caller: string) {
   if (interactive) return options;
 
-  const jest = (Bun as any).jest(caller);
+  const jest = Bun.jest(caller);
 
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
@@ -1727,12 +1724,6 @@ function testImpl<T extends DevServerTest>(
       if (runInstall) {
         // await copyCachedReactDeps(root);
         await installReactWithCache(root);
-
-        // Also ensure bun-framework-react has its dependencies installed
-        const frameworkDir = path.join(__dirname, "../../packages/bun-framework-react");
-        if (!fs.existsSync(path.join(frameworkDir, "node_modules"))) {
-          await runBunInstall(bunEnv, frameworkDir, { allowWarnings: true });
-        }
       }
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
         if (!options.framework) {
@@ -1795,7 +1786,7 @@ function testImpl<T extends DevServerTest>(
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
       dedent`
-        import appConfig from ${JSON.stringify(path.join(mainDir, "bun.app.ts"))};
+        import appConfig from "./bun.app.ts";
         import { fullGC } from "bun:jsc";
 
         const routes = appConfig.static ?? (appConfig.routes ??= {});
@@ -2030,7 +2021,7 @@ process.on("exit", () => {
   }
 });
 
-export function devTest<T extends DevServerTest>(description: string, options: T): T {
+export function devTest(description: string, options: DevServerTest) {
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);

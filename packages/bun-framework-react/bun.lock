@@ -4,9 +4,9 @@
     "": {
       "name": "bun-framework-react",
       "dependencies": {
-        "react": "^0.0.0-experimental-ef889445-20250930",
-        "react-dom": "^0.0.0-experimental-ef889445-20250930",
-        "react-refresh": "^0.0.0-experimental-ef889445-20250930",
+        "react": "0.0.0-experimental-a757cb76-20251002",
+        "react-dom": "0.0.0-experimental-a757cb76-20251002",
+        "react-refresh": "0.0.0-experimental-a757cb76-20251002",
       },
       "devDependencies": {
         "@types/react": "^19.1.13",
@@ -21,12 +21,12 @@
 
     "csstype": ["csstype@3.1.3", "", {}, "sha512-M1uQkMl8rQK/szD0LNhtqxIPLpimGm8sOBwU7lLnCpSbTyY3yeU1Vc7l4KT5zT4s/yOxHH5O7tIuuLOCnLADRw=="],
 
-    "react": ["react@0.0.0-experimental-ef889445-20250930", "", {}, "sha512-KVwhRIlvwh/FD8PVHkSlosAP9+PhHW2U63RJOteZaYgZv5OTRgXPZkKwelcWwAqcntntLjqH8LaYsTnGWOY2CQ=="],
+    "react": ["react@0.0.0-experimental-a757cb76-20251002", "", {}, "sha512-7ZcE4sSUGgrXgUWa84iwC9DqwDFbQBgffFmu2DoNqFseruA/JjxQDXKwpV5acdxOM/0uzfSGrapHU3C3ZLiU2g=="],
 
-    "react-dom": ["react-dom@0.0.0-experimental-ef889445-20250930", "", { "dependencies": { "scheduler": "0.0.0-experimental-ef889445-20250930" }, "peerDependencies": { "react": "0.0.0-experimental-ef889445-20250930" } }, "sha512-NxFoE259P9Ndg+M/JKTbNYdMQ0qc7DWvLrw4xsge2rOxJXxK5a+SmfAjteXJJIddSZHM/+c+hKGcaYFa3WJ2iQ=="],
+    "react-dom": ["react-dom@0.0.0-experimental-a757cb76-20251002", "", { "dependencies": { "scheduler": "0.0.0-experimental-a757cb76-20251002" }, "peerDependencies": { "react": "0.0.0-experimental-a757cb76-20251002" } }, "sha512-XjIkmW8mMx9kURHJUY+dhv1Ugan3RmEJIwrZEbAFcJA4S8RXL1wl+xsQJpDCh8kmeX/n25VAmFY8/j1MzqUHfA=="],
 
-    "react-refresh": ["react-refresh@0.0.0-experimental-ef889445-20250930", "", {}, "sha512-Ux3lsHvNGGJ7eknz7lqmCfrkOOKHG+2znsWISXvWGnZ5/+9YelfK0ht8lXH8fkbeHf44UG6/QrZ/zn4Vznt7sw=="],
+    "react-refresh": ["react-refresh@0.0.0-experimental-a757cb76-20251002", "", {}, "sha512-uYd+N2W8/LymZQyY5u1BMWVvLlBV+5SxztBsFjOGuitE4x7sSCj8TwgS+8bxIEBucEVJglfOhDPCPohL/uEQdg=="],
 
-    "scheduler": ["scheduler@0.0.0-experimental-ef889445-20250930", "", {}, "sha512-nQrKdca1hhFcnUJt4hEGd5NSzp4mJxqtUB+B6XYq+Ju5RBGqselw7+LHYkAcuxycYzhGNqQN9fVx5Qimsgi2Hg=="],
+    "scheduler": ["scheduler@0.0.0-experimental-a757cb76-20251002", "", {}, "sha512-YCVGuzmF7u5HIpOdPFD4tZTPzQlOrtViag7uaWjJXfFx37C8sypfNeSXNXoYJeT/ICybxP1EsbHh2oByQHC2Cg=="],
   }
 }

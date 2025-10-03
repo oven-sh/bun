@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-react",
-  "version": "0.0.0-canary.8",
+  "version": "0.0.0-canary.10",
   "devDependencies": {
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9"
@@ -29,8 +29,8 @@
   ],
   "type": "module",
   "dependencies": {
-    "react": "^0.0.0-experimental-ef889445-20250930",
-    "react-dom": "^0.0.0-experimental-ef889445-20250930",
-    "react-refresh": "^0.0.0-experimental-ef889445-20250930"
+    "react": "0.0.0-experimental-a757cb76-20251002",
+    "react-dom": "0.0.0-experimental-a757cb76-20251002",
+    "react-refresh": "0.0.0-experimental-a757cb76-20251002"
   }
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import util from "node:util";
 import { joinIndented, NamedType, reindent, toASCIILiteral, toQuotedLiteral } from "./base";
 
 abstract class EnumType extends NamedType {}
@@ -11,8 +12,12 @@ export function enumeration(name: string, values: string[]): EnumType {
     throw RangeError("too many enum values: " + name);
   }
 
+  const valueSet = new Set<string>();
   const cppMemberSet = new Set<string>();
   for (const value of values) {
+    if (valueSet.size === valueSet.add(value).size) {
+      throw RangeError(`duplicate enum value in ${name}: ${util.inspect(value)}`);
+    }
     let cppName = "k";
     cppName += value
       .split(/[^A-Za-z0-9]+/)

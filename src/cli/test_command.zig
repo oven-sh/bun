@@ -1844,6 +1844,9 @@ pub const TestCommand = struct {
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
             bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
+
+            // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
+            vm.wakeup();
             var promise = try vm.loadEntryPointForTestRunner(file_path);
             // Only count the file once, not once per repeat
             if (repeat_index == 0) {
@@ -1869,16 +1872,7 @@ pub const TestCommand = struct {
                 else => {},
             }
 
-            {
-                vm.drainMicrotasks();
-                var count = vm.unhandled_error_counter;
-                vm.global.handleRejectedPromises();
-                while (vm.unhandled_error_counter > count) {
-                    count = vm.unhandled_error_counter;
-                    vm.drainMicrotasks();
-                    vm.global.handleRejectedPromises();
-                }
-            }
+            vm.eventLoop().tick();
 
             blk: {
 
@@ -1901,6 +1895,10 @@ pub const TestCommand = struct {
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
                 while (buntest.phase != .done) {
+                    if (buntest.wants_wakeup) {
+                        buntest.wants_wakeup = false;
+                        vm.wakeup();
+                    }
                     vm.eventLoop().autoTick();
                     if (buntest.phase == .done) break;
                     vm.eventLoop().tick();

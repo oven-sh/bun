@@ -714,13 +714,21 @@ pub const BunTest = struct {
                 \\
             , .{});
             bun.Output.flush();
+        } else if (this.reporter) |reporter| {
+            if (reporter.last_printed_dot and reporter.reporters.dots) {
+                bun.Output.prettyError("<r>\n", .{});
+                reporter.last_printed_dot = false;
+                bun.Output.flush();
+            }
         }
+
         globalThis.bunVM().runErrorHandler(exception.?, null);
-        bun.Output.flush();
+
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             bun.Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
-            bun.Output.flush();
         }
+
+        bun.Output.flush();
     }
 };
 

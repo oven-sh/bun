@@ -1370,20 +1370,6 @@ pub fn VisitExpr(
                         };
 
                         const macro_ref_data = p.macro.refs.get(ref).?;
-
-                        if (macro_ref_data.is_bun_module) {
-                            if (macro_ref_data.name) |name| {
-                                if (strings.eqlComptime(name, "ms")) {
-                                    const res = bun.handleOom(bun.api.ms.astFunction(p, e_, expr.loc));
-                                    if (res) |r| {
-                                        p.ignoreUsage(ref);
-                                        return r;
-                                    }
-                                    return expr;
-                                }
-                            }
-                        }
-
                         p.ignoreUsage(ref);
                         if (p.is_control_flow_dead) {
                             return p.newExpr(E.Undefined{}, e_.target.loc);
@@ -1401,6 +1387,13 @@ pub fn VisitExpr(
 
                         const name = macro_ref_data.name orelse e_.target.data.e_dot.name;
                         const record = &p.import_records.items[macro_ref_data.import_record_id];
+
+                        // Special case: import { ms } from "bun" - inline instead of executing as macro
+                        if (record.tag == .bun and strings.eqlComptime(name, "ms")) {
+                            const res = bun.handleOom(bun.api.ms.astFunction(p, e_, expr.loc));
+                            return res orelse expr;
+                        }
+
                         const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                         const start_error_count = p.log.msgs.items.len;
                         p.macro_call_count += 1;

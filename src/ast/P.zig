@@ -2772,12 +2772,17 @@ pub fn NewParser_(
                 }
 
                 if (comptime allow_macros) {
+                    // Track {ms} from "bun" as it will 99% of the time be statically known
+                    // so might as well make it a macro automatically
                     if (strings.eqlComptime(path.text, "bun") and strings.eqlComptime(item.alias, "ms")) {
                         try p.macro.refs.put(ref, .{
                             .import_record_id = stmt.import_record_index,
                             .name = item.alias,
-                            .is_bun_module = true,
                         });
+                        const import_record = &p.import_records.items[stmt.import_record_index];
+                        if (import_record.tag == .none) {
+                            import_record.tag = .bun;
+                        }
                     }
                 }
 

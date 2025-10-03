@@ -861,7 +861,7 @@ pub const CommandLineReporter = struct {
         }
 
         const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
-        bun.handleOom(output_writer.writeAll(output_buf.items[initial_length..]));
+        output_writer.writeAll(output_buf.items[initial_length..]) catch {};
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 
@@ -1828,6 +1828,13 @@ pub const TestCommand = struct {
         vm.onUnhandledRejection = jest.on_unhandled_rejection.onUnhandledRejection;
 
         while (repeat_index < repeat_count) : (repeat_index += 1) {
+            // Clear the module cache before re-running (except for the first run)
+            if (repeat_index > 0) {
+                try vm.clearEntryPoint();
+                var entry = jsc.ZigString.init(file_path);
+                try vm.global.deleteModuleRegistryEntry(&entry);
+            }
+
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);
@@ -1837,8 +1844,14 @@ pub const TestCommand = struct {
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index);
 
             bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtEscapes(file_path)});
+
+            // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
+            vm.wakeup();
             var promise = try vm.loadEntryPointForTestRunner(file_path);
-            reporter.summary().files += 1;
+            // Only count the file once, not once per repeat
+            if (repeat_index == 0) {
+                reporter.summary().files += 1;
+            }
 
             switch (promise.status(vm.global.vm())) {
                 .rejected => {
@@ -1859,16 +1872,7 @@ pub const TestCommand = struct {
                 else => {},
             }
 
-            {
-                vm.drainMicrotasks();
-                var count = vm.unhandled_error_counter;
-                vm.global.handleRejectedPromises();
-                while (vm.unhandled_error_counter > count) {
-                    count = vm.unhandled_error_counter;
-                    vm.drainMicrotasks();
-                    vm.global.handleRejectedPromises();
-                }
-            }
+            vm.eventLoop().tick();
 
             blk: {
 
@@ -1891,6 +1895,10 @@ pub const TestCommand = struct {
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
                 while (buntest.phase != .done) {
+                    if (buntest.wants_wakeup) {
+                        buntest.wants_wakeup = false;
+                        vm.wakeup();
+                    }
                     vm.eventLoop().autoTick();
                     if (buntest.phase == .done) break;
                     vm.eventLoop().tick();
@@ -1905,11 +1913,6 @@ pub const TestCommand = struct {
             }
 
             vm.global.handleRejectedPromises();
-            if (repeat_index > 0) {
-                try vm.clearEntryPoint();
-                var entry = jsc.ZigString.init(file_path);
-                try vm.global.deleteModuleRegistryEntry(&entry);
-            }
 
             if (Output.is_github_action) {
                 Output.prettyErrorln("<r>\n::endgroup::\n", .{});

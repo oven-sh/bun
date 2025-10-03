@@ -20,6 +20,8 @@ pub const Installer = struct {
 
     trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
+    active_tasks: if (Environment.ci_assert) []std.atomic.Value(bool) else void,
+
     pub fn deinit(this: *const Installer) void {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
@@ -1001,6 +1003,22 @@ pub const Installer = struct {
         /// Called from task thread
         pub fn callback(task: *ThreadPool.Task) void {
             const this: *Task = @fieldParentPtr("task", task);
+
+            if (comptime Environment.ci_assert) {
+                // acq_rel because this is a read/write and we don't have dependencies on other memory.
+                // we want this assertion to work if multiple threads are running the same task.
+                const is_active = this.installer.active_tasks[this.entry_id.get()].swap(true, .acq_rel);
+                bun.assertWithLocation(!is_active, @src());
+            }
+
+            defer {
+                if (comptime Environment.ci_assert) {
+                    // acq_rel because this is a read/write and we don't have dependencies on other memory.
+                    // we want this assertion to work if multiple threads are running the same task.
+                    const is_active = this.installer.active_tasks[this.entry_id.get()].swap(false, .acq_rel);
+                    bun.assertWithLocation(is_active, @src());
+                }
+            }
 
             const res = this.run() catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),

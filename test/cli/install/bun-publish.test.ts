@@ -849,7 +849,7 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.only("tarball is created properly", async () => {
+test("tarball is created properly", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await rm(join(registry.packagesPath, "publish-pkg-tarball-test"), { recursive: true, force: true });
 
@@ -879,7 +879,7 @@ test.only("tarball is created properly", async () => {
         "dist": {
           "integrity": "sha512-4TZniDJ86iVpuDHLjaefCE3LjgbymU9XYUhQPCeCv8MDRDB5cTQPRovhGIh2PGfrx9RQunpBPR+qblKBsn4NFQ==",
           "shasum": "5b15f85ecd0e83c37131654879a9592ea2a2a660",
-          "tarball": "http://http://localhost:1234/publish-pkg-tarball-test/-/publish-pkg-tarball-test-1.2.3.tgz",
+          "tarball": "http://localhost:1234/publish-pkg-tarball-test/-/publish-pkg-tarball-test-1.2.3.tgz",
         },
         "integrity": "sha512-4TZniDJ86iVpuDHLjaefCE3LjgbymU9XYUhQPCeCv8MDRDB5cTQPRovhGIh2PGfrx9RQunpBPR+qblKBsn4NFQ==",
         "name": "publish-pkg-tarball-test",

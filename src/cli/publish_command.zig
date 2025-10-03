@@ -980,9 +980,9 @@ pub const PublishCommand = struct {
                 E.String,
                 .{
                     .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
-                        // always use replace https with http
+                        // always replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
-                        strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, registry.url.protocol)),
+                        strings.withoutTrailingSlash(strings.withoutPrefix(registry.url.href, registry.url.protocol))[3..],
                         package_name,
                         Pack.fmtTarballFilename(package_name, package_version, .raw),
                     }),

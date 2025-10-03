@@ -2143,6 +2143,13 @@ pub fn withoutSuffixComptime(input: []const u8, comptime suffix: []const u8) []c
     return input;
 }
 
+pub fn withoutPrefix(input: []const u8, prefix: []const u8) []const u8 {
+    if (hasPrefix(input, prefix)) {
+        return input[prefix.len..];
+    }
+    return input;
+}
+
 pub fn withoutPrefixComptime(input: []const u8, comptime prefix: []const u8) []const u8 {
     if (hasPrefixComptime(input, prefix)) {
         return input[prefix.len..];

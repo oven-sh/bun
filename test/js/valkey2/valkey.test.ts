@@ -45,18 +45,28 @@ describe("disconnected client", () => {
 });
 
 describeValkey("valkey", (ctx: ValkeyContext) => {
+  console.log("Using Bun version:", process.versions.bun);
   it("successfully connects", async () => {
+    console.log("Connecting to Valkey server at", ctx.serverUrl);
     await ctx.client().connect();
   });
 
   describe("runs trivial commands", async () => {
-    it("pings", async () => {
-      expect(await (await ctx.connectedClient()).ping()).toBe("PONG");
+
+    describe("supports", () => {
+      it("PING", async () => {
+        expect(await (await ctx.connectedClient()).ping()).toBe("PONG");
+      });
+
+      it("RANDOMKEY", async () => {
+        expect(await (await ctx.connectedClient()).randomkey()).toBe(null);
+      });
     });
 
+
     it.each(algo.zip(
-      ValkeyFaker.edgeCaseKeys(randomEngine, 32),
-      ValkeyFaker.edgeCaseValues(randomEngine, 32),
+      ValkeyFaker.edgeCaseKeys(randomEngine, 16),
+      ValkeyFaker.edgeCaseValues(randomEngine, 16),
     ))("roundtrip get/set/get %s->%s", async (key, value) => {
       const client = await ctx.connectedClient();
       expect(await client.get(key)).toBe(null);

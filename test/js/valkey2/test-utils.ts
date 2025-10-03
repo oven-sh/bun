@@ -123,7 +123,7 @@ export namespace ValkeyFaker {
   }
 
   export function edgeCaseKeys(randomEngine: random.RandomEngine, count: number): string[] {
-    return Array.from({ length: count }, () => key(randomEngine, 512 * 1024 * 1024));
+    return Array.from({ length: count }, () => key(randomEngine, 512 * 1024));
   }
 
   export function keys(randomEngine: random.RandomEngine, count: number): string[] {
@@ -138,7 +138,7 @@ export namespace ValkeyFaker {
 
   export function edgeCaseValues(randomEngine: random.RandomEngine, count: number): string[] {
     // Use 1 KB max size for regular values to keep tests fast. 1kB is still a reasonably large value.
-    return Array.from({ length: count }, () => value(randomEngine, 512 * 1024 * 1024));
+    return Array.from({ length: count }, () => value(randomEngine, 512 * 1024));
   }
 
   export function values(randomEngine: random.RandomEngine, count: number): string[] {

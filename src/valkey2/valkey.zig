@@ -12,8 +12,8 @@
 ///! may contain any combination of the following methods:
 ///!  - beforeStateTransition(self: *Self, old_state: ValkeyClient.State,
 ///!                          new_state: ValkeyClient.State)
-///!  - afterStateTransition(self: *Self, old_state: ValkeyClient.State,                                             new_state: ValkeyClient.State)
-///!
+///!  - afterStateTransition(self: *Self, old_state: ValkeyClient.State,
+///!                         new_state: ValkeyClient.State)
 ///!
 pub fn ValkeyClient(
     comptime ValkeyListener: type,
@@ -643,6 +643,8 @@ pub fn ValkeyClient(
         /// - `.SubscriptionCompatibility` if the given command is not available in the current
         /// subscription mode.
         pub fn request(self: *Self, req: Self.RequestType) !void {
+            Self.debug("{*}.request({s}, argc={})", .{ self, req.command, req.command.args.len() });
+
             // TODO(markovejnovic): Handle automatically opening the connection.
             switch (self._state) {
                 .linked => |*l_state| {
@@ -665,8 +667,6 @@ pub fn ValkeyClient(
         /// Attempt to enqueue a request for sending to the server. This may choose to skip the
         /// queue if appropriate.
         fn enqueueRequest(self: *Self, req: Self.RequestType) !void {
-            _ = self;
-            _ = req;
         }
 
         const debug = bun.Output.scoped(.valkey, .visible);

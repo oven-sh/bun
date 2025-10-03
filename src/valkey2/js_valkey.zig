@@ -213,6 +213,8 @@ pub const JsValkey = struct {
         cf: *bun.jsc.CallFrame,
         js_this: bun.jsc.JSValue,
     ) bun.JSError!*JsValkey {
+        Self.debug("Creating JsValkey...", .{});
+
         // Parse the arguments first.
         var args_parsed = try Self.parseConstructorArgs(go, cf);
         defer args_parsed.deinit();

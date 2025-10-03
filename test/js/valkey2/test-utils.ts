@@ -103,3 +103,46 @@ export namespace Url {
     return protos.map(generateUrl);
   }
 }
+
+/** Faker-eseque utilities for Valkey. */
+export namespace ValkeyFaker {
+  /**
+   * Generate a random binary-safe string suitable for use as a Redis/Valkey key.
+   *
+   * Uses uniform distribution across all byte values (0-255) for maximum randomness.
+   * The size of the generated string is randomly chosen between 1 byte and maxSize.
+   *
+   * The manual states that the key name is a binary safe string up to 512 MB in length.
+   *
+   * @param randomEngine The random number generator to use
+   * @param maxSize Maximum size in bytes (default: 512 MB)
+   * @returns A binary-safe random string
+   */
+  export function key(randomEngine: random.RandomEngine, maxSize: number = 512 * 1024 * 1024): string {
+    return random.dirtyLatin1String(randomEngine, maxSize);
+  }
+
+  export function edgeCaseKeys(randomEngine: random.RandomEngine, count: number): string[] {
+    return Array.from({ length: count }, () => key(randomEngine, 512 * 1024 * 1024));
+  }
+
+  export function keys(randomEngine: random.RandomEngine, count: number): string[] {
+    // Use 1 KB max size for regular keys to keep tests fast. 1kB is still a reasonably large key.
+    return Array.from({ length: count }, () => key(randomEngine, 1024));
+  }
+
+  /** Generate a random binary-safe string suitable for use as a Redis/Valkey value. */
+  export function value(randomEngine: random.RandomEngine, maxSize: number = 512 * 1024 * 1024): string {
+    return random.dirtyLatin1String(randomEngine, maxSize);
+  }
+
+  export function edgeCaseValues(randomEngine: random.RandomEngine, count: number): string[] {
+    // Use 1 KB max size for regular values to keep tests fast. 1kB is still a reasonably large value.
+    return Array.from({ length: count }, () => value(randomEngine, 512 * 1024 * 1024));
+  }
+
+  export function values(randomEngine: random.RandomEngine, count: number): string[] {
+    // Use 1 KB max size for regular values to keep tests fast. 1kB is still a reasonably large value.
+    return Array.from({ length: count }, () => value(randomEngine, 1024));
+  }
+}

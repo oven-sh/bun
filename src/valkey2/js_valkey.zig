@@ -12,6 +12,51 @@ pub const JsValkey = struct {
 
     const Self = @This();
 
+    /// The context object passed with each request. Keep it small.
+    const RequestContext = union(enum) {
+        /// The JS user requested this command and an associated promise is present.
+        pub const UserRequest = struct {
+            _promise: bun.jsc.JSPromise.Strong,
+            // TODO(markovejnovic): This gives array-of-struct vibes instead of struct-of-array.
+            // Probably slow.
+            _return_as_buffer: bool,
+
+            pub fn init(go: *bun.jsc.JSGlobalObject, return_as_buffer: bool) @This() {
+                return .{
+                    ._promise = bun.jsc.JSPromise.Strong.init(go),
+                    ._return_as_buffer = return_as_buffer,
+                };
+            }
+
+            pub fn promise(self: *const @This()) *bun.jsc.JSPromise {
+                return self._promise.get();
+            }
+
+            /// Given a Redis RESPValue, resolve the promise with it.
+            pub fn resolveWithRespValue(
+                self: *@This(),
+                go: *bun.jsc.JSGlobalObject,
+                value: *protocol.RESPValue,
+            ) void {
+                self._promise.resolve(go, value.toJSWithOptions(go, .{
+                    ._return_as_buffer = self.return_as_buffer,
+                }));
+            }
+
+            pub fn reject(
+                self: @This(),
+                go: *bun.jsc.JSGlobalObject,
+                reason: bun.JSError!bun.jsc.JSValue,
+            ) void {
+                self._promise.reject(go, reason.toJS());
+            }
+        };
+
+        user_request: UserRequest,
+    };
+
+    const ZigClient = ValkeyClient(ValkeyClientListener, RequestContext);
+
     /// This listener is passed into the ValkeyClient. ValkeyClient invokes these methods on
     /// certain events.
     const ValkeyClientListener = struct {
@@ -21,8 +66,8 @@ pub const JsValkey = struct {
 
         pub fn afterStateTransition(
             self: *@This(),
-            old_state: *const ValkeyClient(ValkeyClientListener).State,
-            new_state: *const ValkeyClient(ValkeyClientListener).State,
+            old_state: *const ZigClient.State,
+            new_state: *const ZigClient.State,
         ) void {
             self.updateRefCount(new_state);
             self.updateJsThisRef(new_state);
@@ -30,18 +75,15 @@ pub const JsValkey = struct {
 
             const pp = self.parent();
 
-            if (new_state.* == .linked) {
+            // If we enter the linked normal state, then we're fully connected so what we need to
+            // do is resolve the user's promise.
+            if (new_state.* == .linked and new_state.linked.state == .normal) {
                 const js_this = pp._js_this.tryGet().?;
 
-                // Means we just connected to Valkey. Let's resolve the
-                // connection promise.
+                // Means we just connected to Valkey. Let's resolve the connection promise.
                 const js_promise = JsValkey.js.connectionPromiseGetCached(js_this) orelse {
-                    // No promise to resolve. This is strange and shouldn't
-                    // happen.
-                    Self.debug(
-                        "Error: Entered a linked state but no connection promise found.",
-                        .{},
-                    );
+                    // No promise to resolve. This is strange and shouldn't happen.
+                    Self.debug("Error: Linked state but no connection promise found.", .{});
                     // TODO(markovejnovic): Telemetry.
                     return;
                 };
@@ -59,26 +101,30 @@ pub const JsValkey = struct {
         }
 
         /// Update the event loop reference count based on the new state.
-        fn updateEventLoop(
-            self: *@This(),
-            new_state: *const ValkeyClient(ValkeyClientListener).State,
-        ) void {
+        fn updateEventLoop(self: *@This(), new_state: *const ZigClient.State) void {
             const jsvlk = self.parent();
 
             switch (new_state.*) {
                 .disconnected, .closed => {
                     jsvlk._event_loop_rc.unref(jsvlk._virtual_machine);
                 },
-                .opening, .handshake => {
+                .opening => {
                     // We're opening so we need the event loop.
                     jsvlk._event_loop_rc.ref(jsvlk._virtual_machine);
                 },
+                .handshake => {
+                    bun.debugAssert(jsvlk._event_loop_rc.status == .active);
+                },
                 .linked => |lstate| {
                     switch (lstate.state) {
-                        .authenticating, .subscriber => {
+                        .authenticating => {
+                            bun.debugAssert(jsvlk._event_loop_rc.status == .active);
+                        },
+                        .subscriber => {
                             jsvlk._event_loop_rc.ref(jsvlk._virtual_machine);
                         },
                         .normal => {
+                            bun.debugAssert(jsvlk._event_loop_rc.status == .active);
                             jsvlk._event_loop_rc.unref(jsvlk._virtual_machine);
                         },
                     }
@@ -86,10 +132,7 @@ pub const JsValkey = struct {
             }
         }
 
-        fn updateRefCount(
-            self: *@This(),
-            new_state: *const ValkeyClient(ValkeyClientListener).State,
-        ) void {
+        fn updateRefCount(self: *@This(), new_state: *const ZigClient.State) void {
             const jsvlk = self.parent();
 
             switch (new_state.*) {
@@ -117,10 +160,7 @@ pub const JsValkey = struct {
             Self.debug("Current ref-count: {}", .{jsvlk._ref_count.raw_count});
         }
 
-        fn updateJsThisRef(
-            self: *@This(),
-            new_state: *const ValkeyClient(ValkeyClientListener).State,
-        ) void {
+        fn updateJsThisRef(self: *@This(), new_state: *const ZigClient.State) void {
             const jsvlk = self.parent();
 
             switch (new_state.*) {
@@ -158,7 +198,7 @@ pub const JsValkey = struct {
         const debug = bun.Output.scoped(.valkey_client_listener, .visible);
     };
 
-    const Client = ValkeyClient(ValkeyClientListener);
+    const Client = ZigClient;
 
     _client: Client,
     _ref_count: RefCount,
@@ -279,6 +319,58 @@ pub const JsValkey = struct {
         return bun.jsc.JSValue.jsBoolean(self._client.isConnected());
     }
 
+    pub fn close(self: *Self, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) bun.jsc.JSValue {
+        _ = self;
+        _ = go;
+        _ = cf;
+        return .js_undefined;
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+    }
+
+    pub fn finalize(self: *Self) void {
+        Self.debug("Finalizing JsValkey", .{});
+        self._client.deinit();
+    }
+
+    /// External API which measures the total memory usage of this object in
+    /// bytes.
+    pub fn memoryCost(self: *const Self) usize {
+        return @sizeOf(Self) + self._client.memoryUsage();
+    }
+
+    pub const RequestOptions = struct {
+        return_as_buffer: bool = false,
+    };
+
+    /// Create a request which gets resolved in onResponse.
+    pub fn request(
+        self: *Self,
+        go: *bun.jsc.JSGlobalObject,
+        _: bun.jsc.JSValue,
+        command: Command,
+        options: RequestOptions,
+    ) !*bun.jsc.JSPromise {
+        const ReqType = ZigClient.RequestType;
+
+        // The goal of this function is to transform Command -> RequestType. To achieve that, we
+        // need to enrich the Command with promise.
+        const req: ReqType = .{
+            .command = command,
+            .context = .{
+                .user_request = RequestContext.UserRequest.init(go, options.return_as_buffer),
+            },
+        };
+
+        self._client.request(req) catch |err| {
+            return protocol.valkeyErrorToJS(go, "Failed to send command", err);
+        };
+
+        return req.context.user_request.promise();
+    }
+
     pub fn connect(
         self: *Self,
         go: *bun.jsc.JSGlobalObject,
@@ -313,27 +405,7 @@ pub const JsValkey = struct {
         return promise.toJS();
     }
 
-    pub fn close(self: *Self, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) bun.jsc.JSValue {
-        _ = self;
-        _ = go;
-        _ = cf;
-        return .js_undefined;
-    }
-
-    pub fn deinit(self: *Self) void {
-        _ = self;
-    }
-
-    pub fn finalize(self: *Self) void {
-        Self.debug("Finalizing JsValkey", .{});
-        self._client.deinit();
-    }
-
-    /// External API which measures the total memory usage of this object in
-    /// bytes.
-    pub fn memoryCost(self: *const Self) usize {
-        return @sizeOf(Self) + self._client.memoryUsage();
-    }
+    pub const randomKey = MethodFactory.@"()"("RANDOMKEY").call;
 
     pub const js = bun.jsc.Codegen.JSRedisClient2;
     pub const new = bun.TrivialNew(@This());
@@ -344,5 +416,32 @@ pub const JsValkey = struct {
     const debug = bun.Output.scoped(.js_valkey, .visible);
 };
 
+/// Codegen for different types of methods.
+const MethodFactory = struct {
+    const Self = @This();
+
+    /// 0-arity method like RANDOMKEY
+    pub fn @"()"(comptime command: []const u8) type {
+        return struct {
+            pub fn call(
+                self: *JsValkey,
+                go: *bun.jsc.JSGlobalObject,
+                cf: *bun.jsc.CallFrame,
+            ) bun.JSError!bun.jsc.JSValue {
+                const promise = self.request(go, cf.this(), .{
+                    .command = command,
+                    .args = .{ .args = &.{} },
+                }, .{}) catch |err| {
+                    return protocol.valkeyErrorToJS(go, "Failed to send " ++ command, err);
+                };
+                return promise.toJS();
+            }
+        };
+    }
+};
+
 const bun = @import("bun");
 const ValkeyClient = @import("./valkey.zig").ValkeyClient;
+// TODO(markovejnovic): This should be imported from the same location as ValkeyClient.
+const protocol = @import("./valkey.zig").protocol;
+const Command = @import("./command.zig").Command;

@@ -1,7 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, test, it, afterEach } from "bun:test";
-import {describeValkey, ValkeyContext, Url} from "./test-utils";
+import {describeValkey, ValkeyContext, Url, ValkeyFaker} from "./test-utils";
 import {RedisClient2} from "bun";
 import * as random from "_util/random";
+import * as algo from "_util/algo";
 
 const randomEngine = random.mulberry32Prng(random.currentMonthSeed());
 
@@ -43,8 +44,24 @@ describe("disconnected client", () => {
   });
 });
 
-describeValkey("valkey initialization", (ctx: ValkeyContext) => {
-  test("successfully connects", async () => {
+describeValkey("valkey", (ctx: ValkeyContext) => {
+  it("successfully connects", async () => {
     await ctx.client().connect();
+  });
+
+  describe("runs trivial commands", async () => {
+    it("pings", async () => {
+      expect(await (await ctx.connectedClient()).ping()).toBe("PONG");
+    });
+
+    it.each(algo.zip(
+      ValkeyFaker.edgeCaseKeys(randomEngine, 32),
+      ValkeyFaker.edgeCaseValues(randomEngine, 32),
+    ))("roundtrip get/set/get %s->%s", async (key, value) => {
+      const client = await ctx.connectedClient();
+      expect(await client.get(key)).toBe(null);
+      expect(await client.set(key, value)).toBe("OK");
+      expect(await client.get(key)).toBe(value);
+    });
   });
 }, { server: "redis://localhost:6379" });

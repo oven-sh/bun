@@ -14,6 +14,7 @@ export default [
       close: { fn: "close", length: 0 },
       connect: { fn: "connect", length: 0 },
       connected: { getter: "getConnected" },
+      randomkey: { fn: "randomKey", length: 0 },
       //onconnect: {
       //  getter: "getOnConnect",
       //  setter: "setOnConnect",

@@ -15,7 +15,10 @@
 ///!  - afterStateTransition(self: *Self, old_state: ValkeyClient.State,                                             new_state: ValkeyClient.State)
 ///!
 ///!
-pub fn ValkeyClient(comptime ValkeyListener: type) type {
+pub fn ValkeyClient(
+    comptime ValkeyListener: type,
+    comptime RequestContext: type,
+) type {
     return struct {
         // The client is implemented as a state machine, with each state representing a different
         // phase of the client's lifecycle.
@@ -29,6 +32,13 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
             InvalidState,
             FailedToOpenSocket,
         };
+
+        /// All requests must be given a context which is passed back when the
+        /// response is received.
+        pub const RequestType = Request(RequestContext);
+
+        /// All responses are paired with the original request context.
+        pub const ResponseType = Response(RequestContext);
 
         _allocator: std.mem.Allocator,
 
@@ -48,7 +58,12 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
 
         /// Queue of commands that have been sent to the server and are awaiting a response.
         ///
-        /// TODO(markovejnovic): Does this need to live in the base state?
+        /// TODO(markovejnovic): This implementation is slightly cursed. There's a very redundant
+        /// copy because of this queue. Every time we take a message from the outbound queue and
+        /// drop it into the inflight queue, we're doing a very unnecessary copy. A better
+        /// algorithm would include a marking scheme in the outbound queue, or maybe we would have
+        /// some sort of queue tracking the states of each of the commands and their lifetimes.
+        /// Food for thought.
         _inflight_queue: std.fifo.LinearFifo(SerializedCommand, .Dynamic),
 
         /// The connection parameters used to connect to the Valkey server.
@@ -150,9 +165,243 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
             _ = self;
         }
 
-        /// Invoked whenever a packet is received from the server.
+        /// Invoked whenever a slice of bytes is received from the socket. You need to figure out a
+        /// way to buffer these bytes and parse them as RESP messages.
+        ///
+        /// The goal of this function is to deserialize the incoming data and invoke `onPacket`,
+        /// which then actually services the packet (based on the state).
         pub fn onData(self: *Self, data: []const u8) void {
-            self._state.onData(data);
+            Self.debug("{*}.onData(data.len={})", .{ self, data.len });
+
+            if (self._state != .linked) {
+                self._state.warnIllegalState("onData");
+
+                if (comptime bun.Environment.allow_assert) {
+                    @panic("Received data while not in linked state");
+                }
+
+                // TODO(markovejnovic): This may very well be junk. Probably want to fail noisily
+                // rather than silently.
+                self._state.recoverFromIllegalState();
+                return;
+            }
+
+            const state = &self._state.linked;
+
+            // This actually requires quite some work -- we need to accumulate a bunch of data
+            // together. The way we do this is through two paths:
+
+            // 1. If the buffer already has data, we append to the buffer and then try to process
+            // out of the buffer as much as humanly possible. -- This is batched so will be
+            // slightly more efficient.
+            const ing_buf = &state._ingress_buffer;
+            if (ing_buf.remaining().len > 0) {
+                bun.handleOom(ing_buf.write(self._allocator, data));
+
+                // Batch process the buffer.
+                while (true) {
+                    const rem_buf = ing_buf.remaining();
+                    if (rem_buf.len == 0) return;
+
+                    var reader = protocol.ValkeyReader.init(rem_buf);
+                    const before_read_pos = reader.pos;
+
+                    // TODO(markovejnovic): This is completely copied out of the original
+                    // implementation. Should vet.
+                    //
+                    // TODO(markovejnovic): I think there's performance on the table here. These
+                    // allocations are likely to be sparse since they're happening sparsely with
+                    // whatever the client's allocator is -- likely something sparse -- and that
+                    // sucks if we're receiving a lot of messages that we might want to process in
+                    // parallel. What would be really neat is if we batched subscription Push
+                    // messages, for example, all together, so we wouldn't need to deallocate them
+                    // individually and could simply drop an arena after all of them are pushed to
+                    // the JS frontend. Food for thought.
+                    var value = reader.readValue(self._allocator) catch |err| {
+                        if (err == error.InvalidResponse) {
+                            // Need more data in the buffer, wait for next onData call
+                            if (comptime bun.Environment.allow_assert) {
+                                Self.debug("read_buffer: needs more data ({d} bytes available)", .{
+                                    rem_buf.len,
+                                });
+                            }
+                            return;
+                        } else {
+                            // TODO(markovejnovic): Fail somehow.
+                            return;
+                        }
+                    };
+                    defer value.deinit(self._allocator);
+
+                    const bytes_consumed = reader.pos - before_read_pos;
+                    if (bytes_consumed == 0 and rem_buf.len > 0) {
+                        // TODO(markovejnovic): Fail somehow.
+                        return;
+                    }
+
+                    state._ingress_buffer.consume(@truncate(bytes_consumed));
+
+                    var value_to_handle = value; // Use temp var for defer
+                    self.onPacket(&value_to_handle) catch {
+                        // TODO(markovejnovic): Enable
+                        //self.fail("Failed to handle response (buffer path)", err);
+                        return;
+                    };
+
+                    // Note that handleResponse may change our state. If we're not in a state which
+                    // supports the ingress buffer, we should stop processing.
+                    if (self._state == .linked) {
+                        return;
+                    }
+
+                    //self.sendNextCommand();
+                }
+            }
+
+            // 2. Since the buffer is empty, it's cheaper to just process the data directly.
+            // TODO(markovejnovic): This is completely copied out of the original implementation.
+            // Should vet.
+            var current_data_slice = data; // Create a mutable view of the incoming data
+            while (current_data_slice.len > 0) {
+                var reader = protocol.ValkeyReader.init(current_data_slice);
+                const before_read_pos = reader.pos;
+
+                var value = reader.readValue(self._allocator) catch |err| {
+                    if (err == error.InvalidResponse) {
+                        // Partial message encountered on the stack-allocated path.
+                        // Copy the *remaining* part of the stack data to the heap buffer
+                        // and wait for more data.
+                        if (comptime bun.Environment.allow_assert) {
+                            debug(
+                                "read_buffer: partial message on stack ({d} bytes), switching " ++
+                                    "to buffer",
+                                .{current_data_slice.len - before_read_pos},
+                            );
+                        }
+                        bun.handleOom(state._ingress_buffer.write(
+                            self._allocator,
+                            current_data_slice[before_read_pos..],
+                        ));
+                        return; // Exit onData, next call will use the buffer path
+                    } else {
+                        // Any other error is fatal
+                        // TODO(markovejnovic): Fail somehow.
+                        //self.fail("Failed to read data (stack path)", err);
+                        return;
+                    }
+                };
+                // Successfully read a full message from the stack data
+                defer value.deinit(self._allocator);
+
+                const bytes_consumed = reader.pos - before_read_pos;
+                if (bytes_consumed == 0) {
+                    // This case should ideally not happen if readValue succeeded and slice wasn't
+                    // empty
+                    // TODO(markovejnovic): Fail somehow.
+                    // self.fail("Parser consumed 0 bytes unexpectedly (stack path)",
+                    // error.InvalidResponse);
+                    return;
+                }
+
+                // Advance the view into the stack data slice for the next iteration
+                current_data_slice = current_data_slice[bytes_consumed..];
+
+                // Handle the successfully parsed response
+                var value_to_handle = value; // Use temp var for defer
+                self.onPacket(&value_to_handle) catch {
+                    // TODO(markovejnovic): Fail somehow.
+                    // self.fail("Failed to handle response (stack path)", err);
+                    return;
+                };
+
+                // onPacket can change the state of the state machine, so we need to test again if
+                // all is well.
+                if (self._state != .linked) {
+                    return;
+                }
+                // TODO(markovejnovic): Enable the following
+                //self.sendNextCommand();
+            }
+
+            // If the loop finishes, the entire 'data' was processed without needing th ebuffer
+        }
+
+        /// Invoked by onData for each ingress packet.
+        fn onPacket(self: *Self, value: *protocol.RESPValue) !void {
+            // If we receive a packet while not linked, something's really fucked up.
+            bun.debugAssert(self._state == .linked);
+
+            const l_state = &self._state.linked;
+
+            switch (l_state.state) {
+                .normal => {
+                    // TODO(markovejnovic)
+                    @panic("Not Implemented");
+                },
+                .authenticating => {
+                    try self.onAuthenticatingPacket(value);
+                },
+                .subscriber => {
+                    // TODO(markovejnovic)
+                    @panic("Not Implemented");
+                },
+            }
+        }
+
+        fn onAuthenticatingPacket(self: *Self, value: *protocol.RESPValue) !void {
+            // TODO(markovejnovic): This is the legacy implementation, almost verbatim.
+            Self.debug("Processing HELLO response", .{});
+            switch (value.*) {
+                .Error => |err| {
+                    // TODO(markovejnovic): Enable
+                    //self.fail(err, protocol.RedisError.AuthenticationFailed);
+                    _ = err;
+                    return;
+                },
+                .SimpleString => |str| {
+                    if (std.mem.eql(u8, str, "OK")) {
+                        try self._state.transition(.{ .linked = .{ .state = .normal } });
+                        return;
+                    }
+                    // TODO(markovejnovic): Enable
+                    //self.fail("Authentication failed (unexpected response)",
+                    // protocol.RedisError.AuthenticationFailed,);
+
+                    return;
+                },
+                .Map => |map| {
+                    // This is the HELLO response map
+                    Self.debug("Got HELLO response map with {d} entries", .{map.len});
+
+                    // Process the Map response - find the protocol version
+                    for (map) |*entry| {
+                        switch (entry.key) {
+                            .SimpleString => |key| {
+                                if (std.mem.eql(u8, key, "proto") and entry.value == .Integer) {
+                                    const proto_version = entry.value.Integer;
+                                    Self.debug("Server protocol version: {d}", .{proto_version});
+                                    if (proto_version != 3) {
+                                        // TODO(markovejnovic): Enable
+                                        //self.fail("Server does not support RESP3",
+                                        //protocol.RedisError.UnsupportedProtocol);
+                                        return;
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+
+                    try self._state.transition(.{ .linked = .{ .state = .normal } });
+                    return;
+                },
+                else => {
+                    // TODO(markovejnovic): Enable
+                    //this.fail("Authentication failed with unexpected response",
+                    //protocol.RedisError.AuthenticationFailed);
+                    return;
+                },
+            }
         }
 
         /// Invoked whenever a write action went through. The nominal use-case is to push more
@@ -171,6 +420,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
             self: *Self,
             _: i32,
         ) void {
+            // TODO(markovejnovic): Please implement me!!!
             _ = self;
         }
 
@@ -229,29 +479,15 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
             };
         }
 
-        fn runBeforeStateTransitionCallback(
-            self: *Self,
-            from_state: *State,
-            to_state: *State,
-        ) void {
-            if (comptime std.meta.hasFn(
-                ValkeyListener,
-                "beforeStateTransition",
-            )) {
-                self._callbacks.beforeStateTransition(from_state, to_state);
+        fn runBeforeStateTransitionCallback(self: *Self, from: *State, to: *State) void {
+            if (comptime std.meta.hasFn(ValkeyListener, "beforeStateTransition")) {
+                self._callbacks.beforeStateTransition(from, to);
             }
         }
 
-        fn runAfterStateTransitionCallback(
-            self: *Self,
-            from_state: *State,
-            to_state: *State,
-        ) void {
-            if (comptime std.meta.hasFn(
-                ValkeyListener,
-                "afterStateTransition",
-            )) {
-                self._callbacks.afterStateTransition(from_state, to_state);
+        fn runAfterStateTransitionCallback(self: *Self, from: *State, to: *State) void {
+            if (comptime std.meta.hasFn(ValkeyListener, "afterStateTransition")) {
+                self._callbacks.afterStateTransition(from, to);
             }
         }
 
@@ -305,6 +541,8 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
         }
 
         fn onStateDisconnectedToOpening(self: *Self) !void {
+            bun.debugAssert(self._state == .opening);
+
             Self.debug("{*} Socket is opening...", .{self});
             self._socket_io.startConnecting() catch |e| {
                 Self.debug("{*} Failed to start connecting: {any}", .{
@@ -316,6 +554,8 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
         }
 
         fn onStateOpeningToAuthenticating(self: *Self) !void {
+            bun.debugAssert(self._state == .linked);
+
             Self.debug("{*} Socket is authenticating...", .{self});
 
             // To authenticate, we need to send the HELLO command around.
@@ -339,20 +579,8 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
                 hello_args = hello_args_buf[0..1];
             }
 
-            var hello_cmd = Command().initWithArgs(
-                "HELLO",
-                .{ .raw = hello_args },
-            );
-
-            // Ship out the HELLO command. This can go straight to the egress
-            // buffer.
-            hello_cmd.write(self.egressWriter()) catch |e| {
-                Self.debug("{*} Failed to write HELLO command: {any}", .{
-                    self,
-                    e,
-                });
-                return e;
-            };
+            var hello_cmd = Command.initWithArgs("HELLO", .{ .raw = hello_args });
+            try hello_cmd.write(self.egressWriter());
 
             // If we're using a specific database, we should also send the
             // SELECT command.
@@ -364,7 +592,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
             // TODO(markovejnovic): Implement this.
             //if (self._connection_params.database > 0) {
             //    const db = bun.string.intToStr(self._connection_params.database,);
-            //    var select_cmd = Command().initWithArgs(
+            //    var select_cmd = Command.initWithArgs(
             //        "SELECT",
             //        .{ .raw = &[_][]const u8{ db } },
             //    );
@@ -376,16 +604,14 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
             //        return e;
             //    };
             //}
+
+            self._state.flushEgressBuffer();
         }
 
         /// Zig std.io.Writer-compatible interface for writing to the egress
         /// buffer. Note that this can only be called while the socket is in
         /// the `.linked` state. See `_outbound_queue` for details.
-        fn egressWriter(self: *Self) std.io.Writer(
-            *Self,
-            protocol.RedisError,
-            egressWrite,
-        ) {
+        fn egressWriter(self: *Self) std.io.Writer(*Self, protocol.RedisError, egressWrite) {
             return .{ .context = self };
         }
 
@@ -398,9 +624,9 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
                 },
                 else => {
                     Self.debug(
-                        "{*}.egressWrite invoked while in state {} which " ++
-                            "does not support direct egress writing. Data " ++
-                            "will be lost, and the connection may be broken.",
+                        "{*}.egressWrite invoked while in state {} which  does not support " ++
+                            "direct egress writing. Data will be lost, and the connection may " ++
+                            "be broken.",
                         .{ self, self._state },
                     );
 
@@ -409,6 +635,38 @@ pub fn ValkeyClient(comptime ValkeyListener: type) type {
                     return protocol.RedisError.InvalidArgument;
                 },
             }
+        }
+
+        /// Make a request to the Valkey server.
+        ///
+        /// Errors:
+        /// - `.SubscriptionCompatibility` if the given command is not available in the current
+        /// subscription mode.
+        pub fn request(self: *Self, req: Self.RequestType) !void {
+            // TODO(markovejnovic): Handle automatically opening the connection.
+            switch (self._state) {
+                .linked => |*l_state| {
+                    switch (l_state.state) {
+                        .normal => {
+                            // Great, this state can send requests.
+                            try self.enqueueRequest(req);
+                        },
+                        else => {
+                            @panic("Not implemneted");
+                        },
+                    }
+                },
+                else => {
+                    @panic("Not implemented");
+                },
+            }
+        }
+
+        /// Attempt to enqueue a request for sending to the server. This may choose to skip the
+        /// queue if appropriate.
+        fn enqueueRequest(self: *Self, req: Self.RequestType) !void {
+            _ = self;
+            _ = req;
         }
 
         const debug = bun.Output.scoped(.valkey, .visible);
@@ -437,8 +695,8 @@ const SslMode = enum(u1) {
     }
 };
 
-/// Structure which handles the WebSocket events for the Valkey client.
-/// Encapsulates the socket and its context.
+/// Structure which handles the WebSocket events for the Valkey client. Encapsulates the socket and
+/// its context.
 pub fn SocketIO(ValkeyClientType: type) type {
     return struct {
         const Self = @This();
@@ -449,8 +707,8 @@ pub fn SocketIO(ValkeyClientType: type) type {
         /// Attempt to create a new SocketIO instance.
         ///
         /// Errors:
-        ///   - `error.FailedToCreateContext` if the underlying uWS context could
-        ///     not be created. No further details are provided.
+        ///   - `error.FailedToCreateContext` if the underlying uWS context could not be created.
+        ///   No further details are provided.
         pub fn init(tls_config: TlsConfig, uws_loop: *bun.uws.Loop) !Self {
             return Self{
                 ._context = try Self.createAndConfigureUwsContext(
@@ -471,8 +729,8 @@ pub fn SocketIO(ValkeyClientType: type) type {
         /// Create a new uWS context given the TLS configuration.
         ///
         /// Errors:
-        /// - `error.FailedToCreateContext` if the context could not be created. No
-        ///   further details are provided.
+        /// - `error.FailedToCreateContext` if the context could not be created. No further details
+        /// are provided.
         fn createAndConfigureUwsContext(
             tls_config: TlsConfig,
             uws_loop: *bun.uws.Loop,
@@ -517,7 +775,7 @@ pub fn SocketIO(ValkeyClientType: type) type {
             return @alignCast(@fieldParentPtr("_socket_io", self));
         }
 
-        pub fn write(self: *Self, data: []const u8) usize {
+        pub fn write(self: *Self, data: []const u8) i32 {
             return self._socket.write(data);
         }
 
@@ -594,11 +852,7 @@ pub fn SocketIO(ValkeyClientType: type) type {
                     self.parentClient().onEnd();
                 }
 
-                pub fn onConnectError(
-                    self: *Self,
-                    socket: SocketHandlerType,
-                    err_code: i32,
-                ) void {
+                pub fn onConnectError(self: *Self, socket: SocketHandlerType, err_code: i32) void {
                     Self.debug("{*}.onConnectError()", .{self});
                     self.patchSocket(socket, ssl_mode);
                     self.parentClient().onConnectError(err_code);
@@ -611,12 +865,8 @@ pub fn SocketIO(ValkeyClientType: type) type {
                 }
 
                 /// Invoked whenever a packet is received from the server.
-                pub fn onData(
-                    self: *Self,
-                    socket: SocketHandlerType,
-                    data: []const u8,
-                ) void {
-                    Self.debug("{*}.onData(data={s})", .{ self, data });
+                pub fn onData(self: *Self, socket: SocketHandlerType, data: []const u8) void {
+                    Self.debug("{*}.onData(data.len={})", .{ self, data.len });
                     self.patchSocket(socket, ssl_mode);
                     self.parentClient().onData(data);
                 }
@@ -639,12 +889,8 @@ pub fn SocketIO(ValkeyClientType: type) type {
             comptime ssl_mode: SslMode,
         ) void {
             self._socket = switch (ssl_mode) {
-                .with_ssl => bun.uws.AnySocket{
-                    .SocketTLS = concrete_socket,
-                },
-                .without_ssl => bun.uws.AnySocket{
-                    .SocketTCP = concrete_socket,
-                },
+                .with_ssl => bun.uws.AnySocket{ .SocketTLS = concrete_socket },
+                .without_ssl => bun.uws.AnySocket{ .SocketTCP = concrete_socket },
             };
         }
 
@@ -684,10 +930,7 @@ const ValkeyAddress = union(enum) {
         return if (proto.isUnix())
             .{
                 .unix = Self.parseUnixPath(url_mem) catch {
-                    Self.debug(
-                        "Failed to parse UNIX socket path from URL: {s}",
-                        .{url_mem},
-                    );
+                    Self.debug("Failed to parse UNIX socket path from URL: {s}", .{url_mem});
                     return error.InvalidUnixLocation;
                 },
             }
@@ -1045,151 +1288,6 @@ pub fn ClientState(ValkeyClientType: type) type {
             /// The buffer used to accumulate incoming data.
             _ingress_buffer: bun.OffsetByteList = .{},
 
-            /// Invoked whenever data is received from the server.
-            pub fn onData(self: *@This(), packet: []const u8) void {
-                // Path 1: Buffer already has data, append and process from buffer
-                if (self._ingress_buffer.remaining().len > 0) {
-                    bun.handleOom(self._ingress_buffer.write(
-                        self.allocator,
-                        packet,
-                    ));
-                    self.drainIngressBuffer();
-                }
-
-                // Path 2: Buffer is empty, try processing directly from stack.
-                self.parsePacket(packet);
-            }
-
-            pub fn onWritable(self: *@This()) void {
-                self.sendNextCommand();
-            }
-
-            /// Flush out any data in the egress buffer to the socket.
-            fn flushEgressBuffer(self: *Self) void {
-                const chunk = self._egress_buffer.remaining();
-                if (chunk.len == 0) {
-                    return;
-                }
-
-                // Note we only write here once? Why? Because uSockets will call
-                // onWritable when it's ready to accept more data so we don't need
-                // to block here.
-                const written = self.parentClient()._socket_io.write(chunk);
-                if (written > 0) {
-                    self._egress_buffer.consume(@intCast(written));
-                }
-            }
-
-            /// TODO(markovejnovic): This uses the legacy implementation.
-            fn drainIngressBuffer(self: *@This()) void {
-                while (true) {
-                    const remaining_buffer = self._ingress_buffer.remaining();
-                    if (remaining_buffer.len == 0) {
-                        break;
-                    }
-
-                    var reader = protocol.ValkeyReader.init(remaining_buffer);
-                    const before_read_pos = reader.pos;
-
-                    var value = reader.readValue(self.allocator) catch |err| {
-                        if (err == error.InvalidResponse) {
-                            // Need more data in the buffer, wait for next onData
-                            // call
-                            return;
-                        } else {
-                            // TODO(markovejnovic): self.fail won't work,
-                            // obviously.
-                            self.fail("Failed to read data (buffer path)", err);
-                            return;
-                        }
-                    };
-                    defer value.deinit(self.allocator);
-
-                    const bytes_consumed = reader.pos - before_read_pos;
-                    if (bytes_consumed == 0 and remaining_buffer.len > 0) {
-                        self.fail(
-                            "Parser consumed 0 bytes unexpectedly (buffer path)",
-                            error.InvalidResponse,
-                        );
-                        return;
-                    }
-
-                    self.read_buffer.consume(@truncate(bytes_consumed));
-
-                    var value_to_handle = value; // Use temp var for defer
-                    self.handleResponse(&value_to_handle) catch |err| {
-                        self.fail("Failed to handle response (buffer path)", err);
-                        return;
-                    };
-
-                    if (self.status == .disconnected or self.status == .failed) {
-                        return;
-                    }
-                    self.sendNextCommand();
-                }
-            }
-
-            /// TODO(markovejnovic): This uses the legacy implementation.
-            fn parsePacket(
-                self: *@This(),
-                packet: []const u8,
-            ) !protocol.ValkeyValue {
-                var current_data_slice = packet;
-                while (current_data_slice.len > 0) {
-                    var reader = protocol.ValkeyReader.init(current_data_slice);
-                    const before_read_pos = reader.pos;
-
-                    var value = reader.readValue(self.allocator) catch |err| {
-                        if (err == error.InvalidResponse) {
-                            // Partial message encountered on the stack-allocated path.
-                            // Copy the *remaining* part of the stack data to the heap buffer
-                            // and wait for more data.
-                            if (comptime bun.Environment.allow_assert) {
-                                Self.debug(
-                                    "read_buffer: partial message on stack ({d} bytes), switching to buffer",
-                                    .{current_data_slice.len - before_read_pos},
-                                );
-                            }
-                            self.read_buffer.write(self.allocator, current_data_slice[before_read_pos..]) catch @panic("failed to write remaining stack data to buffer");
-                            return; // Exit onData, next call will use the buffer path
-                        } else {
-                            // Any other error is fatal
-                            self.fail("Failed to read data (stack path)", err);
-                            return;
-                        }
-                    };
-                    // Successfully read a full message from the stack data
-                    defer value.deinit(self.allocator);
-
-                    const bytes_consumed = reader.pos - before_read_pos;
-                    if (bytes_consumed == 0) {
-                        // This case should ideally not happen if readValue succeeded and slice wasn't empty
-                        self.fail("Parser consumed 0 bytes unexpectedly (stack path)", error.InvalidResponse);
-                        return;
-                    }
-
-                    // Advance the view into the stack data slice for the next iteration
-                    current_data_slice = current_data_slice[bytes_consumed..];
-
-                    // Handle the successfully parsed response
-                    var value_to_handle = value; // Use temp var for defer
-                    self.handleResponse(&value_to_handle) catch |err| {
-                        self.fail("Failed to handle response (stack path)", err);
-                        return;
-                    };
-
-                    // Check connection status after handling
-                    if (self.status == .disconnected or self.status == .failed) {
-                        return;
-                    }
-
-                    // After handling a response, try to send the next command
-                    self.sendNextCommand();
-
-                    // Loop continues with the remainder of current_data_slice
-                }
-            }
-
             fn memoryUsage(self: *const @This()) usize {
                 return self._egress_buffer.memoryCost() +
                     self._ingress_buffer.memoryCost();
@@ -1199,6 +1297,23 @@ pub fn ClientState(ValkeyClientType: type) type {
         /// The user has closed the connection. This differs from the
         /// `disconnected` state in that we don't attempt to connect automatically.
         closed: struct {},
+
+        /// Flush out any data in the egress buffer to the socket.
+        pub fn flushEgressBuffer(self: *Self) void {
+            bun.debugAssert(self.* == .linked);
+
+            const chunk = self.linked._egress_buffer.remaining();
+            if (chunk.len == 0) {
+                return;
+            }
+
+            // Note we only write here once? Why? Because uSockets will call onWritable when it's
+            // ready to accept more data so we don't need to block here.
+            const written = self.parentClient()._socket_io.write(chunk);
+            if (written > 0) {
+                self.linked._egress_buffer.consume(@intCast(written));
+            }
+        }
 
         /// Check if the client is in a state where a new connection can be
         /// initiated.
@@ -1212,22 +1327,6 @@ pub fn ClientState(ValkeyClientType: type) type {
                 .disconnected => {},
                 .opening => {},
                 .handshake => {},
-            }
-        }
-
-        pub fn onData(self: *Self, data: []const u8) void {
-            Self.debug("{*}.onData()", .{self});
-            _ = data;
-            switch (self.*) {
-                .linked => |*state| {
-                    // TODO(markovejnovic): Lol implemnet.
-                    _ = state;
-                },
-                .opening => {},
-                else => {
-                    self.warnIllegalState("onData");
-                    self.recoverFromIllegalState();
-                },
             }
         }
 
@@ -1261,11 +1360,7 @@ pub fn ClientState(ValkeyClientType: type) type {
         /// Attempt to recover from an illegal state by transitioning to the
         /// disconnected state.
         fn recoverFromIllegalState(self: *Self) void {
-            Self.debug(
-                "Recovering from illegal state by transitioning to disconnected.",
-                .{},
-            );
-
+            Self.debug("Recovering from illegal state by transitioning to disconnected.", .{});
             // TODO(markovejnovic): This transition makes no sense lmao.
             self.transition(.{ .disconnected = .{} }) catch unreachable;
         }
@@ -1281,22 +1376,8 @@ pub fn ClientState(ValkeyClientType: type) type {
             // TODO(markovejnovic): This is kind of inefficient.
             var old_state: Self = self.*;
 
-            Self.debug("{*} MUTATING STATE: old={s} new={s} @{*}", .{
-                self,
-                @tagName(old_state),
-                @tagName(new_state),
-                &self.*,
-            });
             self.* = new_state;
-            Self.debug("{*} STATE MUTATED: now={s} @{*}", .{
-                self,
-                @tagName(self.*),
-                &self.*,
-            });
-            self.parentClient().onStateTransition(
-                &old_state,
-                self,
-            ) catch |err| {
+            self.parentClient().onStateTransition(&old_state, self) catch |err| {
                 // If the state transition fails, we actually have to revert
                 // the states.
                 Self.debug("State transition failed, reverting...", .{});
@@ -1325,6 +1406,21 @@ pub fn ClientState(ValkeyClientType: type) type {
     };
 }
 
+/// Encodes a command request with a given context. When the request is resolved, the context is
+/// returned alongside the response.
+fn Request(Context: type) type {
+    return struct {
+        command: Command,
+        context: Context,
+    };
+}
+
+fn Response(Context: type) type {
+    _ = Context;
+}
+
+pub const protocol = @import("protocol.zig");
+
 const SerializedCommand = struct {
     serialized_data: []u8,
     metadata: PacketMetadata,
@@ -1334,5 +1430,4 @@ const PacketMetadata = struct {};
 
 const std = @import("std");
 const bun = @import("bun");
-const protocol = @import("protocol.zig");
 const Command = @import("command.zig").Command;

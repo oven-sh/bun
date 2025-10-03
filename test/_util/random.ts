@@ -186,6 +186,37 @@ export namespace FileSystem {
   }
 }
 
+/**
+ * Generates a very dirty string containing arbitrary byte values, encoded as latin1.
+ *
+ * This is useful for testing binary-safe operations, since latin1 encoding maps byte values 0-255 directly to Unicode
+ * code points 0-255.
+ */
+export function dirtyLatin1String(randomEngine: RandomEngine, length: number): string {
+  // TODO(markovejnovic): This was claude.
+
+  // Generate a random size between 1 byte and maxSize
+  const size = range(randomEngine, 1, length + 1);
+
+  // Create buffer and fill with random bytes using uniform distribution
+  const buffer = Buffer.allocUnsafe(size);
+
+  // Optimize: generate 4 bytes per random engine call
+  for (let i = 0; i < size; ) {
+    // Get ~32 bits of randomness
+    const rand = Math.floor(randomEngine() * 0x100000000);
+
+    // Extract up to 4 bytes
+    if (i < size) buffer[i++] = rand & 0xFF;
+    if (i < size) buffer[i++] = (rand >>> 8) & 0xFF;
+    if (i < size) buffer[i++] = (rand >>> 16) & 0xFF;
+    if (i < size) buffer[i++] = (rand >>> 24) & 0xFF;
+  }
+
+  // Use latin1 encoding to preserve all byte values
+  return buffer.toString('latin1');
+}
+
 /** Utilities for working with network operations. */
 export namespace Net {
   /** Generate a fake IP address (IPv4). */

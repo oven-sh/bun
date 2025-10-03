@@ -1,3 +1,4 @@
+// TODO(markovejnovic): Remove JS from this file. Why oh why is this not decoupled?
 pub const RedisError = error{
     AuthenticationFailed,
     ConnectionClosed,

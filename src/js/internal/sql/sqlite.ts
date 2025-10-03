@@ -50,6 +50,12 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
   }
 }
 
+/**
+ * Parse the SQL query and return the command and the last token
+ * @param query - The SQL query to parse
+ * @param partial - Whether to stop on the first command we find
+ * @returns The command, the last token, and whether it's a multiple statements query
+ */
 function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   const text = query.toUpperCase().trim();
   const text_len = text.length;
@@ -408,6 +414,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
             }
             binding_idx += sub_values.length;
           } else if (value instanceof SQLHelper) {
+            // when partial is true we stop on the first command we find
             const { command } = parseSQLQuery(query, true);
 
             // only selectIn, insert, update, updateSet are allowed

@@ -320,8 +320,8 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         });
     }
 
-    var router = try FrameworkRouter.initEmpty(cwd, router_types.items, allocator);
-    try router.scanAll(
+    var _router = try FrameworkRouter.initEmpty(cwd, router_types.items, allocator);
+    try _router.scanAll(
         allocator,
         &server_transpiler.resolver,
         FrameworkRouter.InsertionContext.wrap(EntryPointMap, &entry_points),
@@ -510,6 +510,8 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     pt.* = try PerThread.init(vm, per_thread_options);
     pt.attach();
+    pt.router = _router;
+    var router = &pt.router.?;
 
     // Static site generator
     const server_render_funcs = try JSValue.createEmptyArray(global, router.types.len);
@@ -615,9 +617,13 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     // Example: ["/assets/main.css", "/assets/blog.css"]
     const route_style_references = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
 
+    const route_indices = try JSValue.createEmptyArray(global, navigatable_routes.items.len);
+
     var params_buf: std.ArrayListUnmanaged([]const u8) = .{};
     for (navigatable_routes.items, 0..) |route_index, nav_index| {
         defer params_buf.clearRetainingCapacity();
+
+        try route_indices.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromUint64(route_index.get()));
 
         var pattern = bake.PatternBuffer.empty;
 
@@ -766,6 +772,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         route_param_info,
         // styles: string[][]
         route_style_references,
+        route_indices,
     );
 
     const path_buffer = bun.path_buffer_pool.get();
@@ -891,6 +898,7 @@ extern fn BakeRenderRoutesForProdStatic(
     param_information: JSValue,
     /// CSS URLs per route (e.g., [["/main.css"], ["/main.css", "/blog.css"]])
     styles: JSValue,
+    route_indices: JSValue,
 ) *jsc.JSPromise;
 
 /// The result of this function is a JSValue that wont be garbage collected, as
@@ -1038,6 +1046,8 @@ pub const PerThread = struct {
     module_map: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
     source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index),
 
+    router: ?FrameworkRouter = null,
+
     // Thread-local
     vm: *jsc.VirtualMachine,
     /// Indexed by entry point index (OpaqueFileId)
@@ -1059,6 +1069,119 @@ pub const PerThread = struct {
     };
 
     extern fn BakeGlobalObject__attachPerThreadData(global: *jsc.JSGlobalObject, pt: ?*PerThread) void;
+    extern fn BakeGlobalObject__getPerThreadData(global: *jsc.JSGlobalObject) *PerThread;
+
+    pub fn computeRouteWithParams(
+        globalThis: *jsc.JSGlobalObject,
+        callframe: *jsc.CallFrame,
+    ) bun.JSError!jsc.JSValue {
+        const pt = BakeGlobalObject__getPerThreadData(globalThis);
+        const router = &pt.router.?;
+        if (callframe.argumentsCount() < 3) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams takes three arguments", .{});
+        }
+
+        const route_index_js = callframe.argument(0);
+        const params_js = callframe.argument(1);
+        const pattern_js = callframe.argument(2);
+
+        if (!pattern_js.isString()) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams third argument must be a string", .{});
+        }
+
+        if (!route_index_js.isInteger()) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams first argument must be an integer", .{});
+        }
+
+        const route_index_raw = route_index_js.toU32();
+        if (route_index_raw < 0 or route_index_raw >= router.routes.items.len) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams first argument must be an integer between 0 and {d}", .{router.routes.items.len});
+        }
+        const route_index = FrameworkRouter.Route.Index.init(@truncate(route_index_raw));
+
+        if (!params_js.isObject()) {
+            return globalThis.throwInvalidArguments("computeRouteWithParams second argument must be an object", .{});
+        }
+
+        const JoinerCtx = struct {
+            path: std.ArrayListUnmanaged(u8) = .{},
+            pattern_js: JSValue,
+
+            fn pushString(ctx: *@This(), value: []const u8) !void {
+                try ctx.path.appendSlice(bun.default_allocator, value);
+            }
+
+            fn pushJs(ctx: *@This(), global: *jsc.JSGlobalObject, value: JSValue, param: []const u8) !void {
+                if (!value.isString()) {
+                    const routestr = try ctx.pattern_js.toSlice(global, bun.default_allocator);
+                    defer routestr.deinit();
+                    return global.throw("Parameter \"{s}\" for route \"{s}\" must be a string", .{ param, routestr.slice() });
+                }
+                const bunstr = try value.toBunString(global);
+                defer bunstr.deref();
+                if (bunstr.asUTF8()) |slice| {
+                    try ctx.path.appendSlice(bun.default_allocator, slice);
+                } else {
+                    const slice = bunstr.toUTF8(bun.default_allocator);
+                    defer slice.deinit();
+                    try ctx.path.appendSlice(bun.default_allocator, slice.slice());
+                }
+            }
+        };
+
+        var joiner = JoinerCtx{ .pattern_js = pattern_js };
+        errdefer joiner.path.deinit(bun.default_allocator);
+
+        var iter: FrameworkRouter.Route.Index.Optional = route_index.toOptional();
+        while (iter.unwrap()) |ri| {
+            const route = router.routePtr(ri);
+            defer iter = route.parent;
+            switch (route.part) {
+                .text => |text| try joiner.pushString(text),
+                .param => |param| {
+                    const value = try params_js.get(globalThis, param) orelse {
+                        const routestr = try pattern_js.toSlice(globalThis, bun.default_allocator);
+                        defer routestr.deinit();
+                        return globalThis.throw("Missing parameter \"{s}\" for route \"{s}\"", .{ param, routestr.slice() });
+                    };
+                    try joiner.pushJs(globalThis, value, param);
+                },
+                .catch_all => |catch_all| {
+                    const value = try params_js.get(globalThis, catch_all) orelse {
+                        const routestr = try pattern_js.toSlice(globalThis, bun.default_allocator);
+                        defer routestr.deinit();
+                        return globalThis.throw("Missing parameter \"{s}\" for route \"{s}\"", .{ catch_all, routestr.slice() });
+                    };
+                    if (value.isString()) {
+                        try joiner.pushJs(globalThis, value, catch_all);
+                    } else if (value.isArray()) {
+                        const length = try value.getLength(globalThis);
+                        for (0..length) |i| {
+                            const item = try value.getIndex(globalThis, @truncate(i));
+                            try joiner.pushJs(globalThis, item, catch_all);
+                        }
+                    } else {
+                        const routestr = try pattern_js.toSlice(globalThis, bun.default_allocator);
+                        defer routestr.deinit();
+                        return globalThis.throw("Parameter \"{s}\" for route {s} must be a string or array of strings", .{ catch_all, routestr.slice() });
+                    }
+                },
+                .catch_all_optional => {
+                    return globalThis.throw("catch-all optional routes are not supported in static site generation", .{});
+                },
+                .group => {
+                    return globalThis.throw("group routes are not supported in static site generation", .{});
+                },
+            }
+        }
+
+        if (joiner.path.items.len == 0) {
+            return bun.String.empty.toJS(globalThis);
+        }
+
+        var string = try bun.String.fromUTF8List(&joiner.path);
+        return string.transferToJS(globalThis);
+    }
 
     /// After initializing, call `attach`
     pub fn init(vm: *VirtualMachine, opts: Options) !PerThread {

@@ -150,7 +150,7 @@ fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log)
     }
 
     // Parse router_types array (optional)
-    if (json_obj.get("router_types")) |router_types_prop| {
+    if (json_obj.get("routerTypes")) |router_types_prop| {
         if (router_types_prop.data == .e_array) {
             const router_types_array = router_types_prop.data.e_array.items.slice();
             self.router_types = try allocator.alloc(RouterType, router_types_array.len);
@@ -164,13 +164,13 @@ fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log)
                 const router_type_obj = router_type_expr.data.e_object;
 
                 // Parse server_entrypoint
-                const server_entrypoint_prop = router_type_obj.get("server_entrypoint") orelse {
-                    try log.addError(&json_source, router_type_expr.loc, "router_type entry missing required 'server_entrypoint' field");
+                const server_entrypoint_prop = router_type_obj.get("serverEntrypoint") orelse {
+                    try log.addError(&json_source, router_type_expr.loc, "routerType entry missing required 'serverEntrypoint' field");
                     return error.InvalidManifest;
                 };
 
                 if (server_entrypoint_prop.data != .e_string) {
-                    try log.addError(&json_source, server_entrypoint_prop.loc, "router_type 'server_entrypoint' must be a string");
+                    try log.addError(&json_source, server_entrypoint_prop.loc, "routerType 'serverEntrypoint' must be a string");
                     return error.InvalidManifest;
                 }
 
@@ -226,20 +226,20 @@ fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log)
         }
         const route_str = try route_prop.data.e_string.string(temp_allocator);
 
-        // Parse the "route_type" field
-        const route_type_prop = entry_obj.get("route_type") orelse {
-            try log.addError(&json_source, entry_expr.loc, "manifest entry missing required 'route_type' field");
+        // Parse the "routeType" field
+        const route_type_prop = entry_obj.get("routeType") orelse {
+            try log.addError(&json_source, entry_expr.loc, "manifest entry missing required 'routeType' field");
             return error.InvalidManifest;
         };
         if (route_type_prop.data != .e_number) {
-            try log.addError(&json_source, route_type_prop.loc, "manifest entry 'route_type' field must be a number");
+            try log.addError(&json_source, route_type_prop.loc, "manifest entry 'routeType' field must be a number");
             return error.InvalidManifest;
         }
         const route_type_index = route_type_prop.data.e_number.toU32();
 
         // Get the type from the router
         if (route_type_index >= router.types.len) {
-            try log.addErrorFmt(&json_source, route_type_prop.loc, log.msgs.allocator, "Invalid route_type index {d} (max: {d})", .{ route_type_index, router.types.len - 1 });
+            try log.addErrorFmt(&json_source, route_type_prop.loc, log.msgs.allocator, "Invalid routeType index {d} (max: {d})", .{ route_type_index, router.types.len - 1 });
             return error.InvalidManifest;
         }
         const route_type = &router.types[route_type_index];
@@ -469,12 +469,12 @@ fn initFromJSON(self: *Manifest, source: *const logger.Source, log: *logger.Log)
                 const entry_obj = route_entries[0].json_obj;
 
                 // Parse client entrypoint
-                const ep_prop = entry_obj.get("client_entrypoint") orelse entry_obj.get("entrypoint") orelse {
-                    try log.addError(&json_source, Loc.Empty, "SSR entry missing required 'client_entrypoint' or 'entrypoint' field");
+                const ep_prop = entry_obj.get("clientEntrypoint") orelse entry_obj.get("entrypoint") orelse {
+                    try log.addError(&json_source, Loc.Empty, "SSR entry missing required 'clientEntrypoint' or 'entrypoint' field");
                     return error.InvalidManifest;
                 };
                 if (ep_prop.data != .e_string) {
-                    try log.addError(&json_source, Loc.Empty, "SSR entry 'client_entrypoint' must be a string");
+                    try log.addError(&json_source, Loc.Empty, "SSR entry 'clientEntrypoint' must be a string");
                     return error.InvalidManifest;
                 }
                 const entrypoint = try ep_prop.data.e_string.string(allocator);

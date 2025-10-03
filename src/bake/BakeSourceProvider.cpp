@@ -77,7 +77,7 @@ extern "C" JSC::EncodedJSValue BakeLoadProductionServerCode(JSC::JSGlobalObject*
   RELEASE_ASSERT(fnValue);
 
   // The result should be a function (the IIFE)
-  JSC::JSFunction* fn = jsCast<JSC::JSFunction*>(fnValue);
+  JSC::JSObject* fn = fnValue.getObject();
   JSC::CallData callData = JSC::getCallData(fn);
 
   // Pass import.meta as the argument to the IIFE
@@ -189,7 +189,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
 
   String string = virtualPathName.toWTFString();
   JSC::JSString* key = JSC::jsString(vm, string);
-  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
+  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
     global,
     source.toWTFString(),

@@ -316,7 +316,7 @@ pub const Store = struct {
                 if (packages_to_install) |packages| {
                     if (node_id == .root) { // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
                         for (dep_ids_sort_buf.items) |dep_id| {
-                            const pkg_id = ctx.esolutions[dep_id];
+                            const pkg_id = ctx.resolutions[dep_id];
                             if (pkg_id == invalid_package_id) {
                                 continue;
                             }

@@ -29,6 +29,7 @@ struct us_socket_t;
 namespace uWS {
 template<bool SSL>
 struct HttpResponseData;
+struct WebSocketData;
 }
 
 namespace WebCore {
@@ -48,6 +49,7 @@ public:
     us_socket_t* socket = nullptr;
     unsigned is_ssl : 1 = 0;
     unsigned ended : 1 = 0;
+    unsigned upgraded : 1 = 0;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
     static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response);
@@ -59,7 +61,7 @@ public:
     }
 
     template<bool SSL>
-    static void clearSocketData(us_socket_t* socket);
+    static void clearSocketData(bool upgraded, us_socket_t* socket);
 
     void close();
     bool isClosed() const;

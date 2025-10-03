@@ -40,10 +40,15 @@ JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, Zig::GlobalO
 }
 
 template<bool SSL>
-void JSNodeHTTPServerSocket::clearSocketData(us_socket_t* socket)
+void JSNodeHTTPServerSocket::clearSocketData(bool upgraded, us_socket_t* socket)
 {
-    auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
-    httpResponseData->socketData = nullptr;
+    if (upgraded) {
+        auto* webSocket = (uWS::WebSocketData*)us_socket_ext(SSL, socket);
+        webSocket->socketData = nullptr;
+    } else {
+        auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
+        httpResponseData->socketData = nullptr;
+    }
 }
 
 void JSNodeHTTPServerSocket::close()
@@ -76,9 +81,9 @@ JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
 {
     if (socket) {
         if (is_ssl) {
-            clearSocketData<true>(socket);
+            clearSocketData<true>(this->upgraded, socket);
         } else {
-            clearSocketData<false>(socket);
+            clearSocketData<false>(this->upgraded, socket);
         }
     }
     us_socket_free_stream_buffer(&streamBuffer);

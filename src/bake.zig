@@ -96,6 +96,7 @@ pub const UserOptions = struct {
                 .fulfilled => |resolved| blk: {
                     _ = resolved;
                     const default_export = BakeGetDefaultExportFromModule(global, module_path_str.toJS(global));
+                    try scope.returnIfException();
 
                     if (!default_export.isObject()) {
                         return global.throwInvalidArguments("Framework module '{s}' must export an object as default", .{name});

@@ -154,7 +154,7 @@ For more information on Bun's lockfile `bun.lock`, refer to [Package manager > L
 
 ## Minimum release age
 
-To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in secconds) will be filtered out during installation.
+To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in seconds) will be filtered out during installation.
 
 ```bash
 # Only install package versions published at least 3 days ago

@@ -728,8 +728,8 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                     const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
                                                     if (!loaded_manifest.?.excludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, current_timestamp_ms, min_age_ms)) {
                                                         const package_name = this.lockfile.str(&name);
-                                                        const min_age_secconds = min_age_ms / std.time.ms_per_s;
-                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_secconds }) catch {};
+                                                        const min_age_seconds = min_age_ms / std.time.ms_per_s;
+                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
                                                         return;
                                                     }
                                                 }
@@ -1638,7 +1638,7 @@ fn getOrPutResolvedPackage(
                     const package_name = this.lockfile.str(&name);
                     if (PackageManager.verbose_install or this.options.log_level == .verbose) {
                         if (filtered.newest_filtered) |newest| {
-                            const min_age_secconds = (this.options.minimum_release_age_ms orelse 0) / std.time.ms_per_s;
+                            const min_age_seconds = (this.options.minimum_release_age_ms orelse 0) / std.time.ms_per_s;
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
@@ -1647,7 +1647,7 @@ fn getOrPutResolvedPackage(
                                         tag_str,
                                         filtered.result.version.fmt(manifest.string_buf),
                                         newest.fmt(manifest.string_buf),
-                                        min_age_secconds,
+                                        min_age_seconds,
                                     });
                                 },
                                 .npm => {
@@ -1657,7 +1657,7 @@ fn getOrPutResolvedPackage(
                                         version_str,
                                         filtered.result.version.fmt(manifest.string_buf),
                                         newest.fmt(manifest.string_buf),
-                                        min_age_secconds,
+                                        min_age_seconds,
                                     });
                                 },
                                 else => unreachable,
@@ -1667,14 +1667,14 @@ fn getOrPutResolvedPackage(
 
                     if (comptime successFn == assignRootResolution) {
                         if (filtered.newest_filtered) |newest| {
-                            const min_age_secconds = (this.options.minimum_release_age_ms orelse 0) / std.time.ms_per_s;
+                            const min_age_seconds = (this.options.minimum_release_age_ms orelse 0) / std.time.ms_per_s;
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
-                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}@{s}\" was downgraded from {s} to {s} due to minimum-release-age filter ({d} seconds)", .{ package_name, tag_str, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_secconds }) catch {};
+                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}@{s}\" was downgraded from {s} to {s} due to minimum-release-age filter ({d} seconds)", .{ package_name, tag_str, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
                                 },
                                 .npm => {
-                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}\" was downgraded from {s} to {s} due to minimum-release-age filter ({d} seconds)", .{ package_name, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_secconds }) catch {};
+                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}\" was downgraded from {s} to {s} due to minimum-release-age filter ({d} seconds)", .{ package_name, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
                                 },
                                 else => unreachable,
                             }

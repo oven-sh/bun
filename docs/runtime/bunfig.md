@@ -572,7 +572,7 @@ Valid values are:
 
 ### `install.minimumReleaseAge`
 
-Configure a minimum age (in secconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
 
 ```toml
 [install]

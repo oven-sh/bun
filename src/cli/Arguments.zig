@@ -120,6 +120,7 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
+    clap.parseParam("--app                             Run the bun.app.ts (for Bun Bake)") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
@@ -1204,6 +1205,16 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         // "run.bun" in bunfig.toml
         if (args.flag("--bun")) {
             ctx.debug.run_in_bun = true;
+        }
+    }
+
+    if (cmd == .RunCommand or cmd == .AutoCommand) {
+        if (args.flag("--app")) {
+            if (!bun.FeatureFlags.bake()) {
+                Output.errGeneric("To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
+                Global.exit(1);
+            }
+            ctx.runtime_options.app = true;
         }
     }
 

@@ -382,6 +382,8 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        /// `--app` runs bun.app.ts/bun.app.js for Bun Bake
+        app: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;
@@ -541,25 +543,6 @@ pub const Command = struct {
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
-
-        // `bun --app`: run the bun.app.ts file
-        if (strings.eqlComptime(next_arg, "--app")) {
-            // Check if there's a file or command after --app
-            const maybe_next = args_iter.next();
-            if (maybe_next) |n| {
-                // If it's a flag or doesn't exist, treat as standalone --app
-                if (n.len > 0 and n[0] != '-') {
-                    // It's a file/command, continue normal parsing
-                    next_arg = n;
-                } else {
-                    // It's a flag, so --app is standalone - run bun.app.ts
-                    return .RunCommand;
-                }
-            } else {
-                // No arguments after --app - run bun.app.ts
-                return .RunCommand;
-            }
-        }
 
         while (next_arg.len > 0 and next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
@@ -862,54 +845,8 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
-                // Check if --app flag was passed
-                const has_app_flag = brk: {
-                    for (bun.argv) |arg| {
-                        if (strings.eqlComptime(arg, "--app")) {
-                            break :brk true;
-                        }
-                    }
-                    break :brk false;
-                };
-
-                if (has_app_flag and ctx.positionals.len == 0) {
-                    // Look for bun.app.ts or bun.app.js
-                    const cwd = try bun.getcwdAlloc(allocator);
-                    const config_files = [_][]const u8{ "bun.app.ts", "bun.app.js" };
-                    var found_file: ?[]const u8 = null;
-
-                    for (config_files) |file| {
-                        const full_path = bun.path.joinAbs(cwd, .auto, file);
-                        const full_path_z = try allocator.dupeZ(u8, full_path);
-                        if (bun.sys.existsZ(full_path_z)) {
-                            found_file = full_path_z;
-                            break;
-                        }
-                    }
-
-                    if (found_file) |app_file| {
-                        bun.bake.printWarning();
-                        Output.flush();
-
-                        // Update positionals to include the app file
-                        var positionals_buf: [1][]const u8 = .{app_file};
-                        ctx.positionals = &positionals_buf;
-
-                        if (try RunCommand.exec(ctx, .{ .bin_dirs_only = false, .log_errors = true, .allow_fast_run_for_extensions = false })) {
-                            return;
-                        }
-                        Global.exit(1);
-                    } else {
-                        // No app file found
-                        Output.err(error.ModuleNotFound,
-                            \\'bun --app' cannot find your application's config file
-                            \\
-                            \\The default location is `bun.app.ts` or `bun.app.js`
-                            \\
-                            \\Learn more at https://bun.com/docs/bake
-                        , .{});
-                        Global.exit(1);
-                    }
+                if (ctx.runtime_options.app and ctx.positionals.len == 0) {
+                    @"bun --app"(ctx);
                 }
 
                 if (ctx.filters.len > 0 or ctx.workspaces) {
@@ -960,6 +897,10 @@ pub const Command = struct {
 
                 if (ctx.runtime_options.eval.script.len > 0) {
                     return try @"bun --eval --print"(ctx);
+                }
+
+                if (ctx.runtime_options.app and ctx.positionals.len == 0) {
+                    @"bun --app"(ctx);
                 }
 
                 const extension: []const u8 = if (ctx.args.entry_points.len > 0)
@@ -1485,6 +1426,21 @@ pub const Command = struct {
         @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
         ctx.passthrough = try std.mem.concat(ctx.allocator, []const u8, &.{ ctx.positionals, ctx.passthrough });
         try bun_js.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+    }
+
+    fn @"bun --app"(ctx: Context) noreturn {
+        bun.bake.printWarning();
+        Output.flush();
+
+        // Set the entry point to ./bun.app and let the resolver find .ts or .js
+        // This matches the logic in production.zig
+        var positionals_buf: [1][]const u8 = .{"./bun.app"};
+        ctx.positionals = &positionals_buf;
+
+        if (RunCommand.exec(ctx, .{ .bin_dirs_only = false, .log_errors = true, .allow_fast_run_for_extensions = false }) catch false) {
+            Global.exit(0);
+        }
+        Global.exit(1);
     }
 
     fn @"bun ./bun.lockb"(ctx: Context) !void {

@@ -65,7 +65,6 @@ pub fn resolveAndDupe(this: *ObjectURLRegistry, pathname: []const u8) ?jsc.WebCo
 
 pub fn resolveAndDupeToJS(this: *ObjectURLRegistry, pathname: []const u8, globalObject: *jsc.JSGlobalObject) ?jsc.JSValue {
     var blob = jsc.WebCore.Blob.new(this.resolveAndDupe(pathname) orelse return null);
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalObject);
 }
 

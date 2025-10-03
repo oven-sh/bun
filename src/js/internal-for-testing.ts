@@ -201,3 +201,5 @@ export const structuredCloneAdvanced: (
   forStorage: boolean,
   serializationContext: SerializationContext,
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
+
+export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);

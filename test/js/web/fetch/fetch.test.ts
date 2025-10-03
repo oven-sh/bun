@@ -295,7 +295,42 @@ describe("AbortSignal", () => {
         method: "POST",
         body: new ReadableStream({
           pull(event_controller) {
+            console.count("pull");
             event_controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+            //this will abort immediately should abort before connected
+            controller.abort();
+          },
+          cancel(reason) {
+            console.log("cancel", reason);
+          },
+        }),
+        signal: controller.signal,
+      });
+      expect.unreachable();
+    } catch (ex: any) {
+      expect(ex?.message).toEqual("The operation was aborted.");
+      expect(ex?.name).toEqual("AbortError");
+      expect(ex?.constructor.name).toEqual("DOMException");
+    }
+  });
+
+  it("abort while uploading prevents pull() from being called", async () => {
+    const controller = new AbortController();
+    await fetch(`http://localhost:${server.port}`, {
+      method: "POST",
+      body: new Blob(["a"]),
+    });
+
+    try {
+      await fetch(`http://localhost:${server.port}`, {
+        method: "POST",
+        body: new ReadableStream({
+          async pull(event_controller) {
+            expect(controller.signal.aborted).toBeFalse();
+            const chunk = Buffer.alloc(256 * 1024, "abc");
+            for (let i = 0; i < 64; i++) {
+              event_controller.enqueue(chunk);
+            }
             //this will abort immediately should abort before connected
             controller.abort();
           },

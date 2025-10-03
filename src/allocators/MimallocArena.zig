@@ -94,6 +94,8 @@ const BorrowedHeap = if (safety_checks) *DebugHeap else *mimalloc.Heap;
 const DebugHeap = struct {
     inner: *mimalloc.Heap,
     thread_lock: bun.safety.ThreadLock,
+
+    pub const deinit = void;
 };
 
 threadlocal var thread_heap: if (safety_checks) ?DebugHeap else void = if (safety_checks) null;

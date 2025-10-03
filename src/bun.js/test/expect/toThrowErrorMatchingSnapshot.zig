@@ -12,11 +12,11 @@ pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, 
         return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
     }
 
-    const bunTest = this.bunTest() orelse {
+    var bunTest_strong = this.bunTest() orelse {
         const signature = comptime getSignature("toThrowErrorMatchingSnapshot", "", true);
         return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
     };
-    _ = bunTest; // ?
+    defer bunTest_strong.deinit();
 
     var hint_string: ZigString = ZigString.Empty;
     switch (arguments.len) {

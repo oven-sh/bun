@@ -76,9 +76,9 @@ security_scanner: ?[]const u8 = null,
 
 // Minimum release age in ms (security feature)
 // Only install packages published at least N ms ago
-minimal_age_gate_ms: ?f64 = null,
+minimum_release_age_ms: ?f64 = null,
 // Packages to exclude from minimum release age checking
-minimal_age_gate_excludes: ?[]const []const u8 = null,
+minimum_release_age_excludes: ?[]const []const u8 = null,
 
 /// Override CPU architecture for optional dependencies filtering
 cpu: Npm.Architecture = Npm.Architecture.current,
@@ -378,12 +378,12 @@ pub fn load(
             }
         }
 
-        if (config.minimal_age_gate_ms) |min_age_ms| {
-            this.minimal_age_gate_ms = min_age_ms;
+        if (config.minimum_release_age_ms) |min_age_ms| {
+            this.minimum_release_age_ms = min_age_ms;
         }
 
-        if (config.minimal_age_gate_excludes) |exclusions| {
-            this.minimal_age_gate_excludes = exclusions;
+        if (config.minimum_release_age_excludes) |exclusions| {
+            this.minimum_release_age_excludes = exclusions;
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
@@ -561,8 +561,8 @@ pub fn load(
             this.save_text_lockfile = save_text_lockfile;
         }
 
-        if (cli.minimal_age_gate_ms) |min_age_ms| {
-            this.minimal_age_gate_ms = min_age_ms;
+        if (cli.minimum_release_age_ms) |min_age_ms| {
+            this.minimum_release_age_ms = min_age_ms;
         }
 
         this.lockfile_only = cli.lockfile_only;

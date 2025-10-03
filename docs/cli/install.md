@@ -154,11 +154,11 @@ For more information on Bun's lockfile `bun.lock`, refer to [Package manager > L
 
 ## Minimum release age
 
-To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in days) will be filtered out during installation.
+To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in secconds) will be filtered out during installation.
 
 ```bash
 # Only install package versions published at least 3 days ago
-$ bun add @types/bun --npm-minimal-age-gate 3
+$ bun add @types/bun --minimum-release-age 259200
 ```
 
 You can also configure this in `bunfig.toml`:
@@ -166,10 +166,10 @@ You can also configure this in `bunfig.toml`:
 ```toml
 [install]
 # Only install package versions published at least 3 days ago
-npmMinimalAgeGate = 3
+minimumReleaseAge = 259200
 
 # Exclude trusted packages from the age gate
-npmMinimalAgeGateExcludes = ["@types/node", "typescript"]
+minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 
 When the minimum age filter is active:

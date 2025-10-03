@@ -11,7 +11,9 @@ describe("minimum-release-age", () => {
   let mockRegistryServer: Server;
   let mockRegistryUrl: string;
   const currentTime = Date.now();
-  const DAY_MS = 24 * 60 * 60 * 1000;
+  const SECONDS_PER_DAY = 24 * 60 * 60;
+  const MS_PER_SECOND = 1000;
+  const DAY_MS = SECONDS_PER_DAY * MS_PER_SECOND;
 
   // Helper to create ISO timestamp for a given number of days ago
   const daysAgo = (days: number) => new Date(currentTime - days * DAY_MS).toISOString();
@@ -517,7 +519,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -540,7 +542,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "9.5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${9.5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -566,7 +568,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -594,7 +596,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "1.8", "--verbose"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${1.8 * SECONDS_PER_DAY}`, "--verbose"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -614,7 +616,7 @@ describe("minimum-release-age", () => {
 
       // Verbose output should indicate stability check
       const output = stdout + stderr;
-      expect(output).toContain("npm-minimal-age-gate");
+      expect(output).toContain("minimum-release-age");
     });
 
     test("stability window is capped at 1.5 days", async () => {
@@ -627,7 +629,7 @@ describe("minimum-release-age", () => {
 
       // Even with 10 day minimum, stability window should be 1.5 days
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "10"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${10 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -655,7 +657,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "3"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -690,7 +692,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "3"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -715,7 +717,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "10"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${10 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -742,7 +744,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "3"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -777,7 +779,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "3"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -812,8 +814,8 @@ describe("minimum-release-age", () => {
           },
         }),
         "bunfig.toml": `[install]
-npmMinimalAgeGate = 5
-npmMinimalAgeGateExcludes = ["excluded-package"]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["excluded-package"]
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -845,7 +847,7 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-npmMinimalAgeGate = 5
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -871,13 +873,13 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-npmMinimalAgeGate = 10
+minimumReleaseAge = ${10 * SECONDS_PER_DAY}
 registry = "${mockRegistryUrl}"`,
       });
 
       // CLI says 5 days, bunfig says 10 days
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -900,12 +902,12 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-npmMinimalAgeGate = 10
+minimumReleaseAge = ${10 * SECONDS_PER_DAY}
 registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "0"],
+        cmd: [bunExe(), "install", "--minimum-release-age", "0"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -934,7 +936,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5", "--verbose"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--verbose"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -948,7 +950,7 @@ registry = "${mockRegistryUrl}"`,
 
       const output = stdout + stderr;
       // Should show filtering information
-      expect(output.toLowerCase()).toContain("npm-minimal-age-gate");
+      expect(output.toLowerCase()).toContain("minimum-release-age");
       // Should show package names being filtered
       expect(output).toContain("regular-package");
       expect(output).toContain("bugfix-package");
@@ -967,7 +969,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -998,7 +1000,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1024,12 +1026,12 @@ registry = "${mockRegistryUrl}"`,
           dependencies: { "regular-package": "*" },
         }),
         "bunfig.toml": `[install]
-npmMinimalAgeGate = 5
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
 registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1058,7 +1060,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1088,7 +1090,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5", "--dry-run"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--dry-run"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1128,7 +1130,7 @@ registry = "${mockRegistryUrl}"`,
 
       // Now update with minimum-release-age
       proc = Bun.spawn({
-        cmd: [bunExe(), "update", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "update", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1152,7 +1154,7 @@ registry = "${mockRegistryUrl}"`,
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
         "bunfig.toml": `[install]
-npmMinimalAgeGate = 5
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
 registry = "${mockRegistryUrl}"`,
       });
 
@@ -1206,7 +1208,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1237,7 +1239,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1272,7 +1274,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1302,7 +1304,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1355,7 +1357,7 @@ registry = "${mockRegistryUrl}"`,
       // Now try with frozen lockfile and minimum-release-age
       // Frozen lockfile means no changes to lockfile - versions stay as-is
       proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--frozen-lockfile", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--frozen-lockfile", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1396,7 +1398,7 @@ registry = "${mockRegistryUrl}"`,
 
       // Install with frozen lockfile and minimum-release-age
       proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--frozen-lockfile", "--npm-minimal-age-gate", "5"],
+        cmd: [bunExe(), "install", "--frozen-lockfile", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",

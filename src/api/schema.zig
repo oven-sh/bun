@@ -3052,8 +3052,8 @@ pub const api = struct {
 
         security_scanner: ?[]const u8 = null,
 
-        minimal_age_gate_ms: ?f64 = null,
-        minimal_age_gate_excludes: ?[]const []const u8 = null,
+        minimum_release_age_ms: ?f64 = null,
+        minimum_release_age_excludes: ?[]const []const u8 = null,
     };
 
     pub const ClientServerModule = struct {

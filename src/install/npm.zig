@@ -1487,9 +1487,9 @@ pub const PackageManifest = struct {
     pub inline fn isPackageVersionTooRecent(
         package_version: *const PackageVersion,
         current_timestamp_ms: f64,
-        minimal_age_gate_ms: f64,
+        minimum_release_age_ms: f64,
     ) bool {
-        return package_version.publish_timestamp_ms > current_timestamp_ms - minimal_age_gate_ms;
+        return package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms;
     }
 
     fn searchVersionList(
@@ -1498,7 +1498,7 @@ pub const PackageManifest = struct {
         packages: []const PackageVersion,
         group: Semver.Query.Group,
         group_buf: string,
-        minimal_age_gate_ms: ?f64,
+        minimum_release_age_ms: ?f64,
         newest_filtered: *?*const Semver.Version,
     ) ?FindVersionResult {
         var prev_package_blocked_from_age: ?*const PackageVersion = null;
@@ -1507,7 +1507,7 @@ pub const PackageManifest = struct {
 
         const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
-        const stability_window_ms: f64 = if (minimal_age_gate_ms) |min_age_ms|
+        const stability_window_ms: f64 = if (minimum_release_age_ms) |min_age_ms|
             @min(min_age_ms, seven_days_ms)
         else
             0;
@@ -1516,7 +1516,7 @@ pub const PackageManifest = struct {
             const version = versions[i - 1];
             if (group.satisfies(version, group_buf, this.string_buf)) {
                 const package = &packages[i - 1];
-                if (minimal_age_gate_ms) |min_age_ms| {
+                if (minimum_release_age_ms) |min_age_ms| {
                     if (isPackageVersionTooRecent(package, current_timestamp_ms, min_age_ms)) {
                         if (newest_filtered.* == null) newest_filtered.* = &version;
                         prev_package_blocked_from_age = package;
@@ -1611,11 +1611,11 @@ pub const PackageManifest = struct {
     pub fn findByDistTagWithFilter(
         this: *const PackageManifest,
         tag: string,
-        minimal_age_gate_ms: ?f64,
+        minimum_release_age_ms: ?f64,
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
         const dist_result = this.findByDistTag(tag) orelse return .{ .err = .not_found };
-        const min_age_gate_ms = if (minimal_age_gate_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
+        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
         const min_age_ms = min_age_gate_ms orelse {
             return .{ .found = dist_result };
         };
@@ -1711,17 +1711,17 @@ pub const PackageManifest = struct {
         this: *const PackageManifest,
         group: Semver.Query.Group,
         group_buf: string,
-        minimal_age_gate_ms: ?f64,
+        minimum_release_age_ms: ?f64,
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
-        if (minimal_age_gate_ms != null) {
+        if (minimum_release_age_ms != null) {
             bun.debugAssert(this.pkg.has_extended_manifest);
         }
 
         const left = group.head.head.range.left;
         var newest_filtered: ?*const Semver.Version = null;
         const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
-        const min_age_gate_ms = if (minimal_age_gate_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
+        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
 
         if (left.op == .eql) {
             const result = this.findByVersion(left.version);

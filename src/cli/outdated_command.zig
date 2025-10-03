@@ -427,17 +427,17 @@ pub const OutdatedCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimal_age_gate_ms != null,
+                    manager.options.minimum_release_age_ms != null,
                 ) orelse continue;
 
                 const actual_latest = manifest.findByDistTag("latest") orelse continue;
 
-                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
+                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes);
 
                 const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes)
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes)
                 else
-                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes);
 
                 if (resolution.value.npm.version.order(actual_latest.version, string_buf, manifest.string_buf) != .lt) continue;
 
@@ -577,15 +577,15 @@ pub const OutdatedCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
-                    manager.options.minimal_age_gate_ms != null,
+                    manager.options.minimum_release_age_ms != null,
                 ) orelse continue;
 
-                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
+                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes);
                 const resolved_version = manager.lockfile.resolveCatalogDependency(dep) orelse continue;
                 const update = if (resolved_version.tag == .npm)
-                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes)
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes)
                 else
-                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimal_age_gate_ms, manager.options.minimal_age_gate_excludes);
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes);
 
                 table.printLineSeparator();
 

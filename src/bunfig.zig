@@ -662,22 +662,22 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (install_obj.get("npmMinimalAgeGate")) |min_age| {
+                    if (install_obj.get("minimumReleaseAge")) |min_age| {
                         switch (min_age.data) {
                             .e_number => |days| {
                                 if (days.value < 0) {
-                                    try this.addError(min_age.loc, "Expected positive number of days for npmMinimalAgeGate");
+                                    try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
                                     return;
                                 }
-                                install.minimal_age_gate_ms = days.value * std.time.ms_per_day;
+                                install.minimum_release_age_ms = days.value * std.time.ms_per_s;
                             },
                             else => {
-                                try this.addError(min_age.loc, "Expected number of days for npmMinimalAgeGate");
+                                try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");
                             },
                         }
                     }
 
-                    if (install_obj.get("npmMinimalAgeGateExcludes")) |exclusions| {
+                    if (install_obj.get("minimumReleaseAgeExcludes")) |exclusions| {
                         switch (exclusions.data) {
                             .e_array => |arr| brk: {
                                 const raw_exclusions = arr.items.slice();
@@ -688,10 +688,10 @@ pub const Bunfig = struct {
                                     try this.expectString(p);
                                     exclusions_list[i] = try p.data.e_string.string(allocator);
                                 }
-                                install.minimal_age_gate_excludes = exclusions_list;
+                                install.minimum_release_age_excludes = exclusions_list;
                             },
                             else => {
-                                try this.addError(exclusions.loc, "Expected array for npmMinimalAgeGateExcludes");
+                                try this.addError(exclusions.loc, "Expected array for minimumReleaseAgeExcludes");
                             },
                         }
                     }

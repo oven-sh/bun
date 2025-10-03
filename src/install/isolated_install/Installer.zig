@@ -1376,14 +1376,14 @@ const String = bun.Semver.String;
 
 const install = bun.install;
 const Bin = install.Bin;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;
 const Resolution = install.Resolution;
 const Store = install.Store;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
-const DependencyID = install.DependencyID;
-const PackageID = install.PackageID;
 const invalid_dependency_id = install.invalid_dependency_id;
 
 const Lockfile = install.Lockfile;

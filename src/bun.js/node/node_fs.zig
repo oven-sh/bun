@@ -3799,7 +3799,7 @@ pub const NodeFS = struct {
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
-        return switch (if (Environment.isLinux)
+        return switch (if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic))
             Syscall.fstatx(args.fd, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
         else
             Syscall.fstat(args.fd)) {
@@ -3879,7 +3879,7 @@ pub const NodeFS = struct {
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
-        return switch (if (Environment.isLinux)
+        return switch (if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic))
             Syscall.lstatx(args.path.sliceZ(&this.sync_error_buf), &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
         else
             Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
@@ -5711,7 +5711,7 @@ pub const NodeFS = struct {
             }
         }
 
-        return switch (if (Environment.isLinux)
+        return switch (if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic))
             Syscall.statx(path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
         else
             Syscall.stat(path)) {

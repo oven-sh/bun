@@ -501,6 +501,20 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
         if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| return err;
+
+        // Zero out padding bytes used for birthtime to avoid uninitialized memory
+        if (comptime Environment.isLinux) {
+            if (comptime Environment.isX64) {
+                stat_.__unused[0] = 0;
+                stat_.__unused[1] = 0;
+                stat_.__unused[2] = 0;
+            } else if (comptime Environment.isAarch64) {
+                stat_.__pad = 0;
+                stat_.__unused[0] = 0;
+                stat_.__unused[1] = 0;
+            }
+        }
+
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -551,6 +565,20 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
         log("fstat({}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
+
+    // Zero out padding bytes used for birthtime to avoid uninitialized memory
+    if (comptime Environment.isLinux) {
+        if (comptime Environment.isX64) {
+            stat_.__unused[0] = 0;
+            stat_.__unused[1] = 0;
+            stat_.__unused[2] = 0;
+        } else if (comptime Environment.isAarch64) {
+            stat_.__pad = 0;
+            stat_.__unused[0] = 0;
+            stat_.__unused[1] = 0;
+        }
+    }
+
     return Maybe(bun.Stat){ .result = stat_ };
 }
 
@@ -570,7 +598,7 @@ pub const StatxField = enum(comptime_int) {
 };
 
 // Linux Kernel v4.11
-var supports_statx_on_linux = std.atomic.Value(bool).init(true);
+pub var supports_statx_on_linux = std.atomic.Value(bool).init(true);
 
 fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, comptime fields: []const StatxField) Maybe(bun.Stat) {
     if (comptime !Environment.isLinux) {

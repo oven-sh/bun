@@ -40,6 +40,9 @@ pub fn ValkeyClient(
         /// All responses are paired with the original request context.
         pub const ResponseType = Response(RequestContext);
 
+        /// Type used internal to the client, representing a queued request.
+        const QueuedRequestType = QueuedRequest(RequestContext);
+
         _allocator: std.mem.Allocator,
 
         /// Underlying WebSocket connection to the Valkey server. Interacts with the client through
@@ -54,7 +57,7 @@ pub fn ValkeyClient(
         ///
         /// Since it is possible to queue commands while disconnected, this queue is in the base
         /// state.
-        _outbound_queue: std.fifo.LinearFifo(SerializedCommand, .Dynamic),
+        _outbound_queue: std.fifo.LinearFifo(QueuedRequestType, .Dynamic),
 
         /// Queue of commands that have been sent to the server and are awaiting a response.
         ///
@@ -64,7 +67,7 @@ pub fn ValkeyClient(
         /// algorithm would include a marking scheme in the outbound queue, or maybe we would have
         /// some sort of queue tracking the states of each of the commands and their lifetimes.
         /// Food for thought.
-        _inflight_queue: std.fifo.LinearFifo(SerializedCommand, .Dynamic),
+        _inflight_queue: std.fifo.LinearFifo(QueuedRequestType, .Dynamic),
 
         /// The connection parameters used to connect to the Valkey server.
         _connection_params: ConnParams,
@@ -72,10 +75,17 @@ pub fn ValkeyClient(
         /// Set of user-provided callbacks into the client.
         _callbacks: *ValkeyListener,
 
+        _vm: *bun.jsc.VirtualMachine,
+        auto_flusher: AutoFlusher = .{},
+
         /// Create a new Valkey client instance.
         ///
         /// Arguments:
+        ///   - `allocator`: The allocator to use for all allocations.
+        ///   - `uws_loop`: The uWS event loop to use for the underlying socket.
         ///   - `url_str`: The connection string to use.
+        ///   - `options`: Connection options to use.
+        ///   - `callbacks`: The set of callbacks to use for the client.
         ///
         /// Errors:
         ///   - `error.InvalidProtocol` if the protocol is not recognized.
@@ -90,6 +100,11 @@ pub fn ValkeyClient(
             url_str: []const u8,
             options: ClientOptions,
             callbacks: *ValkeyListener,
+            // TODO(markovejnovic): This makes me genuinely sad -- we spent a lot of effort tearing
+            //                      out all JS-related code out of this library, but the
+            //                      auto-flushing feature still depends on having a VM registered.
+            //                      We should do whatever we can to remove this dependency.
+            virtual_machine: *bun.jsc.VirtualMachine,
         ) !Self {
             // TODO(markovejnovic): Better log with all the params.
             Self.debug(
@@ -111,16 +126,17 @@ pub fn ValkeyClient(
                     }
                 },
                 ._state = .{ .disconnected = .{} },
-                ._outbound_queue = std.fifo.LinearFifo(SerializedCommand, .Dynamic).init(allocator),
-                ._inflight_queue = std.fifo.LinearFifo(SerializedCommand, .Dynamic).init(allocator),
+                ._outbound_queue = std.fifo.LinearFifo(QueuedRequestType, .Dynamic).init(allocator),
+                ._inflight_queue = std.fifo.LinearFifo(QueuedRequestType, .Dynamic).init(allocator),
                 ._connection_params = cparams,
+                ._vm = virtual_machine,
             };
         }
 
         /// Estimate the total number of bytes used by this client. This includes @sizeof(Self).
         pub fn memoryUsage(self: *const Self) usize {
-            return ((self._outbound_queue.buf.len * @sizeOf(SerializedCommand)) +
-                (self._inflight_queue.buf.len * @sizeOf(SerializedCommand)) +
+            return ((self._outbound_queue.buf.len * @sizeOf(QueuedRequestType)) +
+                (self._inflight_queue.buf.len * @sizeOf(QueuedRequestType)) +
                 self._state.memoryUsage());
         }
 
@@ -579,7 +595,7 @@ pub fn ValkeyClient(
                 hello_args = hello_args_buf[0..1];
             }
 
-            var hello_cmd = Command.initWithArgs("HELLO", .{ .raw = hello_args });
+            var hello_cmd = Command.initById(.HELLO, .{ .raw = hello_args });
             try hello_cmd.write(self.egressWriter());
 
             // If we're using a specific database, we should also send the
@@ -612,6 +628,8 @@ pub fn ValkeyClient(
         /// buffer. Note that this can only be called while the socket is in
         /// the `.linked` state. See `_outbound_queue` for details.
         fn egressWriter(self: *Self) std.io.Writer(*Self, protocol.RedisError, egressWrite) {
+            // TODO(markovejnovic): This should live in the linked state, not here, so it is
+            // type-safer.
             return .{ .context = self };
         }
 
@@ -642,7 +660,7 @@ pub fn ValkeyClient(
         /// Errors:
         /// - `.SubscriptionCompatibility` if the given command is not available in the current
         /// subscription mode.
-        pub fn request(self: *Self, req: Self.RequestType) !void {
+        pub fn request(self: *Self, req: *Self.RequestType) !void {
             Self.debug("{*}.request({s}, argc={})", .{ self, req.command, req.command.args.len() });
 
             // TODO(markovejnovic): Handle automatically opening the connection.
@@ -666,7 +684,90 @@ pub fn ValkeyClient(
 
         /// Attempt to enqueue a request for sending to the server. This may choose to skip the
         /// queue if appropriate.
-        fn enqueueRequest(self: *Self, req: Self.RequestType) !void {
+        fn enqueueRequest(self: *Self, req: *Self.RequestType) !void {
+            const conn_opts = self._connection_params.options;
+
+            const can_pipeline = req.command.canBePipelined() and conn_opts.enable_auto_pipelining;
+            const messages_in_queue = self._outbound_queue.readableLength() > 0;
+            const must_wait_flush = !req.command.canBePipelined() and messages_in_queue;
+            const messages_in_flight = self._inflight_queue.readableLength() > 0;
+
+            const queued_request = bun.handleOom(QueuedRequestType.init(req, self._allocator));
+
+            // - If there are any commands in the queue, it makes sense to just queue this one.
+            // - If there are no commands in the queue, and this command is not something that can
+            //   be pipelined but there are commands in flight, the best we can do is queue this
+            //   command.
+            // - If the connection is not ready, then the best we can do is queue this command.
+            // - If the command can be pipelined, we can queue it, regardless if there are messages
+            //   in flight or not.
+            if (messages_in_queue or
+                (!can_pipeline and messages_in_flight) or
+                !self.readyToTransmit() or
+                must_wait_flush or
+                can_pipeline)
+            {
+                bun.handleOom(self._outbound_queue.writeItem(queued_request));
+
+                // If we're connected and using auto pipelining, we should try to flush the queue.
+                if (self.readyToTransmit() and can_pipeline) {
+                    self.registerAutoFlusher();
+                }
+
+                return;
+            }
+
+            // Otherwise, what we have to do is attempt to send this command immediately.
+            // readyToTransmit() implies that we're in the linked state.
+            bun.debugAssert(self.readyToTransmit());
+            bun.debugAssert(self._state == .linked);
+
+            req.command.write(self.egressWriter()) catch {
+                req.context.failOom(self._callbacks);
+                return;
+            };
+
+            bun.handleOom(self._inflight_queue.writeItem(queued_request));
+            self._state.flushEgressBuffer();
+        }
+
+        fn readyToTransmit(self: *const Self) bool {
+            return switch (self._state) {
+                .linked => |*l_state| switch (l_state.state) {
+                    .authenticating => false,
+                    else => true,
+                },
+                else => false,
+            };
+        }
+
+        ///
+        fn registerAutoFlusher(self: *Self) void {
+            if (self.auto_flusher.registered)
+                return;
+
+            AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(Self, self, self._vm);
+            self.auto_flusher.registered = true;
+        }
+
+        fn unregisterAutoFlusher(self: *Self) void {
+            if (!self.auto_flusher.registered)
+                return;
+
+            AutoFlusher.unregisterDeferredMicrotaskWithType(Self, self, self._vm);
+            self.auto_flusher.registered = false;
+        }
+
+        pub fn onAutoFlush(self: *Self) bool {
+            if (!self.readyToTransmit()) {
+                self.auto_flusher.registered = false;
+                return false;
+            }
+
+            /// NOTE TO MARKO!!!
+            /// YOU NEED TO IMPLEMENT THIS!!!
+
+            return false;
         }
 
         const debug = bun.Output.scoped(.valkey, .visible);
@@ -1421,13 +1522,27 @@ fn Response(Context: type) type {
 
 pub const protocol = @import("protocol.zig");
 
-const SerializedCommand = struct {
-    serialized_data: []u8,
-    metadata: PacketMetadata,
-};
+fn QueuedRequest(Context: type) type {
+    return struct {
+        const Self = @This();
+        serialized_data: []u8,
+        context: Context,
+
+        pub fn init(req: *const Request(Context), allocator: std.mem.Allocator) !Self {
+            return Self{
+                .serialized_data = try req.command.serialize(allocator),
+                .context = req.context,
+            };
+        }
+    };
+}
 
 const PacketMetadata = struct {};
 
 const std = @import("std");
 const bun = @import("bun");
 const Command = @import("command.zig").Command;
+
+// TODO(markovejnovic): Remove this dependency. We were so close to removing all dependencies on JS
+// APIs, except for the auto flushing.
+const AutoFlusher = bun.jsc.WebCore.AutoFlusher;

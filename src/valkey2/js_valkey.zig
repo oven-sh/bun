@@ -44,13 +44,23 @@ pub const JsValkey = struct {
             }
 
             pub fn reject(
-                self: @This(),
+                self: *@This(),
                 go: *bun.jsc.JSGlobalObject,
                 reason: bun.JSError!bun.jsc.JSValue,
             ) void {
-                self._promise.reject(go, reason.toJS());
+                // TODO(markovejnovic): I think this handleOom is a smell...
+                self._promise.reject(go, bun.handleOom(reason));
             }
         };
+
+        pub fn failOom(self: *RequestContext, listener: *ValkeyClientListener) void {
+            const go = listener.parent()._global_obj;
+            switch (self.*) {
+                .user_request => |*ur| {
+                    ur.reject(go, go.createOutOfMemoryError());
+                },
+            }
+        }
 
         user_request: UserRequest,
     };
@@ -255,6 +265,9 @@ pub const JsValkey = struct {
             conn_str,
             .{}, // TODO(markovejnovic): Accept options from user lol
             client_listener,
+            // TODO(markovejnovic): This VM argument is leaking JS context down to the
+            // native-only Valkey. This is the only leak site.
+            vm,
         )) catch |err| {
             switch (err) {
                 error.InvalidProtocol => {
@@ -359,14 +372,14 @@ pub const JsValkey = struct {
 
         // The goal of this function is to transform Command -> RequestType. To achieve that, we
         // need to enrich the Command with promise.
-        const req: ReqType = .{
+        var req: ReqType = .{
             .command = command,
             .context = .{
                 .user_request = RequestContext.UserRequest.init(go, options.return_as_buffer),
             },
         };
 
-        self._client.request(req) catch |err| {
+        self._client.request(&req) catch |err| {
             return protocol.valkeyErrorToJS(go, "Failed to send command", err);
         };
 
@@ -407,7 +420,7 @@ pub const JsValkey = struct {
         return promise.toJS();
     }
 
-    pub const randomKey = MethodFactory.@"()"("RANDOMKEY").call;
+    pub const randomKey = MethodFactory.@"()"(.RANDOMKEY).call;
 
     pub const js = bun.jsc.Codegen.JSRedisClient2;
     pub const new = bun.TrivialNew(@This());
@@ -423,7 +436,7 @@ const MethodFactory = struct {
     const Self = @This();
 
     /// 0-arity method like RANDOMKEY
-    pub fn @"()"(comptime command: []const u8) type {
+    pub fn @"()"(comptime command_descriptor: CommandDescriptor) type {
         return struct {
             pub fn call(
                 self: *JsValkey,
@@ -431,10 +444,14 @@ const MethodFactory = struct {
                 cf: *bun.jsc.CallFrame,
             ) bun.JSError!bun.jsc.JSValue {
                 const promise = self.request(go, cf.this(), .{
-                    .command = command,
+                    .command = .{ .command_id = command_descriptor },
                     .args = .{ .args = &.{} },
                 }, .{}) catch |err| {
-                    return protocol.valkeyErrorToJS(go, "Failed to send " ++ command, err);
+                    return protocol.valkeyErrorToJS(
+                        go,
+                        "Failed to send " ++ command_descriptor.toString(),
+                        err,
+                    );
                 };
                 return promise.toJS();
             }
@@ -447,3 +464,4 @@ const ValkeyClient = @import("./valkey.zig").ValkeyClient;
 // TODO(markovejnovic): This should be imported from the same location as ValkeyClient.
 const protocol = @import("./valkey.zig").protocol;
 const Command = @import("./command.zig").Command;
+const CommandDescriptor = @import("./command.zig").CommandDescriptor;

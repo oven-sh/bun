@@ -11,7 +11,7 @@ const cwd = input.cwd || "";
 
 // Get environment variables from the hook context
 // Note: We check process.env directly as env vars are inherited
-const useSystemBun = process.env.USE_SYSTEM_BUN;
+let useSystemBun = process.env.USE_SYSTEM_BUN;
 
 if (toolName !== "Bash" || !command) {
   process.exit(0);
@@ -32,8 +32,8 @@ function denyWithReason(reason) {
 // Parse the command to extract argv0 and positional args
 let tokens;
 try {
-  // Simple shell parsing - split on spaces but respect quotes
-  tokens = command.match(/(?:[^\s"]+|"[^"]*")+/g)?.map(t => t.replace(/^"|"$/g, '')) || [];
+  // Simple shell parsing - split on spaces but respect quotes (both single and double)
+  tokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map(t => t.replace(/^['"]|['"]$/g, '')) || [];
 } catch {
   process.exit(0);
 }
@@ -41,6 +41,24 @@ try {
 if (tokens.length === 0) {
   process.exit(0);
 }
+
+// Strip inline environment variable assignments (e.g., FOO=1 bun test)
+const inlineEnv = new Map();
+let commandStart = 0;
+while (
+  commandStart < tokens.length &&
+  /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[commandStart]) &&
+  !tokens[commandStart].includes("/")
+) {
+  const [name, value = ""] = tokens[commandStart].split("=", 2);
+  inlineEnv.set(name, value);
+  commandStart++;
+}
+if (commandStart >= tokens.length) {
+  process.exit(0);
+}
+tokens = tokens.slice(commandStart);
+useSystemBun = inlineEnv.get("USE_SYSTEM_BUN") ?? useSystemBun;
 
 // Get the executable name (argv0)
 const argv0 = basename(tokens[0]);

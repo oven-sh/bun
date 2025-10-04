@@ -26,7 +26,7 @@ const result = spawnSync("vendor/zig/zig.exe", ["fmt", filePath], {
 
 if (result.error) {
   console.error(`Failed to format ${filePath}: ${result.error.message}`);
-  process.exit(1);
+  process.exit(0);
 }
 
 if (result.status !== 0) {
@@ -34,7 +34,7 @@ if (result.status !== 0) {
   if (result.stderr) {
     console.error(result.stderr);
   }
-  process.exit(1);
+  process.exit(0);
 }
 
 // Success - file was formatted

@@ -130,7 +130,6 @@ pub fn migratePnpmLockfile(
     };
 
     if (lockfile_version_num < 7) {
-        try log.addErrorFmt(null, logger.Loc.Empty, allocator, "pnpm-lock.yaml version is too old (less than v7)", .{});
         return error.PnpmLockfileTooOld;
     }
 

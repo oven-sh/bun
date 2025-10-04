@@ -1214,7 +1214,15 @@ describe("SQLite-specific features", () => {
       await sql`insert into "users" ("id", "name", "verified", "created_at") values (null, ${"John"}, ${0}, strftime('%s', 'now')) returning upper("name")`;
     expect(upperName).toBe("JOHN");
   });
-
+  test("order by and limit in delete statements", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE users (id INTEGER, name TEXT)`;
+    await sql`INSERT INTO users VALUES (1, 'John'), (2, 'Jane'), (3, 'Austin')`;
+    const result = await sql`delete from "users" where "users"."id" = ${1} order by "users"."name" asc limit ${1}`;
+    expect(result.count).toBe(1);
+    expect(result.command).toBe("DELETE");
+    expect(result.lastInsertRowid).toBe(3);
+  });
   test("last_insert_rowid()", async () => {
     await sql`CREATE TABLE rowid_test (id INTEGER PRIMARY KEY, value TEXT)`;
     await sql`INSERT INTO rowid_test (value) VALUES ('test')`;

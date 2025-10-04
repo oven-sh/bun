@@ -258,6 +258,7 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("getMockedSystemTime"), jsc.host_fn.NewFunction(globalObject, ZigString.static("getMockedSystemTime"), 0, JSMock__jsGetMockedSystemTime, false));
         vi.put(globalObject, ZigString.static("getRealSystemTime"), jsc.host_fn.NewFunction(globalObject, ZigString.static("getRealSystemTime"), 0, JSMock__jsGetRealSystemTime, false));
         vi.put(globalObject, ZigString.static("isFakeTimers"), jsc.host_fn.NewFunction(globalObject, ZigString.static("isFakeTimers"), 0, JSMock__jsIsFakeTimers, false));
+        vi.put(globalObject, ZigString.static("runAllTimers"), jsc.host_fn.NewFunction(globalObject, ZigString.static("runAllTimers"), 0, Bun__Timer__runAllTimers, false));
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 
@@ -274,6 +275,7 @@ pub const Jest = struct {
     extern fn JSMock__jsSpyOn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsUseFakeTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsUseRealTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
+    extern fn Bun__Timer__runAllTimers(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
 
     pub fn call(
         globalObject: *JSGlobalObject,

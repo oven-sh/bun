@@ -101,6 +101,7 @@ declare module "bun:test" {
     function getMockedSystemTime(): Date | null;
     function getRealSystemTime(): number;
     function isFakeTimers(): boolean;
+    function runAllTimers(): void;
     function spyOn<T extends object, K extends keyof T>(
       obj: T,
       methodOrPropertyValue: K,

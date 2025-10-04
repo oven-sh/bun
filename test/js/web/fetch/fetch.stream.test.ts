@@ -61,6 +61,8 @@ describe.concurrent("fetch() with streaming", () => {
           });
 
           const reader = res.body?.getReader();
+          if (!signal.aborted) await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+
           while (true) {
             const { done } = await reader?.read();
             if (done) break;

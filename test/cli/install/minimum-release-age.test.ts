@@ -1709,89 +1709,87 @@ registry = "${mockRegistryUrl}"`,
   });
 
   describe("monorepo with linker modes", () => {
-    test.each(["isolated", "hoisted"])(
-      "installs package with minimum-release-age in %s mode",
-      async (linker) => {
-        using dir = tempDir(`monorepo-${linker}`, {
-          "package.json": JSON.stringify({
-            name: "my-monorepo",
-            workspaces: ["packages/*"],
-          }),
-          "bunfig.toml": `
+    test.each(["isolated", "hoisted"])("installs package with minimum-release-age in %s mode", async linker => {
+      using dir = tempDir(`monorepo-${linker}`, {
+        "package.json": JSON.stringify({
+          name: "my-monorepo",
+          workspaces: ["packages/*"],
+        }),
+        "bunfig.toml": `
 [install]
 linker = "${linker}"
 `,
-          "packages/app/package.json": JSON.stringify({
-            name: "app",
-            version: "1.0.0",
-            dependencies: {
-              "regular-package": "*",
-            },
-          }),
-          "packages/lib/package.json": JSON.stringify({
-            name: "lib",
-            version: "1.0.0",
-            dependencies: {
-              "regular-package": "^2.0.0",
-              "daily-release-package": "latest",
-              "bugfix-package": "*",
-              "@scope/scoped-package": "^1.0.0",
-              "stable-package": "latest",
-            },
-          }),
-          "packages/legacy/package.json": JSON.stringify({
-            name: "legacy",
-            version: "1.0.0",
-            dependencies: {
-              "regular-package": "1.0.0", // Pinned to old version
-              "stable-package": "3.0.0", // Pinned to specific old version
-            },
-          }),
-          ".npmrc": `registry=${mockRegistryUrl}`,
-        });
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: {
+            "regular-package": "*",
+          },
+        }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          dependencies: {
+            "regular-package": "^2.0.0",
+            "daily-release-package": "latest",
+            "bugfix-package": "*",
+            "@scope/scoped-package": "^1.0.0",
+            "stable-package": "latest",
+          },
+        }),
+        "packages/legacy/package.json": JSON.stringify({
+          name: "legacy",
+          version: "1.0.0",
+          dependencies: {
+            "regular-package": "1.0.0", // Pinned to old version
+            "stable-package": "3.0.0", // Pinned to specific old version
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
 
-        // Install with 5-day minimum-release-age - comprehensive "final boss" test:
-        // - regular-package (^2.0.0): 3.0.0 too new → select 2.1.0 (6 days old)
-        // - regular-package (1.0.0): pinned to 1.0.0 (legacy workspace - no age check on exact versions)
-        // - daily-release-package (latest): 1.10.0 too new → select 1.5.0 (exactly 5 days, passes gate)
-        // - bugfix-package (*): only 1.0.0 passes 5-day gate (others are 0.5d, 1.5d, 2.5d old)
-        // - @scope/scoped-package (^1.0.0): 2.0.0 too new → select 1.5.0 (8 days old)
-        // - stable-package (latest): 3.2.0 is 30 days old → select 3.2.0 (passes gate, is latest)
-        // - stable-package (3.0.0): pinned to 3.0.0 (legacy workspace - no age check on exact versions)
-        const proc = Bun.spawn({
-          cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
-          cwd: String(dir),
-          env: bunEnv,
-        });
+      // Install with 5-day minimum-release-age - comprehensive "final boss" test:
+      // - regular-package (^2.0.0): 3.0.0 too new → select 2.1.0 (6 days old)
+      // - regular-package (1.0.0): pinned to 1.0.0 (legacy workspace - no age check on exact versions)
+      // - daily-release-package (latest): 1.10.0 too new → select 1.5.0 (exactly 5 days, passes gate)
+      // - bugfix-package (*): only 1.0.0 passes 5-day gate (others are 0.5d, 1.5d, 2.5d old)
+      // - @scope/scoped-package (^1.0.0): 2.0.0 too new → select 1.5.0 (8 days old)
+      // - stable-package (latest): 3.2.0 is 30 days old → select 3.2.0 (passes gate, is latest)
+      // - stable-package (3.0.0): pinned to 3.0.0 (legacy workspace - no age check on exact versions)
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cwd: String(dir),
+        env: bunEnv,
+      });
 
-        const exitCode = await proc.exited;
-        expect(exitCode).toBe(0);
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
 
-        const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
 
-        // Verify each package selected the correct version
-        expect(lockfile).toContain("regular-package@2.1.0");
-        expect(lockfile).not.toContain("regular-package@3.0.0");
+      // Verify each package selected the correct version
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
 
-        expect(lockfile).toContain("daily-release-package@1.5.0");
-        expect(lockfile).not.toContain("daily-release-package@1.10.0");
+      expect(lockfile).toContain("daily-release-package@1.5.0");
+      expect(lockfile).not.toContain("daily-release-package@1.10.0");
 
-        expect(lockfile).toContain("bugfix-package@1.0.0");
-        expect(lockfile).not.toContain("bugfix-package@1.0.1");
+      expect(lockfile).toContain("bugfix-package@1.0.0");
+      expect(lockfile).not.toContain("bugfix-package@1.0.1");
 
-        expect(lockfile).toContain("@scope/scoped-package@1.5.0");
-        expect(lockfile).not.toContain("@scope/scoped-package@2.0.0");
+      expect(lockfile).toContain("@scope/scoped-package@1.5.0");
+      expect(lockfile).not.toContain("@scope/scoped-package@2.0.0");
 
-        expect(lockfile).toContain("stable-package@3.2.0"); // Latest, 30 days old, passes gate
-        expect(lockfile).not.toContain("stable-package@3.1.2");
+      expect(lockfile).toContain("stable-package@3.2.0"); // Latest, 30 days old, passes gate
+      expect(lockfile).not.toContain("stable-package@3.1.2");
 
-        // Verify legacy workspace gets pinned old versions (no age check on exact versions)
-        expect(lockfile).toContain("regular-package@1.0.0");
-        expect(lockfile).toContain("stable-package@3.0.0");
+      // Verify legacy workspace gets pinned old versions (no age check on exact versions)
+      expect(lockfile).toContain("regular-package@1.0.0");
+      expect(lockfile).toContain("stable-package@3.0.0");
 
-        // Normalize the lockfile to remove dynamic port numbers
-        const normalizedLockfile = lockfile.replace(/http:\/\/localhost:\d+/g, "http://localhost:<port>");
-        expect(normalizeBunSnapshot(normalizedLockfile, dir)).toMatchInlineSnapshot(`
+      // Normalize the lockfile to remove dynamic port numbers
+      const normalizedLockfile = lockfile.replace(/http:\/\/localhost:\d+/g, "http://localhost:<port>");
+      expect(normalizeBunSnapshot(normalizedLockfile, dir)).toMatchInlineSnapshot(`
           "{
             "lockfileVersion": 1,
             "workspaces": {
@@ -1847,8 +1845,7 @@ linker = "${linker}"
               "lib/stable-package": ["stable-package@3.2.0", "http://localhost:<port>/stable-package/-/stable-package-3.2.0.tgz", {}, ""],
             }
           }"
-        `)
-      },
-    );
+        `);
+    });
   });
 });

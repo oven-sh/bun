@@ -12,7 +12,8 @@ describeWithContainer(
   },
   container => {
     // Create getters that will be evaluated when the test runs
-    const getUrl = () => `mysql://root:bun@${container.host}:${container.port}/bun_sql_test`;
+    const getUrl = () =>
+      `mysql://root:${encodeURIComponent("bun123456@#$%^&*()")}@${container.host}:${container.port}/bun_sql_test`;
 
     test("should be able to connect with mysql_native_password auth plugin", async () => {
       console.log("Container info in test:", container);

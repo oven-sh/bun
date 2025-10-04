@@ -6576,7 +6576,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const MESSAGE_COUNT = 1000;
         const MESSAGE_SIZE = 1024 * 1024;
 
-        let byteCounter = awaitableCounter();
+        let byteCounter = awaitableCounter(5_000); // 5s timeout
         const subscriber = await ctx.redis.duplicate();
         await subscriber.subscribe(channel, message => {
           byteCounter.incrementBy(message.length);
@@ -6593,10 +6593,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("callback errors don't crash the client", async () => {
         const channel = "error-callback-channel";
 
-        const STEP_SUBSCRIBED = 1;
-        const STEP_FIRST_MESSAGE = 2;
-        const STEP_SECOND_MESSAGE = 3;
-        const STEP_THIRD_MESSAGE = 4;
+        const STEP_WAITING_FOR_URL = 1;
+        const STEP_SUBSCRIBED = 2;
+        const STEP_FIRST_MESSAGE = 3;
+        const STEP_SECOND_MESSAGE = 4;
+        const STEP_THIRD_MESSAGE = 5;
 
         const stepCounter = awaitableCounter();
         let currentMessage: any = {};
@@ -6615,6 +6616,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           },
         });
 
+        await stepCounter.untilValue(STEP_WAITING_FOR_URL);
+        expect(currentMessage.event).toBe("waiting-for-url");
         subscriberProc.send({
           event: "start",
           url: connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,

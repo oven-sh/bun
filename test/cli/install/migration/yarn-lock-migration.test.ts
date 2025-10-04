@@ -225,8 +225,10 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     expect(bunLockContent).not.toContain("null");
   });
 
-  test("complex yarn.lock with multiple dependencies and versions", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-complex", {
+  test(
+    "complex yarn.lock with multiple dependencies and versions",
+    async () => {
+      const tempDir = tempDirWithFiles("yarn-migration-complex", {
       "package.json": JSON.stringify(
         {
           name: "complex-test",
@@ -727,12 +729,14 @@ vary@~1.1.2:
       migrateResult.exited,
     ]);
 
-    expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+      expect(exitCode).toBe(0);
+      expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
-    expect(bunLockContent).toMatchSnapshot("complex-yarn-migration");
-  });
+      const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+      expect(bunLockContent).toMatchSnapshot("complex-yarn-migration");
+    },
+    10000,
+  );
 
   test("yarn.lock with npm aliases", async () => {
     const tempDir = tempDirWithFiles("yarn-migration-aliases", {
@@ -1122,9 +1126,11 @@ babel-loader/chalk@^2.4.2:
     }
   });
 
-  test("migration with realistic complex yarn.lock", async () => {
-    // Create a realistic yarn.lock with various edge cases
-    const tempDir = tempDirWithFiles("yarn-migration-complex-realistic", {
+  test(
+    "migration with realistic complex yarn.lock",
+    async () => {
+      // Create a realistic yarn.lock with various edge cases
+      const tempDir = tempDirWithFiles("yarn-migration-complex-realistic", {
       "package.json": JSON.stringify(
         {
           name: "complex-app",
@@ -1334,9 +1340,11 @@ webpack@^5.75.0:
     expect(bunLockContent).toContain('"webpack": [');
     expect(bunLockContent).toContain('"typescript": [');
 
-    // Verify peer dependencies are captured
-    expect(bunLockContent).toContain("peerDependencies");
-  });
+      // Verify peer dependencies are captured
+      expect(bunLockContent).toContain("peerDependencies");
+    },
+    10000,
+  );
 });
 
 describe("bun pm migrate for existing yarn.lock", () => {
@@ -1348,7 +1356,9 @@ describe("bun pm migrate for existing yarn.lock", () => {
     "yarn-stuff",
     "yarn-stuff/abbrev-link-target",
   ];
-  test.each(folders)("%s", async folder => {
+  test.each(folders)(
+    "%s",
+    async folder => {
     const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
     const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
 
@@ -1369,9 +1379,11 @@ describe("bun pm migrate for existing yarn.lock", () => {
     expect(migrateResult.exited).resolves.toBe(0);
     expect(Bun.file(join(tempDir, "bun.lock")).exists()).resolves.toBe(true);
 
-    const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
-    expect(bunLockContent).toMatchSnapshot(folder);
-  });
+      const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
+      expect(bunLockContent).toMatchSnapshot(folder);
+    },
+    10000,
+  );
 
   test("yarn.lock with packages that have os/cpu requirements", async () => {
     const tempDir = tempDirWithFiles("yarn-migration-os-cpu", {

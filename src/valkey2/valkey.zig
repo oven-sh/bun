@@ -1,24 +1,22 @@
-///! Fully-featured Valkey/Redis client.
-///!
-///! Note that this is completely decoupled from JavaScript and adding
-///! JavaScript-specific functionality is an anti-pattern.
-///!
-///! This client is implemented as a state machine. The public interface for
-///! `ValkeyClient` exposes a relatively opaque API, with the state machine
-///! doing the heavy lifting.
-///!
-///! This client is designed to be asynchronous. Interacting with the lifecycle
-///! of the client is done through the injected `ValkeyListener` type, which
-///! may contain any combination of the following methods:
-///!  - beforeStateTransition(self: *Self, old_state: ValkeyClient.State,
-///!                          new_state: ValkeyClient.State)
-///!  - afterStateTransition(self: *Self, old_state: ValkeyClient.State,
-///!                         new_state: ValkeyClient.State)
-///!
-pub fn ValkeyClient(
-    comptime ValkeyListener: type,
-    comptime RequestContext: type,
-) type {
+/// Fully-featured Valkey/Redis client.
+///
+/// Note that this is completely decoupled from JavaScript and adding JavaScript-specific
+/// functionality is an anti-pattern.
+///
+/// This client is implemented as a state machine. The public interface for `ValkeyClient` exposes
+/// a relatively opaque API, with the state machine doing the heavy lifting.
+///
+/// This client is designed to be asynchronous. Interacting with the lifecycle of the client is
+/// done through the injected `ValkeyListener` type, which may contain any combination of the
+/// following methods:
+///  - beforeStateTransition(self: *Self, old_state: ValkeyClient.State,
+///                          new_state: ValkeyClient.State)
+///  - afterStateTransition(self: *Self, old_state: ValkeyClient.State,
+///                         new_state: ValkeyClient.State)
+///
+// TODO(markovejnovic): This shouldn't need to accept RequestContext as a separate param but should
+// really take it in as a typedef on ValkeyListener.
+pub fn ValkeyClient(comptime ValkeyListener: type, comptime RequestContext: type) type {
     return struct {
         // The client is implemented as a state machine, with each state representing a different
         // phase of the client's lifecycle.
@@ -43,6 +41,9 @@ pub fn ValkeyClient(
         /// Type used internal to the client, representing a queued request.
         const QueuedRequestType = QueuedRequest(RequestContext);
 
+        // TODO(markovejnovic): @taylordotfish mentions that this is a code smell because
+        // std.mem.Allocator is known to be a footgun.
+        // TODO(markovejnovic): Move all of these to be #allocator.
         _allocator: std.mem.Allocator,
 
         /// Underlying WebSocket connection to the Valkey server. Interacts with the client through
@@ -351,8 +352,7 @@ pub fn ValkeyClient(
 
             switch (l_state.state) {
                 .normal => {
-                    // TODO(markovejnovic)
-                    @panic("Not Implemented");
+                    try self.onNormalPacket(value);
                 },
                 .authenticating => {
                     try self.onAuthenticatingPacket(value);
@@ -362,6 +362,22 @@ pub fn ValkeyClient(
                     @panic("Not Implemented");
                 },
             }
+        }
+
+        fn onNormalPacket(self: *Self, value: *protocol.RESPValue) !void {
+            Self.debug("{*}.onNormalPacket(..)", .{self});
+
+            // Let's grab ourselves a Request that is currently in transit.
+            var req = self._inflight_queue.readItem() orelse {
+                Self.debug("Received packet but no corresponding request is in flight.", .{});
+                return;
+            };
+
+            if (req.returns_bool and value.* == .Integer) {
+                value.* = .{ .Boolean = value.Integer > 0 };
+            }
+
+            try self._callbacks.onResponse(&req.context, value);
         }
 
         fn onAuthenticatingPacket(self: *Self, value: *protocol.RESPValue) !void {
@@ -495,13 +511,21 @@ pub fn ValkeyClient(
             };
         }
 
-        fn runBeforeStateTransitionCallback(self: *Self, from: *State, to: *State) void {
+        fn runBeforeStateTransitionCallback(
+            self: *const Self,
+            from: *const State,
+            to: *State,
+        ) void {
             if (comptime std.meta.hasFn(ValkeyListener, "beforeStateTransition")) {
                 self._callbacks.beforeStateTransition(from, to);
             }
         }
 
-        fn runAfterStateTransitionCallback(self: *Self, from: *State, to: *State) void {
+        fn runAfterStateTransitionCallback(
+            self: *const Self,
+            from: *const State,
+            to: *State,
+        ) void {
             if (comptime std.meta.hasFn(ValkeyListener, "afterStateTransition")) {
                 self._callbacks.afterStateTransition(from, to);
             }
@@ -517,7 +541,9 @@ pub fn ValkeyClient(
         ///
         /// This does not need to handle illegal transitions, the state machine handles that for
         /// you.
-        fn onStateTransition(self: *Self, from_state: *State, to_state: *State) !void {
+        fn onStateTransition(self: *Self, from_state: *const State) !void {
+            const to_state = &self._state;
+
             Self.debug("{*}.onStateTransition(from={s}, to={s})", .{
                 self,
                 @tagName(from_state.*),
@@ -533,7 +559,7 @@ pub fn ValkeyClient(
                         },
                         else => {
                             from_state.warnIllegalTransition(to_state);
-                            from_state.recoverFromIllegalState();
+                            self._state.recoverFromIllegalState();
                         },
                     }
                 },
@@ -598,12 +624,11 @@ pub fn ValkeyClient(
             var hello_cmd = Command.initById(.HELLO, .{ .raw = hello_args });
             try hello_cmd.write(self.egressWriter());
 
-            // If we're using a specific database, we should also send the
-            // SELECT command.
+            // If we're using a specific database, we should also send the SELECT command.
             //
-            // What we can do is immediately send the SELECT command after the
-            // HELLO command to the egress buffer. This way, we're not waiting
-            // for the HELLO response to send the SELECT command.
+            // What we can do is immediately send the SELECT command after the HELLO command to the
+            // egress buffer. This way, we're not waiting for the HELLO response to send the SELECT
+            // command.
             //
             // TODO(markovejnovic): Implement this.
             //if (self._connection_params.database > 0) {
@@ -1028,11 +1053,7 @@ pub fn SocketIO(ValkeyClientType: type) type {
         ///
         /// Necessary because the socket type can only be deduced at
         /// runtime.
-        fn patchSocket(
-            self: *Self,
-            concrete_socket: anytype,
-            comptime ssl_mode: SslMode,
-        ) void {
+        fn patchSocket(self: *Self, concrete_socket: anytype, comptime ssl_mode: SslMode) void {
             self._socket = switch (ssl_mode) {
                 .with_ssl => bun.uws.AnySocket{ .SocketTLS = concrete_socket },
                 .without_ssl => bun.uws.AnySocket{ .SocketTCP = concrete_socket },
@@ -1466,15 +1487,6 @@ pub fn ClientState(ValkeyClientType: type) type {
             return self.* == .disconnected or self.* == .closed;
         }
 
-        pub fn onClose(self: *Self) void {
-            Self.debug("{*}.onClose()", .{self});
-            switch (self) {
-                .disconnected => {},
-                .opening => {},
-                .handshake => {},
-            }
-        }
-
         /// Warn about an illegal event in the current state.
         fn warnIllegalState(self: *Self, event_name: []const u8) void {
             // TODO(markovejnovic): Throw some telemetry in here.
@@ -1522,7 +1534,8 @@ pub fn ClientState(ValkeyClientType: type) type {
             var old_state: Self = self.*;
 
             self.* = new_state;
-            self.parentClient().onStateTransition(&old_state, self) catch |err| {
+            // TODO(markovejnovic): Transition should be in the client.
+            self.parentClient().onStateTransition(&old_state) catch |err| {
                 // If the state transition fails, we actually have to revert
                 // the states.
                 Self.debug("State transition failed, reverting...", .{});
@@ -1574,12 +1587,14 @@ fn QueuedRequest(Context: type) type {
 
         // TODO(markovejnovic): These flags are hacks and shouldn't need to exist.
         pipelinable: bool,
+        returns_bool: bool,
 
         pub fn init(req: *const Request(Context), allocator: std.mem.Allocator) !Self {
             return Self{
                 .serialized_data = try req.command.serialize(allocator),
                 .context = req.context,
                 .pipelinable = req.command.canBePipelined(),
+                .returns_bool = req.command.returnsBool(),
             };
         }
     };

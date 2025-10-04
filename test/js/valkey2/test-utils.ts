@@ -62,6 +62,11 @@ export function describeValkey(
     },
   };
 
+  beforeEach(async () => {
+    const client = await context.connectedClient();
+    await client.send("FLUSHALL", ["SYNC"]);
+  });
+
   describe(description, () => {
     beforeAll(async () => {
       clientInstance = null;

@@ -83,8 +83,6 @@ if (ext === ".zig") {
   ].includes(ext)
 ) {
   formatTypeScriptFile();
-} else if (ext === ".cpp" || ext === ".c" || ext === ".h") {
-  formatCppFile();
 }
 
 process.exit(0);

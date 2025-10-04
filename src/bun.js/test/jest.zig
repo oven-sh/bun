@@ -245,7 +245,7 @@ pub const Jest = struct {
             Expect.js.getConstructor(globalObject),
         );
 
-        const vi = JSValue.createEmptyObject(globalObject, 9);
+        const vi = JSValue.createEmptyObject(globalObject, 11);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
         vi.put(globalObject, ZigString.static("mock"), mockModuleFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
@@ -255,6 +255,8 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("useFakeTimers"), useFakeTimers);
         vi.put(globalObject, ZigString.static("useRealTimers"), useRealTimers);
         vi.put(globalObject, ZigString.static("setSystemTime"), setSystemTime);
+        vi.put(globalObject, ZigString.static("getMockedSystemTime"), jsc.host_fn.NewFunction(globalObject, ZigString.static("getMockedSystemTime"), 0, JSMock__jsGetMockedSystemTime, false));
+        vi.put(globalObject, ZigString.static("getRealSystemTime"), jsc.host_fn.NewFunction(globalObject, ZigString.static("getRealSystemTime"), 0, JSMock__jsGetRealSystemTime, false));
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 
@@ -263,6 +265,8 @@ pub const Jest = struct {
     extern fn JSMock__jsModuleMock(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsNow(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsSetSystemTime(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
+    extern fn JSMock__jsGetMockedSystemTime(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
+    extern fn JSMock__jsGetRealSystemTime(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsRestoreAllMocks(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsClearAllMocks(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsSpyOn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;

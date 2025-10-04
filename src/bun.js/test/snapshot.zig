@@ -16,6 +16,10 @@ pub const Snapshots = struct {
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
     inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+    // Track which snapshot names were accessed during this run (for incremental updates with --test-name-pattern)
+    accessed_snapshots: *std.AutoHashMap(usize, void),
+    // Map from hash to snapshot name (for reconstructing file with filter)
+    snapshot_names: *std.AutoHashMap(usize, string),
 
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,
@@ -77,7 +81,23 @@ pub const Snapshots = struct {
         bun.copy(u8, name_with_counter[name.len + 1 ..], counter_string);
 
         const name_hash = bun.hash(name_with_counter);
+
+        // Track that this snapshot was accessed during this test run
+        try this.accessed_snapshots.put(name_hash, {});
+
+        // Store the snapshot name if not already stored
+        if (!this.snapshot_names.contains(name_hash)) {
+            try this.snapshot_names.put(name_hash, try this.allocator.dupe(u8, name_with_counter));
+        }
+
         if (this.values.get(name_hash)) |expected| {
+            // When updating snapshots with a filter, update the value in the hashmap
+            const has_test_filter = if (Jest.runner) |r| r.hasTestFilter() else false;
+            if (this.update_snapshots and has_test_filter) {
+                this.allocator.free(expected);
+                try this.values.put(name_hash, try this.allocator.dupe(u8, target_value));
+                return null;
+            }
             return expected;
         }
 
@@ -91,15 +111,21 @@ pub const Snapshots = struct {
             }
         }
 
-        const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
-        try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
-        try this.file_buf.writer().print(
-            "\nexports[`{}`] = `{}`;\n",
-            .{
-                strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
-                strings.formatEscapes(target_value, .{ .quote_char = '`' }),
-            },
-        );
+        const has_test_filter = if (Jest.runner) |r| r.hasTestFilter() else false;
+
+        // When using filter with update mode, only update hashmap
+        // Otherwise, write to file_buf like normal
+        if (!this.update_snapshots or !has_test_filter) {
+            const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
+            try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
+            try this.file_buf.writer().print(
+                "\nexports[`{}`] = `{}`;\n",
+                .{
+                    strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
+                    strings.formatEscapes(target_value, .{ .quote_char = '`' }),
+                },
+            );
+        }
 
         this.added += 1;
         try this.values.put(name_hash, try this.allocator.dupe(u8, target_value));
@@ -170,6 +196,9 @@ pub const Snapshots = struct {
                                     bun.copy(u8, value_clone, value);
                                     const name_hash = bun.hash(key);
                                     try this.values.put(name_hash, value_clone);
+                                    // Also store the snapshot name
+                                    const key_clone = try this.allocator.dupe(u8, key);
+                                    try this.snapshot_names.put(name_hash, key_clone);
                                 }
                             }
                         }
@@ -183,9 +212,68 @@ pub const Snapshots = struct {
     pub fn writeSnapshotFile(this: *Snapshots) !void {
         if (this._current_file) |_file| {
             var file = _file;
-            file.file.writeAll(this.file_buf.items) catch {
-                return error.FailedToWriteSnapshotFile;
-            };
+
+            // When using --test-name-pattern with update mode, reconstruct file from hashmap
+            const has_test_filter = if (Jest.runner) |r| r.hasTestFilter() else false;
+            const should_preserve_unaccessed = this.update_snapshots and has_test_filter;
+
+            // Only reconstruct from hashmap when preserving unaccessed snapshots
+            const should_reconstruct = should_preserve_unaccessed;
+
+            if (should_reconstruct) {
+                // Reconstruct the file from the values hashmap
+                var reconstruct_buf = std.ArrayList(u8).init(this.allocator);
+                defer reconstruct_buf.deinit();
+
+                try reconstruct_buf.appendSlice(file_header);
+
+                // Sort snapshot names for consistent output
+                var sorted_entries = std.ArrayList(struct { hash: usize, name: string, value: string }).init(this.allocator);
+                defer sorted_entries.deinit();
+
+                var name_iter = this.snapshot_names.iterator();
+                while (name_iter.next()) |entry| {
+                    const hash = entry.key_ptr.*;
+                    const name = entry.value_ptr.*;
+                    if (this.values.get(hash)) |value| {
+                        try sorted_entries.append(.{ .hash = hash, .name = name, .value = value });
+                    }
+                }
+
+                // Sort by name for deterministic output
+                std.mem.sort(@TypeOf(sorted_entries.items[0]), sorted_entries.items, {}, struct {
+                    fn lessThan(_: void, a: @TypeOf(sorted_entries.items[0]), b: @TypeOf(sorted_entries.items[0])) bool {
+                        return std.mem.lessThan(u8, a.name, b.name);
+                    }
+                }.lessThan);
+
+                for (sorted_entries.items) |entry| {
+                    try reconstruct_buf.writer().print(
+                        "\nexports[`{}`] = `{}`;\n",
+                        .{
+                            strings.formatEscapes(entry.name, .{ .quote_char = '`' }),
+                            strings.formatEscapes(entry.value, .{ .quote_char = '`' }),
+                        },
+                    );
+                }
+
+                // Truncate and write the reconstructed file
+                file.file.seekTo(0) catch {
+                    return error.FailedToWriteSnapshotFile;
+                };
+                file.file.setEndPos(0) catch {
+                    return error.FailedToWriteSnapshotFile;
+                };
+                file.file.writeAll(reconstruct_buf.items) catch {
+                    return error.FailedToWriteSnapshotFile;
+                };
+            } else {
+                // Original behavior: write file_buf directly
+                file.file.writeAll(this.file_buf.items) catch {
+                    return error.FailedToWriteSnapshotFile;
+                };
+            }
+
             file.file.close();
             this.file_buf.clearAndFree();
 
@@ -200,6 +288,14 @@ pub const Snapshots = struct {
                 this.allocator.free(key.*);
             }
             this.counts.clearAndFree();
+
+            var name_itr = this.snapshot_names.valueIterator();
+            while (name_itr.next()) |name| {
+                this.allocator.free(name.*);
+            }
+            this.snapshot_names.clearAndFree();
+
+            this.accessed_snapshots.clearAndFree();
         }
     }
 
@@ -510,8 +606,13 @@ pub const Snapshots = struct {
             remain[0] = 0;
             const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
 
+            // When using --test-name-pattern with update mode, don't truncate the file
+            // Instead, read existing snapshots and only update the ones that were accessed
+            const has_test_filter = if (Jest.runner) |r| r.hasTestFilter() else false;
+            const should_preserve_unaccessed = this.update_snapshots and has_test_filter;
+
             var flags: i32 = bun.O.CREAT | bun.O.RDWR;
-            if (this.update_snapshots) flags |= bun.O.TRUNC;
+            if (this.update_snapshots and !should_preserve_unaccessed) flags |= bun.O.TRUNC;
             const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
                 .err => |err| return .initErr(err),
@@ -523,7 +624,7 @@ pub const Snapshots = struct {
             };
             errdefer file.file.close();
 
-            if (this.update_snapshots) {
+            if (this.update_snapshots and !should_preserve_unaccessed) {
                 try this.file_buf.appendSlice(file_header);
             } else {
                 const length = try file.file.getEndPos();

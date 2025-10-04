@@ -27,11 +27,6 @@ extern "C" JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, 
     return handleSlot;
 }
 
-extern "C" JSC::EncodedJSValue Bun__StrongRef__get(JSC::JSValue* _Nonnull handleSlot)
-{
-    return JSC::JSValue::encode(*handleSlot);
-}
-
 extern "C" void Bun__StrongRef__set(JSC::JSValue* _Nonnull handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     auto& vm = globalObject->vm();

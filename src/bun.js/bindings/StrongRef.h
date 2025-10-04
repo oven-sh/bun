@@ -4,7 +4,6 @@
 
 extern "C" void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot);
 extern "C" JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue);
-extern "C" JSC::EncodedJSValue Bun__StrongRef__get(JSC::JSValue* _Nonnull handleSlot);
 extern "C" void Bun__StrongRef__set(JSC::JSValue* _Nonnull handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue);
 extern "C" void Bun__StrongRef__clear(JSC::JSValue* _Nonnull handleSlot);
 

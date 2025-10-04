@@ -137,14 +137,7 @@ pub fn detectAndLoadOtherLockfile(
                 },
                 else => {},
             }
-            if (Environment.isDebug) {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("Invalid pnpm-lock.yaml\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
-                Global.exit(1);
-            }
+            log.reset();
             return LoadResult{ .err = .{
                 .step = .migrating,
                 .value = err,

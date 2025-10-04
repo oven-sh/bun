@@ -55,7 +55,7 @@ test("basic", async () => {
 });
 
 test("version is number with dot", async () => {
-  const { packageDir, packageJson } = await verdaccio.createTestDir({
+  const { packageDir } = await verdaccio.createTestDir({
     files: join(import.meta.dir, "pnpm/version-number-dot"),
   });
 
@@ -67,9 +67,9 @@ test("version is number with dot", async () => {
     stderr: "pipe",
   });
 
-  let [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(1);
+  expect(exitCode).toBe(0);
   expect(err).toContain("pnpm-lock.yaml version is too old (< v7)");
 });
 

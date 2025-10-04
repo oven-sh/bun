@@ -1665,22 +1665,6 @@ fn getOrPutResolvedPackage(
                         }
                     }
 
-                    if (comptime successFn == assignRootResolution) {
-                        if (filtered.newest_filtered) |newest| {
-                            const min_age_seconds = (this.options.minimum_release_age_ms orelse 0) / std.time.ms_per_s;
-                            switch (version.tag) {
-                                .dist_tag => {
-                                    const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
-                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}@{s}\" was downgraded from {s} to {s} due to minimum-release-age filter ({d} seconds)", .{ package_name, tag_str, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
-                                },
-                                .npm => {
-                                    this.log.addWarningFmt(null, logger.Loc.Empty, this.allocator, "Package \"{s}\" was downgraded from {s} to {s} due to minimum-release-age filter ({d} seconds)", .{ package_name, newest.fmt(this.lockfile.buffers.string_bytes.items), filtered.result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
-                                },
-                                else => unreachable,
-                            }
-                        }
-                    }
-
                     break :blk filtered.result;
                 },
                 .err => |err_type| switch (err_type) {

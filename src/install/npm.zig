@@ -1503,7 +1503,6 @@ pub const PackageManifest = struct {
     ) ?FindVersionResult {
         var prev_package_blocked_from_age: ?*const PackageVersion = null;
         var best_version: ?FindResult = null;
-        var i = versions.len;
 
         const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
@@ -1513,7 +1512,7 @@ pub const PackageManifest = struct {
             0;
 
         var i = versions.len;
-        while (i > 0) {
+        while (i > 0) : (i -= 1) {
             i -= 1;
             const version = versions[i];
             if (group.satisfies(version, group_buf, this.string_buf)) {

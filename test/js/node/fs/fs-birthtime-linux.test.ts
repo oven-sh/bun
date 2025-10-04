@@ -3,12 +3,8 @@ import { isLinux, tempDirWithFiles } from "harness";
 import { chmodSync, closeSync, fstatSync, lstatSync, openSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-describe("fs birthtime on Linux", () => {
+describe.skipIf(!isLinux)("birthtime", () => {
   it("should return non-zero birthtime on Linux", () => {
-    if (!isLinux) {
-      return;
-    }
-
     const dir = tempDirWithFiles("birthtime-test", {
       "test.txt": "initial content",
     });
@@ -23,10 +19,6 @@ describe("fs birthtime on Linux", () => {
   });
 
   it("birthtime should remain constant while other timestamps change", () => {
-    if (!isLinux) {
-      return;
-    }
-
     const dir = tempDirWithFiles("birthtime-immutable", {});
     const filepath = join(dir, "immutable-test.txt");
 
@@ -59,10 +51,6 @@ describe("fs birthtime on Linux", () => {
   });
 
   it("birthtime should work with lstat and fstat", () => {
-    if (!isLinux) {
-      return;
-    }
-
     const dir = tempDirWithFiles("birthtime-variants", {
       "test.txt": "content",
     });
@@ -85,10 +73,6 @@ describe("fs birthtime on Linux", () => {
   });
 
   it("birthtime should work with BigInt stats", () => {
-    if (!isLinux) {
-      return;
-    }
-
     const dir = tempDirWithFiles("birthtime-bigint", {
       "test.txt": "content",
     });
@@ -110,10 +94,6 @@ describe("fs birthtime on Linux", () => {
   });
 
   it("birthtime should be less than or equal to all other timestamps on creation", () => {
-    if (!isLinux) {
-      return;
-    }
-
     const dir = tempDirWithFiles("birthtime-ordering", {});
     const filepath = join(dir, "new-file.txt");
 

@@ -57,7 +57,7 @@ describe.concurrent("fetch() with streaming", () => {
         try {
           const signal = timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout);
           const res = await fetch(server_url, {
-            signal: timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout),
+            signal,
           });
 
           const reader = res.body?.getReader();
@@ -262,8 +262,10 @@ describe.concurrent("fetch() with streaming", () => {
         },
       });
 
+      const url = server.url.href;
+
       async function getReader() {
-        return (await fetch(`http://${server.hostname}:${server.port}`, {})).body?.getReader();
+        return (await fetch(url, {})).body?.getReader();
       }
       gcTick(false);
       const reader = await getReader();

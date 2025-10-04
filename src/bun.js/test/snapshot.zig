@@ -82,18 +82,23 @@ pub const Snapshots = struct {
 
         const name_hash = bun.hash(name_with_counter);
 
-        // Track that this snapshot was accessed during this test run
-        try this.accessed_snapshots.put(name_hash, {});
+        // Only track snapshots when using filter with update mode
+        const has_test_filter = if (Jest.runner) |r| r.hasTestFilter() else false;
+        const should_track = this.update_snapshots and has_test_filter;
 
-        // Store the snapshot name if not already stored
-        if (!this.snapshot_names.contains(name_hash)) {
-            try this.snapshot_names.put(name_hash, try this.allocator.dupe(u8, name_with_counter));
+        if (should_track) {
+            // Track that this snapshot was accessed during this test run
+            try this.accessed_snapshots.put(name_hash, {});
+
+            // Store the snapshot name if not already stored
+            if (!this.snapshot_names.contains(name_hash)) {
+                try this.snapshot_names.put(name_hash, try this.allocator.dupe(u8, name_with_counter));
+            }
         }
 
         if (this.values.get(name_hash)) |expected| {
             // When updating snapshots with a filter, update the value in the hashmap
-            const has_test_filter = if (Jest.runner) |r| r.hasTestFilter() else false;
-            if (this.update_snapshots and has_test_filter) {
+            if (should_track) {
                 this.allocator.free(expected);
                 try this.values.put(name_hash, try this.allocator.dupe(u8, target_value));
                 return null;
@@ -111,11 +116,9 @@ pub const Snapshots = struct {
             }
         }
 
-        const has_test_filter = if (Jest.runner) |r| r.hasTestFilter() else false;
-
         // When using filter with update mode, only update hashmap
         // Otherwise, write to file_buf like normal
-        if (!this.update_snapshots or !has_test_filter) {
+        if (!should_track) {
             const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
             try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
             try this.file_buf.writer().print(
@@ -132,7 +135,7 @@ pub const Snapshots = struct {
         return null;
     }
 
-    pub fn parseFile(this: *Snapshots, file: File) !void {
+    pub fn parseFile(this: *Snapshots, file: File, should_store_names: bool) !void {
         if (this.file_buf.items.len == 0) return;
 
         const vm = VirtualMachine.get();
@@ -196,9 +199,11 @@ pub const Snapshots = struct {
                                     bun.copy(u8, value_clone, value);
                                     const name_hash = bun.hash(key);
                                     try this.values.put(name_hash, value_clone);
-                                    // Also store the snapshot name
-                                    const key_clone = try this.allocator.dupe(u8, key);
-                                    try this.snapshot_names.put(name_hash, key_clone);
+                                    // Only store snapshot names when needed (for filter+update mode)
+                                    if (should_store_names) {
+                                        const key_clone = try this.allocator.dupe(u8, key);
+                                        try this.snapshot_names.put(name_hash, key_clone);
+                                    }
                                 }
                             }
                         }
@@ -641,7 +646,7 @@ pub const Snapshots = struct {
                 }
             }
 
-            try this.parseFile(file);
+            try this.parseFile(file, should_preserve_unaccessed);
             this._current_file = file;
         }
 

@@ -26,7 +26,7 @@ const bigText = Buffer.alloc(1 * 1024 * 1024, "a");
 const smallText = Buffer.alloc(16 * "Hello".length, "Hello");
 const empty = Buffer.alloc(0);
 
-describe.concurrent("fetch() with streaming", () => {
+describe.concurrent(() => {
   [100, 50, 20, 0, -1].forEach(timeout => {
     ["pull", "start"].forEach(via => {
       it(`should be able to fail properly when reading from readable stream via ${via} with timeout ${timeout}`, async () => {

@@ -661,7 +661,6 @@ fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32
     }
 }
 
-
 pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(PosixStat) {
     const mask: u32 = comptime brk: {
         var i: u32 = 0;

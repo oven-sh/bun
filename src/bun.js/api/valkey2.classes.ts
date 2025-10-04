@@ -55,9 +55,8 @@ export default [
       hincrbyfloat: { fn: "hincrbyfloat", length: 3 },
       hkeys: { fn: "hkeys" },
       hlen: { fn: "hlen" },
-      // TODO(markovejnovic) Implement these.
-      //hmget: { fn: "hmget", length: 2 },
-      //hmset: { fn: "hmset", length: 2 },
+      hmget: { fn: "hmget", length: 2 },
+      hmset: { fn: "hmset", length: 2 },
       hpersist: { fn: "hpersist", length: 2 },
       hpexpire: { fn: "hpexpire", length: 3 },
       hpexpireat: { fn: "hpexpireat", length: 3 },
@@ -65,8 +64,7 @@ export default [
       hpttl: { fn: "hpttl", length: 2 },
       hrandfield: { fn: "hrandfield", length: 1 },
       hscan: { fn: "hscan", length: 2 },
-      // TODO(markovejnovic): Implement these.
-      //hset: { fn: "hset", length: 2 },
+      hset: { fn: "hset", length: 2 },
       hsetex: { fn: "hsetex", length: 3 },
       hsetnx: { fn: "hsetnx", length: 3 },
       hstrlen: { fn: "hstrlen" },

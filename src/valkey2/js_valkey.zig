@@ -484,6 +484,185 @@ pub const JsValkey = struct {
         return promise.toJS();
     }
 
+    fn hsetImpl(
+        this: *Self,
+        go: *bun.jsc.JSGlobalObject,
+        cf: *bun.jsc.CallFrame,
+        comptime command: CommandDescriptor,
+    ) bun.JSError!bun.jsc.JSValue {
+        // TODO(markovejnovic): Stolen straight off of the legacy implementation.
+        const key = try cf.argument(0).toBunString(go);
+        defer key.deref();
+
+        const second_arg = cf.argument(1);
+
+        var args = std.ArrayList(bun.jsc.ZigString.Slice).init(bun.default_allocator);
+        defer {
+            for (args.items) |item| item.deinit();
+            args.deinit();
+        }
+
+        try args.append(key.toUTF8(bun.default_allocator));
+
+        if (second_arg.isObject() and !second_arg.isArray()) {
+            // Pattern 1: Object/Record - hset(key, {field: value, ...})
+            const obj = second_arg.getObject() orelse {
+                return go.throwInvalidArgumentType(command.toString(), "fields", "object");
+            };
+
+            var object_iter = try bun.jsc.JSPropertyIterator(.{
+                .skip_empty_name = false,
+                .include_value = true,
+            }).init(go, obj);
+            defer object_iter.deinit();
+
+            try args.ensureTotalCapacity(1 + object_iter.len * 2);
+
+            while (try object_iter.next()) |field_name| {
+                const field_slice = field_name.toUTF8(bun.default_allocator);
+                args.appendAssumeCapacity(field_slice);
+
+                const value_str = try object_iter.value.toBunString(go);
+                defer value_str.deref();
+
+                const value_slice = value_str.toUTF8(bun.default_allocator);
+                args.appendAssumeCapacity(value_slice);
+            }
+        } else if (second_arg.isArray()) {
+            // Pattern 3: Array - hmset(key, [field, value, ...])
+            var iter = try second_arg.arrayIterator(go);
+            if (iter.len % 2 != 0) {
+                return go.throw("Array must have an even number of elements (field-value pairs)", .{});
+            }
+
+            try args.ensureTotalCapacity(1 + iter.len);
+
+            while (try iter.next()) |field_js| {
+                const field_str = try field_js.toBunString(go);
+                args.appendAssumeCapacity(field_str.toUTF8(bun.default_allocator));
+                field_str.deref();
+
+                const value_js = try iter.next() orelse {
+                    return go.throw("Array must have an even number of elements (field-value pairs)", .{});
+                };
+                const value_str = try value_js.toBunString(go);
+                args.appendAssumeCapacity(value_str.toUTF8(bun.default_allocator));
+                value_str.deref();
+            }
+        } else {
+            // Pattern 2: Variadic - hset(key, field, value, ...)
+            const args_count = cf.argumentsCount();
+            if (args_count < 3) {
+                return go.throw("HSET requires at least key, field, and value arguments", .{});
+            }
+
+            const field_value_count = args_count - 1; // Exclude key
+            if (field_value_count % 2 != 0) {
+                return go.throw("HSET requires field-value pairs (even number of arguments after key)", .{});
+            }
+
+            try args.ensureTotalCapacity(args_count);
+
+            var i: u32 = 1;
+            while (i < args_count) : (i += 1) {
+                const arg_str = try cf.argument(i).toBunString(go);
+                args.appendAssumeCapacity(arg_str.toUTF8(bun.default_allocator));
+                arg_str.deref();
+            }
+        }
+
+        if (args.items.len == 1) {
+            return go.throw("HSET requires at least one field-value pair", .{});
+        }
+
+        const promise = this.request(
+            go,
+            cf.this(),
+            Command.initById(command, .{ .slices = args.items }),
+            .{},
+        ) catch |err| {
+            const msg = "Failed to send " ++ command.toString() ++ " command";
+            return protocol.valkeyErrorToJS(go, msg, err);
+        };
+
+        return promise.toJS();
+    }
+
+    pub fn hset(
+        this: *Self,
+        globalObject: *bun.jsc.JSGlobalObject,
+        callframe: *bun.jsc.CallFrame,
+    ) bun.JSError!bun.jsc.JSValue {
+        return hsetImpl(this, globalObject, callframe, .HSET);
+    }
+
+    pub fn hmset(
+        this: *Self,
+        globalObject: *bun.jsc.JSGlobalObject,
+        callframe: *bun.jsc.CallFrame,
+    ) bun.JSError!bun.jsc.JSValue {
+        return hsetImpl(this, globalObject, callframe, .HMSET);
+    }
+
+    pub fn hmget(this: *JsValkey, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
+        // TODO(markovejnovic): Implementation taken straight from the legacy code.
+        const args_view = cf.arguments();
+        if (args_view.len < 2) {
+            return go.throw("HMGET requires at least a key and one field", .{});
+        }
+
+        var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+        var args = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), args_view.len);
+        defer {
+            for (args.items) |*item| {
+                item.deinit();
+            }
+            args.deinit();
+        }
+
+        const key = (try jsValueToJsArgument(go, cf.argument(0))) orelse {
+            return go.throwInvalidArgumentType("hmget", "key", "string or buffer");
+        };
+        args.appendAssumeCapacity(key);
+
+        const second_arg = cf.argument(1);
+        if (second_arg.isArray()) {
+            const array_len = try second_arg.getLength(go);
+            if (array_len == 0) {
+                return go.throw("HMGET requires at least one field", .{});
+            }
+
+            var array_iter = try second_arg.arrayIterator(go);
+            while (try array_iter.next()) |element| {
+                const field = (try jsValueToJsArgument(go, element)) orelse {
+                    return go.throwInvalidArgumentType("hmget", "field", "string or buffer");
+                };
+                try args.append(field);
+            }
+        } else {
+            for (args_view[1..]) |arg| {
+                if (arg.isUndefinedOrNull()) {
+                    break;
+                }
+                const field = (try jsValueToJsArgument(go, arg)) orelse {
+                    return go.throwInvalidArgumentType("hmget", "field", "string or buffer");
+                };
+                try args.append(field);
+            }
+        }
+
+        // Send HMGET command
+        const promise = this.request(
+            go,
+            cf.this(),
+            Command.initById(.HMGET, .{ .args = args.items }),
+            .{},
+        ) catch |err| {
+            return protocol.valkeyErrorToJS(go, "Failed to send HMGET command", err);
+        };
+        return promise.toJS();
+    }
+
     pub fn ping(
         this: *Self,
         go: *bun.jsc.JSGlobalObject,

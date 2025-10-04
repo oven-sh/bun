@@ -1,6 +1,8 @@
 pub const CommandDescriptor = enum {
     APPEND,
     BITCOUNT,
+    HMSET,
+    HMGET,
     BLMOVE,
     BLMPOP,
     HINCRBY,
@@ -140,6 +142,7 @@ pub const CommandDescriptor = enum {
     HGETDEL,
     HGETEX,
     HSETEX,
+    HSET,
     HEXPIRE,
     HEXPIREAT,
     HEXPIRETIME,

@@ -114,7 +114,7 @@ pub const Optional = struct {
     }
 };
 
-const Impl = opaque {
+pub const Impl = opaque {
     pub fn init(global: *jsc.JSGlobalObject, value: jsc.JSValue) *Impl {
         jsc.markBinding(@src());
         return Bun__StrongRef__new(global, value);

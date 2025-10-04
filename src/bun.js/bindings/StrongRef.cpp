@@ -1,4 +1,5 @@
 #include "root.h"
+#include "StrongRef.h"
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"

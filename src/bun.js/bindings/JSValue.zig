@@ -1133,25 +1133,16 @@ pub const JSValue = enum(i64) {
         return bun.cpp.JSC__JSValue__toMatch(this, global, other);
     }
 
-    extern fn JSC__JSValue__asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;
-    pub fn asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool {
-        return JSC__JSValue__asArrayBuffer_(this, global, out);
-    }
+    extern fn JSC__JSValue__asArrayBuffer(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;
 
     pub fn asArrayBuffer(this: JSValue, global: *JSGlobalObject) ?ArrayBuffer {
-        var out: ArrayBuffer = .{
-            .offset = 0,
-            .len = 0,
-            .byte_len = 0,
-            .shared = false,
-            .typed_array_type = .Uint8Array,
-        };
-
-        if (this.asArrayBuffer_(global, &out)) {
-            out.value = this;
+        var out: ArrayBuffer = undefined;
+        // `ptr` might not get set if the ArrayBuffer is empty, so make sure it starts out with a
+        // defined value.
+        out.ptr = &.{};
+        if (JSC__JSValue__asArrayBuffer(this, global, &out)) {
             return out;
         }
-
         return null;
     }
     extern fn JSC__JSValue__fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue;

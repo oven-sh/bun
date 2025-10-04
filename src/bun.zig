@@ -8,7 +8,7 @@ const bun = @This();
 
 pub const Environment = @import("./env.zig");
 
-pub const use_mimalloc = true;
+pub const use_mimalloc = @import("build_options").use_mimalloc;
 pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
 /// Zero-sized type whose `allocator` method returns `default_allocator`.
 pub const DefaultAllocator = allocators.Default;

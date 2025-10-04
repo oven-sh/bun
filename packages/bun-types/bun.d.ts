@@ -2861,10 +2861,6 @@ declare module "bun" {
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
 
-    keyFile?: string;
-
-    certFile?: string;
-
     ALPNProtocols?: string | BufferSource;
 
     ciphers?: string;

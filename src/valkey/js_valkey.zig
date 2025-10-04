@@ -1194,8 +1194,8 @@ pub const JSValkeyClient = struct {
         const has_activity = has_pending_commands or !subs_deletable or this.client.flags.is_reconnecting;
 
         // There's a couple cases to handle here:
-        if (has_activity) {
-            // If we currently have pending activity, we need to keep the event
+        if (has_activity or this.client.status == .connecting) {
+            // If we currently have pending activity or we are connecting, we need to keep the event
             // loop alive.
             this.poll_ref.ref(this.client.vm);
         } else {

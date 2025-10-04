@@ -340,6 +340,7 @@ pub fn generateChunksInParallel(
                 chunk,
                 chunks,
                 &display_size,
+                c.resolver.opts.compile and !chunk.is_browser_chunk_from_server_build,
                 chunk.content.sourcemap(c.options.source_maps) != .none,
             );
             var code_result = _code_result catch @panic("Failed to allocate memory for output file");

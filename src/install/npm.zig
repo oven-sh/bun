@@ -1512,7 +1512,7 @@ pub const PackageManifest = struct {
             0;
 
         var i = versions.len;
-        while (i > 0) : (i -= 1) {
+        while (i > 0) {
             i -= 1;
             const version = versions[i];
             if (group.satisfies(version, group_buf, this.string_buf)) {

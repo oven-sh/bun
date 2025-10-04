@@ -125,6 +125,7 @@ pub const Ref = union(Type) {
     }
 
     pub fn init(owner: Owner, global: *jsc.JSGlobalObject) Ref {
+        _ = global;
         switch (owner) {
             .Response => {
                 return .Response;
@@ -132,10 +133,9 @@ pub const Ref = union(Type) {
             .Request => {
                 return .Request;
             },
-            .strong => {
-                return .{ .strong = .init(owner.strong, global) };
-            },
-            .empty => {
+            .strong, .empty => {
+                // Strong and empty don't have an owner, so we return empty
+                // The caller should use .set() to populate with a stream
                 return .empty;
             },
         }

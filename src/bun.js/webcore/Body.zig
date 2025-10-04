@@ -440,10 +440,20 @@ pub const Value = union(Tag) {
                 const stream = (try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?;
                 this.* = .{
                     .Locked = .{
-                        .readable = .{ .strong = .init(stream, globalThis) },
+                        .readable = switch (owner) {
+                            .Request => |jsval| if (jsval != .zero) .Request else .{ .strong = .init(stream, globalThis) },
+                            .Response => |jsval| if (jsval != .zero) .Response else .{ .strong = .init(stream, globalThis) },
+                            .strong, .empty => .{ .strong = .init(stream, globalThis) },
+                        },
                         .global = globalThis,
                     },
                 };
+                // Only set in GC cache if we have a valid JSValue owner
+                switch (owner) {
+                    .Request => |jsval| if (jsval != .zero) this.Locked.readable.set(owner, stream, globalThis),
+                    .Response => |jsval| if (jsval != .zero) this.Locked.readable.set(owner, stream, globalThis),
+                    .strong, .empty => {},
+                }
                 return value;
             },
             .Locked => {
@@ -488,13 +498,25 @@ pub const Value = union(Tag) {
                     .ptr = .{ .Bytes = &reader.context },
                     .value = stream_value,
                 };
-                locked.readable = .{ .strong = .init(stream, globalThis) };
 
-                if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-                    onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(owner, globalThis).?);
+                // Use strong ref if owner doesn't have a valid JSValue
+                const should_use_strong = switch (owner) {
+                    .Request => |jsval| jsval == .zero,
+                    .Response => |jsval| jsval == .zero,
+                    .strong, .empty => true,
+                };
+
+                if (should_use_strong) {
+                    locked.readable = .{ .strong = .init(stream, globalThis) };
+                } else {
+                    locked.readable.set(owner, stream, globalThis);
                 }
 
-                return locked.readable.get(owner, globalThis).?.value;
+                if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
+                    onReadableStreamAvailable(locked.task.?, globalThis, stream);
+                }
+
+                return stream.value;
             },
             .Error => {
                 // TODO: handle error properly

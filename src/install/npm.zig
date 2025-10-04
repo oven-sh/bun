@@ -1679,7 +1679,7 @@ pub const PackageManifest = struct {
                     break;
                 }
 
-                const is_stable = package.publish_timestamp_ms - prev_package.publish_timestamp_ms >= stability_window_ms;
+                const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
                 if (is_stable) {
                     return .{ .found_with_filter = .{
                         .result = .{ .version = version, .package = package },

@@ -1,16 +1,13 @@
 import { randomUUIDv7, RedisClient, spawn } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunExe, bunRun } from "harness";
-import { join } from "node:path";
+import { bunExe } from "harness";
 import {
   ctx as _ctx,
   awaitableCounter,
   ConnectionType,
   createClient,
   DEFAULT_REDIS_URL,
-  expectType,
   isEnabled,
-  randomCoinFlip,
   setupDockerContainer,
   TLS_REDIS_OPTIONS,
   TLS_REDIS_URL,

@@ -971,7 +971,7 @@ pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, ma
                         manager.scopeForPackageName(pkg_name.slice(this.buffers.string_bytes.items)),
                         pkg_name_hash,
                         .load_from_memory_fallback_to_disk,
-                        this.options.minimum_release_age_ms != null,
+                        false,
                     ) orelse {
                         continue;
                     };
@@ -1016,7 +1016,7 @@ pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, ma
                         manager.scopeForPackageName(pkg_name.slice(this.buffers.string_bytes.items)),
                         pkg_name_hash,
                         .load_from_memory_fallback_to_disk,
-                        this.options.minimum_release_age_ms != null,
+                        false,
                     ) orelse {
                         continue;
                     };

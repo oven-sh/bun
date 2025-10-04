@@ -1506,7 +1506,7 @@ pub const PackageManifest = struct {
         var prev_package_blocked_from_age: ?*const PackageVersion = null;
         var best_version: ?FindResult = null;
 
-        const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
+        const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
         const stability_window_ms: f64 = if (minimum_release_age_ms) |min_age_ms|
             @min(min_age_ms, seven_days_ms)
@@ -1621,7 +1621,7 @@ pub const PackageManifest = struct {
         const min_age_ms = min_age_gate_ms orelse {
             return .{ .found = dist_result };
         };
-        const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
+        const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
         const stability_window_ms = @min(min_age_ms, seven_days_ms);
 
@@ -1724,7 +1724,7 @@ pub const PackageManifest = struct {
 
         const left = group.head.head.range.left;
         var newest_filtered: ?Semver.Version = null;
-        const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
+        const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
 
         if (left.op == .eql) {

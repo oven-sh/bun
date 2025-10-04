@@ -278,8 +278,8 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
-const glob = bun.glob;
 const Global = bun.Global;
 const JSON = bun.json;
 const Output = bun.Output;
+const glob = bun.glob;
 const strings = bun.strings;

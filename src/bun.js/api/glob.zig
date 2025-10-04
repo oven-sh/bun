@@ -390,11 +390,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
 
-const GlobWalker = bun.glob.BunGlobWalker;
-
 const bun = @import("bun");
 const BunString = bun.String;
 const CodepointIterator = bun.strings.UnsignedCodepointIterator;
+const GlobWalker = bun.glob.BunGlobWalker;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

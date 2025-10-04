@@ -1019,10 +1019,9 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 
+const Request = jsc.WebCore.Request;
+const Response = jsc.WebCore.Response;
+
 const webcore = bun.webcore;
 const Blob = webcore.Blob;
 const streams = webcore.streams;
-
-const std = @import("std");
-const Request = jsc.WebCore.Request;
-const Response = jsc.WebCore.Response;

@@ -32,6 +32,8 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseFakeTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseRealTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsNow);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsGetMockedSystemTime);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsGetRealSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsClearAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
@@ -1491,6 +1493,33 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     }
 
     return JSValue::encode(callframe->thisValue());
+}
+
+// Returns the currently mocked system time as a Date object, or null if not mocked
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsGetMockedSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    // Check if fake timers are active (overridenDateNow >= 0)
+    if (globalObject->overridenDateNow >= 0) {
+        // Return a new Date object with the mocked time
+        auto& vm = globalObject->vm();
+        DateInstance* dateInstance = DateInstance::create(vm, globalObject->dateStructure(), globalObject->overridenDateNow);
+        return JSValue::encode(dateInstance);
+    }
+
+    // Return null if fake timers are not active
+    return JSValue::encode(jsNull());
+}
+
+// Always returns the real system time, regardless of mocked time
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsGetRealSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    // Get the real system time by temporarily disabling the override
+    double originalOverride = globalObject->overridenDateNow;
+    globalObject->overridenDateNow = -1;
+    double realTime = globalObject->jsDateNow();
+    globalObject->overridenDateNow = originalOverride;
+
+    return JSValue::encode(jsNumber(realTime));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

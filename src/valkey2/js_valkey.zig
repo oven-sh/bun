@@ -1223,11 +1223,14 @@ fn jsValueToJsArgument(go: *bun.jsc.JSGlobalObject, value: bun.jsc.JSValue) !?JS
     return try JSArgument.fromJSMaybeFile(go, bun.default_allocator, value, false);
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const ValkeyClient = @import("./valkey.zig").ValkeyClient;
-const JSArgument = bun.jsc.Node.BlobOrStringOrBuffer;
 // TODO(markovejnovic): This should be imported from the same location as ValkeyClient.
-const protocol = @import("./valkey.zig").protocol;
+
+const bun = @import("bun");
+const std = @import("std");
+const JSArgument = bun.jsc.Node.BlobOrStringOrBuffer;
+
 const Command = @import("./command.zig").Command;
 const CommandDescriptor = @import("./command.zig").CommandDescriptor;
+
+const ValkeyClient = @import("./valkey.zig").ValkeyClient;
+const protocol = @import("./valkey.zig").protocol;

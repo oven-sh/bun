@@ -1577,7 +1577,7 @@ fn Response(Context: type) type {
     _ = Context;
 }
 
-pub const protocol = @import("protocol.zig");
+pub const protocol = @import("./protocol.zig");
 
 fn QueuedRequest(Context: type) type {
     return struct {
@@ -1600,12 +1600,10 @@ fn QueuedRequest(Context: type) type {
     };
 }
 
-const PacketMetadata = struct {};
-
-const std = @import("std");
-const bun = @import("bun");
-const Command = @import("command.zig").Command;
-
 // TODO(markovejnovic): Remove this dependency. We were so close to removing all dependencies on JS
 // APIs, except for the auto flushing.
+
+const bun = @import("bun");
+const std = @import("std");
+const Command = @import("./command.zig").Command;
 const AutoFlusher = bun.jsc.WebCore.AutoFlusher;

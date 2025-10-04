@@ -191,6 +191,6 @@ export default [
     //values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
     values: [
       "connectionPromise", // Used to track the progress of the connection. Not exposed to JS.
-    ]
+    ],
   }),
 ];

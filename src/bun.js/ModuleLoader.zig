@@ -1516,7 +1516,9 @@ pub fn transpileSourceCode(
             }
 
             const value = brk: {
-                if (!jsc_vm.origin.isEmpty()) {
+                // Only use origin for file imports when running from dev server
+                // --port flag should only affect Bun.serve, not file import URLs
+                if (!jsc_vm.origin.isEmpty() and jsc_vm.is_from_devserver) {
                     var buf = bun.handleOom(MutableString.init2048(jsc_vm.allocator));
                     defer buf.deinit();
                     var writer = buf.writer();

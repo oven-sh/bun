@@ -126,9 +126,6 @@ export async function renderRoutesForProdStatic(
 
     await Promise.all(
       Object.entries(files).map(([key, value]) => {
-        if (params != null) {
-          return Bun.write(pathJoin(outBase, routePath, key), value);
-        }
         return Bun.write(pathJoin(outBase, routePath, key), value);
       }),
     );

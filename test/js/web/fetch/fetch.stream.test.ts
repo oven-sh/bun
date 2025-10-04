@@ -28,23 +28,16 @@ const empty = Buffer.alloc(0);
 
 describe.concurrent("fetch() with streaming", () => {
   [100, 50, 20, 0, -1].forEach(timeout => {
-    for (let via of ["pull", "start"]) {
+    ["pull", "start"].forEach(via => {
       it(`should be able to fail properly when reading from readable stream via ${via} with timeout ${timeout}`, async () => {
-        let thisTimeoutShouldNeverBeReached;
+        let ran;
         using server = Bun.serve({
           port: 0,
           async fetch(req) {
             async function fn(controller) {
-              if (thisTimeoutShouldNeverBeReached) return;
+              if (ran) return;
+              ran = true;
               controller.enqueue("Hello, World!");
-              thisTimeoutShouldNeverBeReached = setTimeout(
-                () => {
-                  controller.enqueue("Hello, World!");
-                  controller.close();
-                },
-                // Make the timeout long enough to account for timer imprecision and busy CPUs
-                10000,
-              );
             }
             return new Response(
               new ReadableStream({
@@ -62,15 +55,14 @@ describe.concurrent("fetch() with streaming", () => {
 
         const server_url = server.url.href;
         try {
+          const signal = timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout);
           const res = await fetch(server_url, {
             signal: timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout),
           });
 
           const reader = res.body?.getReader();
-          let results = [];
           while (true) {
-            const { done, value } = await reader?.read();
-            if (value) results.push(value);
+            const { done } = await reader?.read();
             if (done) break;
           }
           expect.unreachable();
@@ -82,11 +74,9 @@ describe.concurrent("fetch() with streaming", () => {
             if (err.name !== "TimeoutError") throw err;
             expect(err.message).toBe("The operation timed out.");
           }
-        } finally {
-          if (thisTimeoutShouldNeverBeReached) clearTimeout(thisTimeoutShouldNeverBeReached);
         }
       });
-    }
+    });
   });
 
   it(`should be locked after start buffering`, async () => {

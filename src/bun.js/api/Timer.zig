@@ -1,5 +1,7 @@
 const Timer = @This();
 
+extern fn Bun__Timer__isFakeTimersEnabled(*jsc.JSGlobalObject) bool;
+
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
 /// When Timeout is null, it means the tasks have been scheduled but not yet executed.
@@ -19,6 +21,7 @@ pub const All = struct {
     lock: bun.Mutex = .{},
     thread_id: std.Thread.Id,
     timers: TimerHeap = .{ .context = {} },
+    vi_timers: TimerHeap = .{ .context = {} },
     active_timer_count: i32 = 0,
     uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
     /// Whether we have emitted a warning for passing a negative timeout duration
@@ -61,18 +64,32 @@ pub const All = struct {
     pub fn insert(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
-        this.timers.insert(timer);
+
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
+        // Check if fake timers are enabled and timer is not a WTFTimer
+        if (timer.tag.allowFakeTimers() and Bun__Timer__isFakeTimersEnabled(vm.global)) {
+            timer.is_vi_timer = true;
+            this.vi_timers.insert(timer);
+        } else {
+            timer.is_vi_timer = false;
+            this.timers.insert(timer);
+        }
         timer.state = .ACTIVE;
 
         if (Environment.isWindows) {
-            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
+            this.ensureUVTimer(vm);
         }
     }
 
     pub fn remove(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
-        this.timers.remove(timer);
+
+        if (timer.is_vi_timer) {
+            this.vi_timers.remove(timer);
+        } else {
+            this.timers.remove(timer);
+        }
 
         timer.state = .CANCELLED;
     }
@@ -82,7 +99,12 @@ pub const All = struct {
         this.lock.lock();
         defer this.lock.unlock();
         if (timer.state == .ACTIVE) {
-            this.timers.remove(timer);
+            // Remove from the correct heap
+            if (timer.is_vi_timer) {
+                this.vi_timers.remove(timer);
+            } else {
+                this.timers.remove(timer);
+            }
         }
 
         timer.state = .ACTIVE;
@@ -98,9 +120,17 @@ pub const All = struct {
             flags.epoch = this.epoch;
         }
 
-        this.timers.insert(timer);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", this));
+        // Check if fake timers are enabled and timer is not a WTFTimer
+        if (timer.tag != .WTFTimer and Bun__Timer__isFakeTimersEnabled(vm.global)) {
+            timer.is_vi_timer = true;
+            this.vi_timers.insert(timer);
+        } else {
+            timer.is_vi_timer = false;
+            this.timers.insert(timer);
+        }
         if (Environment.isWindows) {
-            this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
+            this.ensureUVTimer(vm);
         }
     }
 
@@ -546,6 +576,28 @@ pub const All = struct {
         return .js_undefined;
     }
 
+    pub fn runAllTimers(
+        globalThis: *JSGlobalObject,
+        _: *jsc.CallFrame,
+    ) JSError!JSValue {
+        jsc.markBinding(@src());
+        const vm = globalThis.bunVM();
+        const timer = &vm.timer;
+
+        timer.lock.lock();
+        defer timer.lock.unlock();
+
+        // Fire all timers in the vi_timers heap
+        while (timer.vi_timers.deleteMin()) |event_timer| {
+            timer.lock.unlock();
+            defer timer.lock.lock();
+
+            _ = event_timer.fire(&timespec.now(), vm);
+        }
+
+        return .js_undefined;
+    }
+
     comptime {
         @export(&jsc.host_fn.wrap3(setImmediate), .{ .name = "Bun__Timer__setImmediate" });
         @export(&jsc.host_fn.wrap3(sleep), .{ .name = "Bun__Timer__sleep" });
@@ -554,6 +606,7 @@ pub const All = struct {
         @export(&jsc.host_fn.wrap2(clearImmediate), .{ .name = "Bun__Timer__clearImmediate" });
         @export(&jsc.host_fn.wrap2(clearTimeout), .{ .name = "Bun__Timer__clearTimeout" });
         @export(&jsc.host_fn.wrap2(clearInterval), .{ .name = "Bun__Timer__clearInterval" });
+        @export(&jsc.host_fn.wrap2(runAllTimers), .{ .name = "Bun__Timer__runAllTimers" });
         @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
     }
 };

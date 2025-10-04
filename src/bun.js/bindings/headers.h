@@ -663,6 +663,7 @@ ZIG_DECL JSC::EncodedJSValue Bun__Timer__setInterval(JSC::JSGlobalObject* global
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setTimeout(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__sleep(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue promise, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setImmediate(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments);
+ZIG_DECL bool Bun__Timer__isFakeTimersEnabled(JSC::JSGlobalObject* globalThis);
 
 #endif
 

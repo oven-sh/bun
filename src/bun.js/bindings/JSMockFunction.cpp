@@ -1531,6 +1531,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsIsFakeTimers, (JSC::JSGlobalObject * globalOb
     return JSValue::encode(jsBoolean(isFakeTimersEnabled));
 }
 
+// Export C function for Zig to check if fake timers are enabled
+extern "C" bool Bun__Timer__isFakeTimersEnabled(JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->overridenDateNow >= 0;
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     JSMock__resetSpies(jsCast<Zig::GlobalObject*>(globalObject));

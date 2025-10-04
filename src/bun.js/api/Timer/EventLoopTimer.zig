@@ -4,6 +4,8 @@ const Self = @This();
 next: timespec,
 state: State = .PENDING,
 tag: Tag,
+/// Whether this timer is in the vi_timers heap (for fake timers)
+is_vi_timer: bool = false,
 /// Internal heap fields.
 heap: bun.io.heap.IntrusiveField(Self) = .{},
 
@@ -96,6 +98,17 @@ pub const Tag = enum {
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
+
+    pub fn allowFakeTimers(self: Tag) bool {
+        return switch (self) {
+            .WTFTimer, // internal
+            .BunTest, // for test timeouts
+            .EventLoopDelayMonitor, // probably important
+            .StatWatcherScheduler,
+            => false,
+            else => true,
+        };
+    }
 };
 
 const UnreachableTimer = struct {
@@ -103,6 +116,17 @@ const UnreachableTimer = struct {
     fn callback(_: *UnreachableTimer, _: *UnreachableTimer) Arm {
         if (Environment.ci_assert) bun.assert(false);
         return .disarm;
+    }
+
+    pub fn allowFakeTimers(self: Tag) bool {
+        return switch (self) {
+            .WTFTimer, // internal
+            .BunTest, // for test timeouts
+            .EventLoopDelayMonitor, // probably important
+            .StatWatcherScheduler,
+            => false,
+            else => true,
+        };
     }
 };
 

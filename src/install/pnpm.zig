@@ -824,7 +824,7 @@ pub fn migratePnpmLockfile(
 
     try lockfile.resolve(log);
 
-    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager);
+    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, false);
 
     try updatePackageJsonAfterMigration(allocator, manager, log, dir, found_patches);
 

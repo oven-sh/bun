@@ -789,12 +789,32 @@ pub fn init(
 
     initializeStore();
 
-    // Load .npmrc files: first from HOME (if set), then from current working directory
-    // The CWD .npmrc takes precedence and overrides settings from HOME .npmrc
+    // Load .npmrc files following npm's configuration precedence rules.
+    // See: https://github.com/npm/cli/blob/latest/workspaces/config/lib/index.js
+    //
+    // npm's configuration priority chain (line 119-124) from lowest to highest precedence:
+    //   default → builtin → global → user → project → env → cli
+    //
+    // This means:
+    //   - Project config (.npmrc in project root) overrides user config
+    //   - User config (~/.npmrc) overrides global config
+    //   - etc.
+    //
+    // npm's Config.load() (lines 240-272) loads these configs:
+    //   - loadUserConfig() at line 259: loads ~/.npmrc (or userconfig path)
+    //   - loadProjectConfig() at line 256: loads .npmrc in project root
+    //
+    // We load user config first, then project config. Since each config file's
+    // values overwrite previous values, this implements the correct precedence
+    // (project overrides user).
+    //
+    // npm's loadHome() (line 317-319): HOME = env.HOME || homedir()
+    // We also support XDG_CONFIG_HOME following XDG Base Directory specification
     var npmrc_paths_buf: [2][:0]const u8 = undefined;
     var npmrc_path_count: usize = 0;
 
-    // First, try to load HOME/.npmrc (or XDG_CONFIG_HOME/.npmrc)
+    // Load user config from HOME/.npmrc or XDG_CONFIG_HOME/.npmrc
+    // This matches npm's loadUserConfig() behavior (line 754-756)
     var home_npmrc_buf: bun.PathBuffer = undefined;
     if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
         var parts = [_]string{".npmrc"};
@@ -802,7 +822,9 @@ pub fn init(
         npmrc_path_count += 1;
     }
 
-    // Always load CWD/.npmrc (current working directory)
+    // Load project config from CWD/.npmrc
+    // This matches npm's loadProjectConfig() behavior (line 653-683)
+    // Project config is loaded after user config and takes precedence
     npmrc_paths_buf[npmrc_path_count] = ".npmrc";
     npmrc_path_count += 1;
 

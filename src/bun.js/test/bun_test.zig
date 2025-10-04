@@ -136,14 +136,14 @@ pub const BunTestRoot = struct {
         bun.assert(this.active_file == null);
     }
 
-    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool) void {
+    pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool, first_last: FirstLast) void {
         group.begin(@src());
         defer group.end();
 
         bun.assert(this.active_file.get() == null);
 
         this.active_file = .new(undefined);
-        this.active_file.get().?.init(this.gpa, this, file_id, reporter, default_concurrent);
+        this.active_file.get().?.init(this.gpa, this, file_id, reporter, default_concurrent, first_last);
     }
     pub fn exitFile(this: *BunTestRoot) void {
         group.begin(@src());
@@ -164,10 +164,30 @@ pub const BunTestRoot = struct {
         var clone = this.active_file.clone();
         return clone.take();
     }
+
+    pub const FirstLast = struct {
+        first: bool,
+        last: bool,
+    };
+
+    pub fn onBeforePrint(this: *BunTestRoot) void {
+        if (this.active_file.get()) |active_file| {
+            if (active_file.reporter) |reporter| {
+                if (reporter.last_printed_dot and reporter.reporters.dots) {
+                    bun.Output.prettyError("<r>\n", .{});
+                    bun.Output.flush();
+                    reporter.last_printed_dot = false;
+                }
+                if (bun.jsc.Jest.Jest.runner) |runner| {
+                    runner.current_file.printIfNeeded();
+                }
+            }
+        }
+    }
 };
 
 pub const BunTest = struct {
-    buntest: *BunTestRoot,
+    bun_test_root: *BunTestRoot,
     in_run_loop: bool,
     allocation_scope: bun.AllocationScope,
     gpa: std.mem.Allocator,
@@ -180,7 +200,9 @@ pub const BunTest = struct {
     result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     default_concurrent: bool,
+    first_last: BunTestRoot.FirstLast,
     extra_execution_entries: std.ArrayList(*ExecutionEntry),
+    wants_wakeup: bool = false,
 
     phase: enum {
         collection,
@@ -190,7 +212,7 @@ pub const BunTest = struct {
     collection: Collection,
     execution: Execution,
 
-    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool) void {
+    pub fn init(this: *BunTest, outer_gpa: std.mem.Allocator, bunTest: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool, first_last: BunTestRoot.FirstLast) void {
         group.begin(@src());
         defer group.end();
 
@@ -200,7 +222,7 @@ pub const BunTest = struct {
         this.arena = this.arena_allocator.allocator();
 
         this.* = .{
-            .buntest = bunTest,
+            .bun_test_root = bunTest,
             .in_run_loop = false,
             .allocation_scope = this.allocation_scope,
             .gpa = this.gpa,
@@ -213,6 +235,7 @@ pub const BunTest = struct {
             .reporter = reporter,
             .result_queue = .init(this.gpa),
             .default_concurrent = default_concurrent,
+            .first_last = first_last,
             .extra_execution_entries = .init(this.gpa),
         };
     }
@@ -303,10 +326,8 @@ pub const BunTest = struct {
             bun.destroy(this);
             buntest_weak.deinit();
         }
-        pub fn bunTest(this: *RefData) ?*BunTest {
-            var buntest_strong = this.buntest_weak.clone().upgrade() orelse return null;
-            defer buntest_strong.deinit();
-            return buntest_strong.get();
+        pub fn bunTest(this: *RefData) ?BunTestPtr {
+            return this.buntest_weak.upgrade() orelse return null;
         }
     };
     pub fn getCurrentStateData(this: *BunTest) RefDataValue {
@@ -372,7 +393,7 @@ pub const BunTest = struct {
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
         defer refdata.deref();
         const has_one_ref = refdata.ref_count.hasOneRef();
-        var this_strong = refdata.buntest_weak.clone().upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
+        var this_strong = refdata.buntest_weak.upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
         defer this_strong.deinit();
         const this = this_strong.get();
 
@@ -426,7 +447,7 @@ pub const BunTest = struct {
 
         if (!should_run) return .js_undefined;
 
-        var strong = ref_in.buntest_weak.clone().upgrade() orelse return .js_undefined;
+        var strong = ref_in.buntest_weak.upgrade() orelse return .js_undefined;
         defer strong.deinit();
         const buntest = strong.get();
         buntest.addResult(ref_in.phase);
@@ -458,7 +479,14 @@ pub const BunTest = struct {
         const done_callback_test = bun.new(RunTestsTask, .{ .weak = weak.clone(), .globalThis = globalThis, .phase = phase });
         errdefer bun.destroy(done_callback_test);
         const task = jsc.ManagedTask.New(RunTestsTask, RunTestsTask.call).init(done_callback_test);
-        jsc.VirtualMachine.get().enqueueTask(task);
+        const vm = globalThis.bunVM();
+        var strong = weak.upgrade() orelse {
+            if (bun.Environment.ci_assert) bun.assert(false); // shouldn't be calling runNextTick after moving on to the next file
+            return; // but just in case
+        };
+        defer strong.deinit();
+        strong.get().wants_wakeup = true; // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
+        vm.enqueueTask(task);
     }
     pub const RunTestsTask = struct {
         weak: BunTestPtr.Weak,
@@ -468,7 +496,7 @@ pub const BunTest = struct {
         pub fn call(this: *RunTestsTask) void {
             defer bun.destroy(this);
             defer this.weak.deinit();
-            var strong = this.weak.clone().upgrade() orelse return;
+            var strong = this.weak.upgrade() orelse return;
             defer strong.deinit();
             BunTest.run(strong, this.globalThis) catch |e| {
                 strong.get().onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.phase);
@@ -546,19 +574,20 @@ pub const BunTest = struct {
             .collection => {
                 this.phase = .execution;
                 try debug.dumpDescribe(this.collection.root_scope);
-                var order = Order.init(this.gpa, this.arena);
-                defer order.deinit();
 
                 const has_filter = if (this.reporter) |reporter| if (reporter.jest.filter_regex) |_| true else false else false;
                 const should_randomize: ?std.Random = if (this.reporter) |reporter| reporter.jest.randomize else null;
-                const cfg: Order.Config = .{
+
+                var order = Order.init(this.gpa, this.arena, .{
                     .always_use_hooks = this.collection.root_scope.base.only == .no and !has_filter,
                     .randomize = should_randomize,
-                };
-                const beforeall_order: Order.AllOrderResult = if (cfg.always_use_hooks or this.collection.root_scope.base.has_callback) try order.generateAllOrder(this.buntest.hook_scope.beforeAll.items, cfg) else .empty;
-                try order.generateOrderDescribe(this.collection.root_scope, cfg);
+                });
+                defer order.deinit();
+
+                const beforeall_order: Order.AllOrderResult = if (this.first_last.first) try order.generateAllOrder(this.bun_test_root.hook_scope.beforeAll.items) else .empty;
+                try order.generateOrderDescribe(this.collection.root_scope);
                 beforeall_order.setFailureSkipTo(&order);
-                const afterall_order: Order.AllOrderResult = if (cfg.always_use_hooks or this.collection.root_scope.base.has_callback) try order.generateAllOrder(this.buntest.hook_scope.afterAll.items, cfg) else .empty;
+                const afterall_order: Order.AllOrderResult = if (this.first_last.last) try order.generateAllOrder(this.bun_test_root.hook_scope.afterAll.items) else .empty;
                 afterall_order.setFailureSkipTo(&order);
 
                 try this.execution.loadFromOrder(&order);
@@ -689,6 +718,7 @@ pub const BunTest = struct {
         if (handle_status == .hide_error) return; // do not print error, it was already consumed
         if (exception == null) return; // the exception should not be visible (eg m_terminationException)
 
+        this.bun_test_root.onBeforePrint();
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             this.reporter.?.jest.unhandled_errors_between_tests += 1;
             bun.Output.prettyErrorln(
@@ -699,12 +729,14 @@ pub const BunTest = struct {
             , .{});
             bun.Output.flush();
         }
+
         globalThis.bunVM().runErrorHandler(exception.?, null);
-        bun.Output.flush();
+
         if (handle_status == .show_unhandled_error_between_tests or handle_status == .show_unhandled_error_in_describe) {
             bun.Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
-            bun.Output.flush();
         }
+
+        bun.Output.flush();
     }
 };
 

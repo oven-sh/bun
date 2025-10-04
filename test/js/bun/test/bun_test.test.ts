@@ -235,3 +235,34 @@ test("cross-file safety", async () => {
   expect(stderr).toInclude("Snapshot matchers cannot be used outside of a test");
   expect(exitCode).toBe(1);
 });
+
+test("multi-file", async () => {
+  const result = await Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      import.meta.dir + "/scheduling/multi-file/test1.fixture.ts",
+      import.meta.dir + "/scheduling/multi-file/test2.fixture.ts",
+      "--preload",
+      import.meta.dir + "/scheduling/multi-file/preload.ts",
+    ],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+  expect(exitCode).toBe(0);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    preload: before first file
+    preload: beforeEach
+    test1
+    preload: afterEach
+    preload: beforeEach
+    test2
+    preload: afterEach
+    preload: after last file"
+  `);
+});

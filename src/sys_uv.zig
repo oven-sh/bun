@@ -7,6 +7,7 @@ comptime {
 
 pub const log = bun.sys.syslog;
 pub const Error = bun.sys.Error;
+pub const PosixStat = bun.sys.PosixStat;
 
 // libuv dont support openat (https://github.com/libuv/libuv/issues/4167)
 pub const openat = bun.sys.openat;

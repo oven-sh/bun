@@ -1074,7 +1074,6 @@ pub const WindowsBufferedReader = struct {
                 .tty => |tty| {
                     if (Source.StdinTTY.isStdinTTY(tty)) {
                         // Node only ever closes stdin on process exit.
-                        // Source.StdinTTY.closeStdinTTY();
                     } else {
                         tty.data = tty;
                         tty.close(onTTYClose);

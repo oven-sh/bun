@@ -107,5 +107,4 @@ describe("bun feedback", () => {
     expect(output).toContain("Usage");
     expect(output).toContain("--email");
   });
-
 });

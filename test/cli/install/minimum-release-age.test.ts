@@ -884,13 +884,6 @@ describe("minimum-release-age", () => {
       });
 
       const exitCode = await proc.exited;
-      const stderr = await proc.stderr.text();
-
-      // Debug output
-      if (exitCode !== 0) {
-        console.error("Canary test failed. stderr:", stderr);
-      }
-
       expect(exitCode).toBe(0);
 
       // Should select canary.3 (5 days old), not canary.4 (2 days) or canary.5 (0.5 days)
@@ -1606,12 +1599,7 @@ registry = "${mockRegistryUrl}"`,
         stderr: "pipe",
       });
 
-      const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
-
-      if (exitCode !== 0) {
-        console.error("Install failed with stderr:", stderr);
-      }
-      expect(exitCode).toBe(0);
+      expect(proc.exited).resolves.toBe(0);
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       // Scoped package should be filtered (1.5.0 not 2.0.0)

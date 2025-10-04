@@ -4021,6 +4021,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
 }
 
 extern "C" void Bun__queueTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
+extern "C" void Bun__queueImmediateCppTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
@@ -4044,6 +4045,11 @@ void GlobalObject::queueTask(WebCore::EventLoopTask* task)
     Bun__queueTask(this, task);
 }
 
+void GlobalObject::queueImmediateCppTask(WebCore::EventLoopTask* task)
+{
+    Bun__queueImmediateCppTask(this, task);
+}
+
 void GlobalObject::queueTaskConcurrently(WebCore::EventLoopTask* task)
 {
     Bun__queueTaskConcurrently(this, task);
@@ -4060,7 +4066,10 @@ void GlobalObject::handleRejectedPromises()
             continue;
 
         Bun__handleRejectedPromise(this, promise);
-        if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
+        if (auto ex = scope.exception()) {
+            scope.clearException();
+            this->reportUncaughtExceptionAtEventLoop(this, ex);
+        }
     }
 }
 

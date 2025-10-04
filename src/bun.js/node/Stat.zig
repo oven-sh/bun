@@ -210,5 +210,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const jsc = bun.jsc;
 const Syscall = bun.sys;
+const jsc = bun.jsc;

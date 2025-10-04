@@ -1,5 +1,3 @@
-const bun = @import("../bun.zig");
-
 /// POSIX-like stat structure with birthtime support for node:fs
 /// This extends the standard POSIX stat with birthtime (creation time)
 pub const PosixStat = extern struct {
@@ -39,3 +37,5 @@ pub const PosixStat = extern struct {
         return self.birthtim;
     }
 };
+
+const bun = @import("../bun.zig");

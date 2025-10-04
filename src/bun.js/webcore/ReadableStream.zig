@@ -121,7 +121,7 @@ pub const Ref = union(Type) {
             return;
         }
 
-        this.* = .{ .strong = .init(current.value, global) };
+        this.* = .{ .strong = .init(current.*, global) };
     }
 
     pub fn init(owner: Owner, global: *jsc.JSGlobalObject) Ref {

@@ -8,34 +8,83 @@ const toolName = input.tool_name;
 const toolInput = input.tool_input || {};
 const filePath = toolInput.file_path;
 
-// Only process Write and Edit tools
-if (!["Write", "Edit"].includes(toolName)) {
+// Only process Write, Edit, and MultiEdit tools
+if (!["Write", "Edit", "MultiEdit"].includes(toolName)) {
   process.exit(0);
 }
 
-// Only format .zig files
-if (!filePath || extname(filePath) !== ".zig") {
+const ext = extname(filePath);
+
+// Only format known files
+if (!filePath) {
   process.exit(0);
 }
 
-// Format the Zig file
-const result = spawnSync("vendor/zig/zig.exe", ["fmt", filePath], {
-  cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd(),
-  encoding: "utf-8"
-});
+function formatZigFile() {
+  try {
+    // Format the Zig file
+    const result = spawnSync("vendor/zig/zig.exe", ["fmt", filePath], {
+      cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+      encoding: "utf-8",
+    });
 
-if (result.error) {
-  console.error(`Failed to format ${filePath}: ${result.error.message}`);
-  process.exit(0);
+    if (result.error) {
+      console.error(`Failed to format ${filePath}: ${result.error.message}`);
+      process.exit(0);
+    }
+
+    if (result.status !== 0) {
+      console.error(`zig fmt failed for ${filePath}:`);
+      if (result.stderr) {
+        console.error(result.stderr);
+      }
+      process.exit(0);
+    }
+  } catch (error) {}
 }
 
-if (result.status !== 0) {
-  console.error(`zig fmt failed for ${filePath}:`);
-  if (result.stderr) {
-    console.error(result.stderr);
-  }
-  process.exit(0);
+function formatTypeScriptFile() {
+  try {
+    // Format the TypeScript file
+    const result = spawnSync(
+      "./node_modules/.bin/prettier",
+      ["--plugin=prettier-plugin-organize-imports", "--config", ".prettierrc", "--write", filePath],
+      {
+        cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+        encoding: "utf-8",
+      },
+    );
+  } catch (error) {}
 }
 
-// Success - file was formatted
+if (ext === ".zig") {
+  formatZigFile();
+} else if (
+  [
+    ".cjs",
+    ".css",
+    ".html",
+    ".js",
+    ".json",
+    ".jsonc",
+    ".jsx",
+    ".less",
+    ".mjs",
+    ".pcss",
+    ".postcss",
+    ".sass",
+    ".scss",
+    ".styl",
+    ".stylus",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".yaml",
+  ].includes(ext)
+) {
+  formatTypeScriptFile();
+} else if (ext === ".cpp" || ext === ".c" || ext === ".h") {
+  formatCppFile();
+}
+
 process.exit(0);

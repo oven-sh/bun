@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { basename } from "path";
+import { basename, extname } from "path";
 
 const input = await Bun.stdin.json();
 
@@ -22,8 +22,8 @@ function denyWithReason(reason) {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: reason
-    }
+      permissionDecisionReason: reason,
+    },
   };
   console.log(JSON.stringify(output));
   process.exit(0);
@@ -33,7 +33,7 @@ function denyWithReason(reason) {
 let tokens;
 try {
   // Simple shell parsing - split on spaces but respect quotes (both single and double)
-  tokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map(t => t.replace(/^['"]|['"]$/g, '')) || [];
+  tokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map(t => t.replace(/^['"]|['"]$/g, "")) || [];
 } catch {
   process.exit(0);
 }
@@ -61,10 +61,10 @@ tokens = tokens.slice(commandStart);
 useSystemBun = inlineEnv.get("USE_SYSTEM_BUN") ?? useSystemBun;
 
 // Get the executable name (argv0)
-const argv0 = basename(tokens[0]);
+const argv0 = basename(tokens[0], extname(tokens[0]));
 
 // Check if it's zig or zig.exe
-if (argv0 === "zig" || argv0 === "zig.exe") {
+if (argv0 === "zig") {
   // Filter out flags (starting with -) to get positional arguments
   const positionalArgs = tokens.slice(1).filter(arg => !arg.startsWith("-"));
 
@@ -132,7 +132,9 @@ if ((argv0 === "bun" || argv0.includes("bun-debug")) && useSystemBun !== "1") {
 
   // Check if it's "test" (not "bd test")
   if (positionalArgs.length >= 1 && positionalArgs[0] === "test" && positionalArgs[0] !== "bd") {
-    denyWithReason("error: In development, use `bun bd test <file>` to test your changes. If you meant to use a release version, set USE_SYSTEM_BUN=1");
+    denyWithReason(
+      "error: In development, use `bun bd test <file>` to test your changes. If you meant to use a release version, set USE_SYSTEM_BUN=1",
+    );
   }
 }
 
@@ -145,20 +147,25 @@ if (argv0 === "bun" || argv0.includes("bun-debug")) {
   if (positionalArgs.length >= 2 && positionalArgs[0] === "bd" && positionalArgs[1] === "test") {
     // Check if cwd is the bun repo root or test folder
     const isBunRepoRoot = cwd === "/workspace/bun" || cwd.endsWith("/bun");
-    const isTestFolder = cwd.includes("/bun/test");
+    const isTestFolder = cwd.endsWith("/bun/test");
 
     if (isBunRepoRoot || isTestFolder) {
       // Check if there's a file path argument (looks like a path: contains / or has test extension)
-      const hasFilePath = positionalArgs.slice(2).some(arg =>
-        arg.includes("/") ||
-        arg.endsWith(".test.ts") ||
-        arg.endsWith(".test.js") ||
-        arg.endsWith(".test.tsx") ||
-        arg.endsWith(".test.jsx")
-      );
+      const hasFilePath = positionalArgs
+        .slice(2)
+        .some(
+          arg =>
+            arg.includes("/") ||
+            arg.endsWith(".test.ts") ||
+            arg.endsWith(".test.js") ||
+            arg.endsWith(".test.tsx") ||
+            arg.endsWith(".test.jsx"),
+        );
 
       if (!hasFilePath) {
-        denyWithReason("error: `bun bd test` from repo root or test folder will run all tests. Use `bun bd test <path>` with a specific test file.");
+        denyWithReason(
+          "error: `bun bd test` from repo root or test folder will run all tests. Use `bun bd test <path>` with a specific test file.",
+        );
       }
     }
   }

@@ -244,9 +244,13 @@ pub const Bunfig = struct {
                         if (expr.get("junit")) |junit_expr| {
                             try this.expectString(junit_expr);
                             if (junit_expr.data.e_string.len() > 0) {
-                                this.ctx.test_options.file_reporter = .junit;
+                                this.ctx.test_options.reporters.junit = true;
                                 this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
                             }
+                        }
+                        if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
+                            try this.expect(dots_expr, .e_boolean);
+                            this.ctx.test_options.reporters.dots = dots_expr.data.e_boolean.value;
                         }
                     }
 

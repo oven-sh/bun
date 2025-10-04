@@ -1064,7 +1064,7 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
                 },
             };
 
-            switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
+            switch (bun.glob.match(pattern, path_or_name)) {
                 .match, .negate_match => install_root_dependencies = true,
 
                 .negate_no_match => {

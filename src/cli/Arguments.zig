@@ -204,8 +204,9 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-    clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile). Default: console output.") catch unreachable,
+    clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
+    clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -455,11 +456,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Output.errGeneric("--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report", .{});
                     Global.crash();
                 }
-                ctx.test_options.file_reporter = .junit;
+                ctx.test_options.reporters.junit = true;
+            } else if (strings.eqlComptime(reporter, "dots") or strings.eqlComptime(reporter, "dot")) {
+                ctx.test_options.reporters.dots = true;
             } else {
-                Output.errGeneric("unsupported reporter format '{s}'. Available options: 'junit' (for XML test results)", .{reporter});
+                Output.errGeneric("unsupported reporter format '{s}'. Available options: 'junit' (for XML test results), 'dots'", .{reporter});
                 Global.crash();
             }
+        }
+
+        // Handle --dots flag as shorthand for --reporter=dots
+        if (args.flag("--dots")) {
+            ctx.test_options.reporters.dots = true;
         }
 
         if (args.option("--coverage-dir")) |dir| {

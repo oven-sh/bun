@@ -4,7 +4,7 @@
 
 using namespace JSC;
 
-extern "C" BunString URL__getFileURLString(BunString* filePath)
+extern "C" BunString URL__getFileURLString(BunString* _Nonnull filePath)
 {
     return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
 }
@@ -54,7 +54,7 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
     return Bun::toStringRef(url.string());
 }
 
-extern "C" BunString URL__getHref(BunString* input)
+extern "C" BunString URL__getHref(BunString* _Nonnull input)
 {
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
@@ -64,7 +64,7 @@ extern "C" BunString URL__getHref(BunString* input)
     return Bun::toStringRef(url.string());
 }
 
-extern "C" BunString URL__pathFromFileURL(BunString* input)
+extern "C" BunString URL__pathFromFileURL(BunString* _Nonnull input)
 {
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
@@ -74,7 +74,7 @@ extern "C" BunString URL__pathFromFileURL(BunString* input)
     return Bun::toStringRef(url.fileSystemPath());
 }
 
-extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr)
+extern "C" BunString URL__getHrefJoin(BunString* _Nonnull baseStr, BunString* _Nonnull relativeStr)
 {
     auto base = baseStr->toWTFString();
     auto relative = relativeStr->toWTFString();
@@ -85,7 +85,7 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr
     return Bun::toStringRef(url.string());
 }
 
-extern "C" WTF::URL* URL__fromString(BunString* input)
+extern "C" WTF::URL* URL__fromString(BunString* _Nonnull input)
 {
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
@@ -95,7 +95,7 @@ extern "C" WTF::URL* URL__fromString(BunString* input)
     return new WTF::URL(WTFMove(url));
 }
 
-extern "C" BunString URL__protocol(WTF::URL* url)
+extern "C" BunString URL__protocol(WTF::URL* _Nonnull url)
 {
     return Bun::toStringRef(url->protocol().toStringWithoutCopying());
 }
@@ -106,41 +106,41 @@ extern "C" void URL__setProtocol(WTF::URL* url, BunString newProtocol)
     url->setProtocol(newProtocolStr);
 }
 
-extern "C" void URL__deinit(WTF::URL* url)
+extern "C" void URL__deinit(WTF::URL* _Nonnull url)
 {
     delete url;
 }
 
-extern "C" BunString URL__href(WTF::URL* url)
+extern "C" BunString URL__href(WTF::URL* _Nonnull url)
 {
     return Bun::toStringRef(url->string());
 }
 
-extern "C" BunString URL__username(WTF::URL* url)
+extern "C" BunString URL__username(WTF::URL* _Nonnull url)
 {
     return Bun::toStringRef(url->user());
 }
 
-extern "C" BunString URL__password(WTF::URL* url)
+extern "C" BunString URL__password(WTF::URL* _Nonnull url)
 {
     return Bun::toStringRef(url->password());
 }
 
-extern "C" BunString URL__search(WTF::URL* url)
+extern "C" BunString URL__search(WTF::URL* _Nonnull url)
 {
     return Bun::toStringRef(url->query().toStringWithoutCopying());
 }
 
-extern "C" BunString URL__host(WTF::URL* url)
+extern "C" BunString URL__host(WTF::URL* _Nonnull url)
 {
     return Bun::toStringRef(url->host().toStringWithoutCopying());
 }
-extern "C" BunString URL__hostname(WTF::URL* url)
+extern "C" BunString URL__hostname(WTF::URL* _Nonnull url)
 {
     return Bun::toStringRef(url->hostAndPort());
 }
 
-extern "C" uint32_t URL__port(WTF::URL* url)
+extern "C" uint32_t URL__port(WTF::URL* _Nonnull url)
 {
     auto port = url->port();
 
@@ -151,7 +151,7 @@ extern "C" uint32_t URL__port(WTF::URL* url)
     return std::numeric_limits<uint32_t>::max();
 }
 
-extern "C" BunString URL__pathname(WTF::URL* url)
+extern "C" BunString URL__pathname(WTF::URL* _Nonnull url)
 {
     return Bun::toStringRef(url->path().toStringWithoutCopying());
 }

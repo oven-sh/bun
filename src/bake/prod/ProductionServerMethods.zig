@@ -329,37 +329,22 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
 }
 
 const bun = @import("bun");
-const bake = bun.bake;
-const strings = bun.strings;
-const logger = bun.logger;
-const Loc = logger.Loc;
-
-const Route = bun.bake.FrameworkRouter.Route;
-const SSRRouteList = bun.bake.SSRRouteList;
-
-const jsc = bun.jsc;
+const Environment = bun.Environment;
 const JSError = bun.JSError;
-const CallFrame = jsc.CallFrame;
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSValue = jsc.JSValue;
-const E = bun.ast.E;
+const Output = bun.Output;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const uws = bun.uws;
 
-const DirInfo = bun.resolver.DirInfo;
-const Resolver = bun.resolver.Resolver;
+const AnyServer = bun.api.server.AnyServer;
+const FileRoute = bun.api.server.FileRoute;
+const ServerConfig = bun.api.server.ServerConfig;
 
-const mem = std.mem;
-const Allocator = mem.Allocator;
+const bake = bun.bake;
 const Manifest = bun.bake.Manifest;
 
-const ServerConfig = bun.api.server.ServerConfig;
-const AnyServer = bun.api.server.AnyServer;
-
-const Output = bun.Output;
-const FileRoute = bun.api.server.FileRoute;
-const StaticRoute = bun.api.server.StaticRoute;
-
-const Environment = bun.Environment;
-
 const FrameworkRouter = bun.bake.FrameworkRouter;
+const Route = bun.bake.FrameworkRouter.Route;
+
 const std = @import("std");
-const uws = bun.uws;
+const mem = std.mem;

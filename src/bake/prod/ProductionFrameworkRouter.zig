@@ -62,28 +62,8 @@ pub fn onRouterCollisionError(
 }
 
 const bun = @import("bun");
-const std = @import("std");
-const bake = bun.bake;
-const strings = bun.strings;
-const logger = bun.logger;
-const Loc = logger.Loc;
-
-const Route = bun.bake.FrameworkRouter.Route;
-const SSRRouteList = bun.bake.SSRRouteList;
-
-const jsc = bun.jsc;
-const JSError = bun.JSError;
-const CallFrame = jsc.CallFrame;
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSValue = jsc.JSValue;
-const E = bun.ast.E;
-
-const DirInfo = bun.resolver.DirInfo;
-const Resolver = bun.resolver.Resolver;
-
-const mem = std.mem;
-const Allocator = mem.Allocator;
 const Output = bun.Output;
-const Manifest = bun.bake.Manifest;
+const bake = bun.bake;
 
 const FrameworkRouter = bun.bake.FrameworkRouter;
+const Route = bun.bake.FrameworkRouter.Route;

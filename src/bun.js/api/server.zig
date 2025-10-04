@@ -3438,6 +3438,7 @@ const Output = bun.Output;
 const Transpiler = bun.Transpiler;
 const analytics = bun.analytics;
 const assert = bun.assert;
+const bake = bun.bake;
 const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
@@ -3466,5 +3467,3 @@ const Fetch = WebCore.Fetch;
 const Headers = WebCore.Headers;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
-
-const bake = bun.bake;

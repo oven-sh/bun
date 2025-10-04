@@ -1201,7 +1201,7 @@ pub const JSValkeyClient = struct {
         } else {
             // There is no pending activity so it is safe to remove the event
             // loop.
-            this.poll_ref.unref(this.client.vm);
+            //this.poll_ref.unref(this.client.vm);
         }
 
         if (this.this_value.isEmpty()) {
@@ -1238,7 +1238,7 @@ pub const JSValkeyClient = struct {
                     debug("downgrading this_value since there is no pending activity", .{});
                     // If we don't have any pending activity, we can drop the
                     // strong reference.
-                    this.this_value.downgrade();
+                    //this.this_value.downgrade();
                 }
             },
         }

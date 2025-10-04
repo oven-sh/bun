@@ -24,47 +24,48 @@ let asyncLocalStorageWasSet = false;
 
 type Module = unknown;
 
-type RouteArgs = {
-  serverEntrypoint: string;
-  routeModules: string[];
-  clientEntryUrl: string;
-  styles: string[];
-};
+type RouteArgs = [serverEntrypoint: string, routeModules: string[], clientEntryUrl: string, styles: string[]];
 
-/**
- * A type representing all the data needed to render this route.
- *
- * Note that these fields are actually undefined when this object is
- * uninitialized
- */
-type RouteInfo = {
+type UninitializedRouteInfo = [] | [undefined, undefined, undefined, undefined, Promise<unknown> | undefined];
+
+type RouteInfo = [
   /**
    * The server entrypoint which contains the module to render the page.
    */
-  serverEntrypoint: Module & Bake.ServerEntryPoint;
-  routeModules: Module[];
-  clientEntryUrl: string;
-  styles: string[];
-  /**
-   * A function to fetch the needed to data to initialize this RouteInfo object
-   */
-  dataForInitialization(req: Request, routeIndex: number, routerTypeIndex: number): RouteArgs;
-  initializing: Promise<unknown> | undefined;
-};
+  serverEntrypoint: Module & Bake.ServerEntryPoint,
+  routeModules: Module[],
+  clientEntryUrl: string,
+  styles: string[],
+  initializing: Promise<unknown> | undefined,
+];
+
+export namespace RouteInfo {
+  export function isUninitialized(
+    uninitializedRouteInfo: UninitializedRouteInfo | RouteInfo,
+  ): uninitializedRouteInfo is UninitializedRouteInfo {
+    return uninitializedRouteInfo[0] === undefined;
+  }
+
+  export const serverEntrypoint: 0 = 0;
+  export const routeModules: 1 = 1;
+  export const clientEntryUrl: 2 = 2;
+  export const styles: 3 = 3;
+  export const initializing: 4 = 4;
+}
+
+let routeInfos: Array<UninitializedRouteInfo | RouteInfo> = [];
 
 interface Exports {
+  initializeRouteInfos: (length: number) => void;
   handleRequest: (
     req: Request,
     routeIndex: number,
-    routerTypeIndex: number,
-    routeInfo: RouteInfo,
     params: Record<string, string> | null,
+    dataForInitialization: (req: Request, routeIndex: number) => RouteArgs,
     newRouteParams: (
       req: Request,
       url: string,
-    ) =>
-      | [routeIndex: number, routerTypeIndex: number, routeInfo: RouteInfo, params: Record<string, string> | null]
-      | Blob,
+    ) => [routeIndex: number, routeInfo: RouteInfo, params: Record<string, string> | null] | Blob,
     setAsyncLocalStorage: Function,
   ) => Promise<Response>;
 }
@@ -72,7 +73,13 @@ interface Exports {
 declare let server_exports: Exports;
 
 server_exports = {
-  async handleRequest(req, routeIndex, routerTypeIndex, routeInfo, params, newRouteParams, setAsyncLocalStorage) {
+  initializeRouteInfos(length) {
+    routeInfos = new Array(length);
+    for (let i = 0; i < length; i++) {
+      routeInfos[i] = [];
+    }
+  },
+  async handleRequest(req, routeIndex, params, dataForInitialization, newRouteParams, setAsyncLocalStorage) {
     // Set up AsyncLocalStorage if not already done
     if (!asyncLocalStorageWasSet) {
       asyncLocalStorageWasSet = true;
@@ -80,41 +87,48 @@ server_exports = {
     }
 
     while (true) {
-      if (routeInfo.initializing) {
-        await routeInfo.initializing;
-        routeInfo.initializing = undefined;
-      }
+      let routeInfo = routeInfos[routeIndex];
 
-      if (!routeInfo.serverEntrypoint) {
-        const args = routeInfo.dataForInitialization(req, routeIndex, routerTypeIndex);
+      if (RouteInfo.isUninitialized(routeInfo)) {
+        const [serverEntrypoint, routeModules, clientEntryUrl, styles] = dataForInitialization(req, routeIndex);
         const { promise, resolve, reject } = Promise.withResolvers();
-        routeInfo.initializing = promise;
+        routeInfo = [undefined, undefined, undefined, undefined, promise];
 
         try {
-          routeInfo.serverEntrypoint = await import(args.serverEntrypoint);
-          routeInfo.routeModules = await Promise.all(args.routeModules.map(modulePath => import(modulePath)));
-          routeInfo.clientEntryUrl = args.clientEntryUrl;
-          routeInfo.styles = args.styles;
+          (routeInfo as unknown as RouteInfo) = [
+            await import(serverEntrypoint),
+            await Promise.all(routeModules.map(modulePath => import(modulePath))),
+            clientEntryUrl,
+            styles,
+            undefined,
+          ];
           resolve();
         } catch (error) {
           reject(error);
           throw error;
         } finally {
-          routeInfo.initializing = undefined;
+          routeInfo[4 /* initializing */] = undefined;
         }
 
-        if (!routeInfo.serverEntrypoint.render) {
+        if (!(routeInfo as unknown as RouteInfo)[RouteInfo.serverEntrypoint]!.render) {
           throw new Error('Framework server entrypoint is missing a "render" export.');
         }
-        if (typeof routeInfo.serverEntrypoint.render !== "function") {
+        if (typeof (routeInfo as unknown as RouteInfo)[RouteInfo.serverEntrypoint]!.render !== "function") {
           throw new Error('Framework server entrypoint\'s "render" export is not a function.');
         }
       }
 
-      const serverRenderer = routeInfo.serverEntrypoint.render;
+      routeInfo = routeInfo as unknown as RouteInfo; // typescript
+
+      if (routeInfo[RouteInfo.initializing]) {
+        await routeInfo[RouteInfo.initializing];
+        routeInfo[RouteInfo.initializing] = undefined;
+      }
+
+      const serverRenderer = routeInfo[RouteInfo.serverEntrypoint]!.render;
 
       // Load all route modules (page and layouts)
-      const [pageModule, ...layouts] = routeInfo.routeModules;
+      const [pageModule, ...layouts] = routeInfo[RouteInfo.routeModules]!;
 
       // Set up the request context for AsyncLocalStorage
       let storeValue: RequestContext = {
@@ -129,13 +143,13 @@ server_exports = {
           return await serverRenderer(
             req,
             {
-              styles: routeInfo.styles,
-              modules: [routeInfo.clientEntryUrl],
+              styles: routeInfo[3 /* styles */]!,
+              modules: [routeInfo[2 /* clientEntryUrl */]!],
               layouts,
               pageModule,
               modulepreload: [],
               params,
-              request: pageModule.mode === "ssr" ? req : undefined,
+              request: (pageModule as { mode?: string }).mode === "ssr" ? req : undefined,
             },
             responseOptionsALS,
           );
@@ -164,10 +178,9 @@ server_exports = {
               console.log("Returning a blob", result);
               return new Response(result);
             }
-            const [newRouteIndex, newRouterTypeIndex, newRouteInfo, newParams] = result;
+            const [newRouteIndex, newRouteInfo, newParams] = result;
 
             routeIndex = newRouteIndex;
-            routerTypeIndex = newRouterTypeIndex;
             routeInfo = newRouteInfo;
             params = newParams;
 

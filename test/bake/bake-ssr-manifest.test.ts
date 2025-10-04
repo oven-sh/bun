@@ -3,10 +3,8 @@ import { bunEnv, bunExe, tempDir, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 import { tempDirWithBakeDeps } from "./bake-harness";
 
-test(
-  "bake production build generates manifest with SSR and SSG pages",
-  async () => {
-    const dir = await tempDirWithBakeDeps("bake-ssr-manifest", {
+test("bake production build generates manifest with SSR and SSG pages", async () => {
+  const dir = await tempDirWithBakeDeps("bake-ssr-manifest", {
     "index.ts": `
       export default {
         app: "react"
@@ -66,51 +64,56 @@ test(
   expect(manifest.version).toBe("0.0.1");
   expect(manifest.routes).toBeDefined();
 
-  // Sort by route for consistent ordering
-  manifest.routes.sort((a, b) => a.route.localeCompare(b.route));
-
-  // Replace dynamic file hashes with placeholders for comparison
-  const normalizedManifest = {
-    version: manifest.version,
-    routes: manifest.routes.map(entry => ({
-      ...entry,
-      client_entrypoint: entry.client_entrypoint ? "/_bun/[hash].js" : undefined,
-      modules: entry.modules?.map(() => "_bun/[hash].js"),
-      entrypoint: entry.entrypoint ? "_bun/[hash].js" : undefined,
-    })),
-  };
-
-  expect(normalizedManifest).toMatchInlineSnapshot(`
+  expect(manifest).toMatchInlineSnapshot(`
     {
+      "assets": [
+        "/_bun/xrj8f476.js",
+        "/_bun/7r2ttg7d.js",
+        "/_bun/kq6mn4cb.js",
+        "/_bun/rzwb0r0y.js",
+        "/_bun/fy7ntj6j.js",
+        "/_bun/wvqsb8zz.js",
+        "/_bun/n8n6m1t3.js",
+        "/_bun/7kj4nre7.js",
+        "/_bun/xrj8f476.js.map",
+        "/_bun/7r2ttg7d.js.map",
+        "/_bun/kq6mn4cb.js.map",
+        "/_bun/rzwb0r0y.js.map",
+        "/_bun/fy7ntj6j.js.map",
+        "/_bun/wvqsb8zz.js.map",
+        "/_bun/n8n6m1t3.js.map",
+        "/_bun/7kj4nre7.js.map",
+      ],
+      "router_types": [
+        {
+          "server_entrypoint": "./xrj8f476.js",
+        },
+      ],
       "routes": [
         {
-          "client_entrypoint": "/_bun/[hash].js",
-          "entrypoint": undefined,
-          "mode": "ssr",
-          "modules": [
-            "_bun/[hash].js",
-          ],
-          "route": "/about",
+          "entrypoint": "/_bun/7r2ttg7d.js",
+          "mode": "ssg",
+          "route": "/index",
           "route_type": 0,
           "styles": [],
         },
         {
-          "client_entrypoint": "/_bun/[hash].js",
-          "entrypoint": undefined,
+          "client_entrypoint": "/_bun/7r2ttg7d.js",
           "mode": "ssr",
           "modules": [
-            "_bun/[hash].js",
+            "./rzwb0r0y.js",
           ],
           "route": "/blog/[slug]",
           "route_type": 0,
           "styles": [],
         },
         {
-          "client_entrypoint": undefined,
-          "entrypoint": "_bun/[hash].js",
-          "mode": "ssg",
-          "modules": undefined,
-          "route": "/index",
+          "client_entrypoint": "/_bun/7r2ttg7d.js",
+          "mode": "ssr",
+          "modules": [
+            "./fy7ntj6j.js",
+          ],
+          "route": "/about",
           "route_type": 0,
           "styles": [],
         },
@@ -118,14 +121,10 @@ test(
       "version": "0.0.1",
     }
   `);
-  },
-  30000,
-);
+}, 30000);
 
-test(
-  "bake production build generates manifest with multiple SSG pages under the same route",
-  async () => {
-    const dir = await tempDirWithBakeDeps("bake-ssg-manifest", {
+test("bake production build generates manifest with multiple SSG pages under the same route", async () => {
+  const dir = await tempDirWithBakeDeps("bake-ssg-manifest", {
     "index.ts": `
       export default {
         app: "react"
@@ -181,27 +180,30 @@ test(
   expect(manifest.version).toBe("0.0.1");
   expect(manifest.routes).toBeDefined();
 
-  // Sort by route then by params for consistent ordering
-  manifest.routes.sort((a, b) => {
-    const routeCmp = a.route.localeCompare(b.route);
-    if (routeCmp !== 0) return routeCmp;
-    return JSON.stringify(a.params || {}).localeCompare(JSON.stringify(b.params || {}));
-  });
-
-  // Replace dynamic file hashes with placeholders for comparison
-  const normalizedManifest = {
-    version: manifest.version,
-    routes: manifest.routes.map(entry => ({
-      ...entry,
-      entrypoint: entry.entrypoint ? "_bun/[hash].js" : undefined,
-    })),
-  };
-
-  expect(normalizedManifest).toMatchInlineSnapshot(`
+  expect(manifest).toMatchInlineSnapshot(`
     {
+      "assets": [
+        "/_bun/xrj8f476.js",
+        "/_bun/7r2ttg7d.js",
+        "/_bun/q3vvqn7h.js",
+        "/_bun/wvqsb8zz.js",
+        "/_bun/n8n6m1t3.js",
+        "/_bun/7kj4nre7.js",
+        "/_bun/xrj8f476.js.map",
+        "/_bun/7r2ttg7d.js.map",
+        "/_bun/q3vvqn7h.js.map",
+        "/_bun/wvqsb8zz.js.map",
+        "/_bun/n8n6m1t3.js.map",
+        "/_bun/7kj4nre7.js.map",
+      ],
+      "router_types": [
+        {
+          "server_entrypoint": "./xrj8f476.js",
+        },
+      ],
       "routes": [
         {
-          "entrypoint": "_bun/[hash].js",
+          "entrypoint": "/_bun/7r2ttg7d.js",
           "mode": "ssg",
           "params": {
             "slug": "lmao",
@@ -211,7 +213,7 @@ test(
           "styles": [],
         },
         {
-          "entrypoint": "_bun/[hash].js",
+          "entrypoint": "/_bun/7r2ttg7d.js",
           "mode": "ssg",
           "params": {
             "slug": "lolfucku",
@@ -224,6 +226,4 @@ test(
       "version": "0.0.1",
     }
   `);
-  },
-  30000,
-);
+}, 30000);

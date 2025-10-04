@@ -118,9 +118,9 @@ export async function renderRoutesForProdStatic(
       );
     }
 
-    $assert(patterns[navigableRouteIndex].includes(`:`));
     let routePath: string = patterns[navigableRouteIndex];
     if (params != null) {
+      $assert(patterns[navigableRouteIndex].includes(`:`));
       routePath = computeRouteWithParams(routeIndices[navigableRouteIndex], params, patterns[navigableRouteIndex]);
     }
 
@@ -301,7 +301,7 @@ export async function renderRoutesForProdStatic(
     }),
   );
 
-  // Build the router_types array (make server_entrypoint relative to _bun folder)
+  // Build the router_types array (make serverEntrypoint relative to _bun folder)
   const routerTypes: Array<{ serverEntrypoint: string | null }> = [];
   for (let i = 0; i < routerTypeServerEntrypoints.length; i++) {
     const serverEntrypoint = routerTypeServerEntrypoints[i];
@@ -309,12 +309,12 @@ export async function renderRoutesForProdStatic(
       // Remove "bake:/" prefix first, then make relative to _bun folder
       const cleanPath = serverEntrypoint.startsWith("bake:/") ? serverEntrypoint.slice(6) : serverEntrypoint;
       routerTypes.push({
-        server_entrypoint: makeRelativeToBun(cleanPath),
+        serverEntrypoint: makeRelativeToBun(cleanPath),
       });
     } else {
       // Push null or empty object if no server entrypoint
       routerTypes.push({
-        server_entrypoint: null,
+        serverEntrypoint: null,
       });
     }
   }

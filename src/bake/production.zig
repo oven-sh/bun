@@ -1120,24 +1120,43 @@ pub const PerThread = struct {
                 const bunstr = try value.toBunString(global);
                 defer bunstr.deref();
                 if (bunstr.asUTF8()) |slice| {
+                    if (slice.len > 0) try ctx.path.appendSlice(bun.default_allocator, "/");
                     try ctx.path.appendSlice(bun.default_allocator, slice);
                 } else {
                     const slice = bunstr.toUTF8(bun.default_allocator);
                     defer slice.deinit();
+                    if (slice.len > 0) try ctx.path.appendSlice(bun.default_allocator, "/");
                     try ctx.path.appendSlice(bun.default_allocator, slice.slice());
                 }
             }
         };
 
-        var joiner = JoinerCtx{ .pattern_js = pattern_js };
-        errdefer joiner.path.deinit(bun.default_allocator);
+        var sfb = std.heap.stackFallback(@sizeOf(FrameworkRouter.Route.Index) * 16, bun.default_allocator);
+        const alloc = sfb.get();
+
+        var route_indices_in_order = std.ArrayList(FrameworkRouter.Route.Index).init(alloc);
+        defer route_indices_in_order.deinit();
 
         var iter: FrameworkRouter.Route.Index.Optional = route_index.toOptional();
         while (iter.unwrap()) |ri| {
+            try route_indices_in_order.append(ri);
+            iter = router.routePtr(ri).parent;
+        }
+        std.mem.reverse(FrameworkRouter.Route.Index, route_indices_in_order.items);
+
+        var joiner = JoinerCtx{ .pattern_js = pattern_js };
+        errdefer joiner.path.deinit(bun.default_allocator);
+
+        for (route_indices_in_order.items) |ri| {
             const route = router.routePtr(ri);
             defer iter = route.parent;
             switch (route.part) {
-                .text => |text| try joiner.pushString(text),
+                .text => |text| {
+                    if (text.len > 0) {
+                        try joiner.pushString("/");
+                        try joiner.pushString(text);
+                    }
+                },
                 .param => |param| {
                     const value = try params_js.get(globalThis, param) orelse {
                         const routestr = try pattern_js.toSlice(globalThis, bun.default_allocator);

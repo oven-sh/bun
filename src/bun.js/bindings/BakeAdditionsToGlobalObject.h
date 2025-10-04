@@ -20,6 +20,7 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction);
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getEnsureAsyncLocalStorageInstanceJSFunction(JSC::JSGlobalObject* globalObject);
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getAsyncLocalStorage(JSC::JSGlobalObject* globalObject);
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getProdDataForInitializationJSFunction(JSC::JSGlobalObject* globalObject);
 
 extern "C" SYSV_ABI EncodedJSValue Bake__createFrameworkRequestArgsObject(JSC::JSGlobalObject* globalObject, EncodedJSValue routerTypeMain, EncodedJSValue routeModules, EncodedJSValue clientEntryUrl, EncodedJSValue styles, EncodedJSValue params);
 
@@ -27,6 +28,8 @@ void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initi
 
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Bake__getDevNewRouteParamsJSFunctionImpl(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES Bake__getProdNewRouteParamsJSFunctionImpl(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+JSC_DECLARE_HOST_FUNCTION(jsBakeProductionSSRRouteInfoPrototypeFunction_dataForInitialization);
 
 struct BakeAdditionsToGlobalObject {
     template<typename Visitor>
@@ -36,6 +39,7 @@ struct BakeAdditionsToGlobalObject {
         this->m_FrameworkRequestArgsClassStructure.visit(visitor);
         this->m_BakeProductionSSRRouteInfoClassStructure.visit(visitor);
         this->m_BakeProductionSSRRouteArgsClassStructure.visit(visitor);
+
         visitor.append(this->m_wrapComponent);
         visitor.append(this->m_asyncLocalStorageInstance);
 
@@ -44,6 +48,7 @@ struct BakeAdditionsToGlobalObject {
         this->m_bakeGetBundleNewRoute.visit(visitor);
         this->m_bakeProdGetNewRouteParamsJSFunction.visit(visitor);
         this->m_bakeGetDevNewRouteParamsJSFunction.visit(visitor);
+        this->m_bakeGetProdDataForInitializationJSFunction.visit(visitor);
     }
 
     void initialize()
@@ -86,6 +91,11 @@ struct BakeAdditionsToGlobalObject {
         m_bakeProdGetNewRouteParamsJSFunction.initLater(
             [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
                 init.set(JSFunction::create(init.vm, init.owner, 1, String("newRouteParams"_s), Bake__getProdNewRouteParamsJSFunctionImpl, ImplementationVisibility::Public, NoIntrinsic));
+            });
+
+        m_bakeGetProdDataForInitializationJSFunction.initLater(
+            [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+                init.set(JSFunction::create(init.vm, init.owner, 1, String("dataForInitialization"_s), jsBakeProductionSSRRouteInfoPrototypeFunction_dataForInitialization, ImplementationVisibility::Public, NoIntrinsic));
             });
 
         m_FrameworkRequestArgsClassStructure.initLater(
@@ -158,6 +168,7 @@ struct BakeAdditionsToGlobalObject {
     LazyClassStructure m_BakeProductionSSRRouteInfoClassStructure;
     LazyClassStructure m_BakeProductionSSRRouteArgsClassStructure;
     LazyClassStructure m_FrameworkRequestArgsClassStructure;
+    LazyProperty<JSGlobalObject, JSFunction> m_bakeGetProdDataForInitializationJSFunction;
 
 private:
     WriteBarrier<JSFunction> m_wrapComponent;

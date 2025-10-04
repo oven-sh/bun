@@ -6,7 +6,7 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-extern "C" int Bun__BakeProductionSSRRouteInfo__dataForInitialization(JSGlobalObject* globalObject, void* zigRequestPtr, size_t routerIndex, size_t routerTypeIndex, JSC::EncodedJSValue* routerTypeMain, JSC::EncodedJSValue* routeModules, JSC::EncodedJSValue* clientEntryUrl, JSC::EncodedJSValue* styles);
+extern "C" int Bun__BakeProductionSSRRouteInfo__dataForInitialization(JSGlobalObject* globalObject, void* zigRequestPtr, size_t routerIndex, JSC::EncodedJSValue* routerTypeMain, JSC::EncodedJSValue* routeModules, JSC::EncodedJSValue* clientEntryUrl, JSC::EncodedJSValue* styles);
 
 void createBakeProductionSSRRouteArgsStructure(JSC::LazyClassStructure::Initializer& init)
 {
@@ -26,14 +26,13 @@ void createBakeProductionSSRRouteArgsStructure(JSC::LazyClassStructure::Initiali
 JSC_DEFINE_HOST_FUNCTION(jsBakeProductionSSRRouteInfoPrototypeFunction_dataForInitialization, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (callframe->argumentCount() < 3) {
+    if (callframe->argumentCount() < 2) {
         throwTypeError(globalObject, scope, "Expected 3 argument"_s);
         return {};
     }
 
     JSValue requestObject = callframe->argument(0);
     JSValue routerIndex = callframe->argument(1);
-    JSValue routerTypeIndex = callframe->argument(2);
 
     if (requestObject.isEmpty() || requestObject.isUndefinedOrNull() || !requestObject.isCell()) {
         throwTypeError(globalObject, scope, "Expected first argument to be a non-empty object"_s);
@@ -45,14 +44,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBakeProductionSSRRouteInfoPrototypeFunction_dataForIn
         return {};
     }
 
-    if (!routerTypeIndex.isInt32()) {
-        throwTypeError(globalObject, scope, "Expected third argument to be a number"_s);
-        return {};
-    }
-
     JSBunRequest* request = jsCast<JSBunRequest*>(requestObject);
     size_t routerIndexValue = static_cast<size_t>(routerIndex.asInt32());
-    size_t routerTypeIndexValue = static_cast<size_t>(routerTypeIndex.asInt32());
 
     // What we need:
     // 1. `routerTypeMain: string` (module specifier for serverEntrypoint)
@@ -65,22 +58,19 @@ JSC_DEFINE_HOST_FUNCTION(jsBakeProductionSSRRouteInfoPrototypeFunction_dataForIn
     EncodedJSValue clientEntryUrl;
     EncodedJSValue styles;
 
-    int success = Bun__BakeProductionSSRRouteInfo__dataForInitialization(globalObject, request->m_ctx, routerIndexValue, routerTypeIndexValue, &routerTypeMain, &routeModules, &clientEntryUrl, &styles);
+    int success = Bun__BakeProductionSSRRouteInfo__dataForInitialization(globalObject, request->m_ctx, routerIndexValue, &routerTypeMain, &routeModules, &clientEntryUrl, &styles);
     RETURN_IF_EXCEPTION(scope, {});
     if (success == 0) {
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    auto zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    auto* structure = zig->bakeAdditions().m_BakeProductionSSRRouteArgsClassStructure.get(globalObject);
-    auto* instance = constructEmptyObject(globalObject->vm(), structure);
+    auto* array = JSArray::create(globalObject->vm(), globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), 4);
+    array->putDirectIndex(globalObject, 0, JSValue::decode(routerTypeMain));
+    array->putDirectIndex(globalObject, 1, JSValue::decode(routeModules));
+    array->putDirectIndex(globalObject, 2, JSValue::decode(clientEntryUrl));
+    array->putDirectIndex(globalObject, 3, JSValue::decode(styles));
 
-    instance->putDirectOffset(globalObject->vm(), 0, JSValue::decode(routerTypeMain));
-    instance->putDirectOffset(globalObject->vm(), 1, JSValue::decode(routeModules));
-    instance->putDirectOffset(globalObject->vm(), 2, JSValue::decode(styles));
-    instance->putDirectOffset(globalObject->vm(), 3, JSValue::decode(clientEntryUrl));
-
-    return JSValue::encode(instance);
+    return JSValue::encode(array);
 }
 
 static const HashTableValue BakeProductionSSRRouteInfoPrototypeValues[] = {
@@ -281,6 +271,12 @@ void BakeProductionSSRRouteList::visitChildrenImpl(JSCell* cell, Visitor& visito
     }
 }
 DEFINE_VISIT_CHILDREN(BakeProductionSSRRouteList);
+
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getProdDataForInitializationJSFunction(JSC::JSGlobalObject* globalObject)
+{
+    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    return JSValue::encode(zig->bakeAdditions().m_bakeGetProdDataForInitializationJSFunction.get(globalObject));
+}
 
 extern "C" JSC::EncodedJSValue Bun__BakeProductionSSRRouteList__create(Zig::GlobalObject* globalObject, size_t routeCount)
 {

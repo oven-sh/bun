@@ -43,7 +43,7 @@ pub fn create(
         .auto,
     );
 
-    const bake_server_runtime_handler = try initBakeServerRuntime(globalObject, server_runtime_path);
+    const bake_server_runtime_handler = try initBakeServerRuntime(globalObject, server_runtime_path, manifest.routes.len);
 
     const self: Self = .{
         .route_list = jsc.Strong.create(route_list, globalObject),
@@ -54,7 +54,7 @@ pub fn create(
     return bun.ptr.Owned(*Self).new(self);
 }
 
-pub fn initBakeServerRuntime(global: *JSGlobalObject, server_runtime_path: []const u8) !jsc.Strong {
+pub fn initBakeServerRuntime(global: *JSGlobalObject, server_runtime_path: []const u8, routes_len: usize) !jsc.Strong {
     // Get the production server runtime code
     const runtime_code = bun.String.static(bun.bake.getProductionRuntime(.server).code);
 
@@ -82,6 +82,16 @@ pub fn initBakeServerRuntime(global: *JSGlobalObject, server_runtime_path: []con
 
     handle_request_fn.ensureStillAlive();
 
+    const initialize_route_infos_fn = exports_object.get(global, "initializeRouteInfos") catch null orelse {
+        return global.throw("Server runtime module is missing 'initializeRouteInfos' export", .{});
+    };
+
+    if (!initialize_route_infos_fn.isCallable()) {
+        return global.throw("Server runtime module's 'initializeRouteInfos' export is not a function", .{});
+    }
+
+    _ = try initialize_route_infos_fn.call(global, global.toJSValue(), &.{JSValue.jsNumberFromUint64(routes_len)});
+
     return jsc.Strong.create(handle_request_fn, global);
 }
 
@@ -98,7 +108,6 @@ pub fn routeDataForInitialization(
     globalObject: *JSGlobalObject,
     request: *bun.webcore.Request,
     router_index: usize,
-    router_type_index: usize,
     out_router_type_main: *JSValue,
     out_route_modules: *JSValue,
     out_client_entry_url: *JSValue,
@@ -113,9 +122,6 @@ pub fn routeDataForInitialization(
     if (router_index >= rtr.routes.items.len) {
         return globalObject.throw("Router index out of bounds", .{});
     }
-    if (router_type_index >= rtr.types.len) {
-        return globalObject.throw("Router type index out of bounds", .{});
-    }
 
     const route = switch (server.manifest.routes[router_index]) {
         .ssr => |*ssr| ssr,
@@ -124,7 +130,8 @@ pub fn routeDataForInitialization(
         },
     };
 
-    const router_type_main = bun.String.init(server.manifest.router_types[router_type_index].server_entrypoint);
+    const router_type_index = rtr.routePtr(Route.Index.init(@truncate(router_index))).type;
+    const router_type_main = bun.String.init(server.manifest.router_types[router_type_index.get()].server_entrypoint);
     out_router_type_main.* = router_type_main.toJS(globalObject);
 
     const route_modules = try jsc.JSValue.createEmptyArray(globalObject, route.modules.len);
@@ -149,14 +156,13 @@ export fn Bun__BakeProductionSSRRouteInfo__dataForInitialization(
     globalObject: *JSGlobalObject,
     zigRequestPtr: *anyopaque,
     routerIndex: usize,
-    routerTypeIndex: usize,
     routerTypeMain: *JSValue,
     routeModules: *JSValue,
     clientEntryUrl: *JSValue,
     styles: *JSValue,
 ) callconv(jsc.conv) c_int {
     const request: *bun.webcore.Request = @ptrCast(@alignCast(zigRequestPtr));
-    routeDataForInitialization(globalObject, request, routerIndex, routerTypeIndex, routerTypeMain, routeModules, clientEntryUrl, styles) catch |err| {
+    routeDataForInitialization(globalObject, request, routerIndex, routerTypeMain, routeModules, clientEntryUrl, styles) catch |err| {
         if (err == error.OutOfMemory) bun.outOfMemory();
         return 0;
     };
@@ -225,14 +231,11 @@ pub fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFra
     }
 
     const route_info = try self.getRouteInfo(global, route_index);
-    const framework_route = self.getRouter().routes.items[route_index.get()];
-    const router_type_index = framework_route.type.get();
 
-    var result = try JSValue.createEmptyArray(global, 4);
+    var result = try JSValue.createEmptyArray(global, 3);
     result.putIndex(global, 0, JSValue.jsNumberFromUint64(route_index.get())) catch unreachable;
-    result.putIndex(global, 1, JSValue.jsNumberFromUint64(router_type_index)) catch unreachable;
-    result.putIndex(global, 2, route_info) catch unreachable;
-    result.putIndex(global, 3, params.toJS(global)) catch unreachable;
+    result.putIndex(global, 1, route_info) catch unreachable;
+    result.putIndex(global, 2, params.toJS(global)) catch unreachable;
 
     return result;
 }
@@ -276,31 +279,23 @@ pub fn newRouteParams(
     params: *const bun.bake.FrameworkRouter.MatchedParams,
 ) bun.JSError!struct {
     route_index: JSValue,
-    router_type_index: JSValue,
-    route_info: JSValue,
     params: JSValue,
+    dataForInitialization: JSValue,
     newRouteParams: JSValue,
     setAsyncLocalStorage: JSValue,
 } {
-    const r = self.getRouter();
-
-    // Look up the route to get its router type
-    const framework_route = &r.routes.items[route_index.get()];
-    const router_type_index = framework_route.type.get();
-
     // Convert params to JSValue
     const params_js = try self.createParamsObject(global, route_index, params);
+
+    const dataForInitializationn = Bake__getProdDataForInitializationJSFunction(global);
 
     // Get the setAsyncLocalStorage function that properly sets up the AsyncLocalStorage instance
     const setAsyncLocalStorage = Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global);
 
-    const route_info = try self.getRouteInfo(global, route_index);
-
     return .{
         .route_index = JSValue.jsNumberFromUint64(route_index.get()),
-        .router_type_index = JSValue.jsNumberFromUint64(router_type_index),
-        .route_info = route_info,
         .params = params_js,
+        .dataForInitialization = dataForInitializationn,
         .newRouteParams = Bake__getProdNewRouteParamsJSFunction(global),
         .setAsyncLocalStorage = setAsyncLocalStorage,
     };
@@ -308,6 +303,11 @@ pub fn newRouteParams(
 
 pub fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *jsc.JSGlobalObject) jsc.JSValue {
     const f = @extern(*const fn (*jsc.JSGlobalObject) callconv(.c) jsc.JSValue, .{ .name = "Bake__getEnsureAsyncLocalStorageInstanceJSFunction" }).*;
+    return f(global);
+}
+
+pub fn Bake__getProdDataForInitializationJSFunction(global: *jsc.JSGlobalObject) jsc.JSValue {
+    const f = @extern(*const fn (*jsc.JSGlobalObject) callconv(.c) jsc.JSValue, .{ .name = "Bake__getProdDataForInitializationJSFunction" }).*;
     return f(global);
 }
 

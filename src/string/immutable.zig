@@ -2218,6 +2218,65 @@ pub fn percentEncodeWrite(
     try writer.appendSlice(remaining);
 }
 
+/// Basically backtrack until we find the index that which is the start of byte
+/// sequence encoding a codepoint
+///
+/// **WARNING**: `str` must be a valid UTF-8 string, this function makes no
+/// attempt to validate the string and assumes there are no invalid bytes
+pub fn backtrackUtfSequenceBoundary(str: string, start_index: usize) usize {
+    var i: usize = start_index;
+
+    while (i > 0) {
+        switch (str[i]) {
+            // handle the first byte of a 1 byte, 2 byte, 3 byte, 4 byte sequence
+            0x00...0x7F, 0xC2...0xDF, 0xE0...0xEF, 0xF0...0xF4 => {
+                return i;
+            },
+            // continuation byte so keep going back
+            0x80...0xBF => {
+                i -= 1;
+            },
+            else => {
+                unreachable;
+            },
+        }
+    }
+
+    unreachable;
+}
+
+// pub fn reverse(items: []u8, comptime encoding: ?enum { ascii, utf8 }) void {
+//     switch (encoding orelse if (isAllASCII(items)) .ascii else .utf8) {
+//         .ascii => {
+//             std.mem.reverse(u8, items);
+//         },
+//         .ascii => {
+//             const codepoint_length = codepoint_length: {
+//                 var codepoint_length: usize = 0;
+//                 var i: usize = 0;
+//                 while (i < items.len) : (i += bun.strings.wtf8ByteSequenceLength(items[i])) {
+//                     codepoint_length += 1;
+//                 }
+//                 break :codepoint_length codepoint_length;
+//             };
+//             if (codepoint_length <= 1) return;
+
+//             var byte_sequence_buf: [4]u8 = undefined;
+
+//             var byte_index: usize = 0;
+//             var end_byte_index: usize = items.len - 1;
+//             var codepoint_index: usize = 0;
+//             while (codepoint_index < codepoint_length / 2) : (codepoint_index += 1) {
+//                 const length = bun.strings.wtf8ByteSequenceLength(items[byte_index]);
+//                 @memcpy(byte_sequence_buf[0..length], items[byte_index .. byte_index + length]);
+//                 end_byte_index = backtrackUtfSequenceBoundary(items, end_byte_index);
+//                 // bun.s
+//                 end_byte_index -= 1;
+//             }
+//         },
+//     }
+// }
+
 pub const CodepointIterator = unicode.CodepointIterator;
 pub const NewCodePointIterator = unicode.NewCodePointIterator;
 pub const UnsignedCodepointIterator = unicode.UnsignedCodepointIterator;

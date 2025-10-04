@@ -601,6 +601,18 @@ pub const StatxField = enum(comptime_int) {
 // Linux Kernel v4.11
 pub var supports_statx_on_linux = std.atomic.Value(bool).init(true);
 
+/// Linux kernel makedev encoding for device numbers
+/// From glibc sys/sysmacros.h and Linux kernel <linux/kdev_t.h>
+/// dev_t layout (64 bits):
+///   Bits 31-20: major high (12 bits)
+///   Bits 19-8:  minor high (12 bits)
+///   Bits 7-0:   minor low (8 bits)
+inline fn makedev(major: u32, minor: u32) u64 {
+    const maj: u64 = major & 0xFFF;
+    const min: u64 = minor & 0xFFFFF;
+    return (maj << 8) | (min & 0xFF) | ((min & 0xFFF00) << 12);
+}
+
 fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32) Maybe(PosixStat) {
     if (comptime !Environment.isLinux) {
         @compileError("statx is only supported on Linux");
@@ -638,13 +650,13 @@ fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32
 
         // Convert statx buffer to PosixStat structure
         const stat_ = PosixStat{
-            .dev = @as(u64, buf.dev_major) << 32 | buf.dev_minor,
+            .dev = makedev(buf.dev_major, buf.dev_minor),
             .ino = buf.ino,
             .mode = buf.mode,
             .nlink = buf.nlink,
             .uid = buf.uid,
             .gid = buf.gid,
-            .rdev = @as(u64, buf.rdev_major) << 32 | buf.rdev_minor,
+            .rdev = makedev(buf.rdev_major, buf.rdev_minor),
             .size = @bitCast(buf.size),
             .blksize = @intCast(buf.blksize),
             .blocks = @bitCast(buf.blocks),

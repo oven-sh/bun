@@ -6570,6 +6570,26 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         );
       });
 
+      test("high volume pub/sub", async () => {
+        const channel = testChannel();
+
+        const MESSAGE_COUNT = 1000;
+        const MESSAGE_SIZE = 1024 * 1024;
+
+        let byteCounter = awaitableCounter();
+        const subscriber = await ctx.redis.duplicate();
+        await subscriber.subscribe(channel, message => {
+          byteCounter.incrementBy(message.length);
+        });
+
+        for (let i = 0; i < MESSAGE_COUNT; i++) {
+          await ctx.redis.publish(channel, "X".repeat(MESSAGE_SIZE));
+        }
+
+        expect(await byteCounter.untilValue(MESSAGE_COUNT * MESSAGE_SIZE)).toBe(MESSAGE_COUNT * MESSAGE_SIZE);
+        subscriber.close();
+      });
+
       test("callback errors don't crash the client", async () => {
         const channel = "error-callback-channel";
 

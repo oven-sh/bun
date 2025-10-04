@@ -803,9 +803,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
     }
 
-    if (opts.port != null and opts.origin == null) {
-        opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
-    }
+    // Removed: --port should only affect Bun.serve, not set origin for file imports
+    // Users can explicitly use --origin if they want to set the public path
+    // if (opts.port != null and opts.origin == null) {
+    //     opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
+    // }
 
     const output_dir: ?string = null;
     const output_file: ?string = null;

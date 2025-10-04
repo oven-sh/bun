@@ -639,6 +639,12 @@ extern "C" BunString URL__protocol(WTF::URL* url)
     return Bun::toStringRef(url->protocol().toStringWithoutCopying());
 }
 
+extern "C" void URL__setProtocol(WTF::URL* url, BunString newProtocol)
+{
+    String newProtocolStr = newProtocol.toWTFString(BunString::ZeroCopy);
+    url->setProtocol(newProtocolStr);
+}
+
 extern "C" void URL__deinit(WTF::URL* url)
 {
     delete url;

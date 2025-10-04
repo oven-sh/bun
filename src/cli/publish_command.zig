@@ -970,6 +970,25 @@ pub const PublishCommand = struct {
                 logger.Loc.Empty,
             ),
         };
+
+        var registry_url: *jsc.URL = jsc.URL.fromUTF8(registry.url.href) catch |err| {
+            Output.err(err, "failed to parse registry url: {s}", .{registry.url.href});
+            Global.exit(1);
+        };
+        defer registry_url.deinit();
+
+        // always replace https with http
+        // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
+        if (registry_url.protocol().eqlUTF8("https")) {
+            registry_url.setProtocol(bun.String.static("http"));
+        }
+
+        const registry_url_str = registry_url.href();
+        defer registry_url_str.deref();
+
+        const registry_url_str_slice = registry_url_str.toSlice(bun.default_allocator);
+        defer registry_url_str_slice.deinit();
+
         dist_props[2] = .{
             .key = Expr.init(
                 E.String,
@@ -979,10 +998,8 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try std.fmt.allocPrint(allocator, "http{s}/{s}/-/{}", .{
-                        // always replace https with http
-                        // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
-                        strings.withoutTrailingSlash(strings.withoutPrefix(registry.url.href, registry.url.protocol)),
+                    .data = try std.fmt.allocPrint(allocator, "{s}/{s}/-/{}", .{
+                        strings.withoutTrailingSlash(registry_url_str_slice.slice()),
                         package_name,
                         Pack.fmtTarballFilename(package_name, package_version, .raw),
                     }),
@@ -1480,3 +1497,4 @@ const Dependency = install.Dependency;
 const Lockfile = install.Lockfile;
 const Npm = install.Npm;
 const PackageManager = install.PackageManager;
+const jsc = bun.jsc;

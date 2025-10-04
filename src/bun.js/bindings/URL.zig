@@ -2,6 +2,7 @@ pub const URL = opaque {
     extern fn URL__fromJS(JSValue, *jsc.JSGlobalObject) ?*URL;
     extern fn URL__fromString(*bun.String) ?*URL;
     extern fn URL__protocol(*URL) String;
+    extern fn URL__setProtocol(*URL, new_protocol: String) void;
     extern fn URL__href(*URL) String;
     extern fn URL__username(*URL) String;
     extern fn URL__password(*URL) String;
@@ -58,17 +59,22 @@ pub const URL = opaque {
         return result;
     }
 
-    pub fn fromUTF8(input: []const u8) ?*URL {
+    pub fn fromUTF8(input: []const u8) error{InvalidUrl}!*URL {
         return fromString(String.borrowUTF8(input));
     }
-    pub fn fromString(str: bun.String) ?*URL {
+    pub fn fromString(str: bun.String) error{InvalidUrl}!*URL {
         jsc.markBinding(@src());
         var input = str;
-        return URL__fromString(&input);
+        return URL__fromString(&input) orelse {
+            return error.InvalidUrl;
+        };
     }
     pub fn protocol(url: *URL) String {
         jsc.markBinding(@src());
         return URL__protocol(url);
+    }
+    pub fn setProtocol(url: *URL, new_protocol: String) void {
+        URL__setProtocol(url, new_protocol);
     }
     pub fn href(url: *URL) String {
         jsc.markBinding(@src());

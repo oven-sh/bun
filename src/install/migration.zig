@@ -26,14 +26,6 @@ pub fn detectAndLoadOtherLockfile(
                 , .{});
                 Global.exit(1);
             }
-            if (Environment.isDebug) {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
-                Global.exit(1);
-            }
             return LoadResult{ .err = .{
                 .step = .migrating,
                 .value = err,
@@ -58,14 +50,6 @@ pub fn detectAndLoadOtherLockfile(
         defer lockfile.close();
         const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
         const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
-            if (Environment.isDebug) {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("Invalid yarn.lock\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
-                Global.exit(1);
-            }
             return LoadResult{ .err = .{
                 .step = .migrating,
                 .value = err,

@@ -640,11 +640,11 @@ extern "C" napi_status napi_is_typedarray(napi_env env, napi_value value, bool* 
 // it doesn't copy the string
 // but it's only safe to use if we are not setting a property
 // because we can't guarantee the lifetime of it
-#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                            \
-    size_t utf8Len = strlen(utf8Name);                                                                                     \
-    WTF::String&& nameString = WTF::charactersAreAllASCII(std::span { reinterpret_cast<const LChar*>(utf8Name), utf8Len }) \
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                        \
-        : WTF::String::fromUTF8(utf8Name);                                                                                 \
+#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                                      \
+    size_t utf8Len = strlen(utf8Name);                                                                                               \
+    WTF::String&& nameString = WTF::charactersAreAllASCII(std::span { reinterpret_cast<const Latin1Character*>(utf8Name), utf8Len }) \
+        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                                  \
+        : WTF::String::fromUTF8(utf8Name);                                                                                           \
     const JSC::PropertyName identifierName = JSC::Identifier::fromString(vm, nameString);
 
 extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
@@ -1411,7 +1411,7 @@ node_api_create_external_string_latin1(napi_env env,
     length = length == NAPI_AUTO_LENGTH ? strlen(str) : length;
     // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
     NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
         NAPI_LOG("latin1 string finalizer");
         env->doFinalizer(finalize_callback, str, hint);
     });

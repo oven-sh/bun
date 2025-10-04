@@ -65,48 +65,78 @@ fn deinitIsVoid(comptime T: type) bool {
     };
 }
 
-/// Calls `deinit` on `ptr_or_slice`, or on every element of `ptr_or_slice`, if such a `deinit`
-/// method exists.
+/// Calls `deinit` on `ptr_or_slice`, or on every element of `ptr_or_slice`, if the pointer points
+/// to a struct or tagged union.
 ///
 /// This function first does the following:
 ///
-/// * If `ptr_or_slice` is a single-item pointer, calls `ptr_or_slice.deinit()`, if that method
-///   exists.
-/// * If `ptr_or_slice` is a slice, calls `deinit` on every element of the slice, if the slice
-///   elements have a `deinit` method.
+/// * If `ptr_or_slice` is a single-item pointer of type `*T`:
+///   - If `T` is a struct or tagged union, calls `ptr_or_slice.deinit()`
+///   - If `T` is an optional, checks if `ptr_or_slice` points to a non-null value, and if so,
+///     calls `bun.memory.deinit` with a pointer to the payload.
+/// * If `ptr_or_slice` is a slice, for each element of the slice, calls `bun.memory.deinit` with
+///   a pointer to the element.
 ///
 /// Then, if `ptr_or_slice` is non-const, this function also sets all memory referenced by the
 /// pointer to `undefined`.
 ///
 /// This method does not free `ptr_or_slice` itself.
 pub fn deinit(ptr_or_slice: anytype) void {
-    const ptr_info = @typeInfo(@TypeOf(ptr_or_slice));
+    const PtrType = @TypeOf(ptr_or_slice);
+    const ptr_info = @typeInfo(PtrType);
+    switch (comptime ptr_info.pointer.size) {
+        .slice => {
+            for (ptr_or_slice) |*elem| {
+                deinit(elem);
+            }
+            return;
+        },
+        .one => {},
+        else => @compileError("unsupported pointer type: " ++ @typeName(PtrType)),
+    }
+
     const Child = ptr_info.pointer.child;
     const mutable = !ptr_info.pointer.is_const;
+    defer {
+        if (comptime mutable) {
+            ptr_or_slice.* = undefined;
+        }
+    }
 
-    const needs_deinit = comptime switch (@typeInfo(Child)) {
-        .@"struct" => true,
-        .@"union" => |u| u.tag_type != null,
-        else => false,
-    };
-    const should_call_deinit = comptime needs_deinit and
-        !exemptedFromDeinit(Child) and
-        !deinitIsVoid(Child);
+    switch (comptime @typeInfo(Child)) {
+        .void, .bool, .int, .float, .pointer, .comptime_float, .comptime_int => return,
+        .undefined, .null, .error_set, .@"enum", .vector => return,
+        .array => {
+            for (ptr_or_slice) |*elem| {
+                deinit(elem);
+            }
+            return;
+        },
+        .@"struct" => {},
+        .optional => {
+            if (ptr_or_slice.*) |*payload| {
+                deinit(payload);
+            }
+            return;
+        },
+        .error_union => {
+            if (ptr_or_slice.*) |*payload| {
+                deinit(payload);
+            } else |_| {}
+            return;
+        },
+        .@"union" => |u| {
+            if (comptime u.tag_type == null) {
+                @compileError("cannot deinit an untagged union: " ++ @typeName(Child));
+            }
+        },
+        .type, .noreturn, .@"fn", .@"opaque", .frame, .@"anyframe", .enum_literal => {
+            @compileError("unsupported type for deinit: " ++ @typeName(Child));
+        },
+    }
 
-    switch (comptime ptr_info.pointer.size) {
-        .one => {
-            if (comptime should_call_deinit) {
-                ptr_or_slice.deinit();
-            }
-            if (comptime mutable) ptr_or_slice.* = undefined;
-        },
-        .slice => for (ptr_or_slice) |*elem| {
-            if (comptime should_call_deinit) {
-                elem.deinit();
-            }
-            if (comptime mutable) elem.* = undefined;
-        },
-        else => @compileError("unsupported pointer type"),
+    if (comptime !exemptedFromDeinit(Child) and !deinitIsVoid(Child)) {
+        ptr_or_slice.deinit();
     }
 }
 

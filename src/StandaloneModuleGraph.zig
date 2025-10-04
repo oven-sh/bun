@@ -199,7 +199,6 @@ pub const StandaloneModuleGraph = struct {
                 store.ref();
 
                 const b = bun.webcore.Blob.initWithStore(store, globalObject).new();
-                b.allocator = bun.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;

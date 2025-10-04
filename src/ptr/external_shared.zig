@@ -7,10 +7,13 @@
 ///         pub fn deref(T*) void;
 ///     };
 pub fn ExternalShared(comptime T: type) type {
-    _ = T.external_shared_descriptor.ref; // must define a `ref` function
-    _ = T.external_shared_descriptor.deref; // must define a `deref` function
     return struct {
         const Self = @This();
+
+        comptime {
+            _ = T.external_shared_descriptor.ref; // must define a `ref` function
+            _ = T.external_shared_descriptor.deref; // must define a `deref` function
+        }
 
         #impl: *T,
 

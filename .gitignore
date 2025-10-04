@@ -2,6 +2,7 @@
 .env
 .envrc
 .eslintcache
+.gdb_history
 .idea
 .next
 .ninja_deps

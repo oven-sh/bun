@@ -6,7 +6,7 @@ pub fn runTasks(
     comptime callbacks: anytype,
     install_peer: bool,
     log_level: Options.LogLevel,
-) anyerror!void {
+) !void {
     var has_updated_this_run = false;
     var has_network_error = false;
 

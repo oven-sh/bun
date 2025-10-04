@@ -75,8 +75,8 @@ std::optional<HTTPHeaderField> HTTPHeaderField::decode(Decoder& decoder)
 namespace RFC7230 {
 bool isTokenCharacter(char16_t);
 bool isWhitespace(char16_t);
-bool isTokenCharacter(LChar);
-bool isWhitespace(LChar);
+bool isTokenCharacter(Latin1Character);
+bool isWhitespace(Latin1Character);
 bool isCommentText(char16_t);
 bool isQuotedPairSecondOctet(char16_t);
 bool isDelimiter(char16_t);

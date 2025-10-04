@@ -17,7 +17,7 @@ afterAll(() => {
 
 describe("basic", () => {
   test("single dependency", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
     await write(
       packageJson,
@@ -48,7 +48,7 @@ describe("basic", () => {
   });
 
   test("scope package", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
     await write(
       packageJson,
@@ -88,7 +88,7 @@ describe("basic", () => {
   });
 
   test("transitive dependencies", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
     await write(
       packageJson,
@@ -175,7 +175,7 @@ describe("basic", () => {
 });
 
 test("handles cyclic dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
   await write(
     packageJson,
@@ -227,7 +227,7 @@ test("handles cyclic dependencies", async () => {
 });
 
 test("can install folder dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
   await write(
     packageJson,
@@ -268,9 +268,51 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
+test("can install folder dependencies on root package", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root-file-dep",
+        workspaces: ["packages/*"],
+        dependencies: {
+          self: "file:.",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          root: "file:../..",
+        },
+      }),
+    ),
+  ]);
+
+  console.log({ packageDir });
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(
+    await Promise.all([
+      readlink(join(packageDir, "node_modules", "self")),
+      readlink(join(packageDir, "packages", "pkg1", "node_modules", "root")),
+      file(join(packageDir, "node_modules", "self", "package.json")).json(),
+    ]),
+  ).toEqual([
+    join(".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+    join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+    await file(packageJson).json(),
+  ]);
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
     await Promise.all([
       write(
@@ -345,7 +387,7 @@ describe("isolated workspaces", () => {
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
     await Promise.all([
       write(
@@ -457,7 +499,7 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
 
 describe("--linker flag", () => {
   test("can override linker from bunfig", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
     await write(
       packageJson,
@@ -579,7 +621,7 @@ describe("--linker flag", () => {
   });
 });
 test("many transitive dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
   await write(
     packageJson,
@@ -653,7 +695,7 @@ test("many transitive dependencies", async () => {
 });
 
 test("dependency names are preserved", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
   await write(
     packageJson,
@@ -710,7 +752,7 @@ test("dependency names are preserved", async () => {
 });
 
 test("same resolution, different dependency name", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
   await write(
     packageJson,
@@ -744,7 +786,7 @@ test("same resolution, different dependency name", async () => {
 });
 
 test("successfully removes and corrects symlinks", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
   await Promise.all([
     write(join(packageDir, "old-package", "package.json"), JSON.stringify({ name: "old-package", version: "1.0.0" })),
     mkdir(join(packageDir, "node_modules")),
@@ -778,7 +820,7 @@ test("runs lifecycle scripts correctly", async () => {
   // 2. only postinstall (or any other script that isn't preinstall)
   // 3. preinstall and any other script
 
-  const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
 
   await write(
     packageJson,

@@ -302,6 +302,8 @@ pub const FetchTasklet = struct {
         this.abort_reason.deinit();
         this.check_server_identity.deinit();
         this.clearAbortSignal();
+        // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
+        this.clearSink();
     }
 
     pub fn deinit(this: *FetchTasklet) void {
@@ -343,6 +345,13 @@ pub const FetchTasklet = struct {
         this.is_waiting_request_stream_start = false;
         bun.assert(this.request_body == .ReadableStream);
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
+            if (this.signal) |signal| {
+                if (signal.aborted()) {
+                    stream.abort(this.global_this);
+                    return;
+                }
+            }
+
             const globalThis = this.global_this;
             this.ref(); // lets only unref when sink is done
             // +1 because the task refs the sink
@@ -1176,53 +1185,63 @@ pub const FetchTasklet = struct {
     pub fn resumeRequestDataStream(this: *FetchTasklet) void {
         // deref when done because we ref inside onWriteRequestDataDrain
         defer this.deref();
+        log("resumeRequestDataStream", .{});
         if (this.sink) |sink| {
+            if (this.signal) |signal| {
+                if (signal.aborted()) {
+                    // already aborted; nothing to drain
+                    return;
+                }
+            }
             sink.drain();
         }
     }
 
-    pub fn writeRequestData(this: *FetchTasklet, data: []const u8) bool {
+    pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
-        if (this.request_body_streaming_buffer) |buffer| {
-            const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
-            const stream_buffer = buffer.acquire();
-            var needs_schedule = false;
-            defer if (needs_schedule) {
-                // wakeup the http thread to write the data
-                http.http_thread.scheduleRequestWrite(this.http.?, .data);
-            };
-            defer buffer.release();
-
-            // dont have backpressure so we will schedule the data to be written
-            // if we have backpressure the onWritable will drain the buffer
-            needs_schedule = stream_buffer.isEmpty();
-            if (this.upgraded_connection) {
-                bun.handleOom(stream_buffer.write(data));
-            } else {
-                //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
-                var formated_size_buffer: [18]u8 = undefined;
-                const formated_size = std.fmt.bufPrint(
-                    formated_size_buffer[0..],
-                    "{x}\r\n",
-                    .{data.len},
-                ) catch |err| switch (err) {
-                    error.NoSpaceLeft => unreachable,
-                };
-                bun.handleOom(stream_buffer.ensureUnusedCapacity(formated_size.len + data.len + 2));
-                stream_buffer.writeAssumeCapacity(formated_size);
-                stream_buffer.writeAssumeCapacity(data);
-                stream_buffer.writeAssumeCapacity("\r\n");
+        if (this.signal) |signal| {
+            if (signal.aborted()) {
+                return .done;
             }
-
-            // pause the stream if we hit the high water mark
-            return stream_buffer.size() >= highWaterMark;
         }
-        return false;
+        const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return .done;
+        const stream_buffer = thread_safe_stream_buffer.acquire();
+        defer thread_safe_stream_buffer.release();
+        const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
+
+        var needs_schedule = false;
+        defer if (needs_schedule) {
+            // wakeup the http thread to write the data
+            http.http_thread.scheduleRequestWrite(this.http.?, .data);
+        };
+
+        // dont have backpressure so we will schedule the data to be written
+        // if we have backpressure the onWritable will drain the buffer
+        needs_schedule = stream_buffer.isEmpty();
+        if (this.upgraded_connection) {
+            bun.handleOom(stream_buffer.write(data));
+        } else {
+            //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
+            var formated_size_buffer: [18]u8 = undefined;
+            const formated_size = std.fmt.bufPrint(
+                formated_size_buffer[0..],
+                "{x}\r\n",
+                .{data.len},
+            ) catch |err| switch (err) {
+                error.NoSpaceLeft => unreachable,
+            };
+            bun.handleOom(stream_buffer.ensureUnusedCapacity(formated_size.len + data.len + 2));
+            stream_buffer.writeAssumeCapacity(formated_size);
+            stream_buffer.writeAssumeCapacity(data);
+            stream_buffer.writeAssumeCapacity("\r\n");
+        }
+
+        // pause the stream if we hit the high water mark
+        return if (stream_buffer.size() >= highWaterMark) .backpressure else .want_more;
     }
 
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
-        this.clearSink();
         defer this.deref();
         if (err) |jsError| {
             if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
@@ -1233,9 +1252,16 @@ pub const FetchTasklet = struct {
             }
             this.abortTask();
         } else {
+            if (!this.upgraded_connection) {
+                // If is not upgraded we need to send the terminating chunk
+                const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return;
+                const stream_buffer = thread_safe_stream_buffer.acquire();
+                defer thread_safe_stream_buffer.release();
+                bun.handleOom(stream_buffer.write(http.end_of_chunked_http1_1_encoding_response_body));
+            }
             if (this.http) |http_| {
                 // just tell to write the end of the chunked encoding aka 0\r\n\r\n
-                http.http_thread.scheduleRequestWrite(http_, .endChunked);
+                http.http_thread.scheduleRequestWrite(http_, .end);
             }
         }
     }
@@ -2743,6 +2769,7 @@ const JSType = jsc.C.JSType;
 const Body = jsc.WebCore.Body;
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;
 
 const Blob = jsc.WebCore.Blob;
 const AnyBlob = jsc.WebCore.Blob.Any;

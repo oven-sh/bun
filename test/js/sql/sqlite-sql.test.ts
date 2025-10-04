@@ -1,4 +1,4 @@
-import { SQL } from "bun";
+import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
@@ -1055,7 +1055,6 @@ describe("Template Literal Security", () => {
     await sql.close();
   });
 });
-
 describe("Transactions", () => {
   let sql: SQL;
 
@@ -1185,6 +1184,36 @@ describe("SQLite-specific features", () => {
     expect(results[0].id).toBe(1);
     expect(results[1].id).toBe(3);
   });
+  test("returning clause on insert statements", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`
+        create table users (
+            id integer primary key,
+            name text not null,
+            verified integer not null default 0,
+            created_at integer not null default (strftime('%s', 'now'))
+        )`;
+
+    const result =
+      await sql`insert into "users" ("id", "name", "verified", "created_at") values (null, ${"John"}, ${0}, strftime('%s', 'now')), (null, ${"Bruce"}, ${0}, strftime('%s', 'now')), (null, ${"Jane"}, ${0}, strftime('%s', 'now')), (null, ${"Austin"}, ${0},  strftime('%s', 'now')) returning "id", "name", "verified"`;
+
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("John");
+    expect(result[0].verified).toBe(0);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Bruce");
+    expect(result[1].verified).toBe(0);
+    expect(result[2].id).toBe(3);
+    expect(result[2].name).toBe("Jane");
+    expect(result[2].verified).toBe(0);
+    expect(result[3].id).toBe(4);
+    expect(result[3].name).toBe("Austin");
+    expect(result[3].verified).toBe(0);
+
+    const [{ 'upper("name")': upperName }] =
+      await sql`insert into "users" ("id", "name", "verified", "created_at") values (null, ${"John"}, ${0}, strftime('%s', 'now')) returning upper("name")`;
+    expect(upperName).toBe("JOHN");
+  });
 
   test("last_insert_rowid()", async () => {
     await sql`CREATE TABLE rowid_test (id INTEGER PRIMARY KEY, value TEXT)`;
@@ -1309,6 +1338,130 @@ describe("SQL helpers", () => {
     const selectQuery = "SELECT * FROM unsafe_test WHERE id = ?";
     const results = await sql.unsafe(selectQuery, [1]);
     expect(results[0].value).toBe("test");
+  });
+
+  test("insert into with select helper using where IN", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    {
+      await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, name: "John", age: 30 })}`;
+      const result = await sql`SELECT * FROM ${sql(random_name)}`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(30);
+    }
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name + "2")} (id int, name text, age int)`;
+    {
+      await sql`INSERT INTO ${sql(random_name + "2")} (id, name, age) SELECT id, name, age FROM ${sql(random_name)} WHERE id IN ${sql([1, 2])}`;
+      const result = await sql`SELECT * FROM ${sql(random_name + "2")}`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(30);
+    }
+  });
+
+  test("update helper with undefined values", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: undefined })} WHERE id IN ${sql([1, 2])}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("Mary");
+    expect(result[0].age).toBe(30);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Mary");
+    expect(result[1].age).toBe(25);
+  });
+  test("update helper that starts with undefined values", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: 19 })} WHERE id IN ${sql([1, 2])}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("John");
+    expect(result[0].age).toBe(19);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Jane");
+    expect(result[1].age).toBe(19);
+  });
+
+  test("update helper with undefined values and no columns", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    try {
+      await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])}`;
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(SyntaxError);
+      expect(e.message).toBe("Update needs to have at least one column");
+    }
+  });
+
+  test("update helper with IN and column name", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE id IN ${sql(users, "id")}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("Mary");
+    expect(result[0].age).toBe(18);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Mary");
+    expect(result[1].age).toBe(18);
+  });
+
+  test("select helper with IN using fragment", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, name: "John", age: 30 })}`;
+    const fragment = sql`id IN ${sql([1, 2])}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)} WHERE ${fragment}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("John");
+    expect(result[0].age).toBe(30);
+  });
+
+  test("update helper with AND IN", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE 1=1 AND id IN ${sql([1, 2])}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("Mary");
+    expect(result[0].age).toBe(18);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Mary");
+    expect(result[1].age).toBe(18);
   });
 
   test("file execution", async () => {

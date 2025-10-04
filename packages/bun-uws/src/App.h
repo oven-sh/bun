@@ -627,12 +627,22 @@ public:
         return std::move(*this);
     }
 
-    void setOnClose(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
+    void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
         httpContext->getSocketContextData()->onSocketClosed = onClose;
+    }
+    void setOnSocketDrain(HttpContextData<SSL>::OnSocketDrainCallback onDrain) {
+        httpContext->getSocketContextData()->onSocketDrain = onDrain;
+    }
+    void setOnSocketData(HttpContextData<SSL>::OnSocketDataCallback onData) {
+        httpContext->getSocketContextData()->onSocketData = onData;
     }
 
     void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
         httpContext->getSocketContextData()->onClientError = std::move(onClientError);
+    }
+
+    void setOnSocketUpgraded(HttpContextData<SSL>::OnSocketUpgradedCallback onUpgraded) {
+        httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }
 
     TemplatedApp &&run() {

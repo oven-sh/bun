@@ -50,6 +50,8 @@ const shared_params = [_]ParamType{
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
+    clap.parseParam("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)") catch unreachable,
+    clap.parseParam("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
 };
 
@@ -158,6 +160,7 @@ const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
     clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
+    clap.parseParam("--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number") catch unreachable,
 });
 
 const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -218,6 +221,8 @@ registry: string = "",
 
 publish_config: Options.PublishConfig = .{},
 
+tolerate_republish: bool = false,
+
 ca: []const string = &.{},
 ca_file_name: string = "",
 
@@ -240,6 +245,10 @@ depth: ?usize = null,
 // `bun audit` options
 audit_level: ?AuditLevel = null,
 audit_ignore_list: []const string = &.{},
+
+// CPU and OS overrides for optional dependencies
+cpu: Npm.Architecture = Npm.Architecture.current,
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
 
 pub const AuditLevel = enum {
     low,
@@ -605,6 +614,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
                 \\  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
                 \\
+                \\  <d>Publish without failing when republishing over an existing version.<r>
+                \\  <b><green>bun publish<r> <cyan>--tolerate-republish<r>
+                \\
                 \\Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
                 \\
             ;
@@ -796,7 +808,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.lockfile_only = args.flag("--lockfile-only");
 
     if (args.option("--linker")) |linker| {
-        cli.node_linker = .fromStr(linker);
+        cli.node_linker = Options.NodeLinker.fromStr(linker) orelse {
+            Output.errGeneric("Expected --linker to be one of 'isolated' or 'hoisted'", .{});
+            Global.exit(1);
+        };
     }
 
     if (args.option("--cache-dir")) |cache_dir| {
@@ -890,6 +905,8 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
                 Global.crash();
             };
         }
+
+        cli.tolerate_republish = args.flag("--tolerate-republish");
     }
 
     // link and unlink default to not saving, all others default to
@@ -935,6 +952,54 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (args.option("--config")) |opt| {
         cli.config = opt;
+    }
+
+    // Parse multiple --cpu flags and combine them using Negatable
+    const cpu_values = args.options("--cpu");
+    if (cpu_values.len > 0) {
+        var cpu_negatable = Npm.Architecture.none.negatable();
+        for (cpu_values) |cpu_str| {
+            // apply() already handles "any" as wildcard and negation with !
+            cpu_negatable.apply(cpu_str);
+
+            // Support * as an alias for "any"
+            if (strings.eqlComptime(cpu_str, "*")) {
+                cpu_negatable.had_wildcard = true;
+                cpu_negatable.had_unrecognized_values = false;
+            } else if (cpu_negatable.had_unrecognized_values and
+                !strings.eqlComptime(cpu_str, "any") and
+                !strings.eqlComptime(cpu_str, "none"))
+            {
+                // Only error for truly unrecognized values (not "any" or "none")
+                Output.errGeneric("Invalid CPU architecture: '{s}'. Valid values are: *, any, arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64. Use !name to negate.", .{cpu_str});
+                Global.crash();
+            }
+        }
+        cli.cpu = cpu_negatable.combine();
+    }
+
+    // Parse multiple --os flags and combine them using Negatable
+    const os_values = args.options("--os");
+    if (os_values.len > 0) {
+        var os_negatable = Npm.OperatingSystem.none.negatable();
+        for (os_values) |os_str| {
+            // apply() already handles "any" as wildcard and negation with !
+            os_negatable.apply(os_str);
+
+            // Support * as an alias for "any"
+            if (strings.eqlComptime(os_str, "*")) {
+                os_negatable.had_wildcard = true;
+                os_negatable.had_unrecognized_values = false;
+            } else if (os_negatable.had_unrecognized_values and
+                !strings.eqlComptime(os_str, "any") and
+                !strings.eqlComptime(os_str, "none"))
+            {
+                // Only error for truly unrecognized values (not "any" or "none")
+                Output.errGeneric("Invalid operating system: '{s}'. Valid values are: *, any, aix, darwin, freebsd, linux, openbsd, sunos, win32, android. Use !name to negate.", .{os_str});
+                Global.crash();
+            }
+        }
+        cli.os = os_negatable.combine();
     }
 
     if (comptime subcommand == .add or subcommand == .install) {
@@ -1061,6 +1126,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
 const string = []const u8;
 
+const Npm = @import("../npm.zig");
 const Options = @import("./PackageManagerOptions.zig");
 const std = @import("std");
 const PackageManagerCommand = @import("../../cli/package_manager_command.zig").PackageManagerCommand;

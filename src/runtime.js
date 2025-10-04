@@ -169,3 +169,5 @@ export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
+
+export var __promiseAll = args => Promise.all(args);

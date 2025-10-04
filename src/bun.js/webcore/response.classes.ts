@@ -69,6 +69,7 @@ export default [
     name: "Response",
     construct: true,
     finalize: true,
+    final: false,
     JSType: "0b11101110",
     configurable: false,
     estimatedSize: true,

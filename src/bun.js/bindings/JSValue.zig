@@ -52,6 +52,16 @@ pub const JSValue = enum(i64) {
         return jsc.JSObject.getIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__isJSXElement(JSValue, *JSGlobalObject) bool;
+    pub fn isJSXElement(this: JSValue, globalThis: *jsc.JSGlobalObject) JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(
+            globalThis,
+            @src(),
+            JSC__JSValue__isJSXElement,
+            .{ this, globalThis },
+        );
+    }
+
     extern fn JSC__JSValue__getDirectIndex(JSValue, *JSGlobalObject, u32) JSValue;
     pub fn getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
@@ -326,6 +336,13 @@ pub const JSValue = enum(i64) {
         JSC__JSValue__putBunString(value, global, key, result);
     }
 
+    extern "c" fn JSC__JSValue__upsertBunStringArray(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) JSValue;
+
+    /// Put key/val pair into `obj`. If `key` is already present on the object, create an array for the values.
+    pub fn putBunStringOneOrArray(obj: JSValue, global: *JSGlobalObject, key: *const bun.String, value: jsc.JSValue) bun.JSError!JSValue {
+        return fromJSHostCall(global, @src(), JSC__JSValue__upsertBunStringArray, .{ obj, global, key, value });
+    }
+
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: jsc.JSValue) void {
         const Key = @TypeOf(key);
         if (comptime @typeInfo(Key) == .pointer) {
@@ -347,12 +364,11 @@ pub const JSValue = enum(i64) {
             @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Key));
         }
     }
-    extern fn JSC__JSValue__putMayBeIndex(target: JSValue, globalObject: *JSGlobalObject, key: *const String, value: jsc.JSValue) void;
     /// Note: key can't be numeric (if so, use putMayBeIndex instead)
     /// Same as `.put` but accepts both non-numeric and numeric keys.
     /// Prefer to use `.put` if the key is guaranteed to be non-numeric (e.g. known at comptime)
-    pub inline fn putMayBeIndex(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) void {
-        JSC__JSValue__putMayBeIndex(this, globalObject, key, value);
+    pub fn putMayBeIndex(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) bun.JSError!void {
+        return bun.cpp.JSC__JSValue__putMayBeIndex(this, globalObject, key, value);
     }
 
     extern fn JSC__JSValue__putToPropertyKey(target: JSValue, globalObject: *JSGlobalObject, key: jsc.JSValue, value: jsc.JSValue) void;
@@ -1111,33 +1127,22 @@ pub const JSValue = enum(i64) {
         return bun.String.fromJS(this, globalObject);
     }
 
-    extern fn JSC__JSValue__toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool;
-
     /// this: RegExp value
     /// other: string value
-    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
-        return JSC__JSValue__toMatch(this, global, other);
+    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) !bool {
+        return bun.cpp.JSC__JSValue__toMatch(this, global, other);
     }
 
-    extern fn JSC__JSValue__asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;
-    pub fn asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool {
-        return JSC__JSValue__asArrayBuffer_(this, global, out);
-    }
+    extern fn JSC__JSValue__asArrayBuffer(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;
 
     pub fn asArrayBuffer(this: JSValue, global: *JSGlobalObject) ?ArrayBuffer {
-        var out: ArrayBuffer = .{
-            .offset = 0,
-            .len = 0,
-            .byte_len = 0,
-            .shared = false,
-            .typed_array_type = .Uint8Array,
-        };
-
-        if (this.asArrayBuffer_(global, &out)) {
-            out.value = this;
+        var out: ArrayBuffer = undefined;
+        // `ptr` might not get set if the ArrayBuffer is empty, so make sure it starts out with a
+        // defined value.
+        out.ptr = &.{};
+        if (JSC__JSValue__asArrayBuffer(this, global, &out)) {
             return out;
         }
-
         return null;
     }
     extern fn JSC__JSValue__fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue;
@@ -1191,26 +1196,13 @@ pub const JSValue = enum(i64) {
         return getZigString(this, global).toSliceZ(allocator);
     }
 
-    extern fn JSC__JSValue__toString(this: JSValue, globalThis: *JSGlobalObject) *JSString;
-    /// On exception, this returns the empty string.
-    pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
-        return JSC__JSValue__toString(this, globalThis);
+    pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
+        return bun.cpp.JSC__JSValue__toStringOrNull(this, globalThis);
     }
 
     extern fn JSC__JSValue__jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void;
     pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) bun.JSError!void {
         return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__jsonStringify, .{ this, globalThis, indent, out });
-    }
-
-    extern fn JSC__JSValue__toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString;
-    // Calls JSValue::toStringOrNull. Returns error on exception.
-    pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
-        var scope: ExceptionValidationScope = undefined;
-        scope.init(globalThis, @src());
-        defer scope.deinit();
-        const maybe_string = JSC__JSValue__toStringOrNull(this, globalThis);
-        scope.assertExceptionPresenceMatches(maybe_string == null);
-        return maybe_string orelse error.JSError;
     }
 
     /// Call `toString()` on the JSValue and clone the result.
@@ -2372,6 +2364,11 @@ pub const JSValue = enum(i64) {
         Output.flush();
     }
 
+    pub fn bind(this: JSValue, globalObject: *JSGlobalObject, bindThisArg: JSValue, name: *const bun.String, length: f64, args: []JSValue) bun.JSError!JSValue {
+        return bun.cpp.Bun__JSValue__bind(this, globalObject, bindThisArg, name, length, args.ptr, args.len);
+    }
+    pub const setPrototypeDirect = bun.cpp.Bun__JSValue__setPrototypeDirect;
+
     pub const JSPropertyNameIterator = struct {
         array: jsc.C.JSPropertyNameArrayRef,
         count: u32,
@@ -2394,6 +2391,13 @@ pub const JSValue = enum(i64) {
     };
 
     pub const backing_int = @typeInfo(JSValue).@"enum".tag_type;
+
+    /// Equivalent to `JSC::JSValue::decode`.
+    pub fn decode(self: JSValue) jsc.DecodedJSValue {
+        var decoded: jsc.DecodedJSValue = undefined;
+        decoded.u.asInt64 = @intFromEnum(self);
+        return decoded;
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
@@ -2419,7 +2423,6 @@ const ArrayBuffer = jsc.ArrayBuffer;
 const C_API = bun.jsc.C;
 const CatchScope = jsc.CatchScope;
 const DOMURL = jsc.DOMURL;
-const ExceptionValidationScope = jsc.ExceptionValidationScope;
 const JSArrayIterator = jsc.JSArrayIterator;
 const JSCell = jsc.JSCell;
 const JSGlobalObject = jsc.JSGlobalObject;

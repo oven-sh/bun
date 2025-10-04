@@ -7,12 +7,13 @@
 
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect } from "bun:test";
 import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import * as numeric from "_util/numeric.ts";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -60,6 +61,7 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
+  WANTS_LOUD: "0",
 };
 
 const ciEnv = { ...bunEnv };
@@ -259,7 +261,7 @@ export function tempDirWithFiles(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
 ): string {
-  const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
+  const base = fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_"));
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
 }
@@ -276,10 +278,10 @@ class DisposableString extends String {
 export function tempDir(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
-): DisposableString {
+): string & DisposableString & AsyncDisposable {
   const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
 
-  return new DisposableString(base);
+  return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
@@ -356,7 +358,7 @@ export function bunRunAsScript(
 }
 
 export function randomLoneSurrogate() {
-  const n = randomRange(0, 2);
+  const n = numeric.random.between(0, 2, { domain: "integral" });
   if (n === 0) return randomLoneHighSurrogate();
   return randomLoneLowSurrogate();
 }
@@ -369,16 +371,12 @@ export function randomInvalidSurrogatePair() {
 
 // Generates a random lone high surrogate (from the range D800-DBFF)
 export function randomLoneHighSurrogate() {
-  return String.fromCharCode(randomRange(0xd800, 0xdbff));
+  return String.fromCharCode(numeric.random.between(0xd800, 0xdbff, { domain: "integral" }));
 }
 
 // Generates a random lone high surrogate (from the range DC00-DFFF)
 export function randomLoneLowSurrogate() {
-  return String.fromCharCode(randomRange(0xdc00, 0xdfff));
-}
-
-function randomRange(low: number, high: number): number {
-  return low + Math.floor(Math.random() * (high - low));
+  return String.fromCharCode(numeric.random.between(0xdc00, 0xdfff, { domain: "integral" }));
 }
 
 export function runWithError(cb: () => unknown): Error | undefined {
@@ -859,6 +857,9 @@ export function dockerExe(): string | null {
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 
@@ -871,6 +872,9 @@ export function isDockerEnabled(): boolean {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
+    if (isCI && isLinux) {
+      throw new Error("A functional `docker` is required in CI for some tests.");
+    }
     return false;
   }
 }
@@ -909,11 +913,13 @@ export async function describeWithContainer(
     env = {},
     args = [],
     archs,
+    concurrent = false,
   }: {
     image: string;
     env?: Record<string, string>;
     args?: string[];
     archs?: NodeJS.Architecture[];
+    concurrent?: boolean;
   },
   fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
@@ -923,7 +929,7 @@ export async function describeWithContainer(
     return;
   }
 
-  describe(label, () => {
+  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
     // Check if this is one of our docker-compose services
     const services: Record<string, number> = {
       "postgres_plain": 5432,
@@ -932,8 +938,8 @@ export async function describeWithContainer(
       "mysql_plain": 3306,
       "mysql_native_password": 3306,
       "mysql_tls": 3306,
-      "mysql:8": 3306,  // Map mysql:8 to mysql_plain
-      "mysql:9": 3306,  // Map mysql:9 to mysql_native_password
+      "mysql:8": 3306, // Map mysql:8 to mysql_plain
+      "mysql:9": 3306, // Map mysql:9 to mysql_native_password
       "redis_plain": 6379,
       "redis_unified": 6379,
       "minio": 9000,
@@ -968,8 +974,12 @@ export async function describeWithContainer(
 
       // Container descriptor with live getters and ready promise
       const containerDescriptor = {
-        get host() { return _host; },
-        get port() { return _port; },
+        get host() {
+          return _host;
+        },
+        get port() {
+          return _port;
+        },
         ready: readyPromise,
       };
 
@@ -992,7 +1002,9 @@ export async function describeWithContainer(
       return;
     }
     // No fallback - if the image isn't in docker-compose, it should fail
-    throw new Error(`Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`);
+    throw new Error(
+      `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
+    );
   });
 }
 
@@ -1710,14 +1722,16 @@ export class VerdaccioRegistry {
         `;
   }
 
-  async createTestDir(bunfigOpts: BunfigOpts = {}) {
+  async createTestDir(
+    opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = { bunfigOpts: {}, files: {} },
+  ) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
-    const packageDir = tmpdirSync();
+    const packageDir = tempDir("verdaccio-test-", opts.files ?? {});
     const packageJson = join(packageDir, "package.json");
-    await this.writeBunfig(packageDir, bunfigOpts);
+    await this.writeBunfig(packageDir, opts.bunfigOpts);
     this.users = {};
-    return { packageDir, packageJson };
+    return { packageDir: String(packageDir), packageJson };
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
@@ -1823,4 +1837,53 @@ export function normalizeBunSnapshot(snapshot: string, optionalDir?: string) {
       .replaceAll(Bun.revision, "<revision>")
       .trim()
   );
+}
+
+export function nodeModulesPackages(nodeModulesPath: string): string {
+  const packages: string[] = [];
+
+  function scanDirectory(dir: string, relativePath: string = "") {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          if (entry.name === ".bun-cache") {
+            // Skip .bun-cache directories
+            continue;
+          }
+
+          const newRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+          // Check if this directory contains a package.json
+          const packageJsonPath = join(fullPath, "package.json");
+          if (fs.existsSync(packageJsonPath)) {
+            try {
+              const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+              const name = packageJson.name || "unknown";
+              const version = packageJson.version || "unknown";
+              packages.push(`${newRelativePath}/${name}@${version}`);
+            } catch {
+              // If package.json is invalid, still include the path
+              packages.push(`${newRelativePath}/[invalid-package.json]`);
+            }
+          }
+
+          // Recursively scan subdirectories (including nested node_modules)
+          scanDirectory(fullPath, newRelativePath);
+        }
+      }
+    } catch (err) {
+      // Ignore errors for directories we can't read
+    }
+  }
+
+  scanDirectory(nodeModulesPath);
+
+  // Sort the packages alphabetically
+  packages.sort();
+
+  return packages.join("\n");
 }

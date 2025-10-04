@@ -732,7 +732,7 @@ vary@~1.1.2:
 
     const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-yarn-migration");
-  }, 10000);
+  });
 
   test("yarn.lock with npm aliases", async () => {
     const tempDir = tempDirWithFiles("yarn-migration-aliases", {
@@ -1336,7 +1336,7 @@ webpack@^5.75.0:
 
     // Verify peer dependencies are captured
     expect(bunLockContent).toContain("peerDependencies");
-  }, 10000);
+  });
 });
 
 describe("bun pm migrate for existing yarn.lock", () => {
@@ -1373,9 +1373,7 @@ describe("bun pm migrate for existing yarn.lock", () => {
 
       const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
       expect(bunLockContent).toMatchSnapshot(folder);
-    },
-    10000,
-  );
+    });
 
   test("yarn.lock with packages that have os/cpu requirements", async () => {
     const tempDir = tempDirWithFiles("yarn-migration-os-cpu", {

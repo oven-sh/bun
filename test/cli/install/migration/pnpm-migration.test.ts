@@ -67,7 +67,6 @@ test("version is number with dot", async () => {
     stderr: "pipe",
   });
 
-  console.log({ packageDir });
 
   let [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 

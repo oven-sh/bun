@@ -1,5 +1,36 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
+exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have os/cpu requirements: os-cpu-yarn-migration 1`] = `
+"{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "os-cpu-test",
+      "dependencies": {
+        "fsevents": "^2.3.2",
+        "esbuild": "^0.17.0",
+      },
+    },
+  },
+  "packages": {
+    "@esbuild/android-arm64": ["@esbuild/android-arm64@0.17.19", "", {}, "sha512-KBMWvEZooR7+kzY0BtbTQn0OAYY7CsiydT63pVEaPtVYF0hXbUaOyZog37DKxK7NF3XacBJOpYT4adIJh+avxA=="],
+
+    "@esbuild/darwin-arm64": ["@esbuild/darwin-arm64@0.17.19", "", {}, "sha512-80wEoCfF/hFKM6WE1FyBHc9SfUblloAWx6FJkFWTWiCoht9Mc0ARGEM47e67W9rI09YoUxJL68WHfDRYEAvOhg=="],
+
+    "@esbuild/darwin-x64": ["@esbuild/darwin-x64@0.17.19", "", {}, "sha512-IJM4JJsLhRYr9xdtLytPLSH9k/oxR3boaUIYiHkAawtwNOXKE8KoU8tMvryogdcT8AU+Bflmh81Xn6Q0vTZbQw=="],
+
+    "@esbuild/linux-arm64": ["@esbuild/linux-arm64@0.17.19", "", {}, "sha512-ct1Mj/VEUqd5+2h0EBPdMzNdGXnGxbLPg6H5TF8xsHY4X5UAP0FUbDKJhtKu+6iLpIjKjWEvb5XrFyZdVy9OTg=="],
+
+    "@esbuild/linux-x64": ["@esbuild/linux-x64@0.17.19", "", {}, "sha512-68ngA9lg2H6zkZcyp22tsVt38mlhWde8l3eJLWkyLrp4HwMUr3c1s/M2t7+kHIhvMjglIBrFpncX1SzMckomGw=="],
+
+    "esbuild": ["esbuild@0.17.19", "", { "optionalDependencies": { "@esbuild/android-arm": "0.17.19", "@esbuild/android-arm64": "0.17.19", "@esbuild/android-x64": "0.17.19", "@esbuild/darwin-arm64": "0.17.19", "@esbuild/darwin-x64": "0.17.19", "@esbuild/freebsd-arm64": "0.17.19", "@esbuild/freebsd-x64": "0.17.19", "@esbuild/linux-arm": "0.17.19", "@esbuild/linux-arm64": "0.17.19", "@esbuild/linux-ia32": "0.17.19", "@esbuild/linux-loong64": "0.17.19", "@esbuild/linux-mips64el": "0.17.19", "@esbuild/linux-ppc64": "0.17.19", "@esbuild/linux-riscv64": "0.17.19", "@esbuild/linux-s390x": "0.17.19", "@esbuild/linux-x64": "0.17.19", "@esbuild/netbsd-x64": "0.17.19", "@esbuild/openbsd-x64": "0.17.19", "@esbuild/sunos-x64": "0.17.19", "@esbuild/win32-arm64": "0.17.19", "@esbuild/win32-ia32": "0.17.19", "@esbuild/win32-x64": "0.17.19" }, "bin": { "esbuild": "bin/esbuild" } }, "sha512-XQ0jAPFkK/u3LcVRcvVHQcTIqD6E2H1fvZMA5dQPSOWb3suUbWbfbRf94pjc0bNzRYLfIrDRQXr7X+LHIm5oHw=="],
+
+    "fsevents": ["fsevents@2.3.2", "", {}, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
+  }
+}
+"
+`;
+
 exports[`yarn.lock migration basic simple yarn.lock migration produces correct bun.lock: simple-yarn-migration 1`] = `
 "{
   "lockfileVersion": 1,

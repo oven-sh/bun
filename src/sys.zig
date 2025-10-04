@@ -503,19 +503,6 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
 
         if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| return err;
 
-        // Zero out padding bytes used for birthtime to avoid uninitialized memory
-        if (comptime Environment.isLinux) {
-            if (comptime Environment.isX64) {
-                stat_.__unused[0] = 0;
-                stat_.__unused[1] = 0;
-                stat_.__unused[2] = 0;
-            } else if (comptime Environment.isAarch64) {
-                stat_.__pad = 0;
-                stat_.__unused[0] = 0;
-                stat_.__unused[1] = 0;
-            }
-        }
-
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -566,19 +553,6 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
         log("fstat({}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
-
-    // Zero out padding bytes used for birthtime to avoid uninitialized memory
-    if (comptime Environment.isLinux) {
-        if (comptime Environment.isX64) {
-            stat_.__unused[0] = 0;
-            stat_.__unused[1] = 0;
-            stat_.__unused[2] = 0;
-        } else if (comptime Environment.isAarch64) {
-            stat_.__pad = 0;
-            stat_.__unused[0] = 0;
-            stat_.__unused[1] = 0;
-        }
-    }
 
     return Maybe(bun.Stat){ .result = stat_ };
 }

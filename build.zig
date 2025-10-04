@@ -49,6 +49,7 @@ const BunBuildOptions = struct {
     enable_logs: bool = false,
     enable_asan: bool,
     enable_valgrind: bool,
+    use_mimalloc: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
     /// To make iterating on some '@embedFile's faster, we load them at runtime
@@ -68,6 +69,7 @@ const BunBuildOptions = struct {
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
+    llvm_codegen_threads: ?u32 = null,
 
     pub fn isBaseline(this: *const BunBuildOptions) bool {
         return this.arch.isX86() and
@@ -96,6 +98,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption(bool, "enable_valgrind", this.enable_valgrind);
+        opts.addOption(bool, "use_mimalloc", this.use_mimalloc);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
         opts.addOption(bool, "override_no_export_cpp_apis", this.override_no_export_cpp_apis);
@@ -269,6 +272,8 @@ pub fn build(b: *Build) !void {
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
         .enable_valgrind = b.option(bool, "enable_valgrind", "Enable valgrind") orelse false,
+        .use_mimalloc = b.option(bool, "use_mimalloc", "Use mimalloc as default allocator") orelse false,
+        .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
     };
 
     // zig build obj
@@ -498,6 +503,7 @@ fn addMultiCheck(
                 .no_llvm = root_build_options.no_llvm,
                 .enable_asan = root_build_options.enable_asan,
                 .enable_valgrind = root_build_options.enable_valgrind,
+                .use_mimalloc = root_build_options.use_mimalloc,
                 .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
             };
 
@@ -603,7 +609,15 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     // Object options
     obj.use_llvm = !opts.no_llvm;
-    obj.use_lld = if (opts.os == .mac) false else !opts.no_llvm;
+    obj.use_lld = if (opts.os == .mac or opts.os == .linux) false else !opts.no_llvm;
+
+    if (opts.optimize == .Debug) {
+        if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
+            obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
+    }
+
+    obj.no_link_obj = true;
+
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;
@@ -710,6 +724,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     // Generated code exposed as individual modules.
     inline for (.{
         .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
+        .{ .file = "bindgen_generated.zig", .import = "bindgen_generated" },
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
         .{ .file = "runtime.out.js", .enable = opts.shouldEmbedCode() },

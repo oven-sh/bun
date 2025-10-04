@@ -105,21 +105,21 @@ pub fn migratePnpmLockfile(
         return error.PnpmLockfileMissingVersion;
     };
 
-    const lockfile_version_num: u32 = lockfile_version: {
+    const lockfile_version_num: f64 = lockfile_version: {
         err: {
             switch (lockfile_version_expr.data) {
                 .e_number => |num| {
-                    if (num.value < 0 or num.value > std.math.maxInt(u32)) {
+                    if (num.value < 0) {
                         break :err;
                     }
 
-                    break :lockfile_version @intFromFloat(std.math.divExact(f64, num.value, 1) catch break :err);
+                    break :lockfile_version num.value;
                 },
                 .e_string => |version_str| {
                     const str = version_str.slice(allocator);
 
                     const end = strings.indexOfChar(str, '.') orelse str.len;
-                    break :lockfile_version std.fmt.parseUnsigned(u32, str[0..end], 10) catch break :err;
+                    break :lockfile_version std.fmt.parseFloat(f64, str[0..end]) catch break :err;
                 },
                 else => {},
             }
@@ -242,7 +242,7 @@ pub fn migratePnpmLockfile(
                 continue;
             }
 
-            var pkg_json_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+            var pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
             defer pkg_json_path.deinit();
 
             pkg_json_path.append(importer_path);
@@ -285,7 +285,7 @@ pub fn migratePnpmLockfile(
         var importer_dep_res_versions: bun.StringArrayHashMap(bun.StringArrayHashMap([]const u8)) = .init(allocator);
 
         {
-            var pkg_json_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+            var pkg_json_path: bun.AutoAbsPath = .initTopLevelDir();
             defer pkg_json_path.deinit();
 
             pkg_json_path.append("package.json");
@@ -329,6 +329,8 @@ pub fn migratePnpmLockfile(
 
         var pkg_map: bun.StringArrayHashMap(PackageID) = .init(allocator);
 
+        try pkg_map.putNoClobber(bun.fs.FileSystem.instance.top_level_dir, 0);
+
         const workspace_pkgs_off = lockfile.packages.len;
 
         workspaces: for (lockfile.workspace_paths.values()) |workspace_path| {
@@ -348,7 +350,7 @@ pub fn migratePnpmLockfile(
                     .value = .{ .workspace = try string_buf.append(path) },
                 };
 
-                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                var path_buf: bun.AutoAbsPath = .initTopLevelDir();
                 defer path_buf.deinit();
 
                 path_buf.append(path);
@@ -445,13 +447,13 @@ pub fn migratePnpmLockfile(
                         if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |link_path| {
                             // create a link package for the workspace dependency only if it doesn't already exist
                             if (dep.version.tag == .workspace) {
-                                var link_path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                                var link_path_buf: bun.AutoAbsPath = .initTopLevelDir();
                                 defer link_path_buf.deinit();
                                 link_path_buf.append(workspace_path);
                                 link_path_buf.join(&.{link_path});
 
                                 for (lockfile.workspace_paths.values()) |existing_workspace_path| {
-                                    var workspace_path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                                    var workspace_path_buf: bun.AutoAbsPath = .initTopLevelDir();
                                     defer workspace_path_buf.deinit();
                                     workspace_path_buf.append(existing_workspace_path.slice(string_buf.bytes.items));
 
@@ -469,7 +471,7 @@ pub fn migratePnpmLockfile(
                                 .resolution = .init(.{ .symlink = try string_buf.append(link_path) }),
                             };
 
-                            var abs_link_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                            var abs_link_path: bun.AutoAbsPath = .initTopLevelDir();
                             defer abs_link_path.deinit();
 
                             abs_link_path.join(&.{ workspace_path, link_path });
@@ -685,7 +687,7 @@ pub fn migratePnpmLockfile(
             // implicit workspace dependencies
             if (dep.behavior.isWorkspace()) {
                 const workspace_path = dep.version.value.workspace.slice(string_buf);
-                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                var path_buf: bun.AutoAbsPath = .initTopLevelDir();
                 defer path_buf.deinit();
                 path_buf.join(&.{workspace_path});
                 if (pkg_map.get(path_buf.slice())) |workspace_pkg_id| {
@@ -706,7 +708,7 @@ pub fn migratePnpmLockfile(
             const version_without_suffix = removeSuffix(version);
 
             if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |maybe_symlink_or_folder_or_workspace_path| {
-                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                var path_buf: bun.AutoAbsPath = .initTopLevelDir();
                 defer path_buf.deinit();
                 path_buf.join(&.{maybe_symlink_or_folder_or_workspace_path});
                 if (pkg_map.get(path_buf.slice())) |pkg_id| {
@@ -755,7 +757,7 @@ pub fn migratePnpmLockfile(
             const version_without_suffix = removeSuffix(version);
 
             if (strings.withoutPrefixIfPossibleComptime(version_without_suffix, "link:")) |maybe_symlink_or_folder_or_workspace_path| {
-                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                var path_buf: bun.AutoAbsPath = .initTopLevelDir();
                 defer path_buf.deinit();
                 path_buf.join(&.{ workspace_path, maybe_symlink_or_folder_or_workspace_path });
                 if (pkg_map.get(path_buf.slice())) |link_pkg_id| {
@@ -795,8 +797,11 @@ pub fn migratePnpmLockfile(
             switch (dep.version.tag) {
                 .folder, .symlink, .workspace => {
                     const maybe_symlink_or_folder_or_workspace_path = strings.withoutPrefixComptime(version_without_suffix, "link:");
-                    if (pkg_map.get(maybe_symlink_or_folder_or_workspace_path)) |workspace_pkg_id| {
-                        lockfile.buffers.resolutions.items[dep_id] = workspace_pkg_id;
+                    var path_buf: bun.AutoAbsPath = .initTopLevelDir();
+                    defer path_buf.deinit();
+                    path_buf.join(&.{maybe_symlink_or_folder_or_workspace_path});
+                    if (pkg_map.get(path_buf.slice())) |link_pkg_id| {
+                        lockfile.buffers.resolutions.items[dep_id] = link_pkg_id;
                         continue;
                     }
                 },
@@ -819,7 +824,7 @@ pub fn migratePnpmLockfile(
 
     try lockfile.resolve(log);
 
-    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager);
+    try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, false);
 
     try updatePackageJsonAfterMigration(allocator, manager, log, dir, found_patches);
 
@@ -1172,7 +1177,7 @@ fn parseAppendImporterDependencies(
                     continue;
                 }
 
-                var path_buf: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                var path_buf: bun.AutoAbsPath = .initTopLevelDir();
                 defer path_buf.deinit();
 
                 path_buf.append(path);

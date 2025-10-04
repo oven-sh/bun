@@ -59,7 +59,7 @@ pub fn installIsolatedPackages(
 
         // First pass: create full dependency tree with resolved peers
         next_node: while (node_queue.readItem()) |entry| {
-            {
+            check_cycle: {
                 // check for cycles
                 const nodes_slice = nodes.slice();
                 const node_pkg_ids = nodes_slice.items(.pkg_id);
@@ -74,9 +74,15 @@ pub fn installIsolatedPackages(
                         // 'node_modules/.bun/parent@version/node_modules'.
 
                         const dep_id = node_dep_ids[curr_id.get()];
-                        if (dep_id == invalid_dependency_id or entry.dep_id == invalid_dependency_id) {
+                        if (dep_id == invalid_dependency_id and entry.dep_id == invalid_dependency_id) {
                             node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
                             continue :next_node;
+                        }
+
+                        if (dep_id == invalid_dependency_id or entry.dep_id == invalid_dependency_id) {
+                            // one is the root package, one is a dependency on the root package (it has a valid dep_id)
+                            // create a new node for it.
+                            break :check_cycle;
                         }
 
                         // ensure the dependency name is the same before skipping the cycle. if they aren't
@@ -93,7 +99,11 @@ pub fn installIsolatedPackages(
             const node_id: Store.Node.Id = .from(@intCast(nodes.len));
             const pkg_deps = pkg_dependency_slices[entry.pkg_id];
 
-            var skip_dependencies_of_workspace_node = false;
+            // for skipping dependnecies of workspace packages and the root package. the dependencies
+            // of these packages should only be pulled in once, but we might need to create more than
+            // one entry if there's multiple dependencies on the workspace or root package.
+            var skip_dependencies = entry.pkg_id == 0 and entry.dep_id != invalid_dependency_id;
+
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
                 if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
@@ -106,6 +116,9 @@ pub fn installIsolatedPackages(
                         const node_dep_ids = nodes_slice.items(.dep_id);
 
                         const dedupe_dep_id = node_dep_ids[dedupe_node_id.get()];
+                        if (dedupe_dep_id == invalid_dependency_id) {
+                            break :dont_dedupe;
+                        }
                         const dedupe_dep = dependencies[dedupe_dep_id];
 
                         if (dedupe_dep.name_hash != entry_dep.name_hash) {
@@ -115,7 +128,7 @@ pub fn installIsolatedPackages(
                         if (dedupe_dep.version.tag == .workspace and entry_dep.version.tag == .workspace) {
                             if (dedupe_dep.behavior.isWorkspace() != entry_dep.behavior.isWorkspace()) {
                                 // only attach the dependencies to one of the workspaces
-                                skip_dependencies_of_workspace_node = true;
+                                skip_dependencies = true;
                                 break :dont_dedupe;
                             }
                         }
@@ -132,8 +145,8 @@ pub fn installIsolatedPackages(
                 .pkg_id = entry.pkg_id,
                 .dep_id = entry.dep_id,
                 .parent_id = entry.parent_id,
-                .nodes = if (skip_dependencies_of_workspace_node) .empty else try .initCapacity(lockfile.allocator, pkg_deps.len),
-                .dependencies = if (skip_dependencies_of_workspace_node) .empty else try .initCapacity(lockfile.allocator, pkg_deps.len),
+                .nodes = if (skip_dependencies) .empty else try .initCapacity(lockfile.allocator, pkg_deps.len),
+                .dependencies = if (skip_dependencies) .empty else try .initCapacity(lockfile.allocator, pkg_deps.len),
             });
 
             const nodes_slice = nodes.slice();
@@ -146,7 +159,7 @@ pub fn installIsolatedPackages(
                 node_nodes[parent_id].appendAssumeCapacity(node_id);
             }
 
-            if (skip_dependencies_of_workspace_node) {
+            if (skip_dependencies) {
                 continue;
             }
 
@@ -411,6 +424,11 @@ pub fn installIsolatedPackages(
                 const curr_dep_id = node_dep_ids[entry.node_id.get()];
 
                 for (dedupe_entry.value_ptr.items) |info| {
+                    if (info.dep_id == invalid_dependency_id or curr_dep_id == invalid_dependency_id) {
+                        if (info.dep_id != curr_dep_id) {
+                            continue;
+                        }
+                    }
                     if (info.dep_id != invalid_dependency_id and curr_dep_id != invalid_dependency_id) {
                         const curr_dep = dependencies[curr_dep_id];
                         const existing_dep = dependencies[info.dep_id];
@@ -685,6 +703,7 @@ pub fn installIsolatedPackages(
 
             const node_id = entry_node_ids[entry_id.get()];
             const pkg_id = node_pkg_ids[node_id.get()];
+            const dep_id = node_dep_ids[node_id.get()];
 
             const pkg_name = pkg_names[pkg_id];
             const pkg_name_hash = pkg_name_hashes[pkg_id];
@@ -700,15 +719,15 @@ pub fn installIsolatedPackages(
                     continue;
                 },
                 .root => {
-                    // .monotonic is okay in this block because the task isn't running on another
-                    // thread.
-                    if (entry_id == .root) {
+                    if (dep_id == invalid_dependency_id) {
+                        // .monotonic is okay in this block because the task isn't running on another
+                        // thread.
                         entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);
-                        installer.startTask(entry_id);
-                        continue;
+                    } else {
+                        // dep_id is valid meaning this was a dependency that resolved to the root
+                        // package. it gets an entry in the store.
                     }
-                    entry_steps[entry_id.get()].store(.done, .monotonic);
-                    installer.onTaskComplete(entry_id, .skipped);
+                    installer.startTask(entry_id);
                     continue;
                 },
                 .workspace => {
@@ -830,7 +849,6 @@ pub fn installIsolatedPackages(
                         .isolated_package_install_context = entry_id,
                     };
 
-                    const dep_id = node_dep_ids[node_id.get()];
                     const dep = lockfile.buffers.dependencies.items[dep_id];
 
                     switch (pkg_res_tag) {

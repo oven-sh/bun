@@ -1350,10 +1350,10 @@ pub fn transpileSourceCode(
                 if (virtual_source) |source| {
                     if (globalObject) |globalThis| {
                         // attempt to avoid reading the WASM file twice.
-                        const encoded = jsc.EncodedJSValue{
-                            .asPtr = globalThis,
+                        const decoded: jsc.DecodedJSValue = .{
+                            .u = .{ .ptr = @ptrCast(globalThis) },
                         };
-                        const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
+                        const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
@@ -2637,6 +2637,7 @@ pub const FetchFlags = enum {
 pub const HardcodedModule = enum {
     bun,
     @"abort-controller",
+    @"bun:app",
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
@@ -2724,6 +2725,7 @@ pub const HardcodedModule = enum {
     pub const map = bun.ComptimeStringMap(HardcodedModule, [_]struct { []const u8, HardcodedModule }{
         // Bun
         .{ "bun", .bun },
+        .{ "bun:app", .@"bun:app" },
         .{ "bun:ffi", .@"bun:ffi" },
         .{ "bun:jsc", .@"bun:jsc" },
         .{ "bun:main", .@"bun:main" },
@@ -2991,6 +2993,7 @@ pub const HardcodedModule = enum {
         const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
+            .{ "bun:app", .{ .path = "bun:app" } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },

@@ -1340,7 +1340,7 @@ class ChildProcess extends EventEmitter {
 
           if (hasSocketsToEagerlyLoad) {
             process.nextTick(() => {
-              this.stdio;
+              void this.stdio;
               $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
             });
           }

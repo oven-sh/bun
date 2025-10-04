@@ -52,6 +52,16 @@ pub const JSValue = enum(i64) {
         return jsc.JSObject.getIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__isJSXElement(JSValue, *JSGlobalObject) bool;
+    pub fn isJSXElement(this: JSValue, globalThis: *jsc.JSGlobalObject) JSError!bool {
+        return bun.jsc.fromJSHostCallGeneric(
+            globalThis,
+            @src(),
+            JSC__JSValue__isJSXElement,
+            .{ this, globalThis },
+        );
+    }
+
     extern fn JSC__JSValue__getDirectIndex(JSValue, *JSGlobalObject, u32) JSValue;
     pub fn getDirectIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
@@ -324,6 +334,13 @@ pub const JSValue = enum(i64) {
         if (comptime bun.Environment.isDebug)
             jsc.markBinding(@src());
         JSC__JSValue__putBunString(value, global, key, result);
+    }
+
+    extern "c" fn JSC__JSValue__upsertBunStringArray(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) JSValue;
+
+    /// Put key/val pair into `obj`. If `key` is already present on the object, create an array for the values.
+    pub fn putBunStringOneOrArray(obj: JSValue, global: *JSGlobalObject, key: *const bun.String, value: jsc.JSValue) bun.JSError!JSValue {
+        return fromJSHostCall(global, @src(), JSC__JSValue__upsertBunStringArray, .{ obj, global, key, value });
     }
 
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: jsc.JSValue) void {
@@ -1116,25 +1133,16 @@ pub const JSValue = enum(i64) {
         return bun.cpp.JSC__JSValue__toMatch(this, global, other);
     }
 
-    extern fn JSC__JSValue__asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;
-    pub fn asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool {
-        return JSC__JSValue__asArrayBuffer_(this, global, out);
-    }
+    extern fn JSC__JSValue__asArrayBuffer(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool;
 
     pub fn asArrayBuffer(this: JSValue, global: *JSGlobalObject) ?ArrayBuffer {
-        var out: ArrayBuffer = .{
-            .offset = 0,
-            .len = 0,
-            .byte_len = 0,
-            .shared = false,
-            .typed_array_type = .Uint8Array,
-        };
-
-        if (this.asArrayBuffer_(global, &out)) {
-            out.value = this;
+        var out: ArrayBuffer = undefined;
+        // `ptr` might not get set if the ArrayBuffer is empty, so make sure it starts out with a
+        // defined value.
+        out.ptr = &.{};
+        if (JSC__JSValue__asArrayBuffer(this, global, &out)) {
             return out;
         }
-
         return null;
     }
     extern fn JSC__JSValue__fromInt64NoTruncate(globalObject: *JSGlobalObject, i: i64) JSValue;
@@ -2383,6 +2391,13 @@ pub const JSValue = enum(i64) {
     };
 
     pub const backing_int = @typeInfo(JSValue).@"enum".tag_type;
+
+    /// Equivalent to `JSC::JSValue::decode`.
+    pub fn decode(self: JSValue) jsc.DecodedJSValue {
+        var decoded: jsc.DecodedJSValue = undefined;
+        decoded.u.asInt64 = @intFromEnum(self);
+        return decoded;
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;

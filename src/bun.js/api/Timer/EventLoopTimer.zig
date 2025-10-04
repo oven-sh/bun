@@ -47,7 +47,7 @@ pub fn less(_: void, a: *const Self, b: *const Self) bool {
     return order == .lt;
 }
 
-pub const Tag = if (Environment.isWindows) enum {
+pub const Tag = enum {
     TimerCallback,
     TimeoutObject,
     ImmediateObject,
@@ -78,7 +78,7 @@ pub const Tag = if (Environment.isWindows) enum {
             .StatWatcherScheduler => StatWatcherScheduler,
             .UpgradedDuplex => uws.UpgradedDuplex,
             .DNSResolver => DNSResolver,
-            .WindowsNamedPipe => uws.WindowsNamedPipe,
+            .WindowsNamedPipe => if (Environment.isWindows) uws.WindowsNamedPipe else UnreachableTimer,
             .WTFTimer => WTFTimer,
             .PostgresSQLConnectionTimeout => jsc.Postgres.PostgresSQLConnection,
             .PostgresSQLConnectionMaxLifetime => jsc.Postgres.PostgresSQLConnection,
@@ -96,52 +96,13 @@ pub const Tag = if (Environment.isWindows) enum {
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
         };
     }
-} else enum {
-    TimerCallback,
-    TimeoutObject,
-    ImmediateObject,
-    StatWatcherScheduler,
-    UpgradedDuplex,
-    WTFTimer,
-    DNSResolver,
-    PostgresSQLConnectionTimeout,
-    PostgresSQLConnectionMaxLifetime,
-    MySQLConnectionTimeout,
-    MySQLConnectionMaxLifetime,
-    ValkeyConnectionTimeout,
-    ValkeyConnectionReconnect,
-    SubprocessTimeout,
-    DevServerSweepSourceMaps,
-    DevServerMemoryVisualizerTick,
-    AbortSignalTimeout,
-    DateHeaderTimer,
-    BunTest,
-    EventLoopDelayMonitor,
+};
 
-    pub fn Type(comptime T: Tag) type {
-        return switch (T) {
-            .TimerCallback => TimerCallback,
-            .TimeoutObject => TimeoutObject,
-            .ImmediateObject => ImmediateObject,
-            .StatWatcherScheduler => StatWatcherScheduler,
-            .UpgradedDuplex => uws.UpgradedDuplex,
-            .WTFTimer => WTFTimer,
-            .DNSResolver => DNSResolver,
-            .PostgresSQLConnectionTimeout => jsc.Postgres.PostgresSQLConnection,
-            .PostgresSQLConnectionMaxLifetime => jsc.Postgres.PostgresSQLConnection,
-            .MySQLConnectionTimeout => jsc.MySQL.MySQLConnection,
-            .MySQLConnectionMaxLifetime => jsc.MySQL.MySQLConnection,
-            .ValkeyConnectionTimeout => jsc.API.Valkey,
-            .ValkeyConnectionReconnect => jsc.API.Valkey,
-            .SubprocessTimeout => jsc.Subprocess,
-            .DevServerSweepSourceMaps,
-            .DevServerMemoryVisualizerTick,
-            => bun.bake.DevServer,
-            .AbortSignalTimeout => jsc.WebCore.AbortSignal.Timeout,
-            .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
-            .BunTest => jsc.Jest.bun_test.BunTest,
-            .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
-        };
+const UnreachableTimer = struct {
+    event_loop_timer: Self,
+    fn callback(_: *UnreachableTimer, _: *UnreachableTimer) Arm {
+        if (Environment.ci_assert) bun.assert(false);
+        return .disarm;
     }
 };
 

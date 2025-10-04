@@ -182,10 +182,107 @@ describe("minimum-release-age", () => {
               },
             },
             time: {
-              "1.0.0": daysAgo(10),
-              "1.0.1": daysAgo(2),
+              "1.0.0": daysAgo(8),
+              "1.0.1": daysAgo(2.5),
               "1.0.2": daysAgo(1.5),
               "1.0.3": daysAgo(0.5),
+            },
+          };
+
+          return new Response(JSON.stringify(packageData));
+        }
+
+        // TEST PACKAGE 3: search-limit-package (tests 7-day search limit)
+        if (url.pathname === "/search-limit-package") {
+          const packageData = {
+            name: "search-limit-package",
+            "dist-tags": {
+              latest: "1.0.8",
+            },
+            versions: {
+              "1.0.0": {
+                name: "search-limit-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.0.tgz`,
+                  integrity: "sha512-limit1==",
+                },
+              },
+              "1.0.1": {
+                name: "search-limit-package",
+                version: "1.0.1",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.1.tgz`,
+                  integrity: "sha512-limit2==",
+                },
+              },
+              "1.0.2": {
+                name: "search-limit-package",
+                version: "1.0.2",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.2.tgz`,
+                  integrity: "sha512-limit3==",
+                },
+              },
+              "1.0.3": {
+                name: "search-limit-package",
+                version: "1.0.3",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.3.tgz`,
+                  integrity: "sha512-limit4==",
+                },
+              },
+              "1.0.4": {
+                name: "search-limit-package",
+                version: "1.0.4",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.4.tgz`,
+                  integrity: "sha512-limit5==",
+                },
+              },
+              "1.0.5": {
+                name: "search-limit-package",
+                version: "1.0.5",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.5.tgz`,
+                  integrity: "sha512-limit6==",
+                },
+              },
+              "1.0.6": {
+                name: "search-limit-package",
+                version: "1.0.6",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.6.tgz`,
+                  integrity: "sha512-limit7==",
+                },
+              },
+              "1.0.7": {
+                name: "search-limit-package",
+                version: "1.0.7",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.7.tgz`,
+                  integrity: "sha512-limit8==",
+                },
+              },
+              "1.0.8": {
+                name: "search-limit-package",
+                version: "1.0.8",
+                dist: {
+                  tarball: `${mockRegistryUrl}/search-limit-package/-/search-limit-package-1.0.8.tgz`,
+                  integrity: "sha512-limit9==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(20), // Beyond search limit (5 + 7 = 12 days)
+              "1.0.1": daysAgo(11), // Just beyond search limit
+              "1.0.2": daysAgo(10), // Within search limit but unstable
+              "1.0.3": daysAgo(9), // Unstable
+              "1.0.4": daysAgo(8), // Unstable
+              "1.0.5": daysAgo(7), // Unstable
+              "1.0.6": daysAgo(6), // Passes age gate, unstable
+              "1.0.7": daysAgo(4), // Blocked by age gate
+              "1.0.8": daysAgo(1), // Blocked by age gate
             },
           };
 
@@ -590,7 +687,7 @@ describe("minimum-release-age", () => {
     test("detects rapid bugfixes and selects stable version", async () => {
       using dir = tempDir("stability-check", {
         "package.json": JSON.stringify({
-          dependencies: { "bugfix-package": "latest" },
+          dependencies: { "bugfix-package": "*" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
       });
@@ -608,10 +705,18 @@ describe("minimum-release-age", () => {
 
       expect(exitCode).toBe(0);
 
-      // With 1.8 days filter, should select 1.0.1 (2 days old)
-      // 1.0.2 and 1.0.3 are too recent and have rapid fixes
+      // With 1.8 days filter:
+      // - stability_window = min(1.8, 7) = 1.8 days
+      // - search_limit = 1.8 + 7 = 8.8 days
+      // - 1.0.3 (0.5d): BLOCKED by age gate
+      // - 1.0.2 (1.5d): BLOCKED by age gate
+      // - 1.0.1 (2.5d): PASSES age gate, gap to 1.0.2 = 1d < 1.8d → UNSTABLE
+      // - 1.0.0 (8d): PASSES age gate, within search limit, gap to 1.0.1 = 5.5d >= 1.8d → STABLE!
+      // - Should select 1.0.0 (skips unstable 1.0.1)
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfile).toContain("bugfix-package@");
+      expect(lockfile).toContain("bugfix-package@1.0.0");
+      expect(lockfile).not.toContain("bugfix-package@1.0.1");
+      expect(lockfile).not.toContain("bugfix-package@1.0.2");
       expect(lockfile).not.toContain("bugfix-package@1.0.3");
 
       // Verbose output should indicate stability check
@@ -619,17 +724,16 @@ describe("minimum-release-age", () => {
       expect(output).toContain("minimum-release-age");
     });
 
-    test("stability window is capped at 1.5 days", async () => {
-      using dir = tempDir("stability-window-cap", {
+    test("detects rapid bugfixes with dist-tag (latest)", async () => {
+      using dir = tempDir("stability-check-dist-tag", {
         "package.json": JSON.stringify({
-          dependencies: { "bugfix-package": "*" },
+          dependencies: { "bugfix-package": "latest" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
       });
 
-      // Even with 10 day minimum, stability window should be 1.5 days
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${10 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${1.8 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -639,11 +743,49 @@ describe("minimum-release-age", () => {
       const exitCode = await proc.exited;
       expect(exitCode).toBe(0);
 
-      // All versions are within 10 days, but stability check with 1.5 day window
-      // should still select a stable version
+      // Same logic as semver test, but using dist-tag resolution path
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      // This is complex - the exact version depends on stability logic
-      expect(lockfile).toContain("bugfix-package@");
+      expect(lockfile).toContain("bugfix-package@1.0.0");
+      expect(lockfile).not.toContain("bugfix-package@1.0.1");
+      expect(lockfile).not.toContain("bugfix-package@1.0.2");
+      expect(lockfile).not.toContain("bugfix-package@1.0.3");
+    });
+
+    test("gives up after searching 7 days beyond age gate", async () => {
+      using dir = tempDir("seven-day-limit", {
+        "package.json": JSON.stringify({
+          dependencies: { "search-limit-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // Testing the "give up after 7 days of searching" logic:
+      // - Age gate: 5 days
+      // - stability_window: min(5, 7) = 5 days (gap needed for stability)
+      // - search_limit: 5 + 7 = 12 days (how far back to search)
+      //
+      // Timeline:
+      // - 1.0.8 (1d), 1.0.7 (4d): BLOCKED by age gate
+      // - 1.0.6 (6d): First to PASS age gate
+      // - All versions 1.0.6→1.0.1 have 1-day gaps (all UNSTABLE, need 5-day gap)
+      // - 1.0.0 (20d) is beyond search_limit (12d) → GIVE UP
+      //
+      // Result: Selects 1.0.6 (gave up finding stable version)
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Should select 1.0.6 after giving up search
+      expect(lockfile).toContain("search-limit-package@1.0.6");
+      expect(lockfile).not.toContain("search-limit-package@1.0.0");
     });
   });
 

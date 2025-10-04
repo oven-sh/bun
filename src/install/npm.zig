@@ -1501,7 +1501,7 @@ pub const PackageManifest = struct {
         group: Semver.Query.Group,
         group_buf: string,
         minimum_release_age_ms: ?f64,
-        newest_filtered: *?*const Semver.Version,
+        newest_filtered: *?Semver.Version,
     ) ?FindVersionResult {
         var prev_package_blocked_from_age: ?*const PackageVersion = null;
         var best_version: ?FindResult = null;
@@ -1521,24 +1521,17 @@ pub const PackageManifest = struct {
                 const package = &packages[i];
                 if (minimum_release_age_ms) |min_age_ms| {
                     if (isPackageVersionTooRecent(package, current_timestamp_ms, min_age_ms)) {
-                        if (newest_filtered.* == null) newest_filtered.* = &version;
+                        if (newest_filtered.* == null) newest_filtered.* = version;
                         prev_package_blocked_from_age = package;
                     }
                     // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
                     else if (prev_package_blocked_from_age) |prev_package| {
-                        if (best_version == null) {
-                            best_version = .{
-                                .version = version,
-                                .package = package,
-                            };
-                        }
-
                         // only try to go backwards for a max of 7 days on top of existing minimum age
                         if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
                             break;
                         }
 
-                        const is_stable = package.publish_timestamp_ms <= prev_package.publish_timestamp_ms + stability_window_ms;
+                        const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
                         if (is_stable) {
                             best_version = .{
                                 .version = version,
@@ -1546,6 +1539,12 @@ pub const PackageManifest = struct {
                             };
                             break;
                         } else {
+                            if (best_version == null) {
+                                best_version = .{
+                                    .version = version,
+                                    .package = package,
+                                };
+                            }
                             prev_package_blocked_from_age = package;
                             continue;
                         }
@@ -1572,7 +1571,7 @@ pub const PackageManifest = struct {
             if (newest_filtered.*) |nf| {
                 return .{ .found_with_filter = .{
                     .result = result,
-                    .newest_filtered = nf.*,
+                    .newest_filtered = nf,
                 } };
             } else {
                 return .{ .found = result };
@@ -1669,25 +1668,27 @@ pub const PackageManifest = struct {
 
             // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
             if (prev_package_blocked_from_age) |prev_package| {
-                if (best_version == null) {
-                    best_version = .{
-                        .version = version,
-                        .package = package,
-                    };
-                }
                 // only try to go backwards for a max of 7 days on top of existing minimum age
                 if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
+                    if (best_version) |result| {
+                        return .{ .found_with_filter = .{
+                            .result = result,
+                            .newest_filtered = dist_result.version,
+                        } };
+                    }
                     break;
                 }
 
-                const is_stable = package.publish_timestamp_ms <= prev_package.publish_timestamp_ms + stability_window_ms;
+                const is_stable = package.publish_timestamp_ms - prev_package.publish_timestamp_ms >= stability_window_ms;
                 if (is_stable) {
-                    best_version = .{
-                        .version = version,
-                        .package = package,
-                    };
-                    break;
+                    return .{ .found_with_filter = .{
+                        .result = .{ .version = version, .package = package },
+                        .newest_filtered = dist_result.version,
+                    } };
                 } else {
+                    if (best_version == null) {
+                        best_version = .{ .version = version, .package = package };
+                    }
                     prev_package_blocked_from_age = package;
                     continue;
                 }
@@ -1722,7 +1723,7 @@ pub const PackageManifest = struct {
         }
 
         const left = group.head.head.range.left;
-        var newest_filtered: ?*const Semver.Version = null;
+        var newest_filtered: ?Semver.Version = null;
         const current_timestamp_ms: f64 = @floatFromInt(std.time.milliTimestamp());
         const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
 
@@ -1743,7 +1744,7 @@ pub const PackageManifest = struct {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
                 if (min_age_gate_ms) |min_age_ms| {
                     if (isPackageVersionTooRecent(result.package, current_timestamp_ms, min_age_ms)) {
-                        newest_filtered = &result.version;
+                        newest_filtered = result.version;
                     }
                 }
                 if (newest_filtered == null) {

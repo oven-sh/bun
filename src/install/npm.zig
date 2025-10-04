@@ -1512,10 +1512,12 @@ pub const PackageManifest = struct {
         else
             0;
 
-        while (i > 0) : (i -= 1) {
-            const version = versions[i - 1];
+        var i = versions.len;
+        while (i > 0) {
+            i -= 1;
+            const version = versions[i];
             if (group.satisfies(version, group_buf, this.string_buf)) {
-                const package = &packages[i - 1];
+                const package = &packages[i];
                 if (minimum_release_age_ms) |min_age_ms| {
                     if (isPackageVersionTooRecent(package, current_timestamp_ms, min_age_ms)) {
                         if (newest_filtered.* == null) newest_filtered.* = &version;

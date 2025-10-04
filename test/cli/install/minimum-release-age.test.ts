@@ -1748,6 +1748,8 @@ linker = "${linker}"
         cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
         cwd: String(dir),
         env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
       });
 
       const exitCode = await proc.exited;

@@ -1488,9 +1488,9 @@ pub const PackageManifest = struct {
 
     pub inline fn isPackageVersionTooRecent(
         package_version: *const PackageVersion,
-        current_timestamp_ms: f64,
         minimum_release_age_ms: f64,
     ) bool {
+        const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         return package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms;
     }
 
@@ -1520,7 +1520,7 @@ pub const PackageManifest = struct {
             if (group.satisfies(version, group_buf, this.string_buf)) {
                 const package = &packages[i];
                 if (minimum_release_age_ms) |min_age_ms| {
-                    if (isPackageVersionTooRecent(package, current_timestamp_ms, min_age_ms)) {
+                    if (isPackageVersionTooRecent(package, min_age_ms)) {
                         if (newest_filtered.* == null) newest_filtered.* = version;
                         prev_package_blocked_from_age = package;
                     }
@@ -1625,7 +1625,7 @@ pub const PackageManifest = struct {
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
         const stability_window_ms = @min(min_age_ms, seven_days_ms);
 
-        const dist_too_recent = isPackageVersionTooRecent(dist_result.package, current_timestamp_ms, min_age_ms);
+        const dist_too_recent = isPackageVersionTooRecent(dist_result.package, min_age_ms);
         if (!dist_too_recent) {
             return .{ .found = dist_result };
         }
@@ -1661,7 +1661,7 @@ pub const PackageManifest = struct {
                 if (!strings.eql(actual_tag, expected_tag)) continue;
             }
 
-            if (isPackageVersionTooRecent(package, current_timestamp_ms, min_age_ms)) {
+            if (isPackageVersionTooRecent(package, min_age_ms)) {
                 prev_package_blocked_from_age = package;
                 continue;
             }
@@ -1724,14 +1724,13 @@ pub const PackageManifest = struct {
 
         const left = group.head.head.range.left;
         var newest_filtered: ?Semver.Version = null;
-        const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
 
         if (left.op == .eql) {
             const result = this.findByVersion(left.version);
             if (result) |r| {
                 if (min_age_gate_ms) |min_age_ms| {
-                    if (isPackageVersionTooRecent(r.package, current_timestamp_ms, min_age_ms)) {
+                    if (isPackageVersionTooRecent(r.package, min_age_ms)) {
                         return .{ .err = .too_recent };
                     }
                 }
@@ -1743,7 +1742,7 @@ pub const PackageManifest = struct {
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
                 if (min_age_gate_ms) |min_age_ms| {
-                    if (isPackageVersionTooRecent(result.package, current_timestamp_ms, min_age_ms)) {
+                    if (isPackageVersionTooRecent(result.package, min_age_ms)) {
                         newest_filtered = result.version;
                     }
                 }

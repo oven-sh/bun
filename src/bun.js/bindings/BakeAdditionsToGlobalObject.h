@@ -37,8 +37,6 @@ struct BakeAdditionsToGlobalObject {
     {
         this->m_JSBakeResponseClassStructure.visit(visitor);
         this->m_FrameworkRequestArgsClassStructure.visit(visitor);
-        this->m_BakeProductionSSRRouteInfoClassStructure.visit(visitor);
-        this->m_BakeProductionSSRRouteArgsClassStructure.visit(visitor);
 
         visitor.append(this->m_wrapComponent);
         visitor.append(this->m_asyncLocalStorageInstance);
@@ -66,16 +64,6 @@ struct BakeAdditionsToGlobalObject {
         m_bakeEnsureAsyncLocalStorage.initLater(
             [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
                 init.set(JSFunction::create(init.vm, init.owner, 1, String("bakeSetAsyncLocalStorage"_s), jsFunctionBakeEnsureAsyncLocalStorage, ImplementationVisibility::Public, NoIntrinsic));
-            });
-
-        m_BakeProductionSSRRouteInfoClassStructure.initLater(
-            [](LazyClassStructure::Initializer& init) {
-                Bun::createBakeProductionSSRRouteInfoStructure(init);
-            });
-
-        m_BakeProductionSSRRouteArgsClassStructure.initLater(
-            [](LazyClassStructure::Initializer& init) {
-                Bun::createBakeProductionSSRRouteArgsStructure(init);
             });
 
         m_bakeGetBundleNewRoute.initLater(
@@ -165,8 +153,6 @@ struct BakeAdditionsToGlobalObject {
     }
 
     LazyClassStructure m_JSBakeResponseClassStructure;
-    LazyClassStructure m_BakeProductionSSRRouteInfoClassStructure;
-    LazyClassStructure m_BakeProductionSSRRouteArgsClassStructure;
     LazyClassStructure m_FrameworkRequestArgsClassStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeGetProdDataForInitializationJSFunction;
 

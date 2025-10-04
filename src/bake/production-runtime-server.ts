@@ -15,12 +15,6 @@ export type RequestContext = {
 
 // Create the AsyncLocalStorage instance for propagating response options
 const responseOptionsALS = new AsyncLocalStorage();
-// let responseOptionsALS = {
-//   run: async (storeValue, fn) => {
-//     return await fn();
-//   },
-// };
-let asyncLocalStorageWasSet = false;
 
 type Module = unknown;
 
@@ -60,19 +54,14 @@ interface Exports {
     length: number,
     setAsyncLocalStorage: Function,
     dataForInitialization: (req: Request, routeIndex: number) => RouteArgs,
-    newRouteParams: (
-      req: Request,
-      url: string,
-    ) => [routeIndex: number, routeInfo: RouteInfo, params: Record<string, string> | null],
+    newRouteParams: (req: Request, url: string) => [routeIndex: number, params: Record<string, string> | null],
   ) => void;
   handleRequest: (req: Request, routeIndex: number, params: Record<string, string> | null) => Promise<Response>;
 }
 
 let dataForInitialization: (req: Request, routeIndex: number) => RouteArgs = undefined as any;
-let newRouteParams: (
-  req: Request,
-  url: string,
-) => [routeIndex: number, routeInfo: RouteInfo, params: Record<string, string> | null] | Blob = undefined as any;
+let newRouteParams: (req: Request, url: string) => [routeIndex: number, params: Record<string, string> | null] | Blob =
+  undefined as any;
 
 declare let server_exports: Exports;
 
@@ -108,7 +97,7 @@ server_exports = {
           reject(error);
           throw error;
         } finally {
-          routeInfo[4 /* initializing */] = undefined;
+          routeInfo[RouteInfo.initializing] = undefined;
         }
 
         if (!(routeInfo as unknown as RouteInfo)[RouteInfo.serverEntrypoint]!.render) {
@@ -144,8 +133,8 @@ server_exports = {
           return await serverRenderer(
             req,
             {
-              styles: routeInfo[3 /* styles */]!,
-              modules: [routeInfo[2 /* clientEntryUrl */]!],
+              styles: routeInfo[RouteInfo.styles]!,
+              modules: [routeInfo[RouteInfo.clientEntryUrl]!],
               layouts,
               pageModule,
               modulepreload: [],
@@ -175,14 +164,13 @@ server_exports = {
             }
 
             const result = newRouteParams(req, newUrl);
+            // If the path points to an SSG route then we get a blob
             if (result instanceof Blob) {
-              console.log("Returning a blob", result);
               return new Response(result);
             }
-            const [newRouteIndex, newRouteInfo, newParams] = result;
+            const [newRouteIndex, newParams] = result;
 
             routeIndex = newRouteIndex;
-            routeInfo = newRouteInfo;
             params = newParams;
 
             continue;

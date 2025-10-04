@@ -100,10 +100,6 @@ pub fn initBakeServerRuntime(global: *JSGlobalObject, server_runtime_path: []con
     return jsc.Strong.create(handle_request_fn, global);
 }
 
-pub fn getRouteInfo(this: *Self, global: *JSGlobalObject, index: Route.Index) JSError!JSValue {
-    return SSRRouteList.getRouteInfo(global, this.route_list.get(), index.get());
-}
-
 fn BakeLoadProductionServerCode(global: *jsc.JSGlobalObject, code: bun.String, path: bun.String) bun.JSError!jsc.JSValue {
     const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.c) jsc.JSValue, .{ .name = "BakeLoadProductionServerCode" }).*;
     return bun.jsc.fromJSHostCall(global, @src(), f, .{ global, code, path });
@@ -235,18 +231,17 @@ pub fn newRouteParamsJS(global: *bun.jsc.JSGlobalObject, callframe: *jsc.CallFra
         .empty => return global.throw("Path points to an invalid route: {s}", .{url_utf8.byteSlice()}),
     }
 
-    const route_info = try self.getRouteInfo(global, route_index);
-
-    var result = try JSValue.createEmptyArray(global, 3);
+    var result = try JSValue.createEmptyArray(global, 1);
     result.putIndex(global, 0, JSValue.jsNumberFromUint64(route_index.get())) catch unreachable;
-    result.putIndex(global, 1, route_info) catch unreachable;
-    result.putIndex(global, 2, params.toJS(global)) catch unreachable;
+    result.putIndex(global, 1, params.toJS(global)) catch unreachable;
 
     return result;
 }
 
 extern "C" fn Bake__getProdNewRouteParamsJSFunction(global: *bun.jsc.JSGlobalObject) callconv(jsc.conv) bun.jsc.JSValue;
 
+/// Create a JS object representing the passed in matched params. This uses
+/// structure caching.
 pub fn createParamsObject(
     self: *Self,
     global: *bun.jsc.JSGlobalObject,

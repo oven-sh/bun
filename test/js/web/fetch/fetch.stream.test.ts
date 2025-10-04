@@ -27,54 +27,66 @@ const smallText = Buffer.alloc(16 * "Hello".length, "Hello");
 const empty = Buffer.alloc(0);
 
 describe.concurrent("fetch() with streaming", () => {
-  [-1, 0, 20, 50, 100].forEach(timeout => {
-    it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
-      using server = Bun.serve({
-        port: 0,
-        async fetch(req) {
-          return new Response(
-            new ReadableStream({
-              async start(controller) {
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(1000);
-                controller.enqueue("Hello, World!");
-                controller.close();
+  [100, 50, 20, 0, -1].forEach(timeout => {
+    for (let via of ["pull", "start"]) {
+      it(`should be able to fail properly when reading from readable stream via ${via} with timeout ${timeout}`, async () => {
+        let thisTimeoutShouldNeverBeReached;
+        using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            async function fn(controller) {
+              if (thisTimeoutShouldNeverBeReached) return;
+              controller.enqueue("Hello, World!");
+              thisTimeoutShouldNeverBeReached = setTimeout(
+                () => {
+                  controller.enqueue("Hello, World!");
+                  controller.close();
+                },
+                // Make the timeout long enough to account for timer imprecision and busy CPUs
+                10000,
+              );
+            }
+            return new Response(
+              new ReadableStream({
+                [via]: fn,
+              }),
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/plain",
+                },
               },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-              },
-            },
-          );
-        },
-      });
-
-      const server_url = `http://${server.hostname}:${server.port}`;
-      try {
-        const res = await fetch(server_url, {
-          signal: timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout),
+            );
+          },
         });
 
-        const reader = res.body?.getReader();
-        let results = [];
-        while (true) {
-          const { done, data } = await reader?.read();
-          if (data) results.push(data);
-          if (done) break;
+        const server_url = server.url.href;
+        try {
+          const res = await fetch(server_url, {
+            signal: timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout),
+          });
+
+          const reader = res.body?.getReader();
+          let results = [];
+          while (true) {
+            const { done, value } = await reader?.read();
+            if (value) results.push(value);
+            if (done) break;
+          }
+          expect.unreachable();
+        } catch (err: any) {
+          if (timeout < 0) {
+            if (err.name !== "AbortError") throw err;
+            expect(err.message).toBe("The operation was aborted.");
+          } else {
+            if (err.name !== "TimeoutError") throw err;
+            expect(err.message).toBe("The operation timed out.");
+          }
+        } finally {
+          if (thisTimeoutShouldNeverBeReached) clearTimeout(thisTimeoutShouldNeverBeReached);
         }
-        expect.unreachable();
-      } catch (err: any) {
-        if (timeout < 0) {
-          if (err.name !== "AbortError") throw err;
-          expect(err.message).toBe("The operation was aborted.");
-        } else {
-          if (err.name !== "TimeoutError") throw err;
-          expect(err.message).toBe("The operation timed out.");
-        }
-      }
-    });
+      });
+    }
   });
 
   it(`should be locked after start buffering`, async () => {
@@ -104,7 +116,7 @@ describe.concurrent("fetch() with streaming", () => {
         );
       },
     });
-    const server_url = `http://${server.hostname}:${server.port}`;
+    const server_url = server.url.href;
     const res = await fetch(server_url, {});
     const promise = res.text();
     expect(async () => res.body?.getReader()).toThrow("ReadableStream is locked");
@@ -139,7 +151,7 @@ describe.concurrent("fetch() with streaming", () => {
       },
     });
 
-    const server_url = `http://${server.hostname}:${server.port}`;
+    const server_url = server.url.href;
     const res = await fetch(server_url);
     var body = res.body as ReadableStream<Uint8Array>;
     const promise = res.text();
@@ -172,7 +184,7 @@ describe.concurrent("fetch() with streaming", () => {
           });
         },
       });
-      const url = `http://${server.hostname}:${server.port}/`;
+      const url = server.url.href;
       expect(await fetch(`${url}with_headers`).then(res => res.text())).toBe("Hello, World");
       expect(await fetch(url).then(res => res.text())).toBe("Hello, World");
     }
@@ -184,15 +196,19 @@ describe.concurrent("fetch() with streaming", () => {
       try {
         const errorHandler = (err: any) => expect(err).toBeUndefined();
 
-        server = http
-          .createServer(function (req, res) {
-            res.writeHead(200, { "Content-Type": "text/plain" });
+        const address = await new Promise<AddressInfo>((resolve, reject) => {
+          server = http
+            .createServer(function (req, res) {
+              res.writeHead(200, { "Content-Type": "text/plain" });
 
-            pipeline(createReadStream(file), res, errorHandler);
-          })
-          .listen(0);
+              pipeline(createReadStream(file), res, errorHandler);
+            })
+            .listen(0, err => {
+              if (err) reject(err);
+              else resolve(server!.address() as AddressInfo);
+            });
+        });
 
-        const address = server.address() as AddressInfo;
         let url;
         if (address.family == "IPv4") {
           url = `http://${address.address}:${address.port}`;

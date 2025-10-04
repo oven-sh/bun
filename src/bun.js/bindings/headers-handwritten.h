@@ -183,6 +183,18 @@ typedef struct ZigStackFrame {
     ZigStackFrameCode code_type;
     bool is_async;
     bool remapped;
+    int32_t jsc_stack_frame_index;
+
+    ZigStackFrame()
+        : function_name {}
+        , source_url {}
+        , position {}
+        , code_type {}
+        , is_async(false)
+        , remapped(false)
+        , jsc_stack_frame_index(-1)
+    {
+    }
 } ZigStackFrame;
 
 typedef struct ZigStackTrace {

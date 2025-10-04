@@ -143,19 +143,6 @@ When implementing JavaScript classes in C++:
 3. Add iso subspaces for classes with C++ fields
 4. Cache structures in ZigGlobalObject
 
-## Development Workflow
-
-### Code Formatting
-
-- `bun run prettier` - Format JS/TS files
-- `bun run zig-format` - Format Zig files
-- `bun run clang-format` - Format C++ files
-
-### Watching for Changes
-
-- `bun run watch` - Incremental Zig compilation with error checking
-- `bun run watch-windows` - Windows-specific watch mode
-
 ### Code Generation
 
 Code generation happens automatically as part of the build process. The main scripts are:
@@ -188,6 +175,6 @@ Built-in JavaScript modules use special syntax and are organized as:
 7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
 8. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
 9. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
-10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific `Output.scoped(.${scopeName}, .visible)`s
+10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scopeName>=1` to enable specific `Output.scoped(.${scopeName}, .visible)`s
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.

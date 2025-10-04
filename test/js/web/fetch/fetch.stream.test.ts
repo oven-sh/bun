@@ -60,8 +60,8 @@ describe.concurrent("fetch() with streaming", () => {
         const reader = res.body?.getReader();
         let results = [];
         while (true) {
-          const { done, data } = await reader?.read();
-          if (data) results.push(data);
+          const { done, value } = await reader?.read();
+          if (value) results.push(value);
           if (done) break;
         }
         expect.unreachable();

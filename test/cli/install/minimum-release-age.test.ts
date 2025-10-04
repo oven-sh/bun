@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 /**
  * Comprehensive test suite for the minimum-release-age security feature.
@@ -561,6 +561,83 @@ describe("minimum-release-age", () => {
               "1.0.0": daysAgo(20),
               "1.5.0": daysAgo(8),
               "2.0.0": daysAgo(1),
+            },
+          };
+
+          if (req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json")) {
+            return Response.json({
+              name: packageData.name,
+              "dist-tags": packageData["dist-tags"],
+              versions: packageData.versions,
+            });
+          }
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE 8: stable-package (latest is old, has many versions)
+        if (url.pathname === "/stable-package") {
+          const packageData = {
+            name: "stable-package",
+            "dist-tags": {
+              latest: "3.2.0",
+            },
+            versions: {
+              "3.0.0": {
+                name: "stable-package",
+                version: "3.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/stable-package/-/stable-package-3.0.0.tgz`,
+                  integrity: "sha512-stable1==",
+                },
+              },
+              "3.0.1": {
+                name: "stable-package",
+                version: "3.0.1",
+                dist: {
+                  tarball: `${mockRegistryUrl}/stable-package/-/stable-package-3.0.1.tgz`,
+                  integrity: "sha512-stable2==",
+                },
+              },
+              "3.1.0": {
+                name: "stable-package",
+                version: "3.1.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/stable-package/-/stable-package-3.1.0.tgz`,
+                  integrity: "sha512-stable3==",
+                },
+              },
+              "3.1.1": {
+                name: "stable-package",
+                version: "3.1.1",
+                dist: {
+                  tarball: `${mockRegistryUrl}/stable-package/-/stable-package-3.1.1.tgz`,
+                  integrity: "sha512-stable4==",
+                },
+              },
+              "3.1.2": {
+                name: "stable-package",
+                version: "3.1.2",
+                dist: {
+                  tarball: `${mockRegistryUrl}/stable-package/-/stable-package-3.1.2.tgz`,
+                  integrity: "sha512-stable5==",
+                },
+              },
+              "3.2.0": {
+                name: "stable-package",
+                version: "3.2.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/stable-package/-/stable-package-3.2.0.tgz`,
+                  integrity: "sha512-stable6==",
+                },
+              },
+            },
+            time: {
+              "3.0.0": daysAgo(50),
+              "3.0.1": daysAgo(45),
+              "3.1.0": daysAgo(40),
+              "3.1.1": daysAgo(35),
+              "3.1.2": daysAgo(32),
+              "3.2.0": daysAgo(30), // Latest is 30 days old - passes any reasonable gate
             },
           };
 
@@ -1629,5 +1706,149 @@ registry = "${mockRegistryUrl}"`,
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain("regular-package@2.1.0");
     });
+  });
+
+  describe("monorepo with linker modes", () => {
+    test.each(["isolated", "hoisted"])(
+      "installs package with minimum-release-age in %s mode",
+      async (linker) => {
+        using dir = tempDir(`monorepo-${linker}`, {
+          "package.json": JSON.stringify({
+            name: "my-monorepo",
+            workspaces: ["packages/*"],
+          }),
+          "bunfig.toml": `
+[install]
+linker = "${linker}"
+`,
+          "packages/app/package.json": JSON.stringify({
+            name: "app",
+            version: "1.0.0",
+            dependencies: {
+              "regular-package": "*",
+            },
+          }),
+          "packages/lib/package.json": JSON.stringify({
+            name: "lib",
+            version: "1.0.0",
+            dependencies: {
+              "regular-package": "^2.0.0",
+              "daily-release-package": "latest",
+              "bugfix-package": "*",
+              "@scope/scoped-package": "^1.0.0",
+              "stable-package": "latest",
+            },
+          }),
+          "packages/legacy/package.json": JSON.stringify({
+            name: "legacy",
+            version: "1.0.0",
+            dependencies: {
+              "regular-package": "1.0.0", // Pinned to old version
+              "stable-package": "3.0.0", // Pinned to specific old version
+            },
+          }),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
+
+        // Install with 5-day minimum-release-age - comprehensive "final boss" test:
+        // - regular-package (^2.0.0): 3.0.0 too new → select 2.1.0 (6 days old)
+        // - regular-package (1.0.0): pinned to 1.0.0 (legacy workspace - no age check on exact versions)
+        // - daily-release-package (latest): 1.10.0 too new → select 1.5.0 (exactly 5 days, passes gate)
+        // - bugfix-package (*): only 1.0.0 passes 5-day gate (others are 0.5d, 1.5d, 2.5d old)
+        // - @scope/scoped-package (^1.0.0): 2.0.0 too new → select 1.5.0 (8 days old)
+        // - stable-package (latest): 3.2.0 is 30 days old → select 3.2.0 (passes gate, is latest)
+        // - stable-package (3.0.0): pinned to 3.0.0 (legacy workspace - no age check on exact versions)
+        const proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+          cwd: String(dir),
+          env: bunEnv,
+        });
+
+        const exitCode = await proc.exited;
+        expect(exitCode).toBe(0);
+
+        const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+
+        // Verify each package selected the correct version
+        expect(lockfile).toContain("regular-package@2.1.0");
+        expect(lockfile).not.toContain("regular-package@3.0.0");
+
+        expect(lockfile).toContain("daily-release-package@1.5.0");
+        expect(lockfile).not.toContain("daily-release-package@1.10.0");
+
+        expect(lockfile).toContain("bugfix-package@1.0.0");
+        expect(lockfile).not.toContain("bugfix-package@1.0.1");
+
+        expect(lockfile).toContain("@scope/scoped-package@1.5.0");
+        expect(lockfile).not.toContain("@scope/scoped-package@2.0.0");
+
+        expect(lockfile).toContain("stable-package@3.2.0"); // Latest, 30 days old, passes gate
+        expect(lockfile).not.toContain("stable-package@3.1.2");
+
+        // Verify legacy workspace gets pinned old versions (no age check on exact versions)
+        expect(lockfile).toContain("regular-package@1.0.0");
+        expect(lockfile).toContain("stable-package@3.0.0");
+
+        // Normalize the lockfile to remove dynamic port numbers
+        const normalizedLockfile = lockfile.replace(/http:\/\/localhost:\d+/g, "http://localhost:<port>");
+        expect(normalizeBunSnapshot(normalizedLockfile, dir)).toMatchInlineSnapshot(`
+          "{
+            "lockfileVersion": 1,
+            "workspaces": {
+              "": {
+                "name": "my-monorepo",
+              },
+              "packages/app": {
+                "name": "app",
+                "version": "1.0.0",
+                "dependencies": {
+                  "regular-package": "*",
+                },
+              },
+              "packages/legacy": {
+                "name": "legacy",
+                "version": "1.0.0",
+                "dependencies": {
+                  "regular-package": "1.0.0",
+                  "stable-package": "3.0.0",
+                },
+              },
+              "packages/lib": {
+                "name": "lib",
+                "version": "1.0.0",
+                "dependencies": {
+                  "@scope/scoped-package": "^1.0.0",
+                  "bugfix-package": "*",
+                  "daily-release-package": "latest",
+                  "regular-package": "^2.0.0",
+                  "stable-package": "latest",
+                },
+              },
+            },
+            "packages": {
+              "@scope/scoped-package": ["@scope/scoped-package@1.5.0", "http://localhost:<port>/@scope/scoped-package/-/scoped-package-1.5.0.tgz", {}, ""],
+
+              "app": ["app@workspace:packages/app"],
+
+              "bugfix-package": ["bugfix-package@1.0.0", "http://localhost:<port>/bugfix-package/-/bugfix-package-1.0.0.tgz", {}, ""],
+
+              "daily-release-package": ["daily-release-package@1.5.0", "http://localhost:<port>/daily-release-package/-/daily-release-package-1.5.0.tgz", {}, ""],
+
+              "legacy": ["legacy@workspace:packages/legacy"],
+
+              "lib": ["lib@workspace:packages/lib"],
+
+              "regular-package": ["regular-package@2.1.0", "http://localhost:<port>/regular-package/-/regular-package-2.1.0.tgz", {}, ""],
+
+              "stable-package": ["stable-package@3.0.0", "http://localhost:<port>/stable-package/-/stable-package-3.0.0.tgz", {}, ""],
+
+              "legacy/regular-package": ["regular-package@1.0.0", "http://localhost:<port>/regular-package/-/regular-package-1.0.0.tgz", {}, ""],
+
+              "lib/stable-package": ["stable-package@3.2.0", "http://localhost:<port>/stable-package/-/stable-package-3.2.0.tgz", {}, ""],
+            }
+          }"
+        `)
+      },
+    );
   });
 });

@@ -215,7 +215,7 @@ pub fn processNamesArray(
     if (workspace_globs.items.len > 0) {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        for (workspace_globs.items) |user_pattern| {
+        for (workspace_globs.items, 0..) |user_pattern, i| {
             defer _ = arena.reset(.retain_capacity);
 
             const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
@@ -253,7 +253,7 @@ pub fn processNamesArray(
                 return error.GlobError;
             }
 
-            while (switch (try iter.next()) {
+            next_match: while (switch (try iter.next()) {
                 .result => |r| r,
                 .err => |e| {
                     log.addErrorFmt(
@@ -270,6 +270,28 @@ pub fn processNamesArray(
 
                 // skip root package.json
                 if (strings.eqlComptime(matched_path, "package.json")) continue;
+
+                {
+                    const matched_path_without_package_json = strings.withoutTrailingSlash(strings.withoutSuffixComptime(matched_path, "package.json"));
+
+                    // check if it's negated by any remaining patterns
+                    for (workspace_globs.items[i + 1 ..]) |next_pattern| {
+                        switch (bun.glob.match(undefined, next_pattern, matched_path_without_package_json)) {
+                            .no_match,
+                            .match,
+                            .negate_match,
+                            => {},
+
+                            .negate_no_match => {
+                                debug("skipping negated path: {s}, {s}\n", .{
+                                    matched_path_without_package_json,
+                                    next_pattern,
+                                });
+                                continue :next_match;
+                            },
+                        }
+                    }
+                }
 
                 debug("matched path: {s}, dirname: {s}\n", .{ matched_path, entry_dir });
 

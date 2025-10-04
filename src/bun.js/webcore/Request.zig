@@ -794,6 +794,13 @@ pub fn constructor(
 
     if (readable_stream_tee[1] != .zero and result.body.value == .Locked) {
         js.gc.body.set(thisValue, globalThis, readable_stream_tee[1]);
+
+        // Upgrade to strong ref since Request doesn't track this_jsvalue
+        // Without this, getText()/etc will fail to retrieve the stream (owner is always .empty)
+        const stream = jsc.WebCore.ReadableStream.fromJS(readable_stream_tee[1], globalThis) catch null;
+        if (stream) |s| {
+            result.body.value.Locked.readable.upgrade(&s, globalThis);
+        }
     }
 
     return result;

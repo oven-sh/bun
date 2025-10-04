@@ -55,14 +55,15 @@ export var __toESM = (mod, isNodeMode, target) => {
   return to;
 };
 
-// Converts the module from ESM to CommonJS. With the __esModule workaround removed,
-// this simply clones the input module object without adding "__esModule".
+// Converts the module from ESM to CommonJS. This clones the input module
+// object with the addition of a non-enumerable "__esModule" property set
+// to "true", which overwrites any existing export named "__esModule".
 var __moduleCache = /* @__PURE__ */ new WeakMap();
 export var __toCommonJS = /* @__PURE__ */ from => {
   var entry = __moduleCache.get(from),
     desc;
   if (entry) return entry;
-  entry = {};
+  entry = __defProp({}, "__esModule", { value: true });
   if ((from && typeof from === "object") || typeof from === "function")
     __getOwnPropNames(from).map(
       key =>

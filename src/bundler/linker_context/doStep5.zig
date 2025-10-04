@@ -417,8 +417,12 @@ pub fn createExportsForFile(
     }
 
     // Export the ES module exports as CommonJS exports.
-    // With the __esModule workaround removed, we directly assign the exports object.
+    // Wrap in __toCommonJS to add __esModule marker for interoperability
     if (force_include_exports_for_entry_point) {
+        const toCommonJSRef = c.runtimeFunction("__toCommonJS");
+
+        var call_args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
+        call_args[0] = Expr.initIdentifier(exports_ref, Loc.Empty);
         remaining_stmts[0] = js_ast.Stmt.assign(
             Expr.allocate(
                 allocator,
@@ -430,7 +434,15 @@ pub fn createExportsForFile(
                 },
                 Loc.Empty,
             ),
-            Expr.initIdentifier(exports_ref, Loc.Empty),
+            Expr.allocate(
+                allocator,
+                E.Call,
+                E.Call{
+                    .target = Expr.initIdentifier(toCommonJSRef, Loc.Empty),
+                    .args = js_ast.ExprNodeList.fromOwnedSlice(call_args),
+                },
+                Loc.Empty,
+            ),
         );
         remaining_stmts = remaining_stmts[1..];
     }

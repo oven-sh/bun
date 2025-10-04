@@ -1418,9 +1418,16 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
 using namespace Bun;
 using namespace JSC;
 
-// This is a stub. Exists so that the same code can be run in Jest
+// Enables fake timers and sets up Date mocking
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
+    // Enable fake timers flag - this will make Date use the overridden time
+    // When overridenDateNow is >= 0, Date will use that value instead of current time
+    // If overridenDateNow is not set (< 0), we'll set it to current time to freeze it
+    if (globalObject->overridenDateNow < 0) {
+        // Initialize with current time if not already set
+        globalObject->overridenDateNow = globalObject->jsDateNow();
+    }
     return JSValue::encode(callframe->thisValue());
 }
 
@@ -1438,14 +1445,50 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
 {
     JSValue argument0 = callframe->argument(0);
 
+    // Handle Date object
     if (auto* dateInstance = jsDynamicCast<DateInstance*>(argument0)) {
         if (std::isnormal(dateInstance->internalNumber())) {
             globalObject->overridenDateNow = dateInstance->internalNumber();
         }
         return JSValue::encode(callframe->thisValue());
     }
-    // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to -1)
-    globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : -1;
+
+    // Handle string (parse it as a date)
+    if (argument0.isString()) {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        // Create a new Date object from the string
+        JSValue dateConstructor = globalObject->dateConstructor();
+        MarkedArgumentBuffer args;
+        args.append(argument0);
+        JSValue dateValue = construct(globalObject, dateConstructor, dateConstructor, args, "Failed to parse date string"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (auto* dateInstance = jsDynamicCast<DateInstance*>(dateValue)) {
+            double timeValue = dateInstance->internalNumber();
+            // Only set if it's a valid date
+            if (std::isnormal(timeValue) || timeValue == 0) {
+                globalObject->overridenDateNow = timeValue;
+            }
+        }
+        return JSValue::encode(callframe->thisValue());
+    }
+
+    // Handle number (timestamp in milliseconds)
+    if (argument0.isNumber()) {
+        double timeValue = argument0.asNumber();
+        // Accept 0 or any positive number as valid timestamps
+        if (timeValue >= 0) {
+            globalObject->overridenDateNow = timeValue;
+        }
+        return JSValue::encode(callframe->thisValue());
+    }
+
+    // If no argument or invalid argument, reset to current time (for compatibility)
+    if (argument0.isUndefinedOrNull()) {
+        globalObject->overridenDateNow = -1;
+    }
 
     return JSValue::encode(callframe->thisValue());
 }

@@ -97,6 +97,7 @@ declare module "bun:test" {
     function setTimeout(milliseconds: number): void;
     function useFakeTimers(): void;
     function useRealTimers(): void;
+    function setSystemTime(now: string | number | Date): void;
     function spyOn<T extends object, K extends keyof T>(
       obj: T,
       methodOrPropertyValue: K,

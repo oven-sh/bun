@@ -245,7 +245,7 @@ pub const Jest = struct {
             Expect.js.getConstructor(globalObject),
         );
 
-        const vi = JSValue.createEmptyObject(globalObject, 8);
+        const vi = JSValue.createEmptyObject(globalObject, 9);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
         vi.put(globalObject, ZigString.static("mock"), mockModuleFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
@@ -254,6 +254,7 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         vi.put(globalObject, ZigString.static("useFakeTimers"), useFakeTimers);
         vi.put(globalObject, ZigString.static("useRealTimers"), useRealTimers);
+        vi.put(globalObject, ZigString.static("setSystemTime"), setSystemTime);
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 

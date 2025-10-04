@@ -34,6 +34,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsNow);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsGetMockedSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsGetRealSystemTime);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsIsFakeTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsClearAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
@@ -1520,6 +1521,14 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsGetRealSystemTime, (JSC::JSGlobalObject * glo
     globalObject->overridenDateNow = originalOverride;
 
     return JSValue::encode(jsNumber(realTime));
+}
+
+// Returns true if fake timers are currently enabled
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsIsFakeTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    // Fake timers are enabled when overridenDateNow is >= 0
+    bool isFakeTimersEnabled = globalObject->overridenDateNow >= 0;
+    return JSValue::encode(jsBoolean(isFakeTimersEnabled));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

@@ -816,7 +816,7 @@ pub fn doClone(
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
         if (this.body.value == .Locked and readable_stream_tee[0] != .zero) {
-            js.gc.body.set(js_wrapper, globalThis, readable_stream_tee[0]);
+            js.gc.body.set(this_value, globalThis, readable_stream_tee[0]);
         }
 
         if (cloned.body.value == .Locked and readable_stream_tee[1] != .zero) {

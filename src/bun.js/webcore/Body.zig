@@ -961,6 +961,11 @@ pub const Value = union(Tag) {
             if (readable_stream_tee != null) {
                 return .{
                     .Locked = .{
+                        .readable = switch (owner) {
+                            .Response => .Response,
+                            .Request => .Request,
+                            else => .empty,
+                        },
                         .global = globalThis,
                     },
                 };
@@ -1012,7 +1017,7 @@ pub const Value = union(Tag) {
             .ptr = .{ .Bytes = &reader.context },
             .value = stream_value,
         };
-        locked.readable.set(.strong, stream, globalThis);
+        locked.readable.set(owner, stream, globalThis);
 
         if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
             onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(owner, globalThis).?);
@@ -1023,6 +1028,11 @@ pub const Value = union(Tag) {
         if (readable_stream_tee != null) {
             return .{
                 .Locked = .{
+                    .readable = switch (owner) {
+                        .Response => .Response,
+                        .Request => .Request,
+                        else => .empty,
+                    },
                     .global = globalThis,
                 },
             };
@@ -1037,11 +1047,14 @@ pub const Value = union(Tag) {
     }
 
     pub fn clone(this: *Value, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalThis: *jsc.JSGlobalObject, readable_stream_tee: ?*[2]jsc.JSValue) bun.JSError!Value {
+        bun.Output.debug("Body.Value.clone: called, this={s}, owner={s}, has_array={}", .{ @tagName(this.*), @tagName(owner), readable_stream_tee != null });
         this.toBlobIfPossible(owner);
 
         if (this.* == .Locked) {
+            bun.Output.debug("Body.Value.clone: calling tee()", .{});
             return try this.tee(owner, globalThis, readable_stream_tee);
         }
+        bun.Output.debug("Body.Value.clone: not Locked, type is {s}", .{@tagName(this.*)});
 
         if (this.* == .InternalBlob) {
             var internal_blob = this.InternalBlob;

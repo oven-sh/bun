@@ -303,50 +303,77 @@ for (let doClone of [true, false]) {
           // - backpressure
 
           for (let inputLength of [1, 2, 12, 95, 1024, 1024 * 1024, 1024 * 1024 * 2]) {
-            var bytes = new Uint8Array(inputLength);
-            {
-              const chunk = Math.min(bytes.length, 256);
-              for (var i = 0; i < chunk; i++) {
-                bytes[i] = 255 - i;
+            // Factory function to create test arrays on demand, avoiding memory issues during test discovery
+            const createTestArrays = () => {
+              var bytes = new Uint8Array(inputLength);
+              {
+                const chunk = Math.min(bytes.length, 256);
+                for (var i = 0; i < chunk; i++) {
+                  bytes[i] = 255 - i;
+                }
               }
-            }
 
-            if (bytes.length > 255) fillRepeating(bytes, 0, bytes.length);
+              if (bytes.length > 255) fillRepeating(bytes, 0, bytes.length);
 
-            for (const huge_ of [
-              bytes,
-              bytes.buffer,
-              new DataView(bytes.buffer),
-              new Int8Array(bytes),
-              new Blob([bytes]),
-              new Float64Array(bytes),
+              return [
+                bytes,
+                bytes.buffer,
+                new DataView(bytes.buffer),
+                new Int8Array(bytes),
+                new Blob([bytes]),
+                new Float64Array(bytes),
 
-              new Uint16Array(bytes),
-              new Uint32Array(bytes),
-              new Int16Array(bytes),
-              new Int32Array(bytes),
+                new Uint16Array(bytes),
+                new Uint32Array(bytes),
+                new Int16Array(bytes),
+                new Int32Array(bytes),
 
-              // make sure we handle subarray() as expected when reading
-              // typed arrays from native code
-              new Int16Array(bytes).subarray(1),
-              new Int16Array(bytes).subarray(0, new Int16Array(bytes).byteLength - 1),
-              new Int32Array(bytes).subarray(1),
-              new Int32Array(bytes).subarray(0, new Int32Array(bytes).byteLength - 1),
-              new Int16Array(bytes).subarray(0, 1),
-              new Int32Array(bytes).subarray(0, 1),
-              new Float32Array(bytes).subarray(0, 1),
-            ]) {
-              const thisArray = huge_;
-              if (Number(thisArray.byteLength ?? thisArray.size) === 0) continue;
+                // make sure we handle subarray() as expected when reading
+                // typed arrays from native code
+                new Int16Array(bytes).subarray(1),
+                new Int16Array(bytes).subarray(0, new Int16Array(bytes).length - 1),
+                new Int32Array(bytes).subarray(1),
+                new Int32Array(bytes).subarray(0, new Int32Array(bytes).length - 1),
+                new Int16Array(bytes).subarray(0, 1),
+                new Int32Array(bytes).subarray(0, 1),
+                new Float32Array(bytes).subarray(0, 1),
+              ];
+            };
+
+            // Create a single sample array just to get metadata for test names
+            const sampleBytes = new Uint8Array(Math.min(inputLength, 256));
+            const arrayDescriptors = [
+              { name: "Uint8Array", size: inputLength },
+              { name: "ArrayBuffer", size: inputLength },
+              { name: "DataView", size: inputLength },
+              { name: "Int8Array", size: inputLength },
+              { name: "Blob", size: inputLength },
+              { name: "Float64Array", size: inputLength * 8 },
+              { name: "Uint16Array", size: inputLength * 2 },
+              { name: "Uint32Array", size: inputLength * 4 },
+              { name: "Int16Array", size: inputLength * 2 },
+              { name: "Int32Array", size: inputLength * 4 },
+              { name: "Int16Array_subarray1", size: (inputLength - 1) * 2 },
+              { name: "Int16Array_subarrayEnd", size: (Math.floor(inputLength / 2) - 1) * 2 },
+              { name: "Int32Array_subarray1", size: (Math.floor(inputLength / 4) - 1) * 4 },
+              { name: "Int32Array_subarrayEnd", size: (Math.floor(inputLength / 4) - 1) * 4 },
+              { name: "Int16Array_subarray01", size: 2 },
+              { name: "Int32Array_subarray01", size: 4 },
+              { name: "Float32Array_subarray01", size: 4 },
+            ];
+
+            for (let arrayIndex = 0; arrayIndex < arrayDescriptors.length; arrayIndex++) {
+              const descriptor = arrayDescriptors[arrayIndex];
+              if (descriptor.size === 0) continue;
 
               it(
-                `works with ${thisArray.constructor.name}(${
-                  thisArray.byteLength ?? thisArray.size
-                }:${inputLength}) via req.body.getReader() in chunks` +
+                `works with ${descriptor.name}(${descriptor.size}:${inputLength}) via req.body.getReader() in chunks` +
                   (withDelay ? " with delay" : "") +
                   (forceReadableStreamConversionFastPath ? " (force ReadableStream conversion)" : ""),
                 async () => {
-                  var huge = thisArray;
+                  // Create the actual test array when the test runs, not during discovery
+                  const testArrays = createTestArrays();
+                  var huge = testArrays[arrayIndex];
                   var called = false;
 
                   const expectedHash =
@@ -407,7 +434,7 @@ for (let doClone of [true, false]) {
                         headers: {
                           "content-type": "text/plain",
                           "x-custom": "hello",
-                          "x-typed-array": thisArray.constructor.name,
+                          "x-typed-array": descriptor.name,
                         },
                       });
                       if (withDelay) {
@@ -440,15 +467,15 @@ for (let doClone of [true, false]) {
 
               for (let isDirectStream of [true, false]) {
                 const positions = ["begin", "end"];
-                const inner = thisArray => {
+                const inner = (desc, idx) => {
                   for (let position of positions) {
                     it(
-                      `streaming back ${thisArray.constructor.name}(${
-                        thisArray.byteLength ?? thisArray.size
-                      }:${inputLength}) starting request.body.getReader() at ${position}` +
+                      `streaming back ${desc.name}(${desc.size}:${inputLength}) starting request.body.getReader() at ${position}` +
                         (forceReadableStreamConversionFastPath ? " (force ReadableStream conversion)" : ""),
                       async () => {
-                        var huge = thisArray;
+                        // Create the actual test array when the test runs, not during discovery
+                        const testArrays = createTestArrays();
+                        var huge = testArrays[idx];
                         var called = false;
 
                         const expectedHash =
@@ -531,7 +558,7 @@ for (let doClone of [true, false]) {
                               headers: {
                                 "content-type": "text/plain",
                                 "x-custom": "hello",
-                                "x-typed-array": thisArray.constructor.name,
+                                "x-typed-array": desc.name,
                               },
                             });
                             huge = undefined;
@@ -567,9 +594,9 @@ for (let doClone of [true, false]) {
                 };
 
                 if (isDirectStream) {
-                  describe(" direct stream", () => inner(thisArray));
+                  describe(" direct stream", () => inner(descriptor, arrayIndex));
                 } else {
-                  describe("default stream", () => inner(thisArray));
+                  describe("default stream", () => inner(descriptor, arrayIndex));
                 }
               }
             }

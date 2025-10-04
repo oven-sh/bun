@@ -82,15 +82,20 @@ pub fn initBakeServerRuntime(global: *JSGlobalObject, server_runtime_path: []con
 
     handle_request_fn.ensureStillAlive();
 
-    const initialize_route_infos_fn = exports_object.get(global, "initializeRouteInfos") catch null orelse {
-        return global.throw("Server runtime module is missing 'initializeRouteInfos' export", .{});
+    const initialize_fn = exports_object.get(global, "initialize") catch null orelse {
+        return global.throw("Server runtime module is missing 'initialize' export", .{});
     };
 
-    if (!initialize_route_infos_fn.isCallable()) {
-        return global.throw("Server runtime module's 'initializeRouteInfos' export is not a function", .{});
+    if (!initialize_fn.isCallable()) {
+        return global.throw("Server runtime module's 'initialize' export is not a function", .{});
     }
 
-    _ = try initialize_route_infos_fn.call(global, global.toJSValue(), &.{JSValue.jsNumberFromUint64(routes_len)});
+    _ = try initialize_fn.call(global, global.toJSValue(), &.{
+        JSValue.jsNumberFromUint64(routes_len),
+        Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global),
+        Bake__getProdDataForInitializationJSFunction(global),
+        Bake__getProdNewRouteParamsJSFunction(global),
+    });
 
     return jsc.Strong.create(handle_request_fn, global);
 }
@@ -280,24 +285,13 @@ pub fn newRouteParams(
 ) bun.JSError!struct {
     route_index: JSValue,
     params: JSValue,
-    dataForInitialization: JSValue,
-    newRouteParams: JSValue,
-    setAsyncLocalStorage: JSValue,
 } {
     // Convert params to JSValue
     const params_js = try self.createParamsObject(global, route_index, params);
 
-    const dataForInitializationn = Bake__getProdDataForInitializationJSFunction(global);
-
-    // Get the setAsyncLocalStorage function that properly sets up the AsyncLocalStorage instance
-    const setAsyncLocalStorage = Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global);
-
     return .{
         .route_index = JSValue.jsNumberFromUint64(route_index.get()),
         .params = params_js,
-        .dataForInitialization = dataForInitializationn,
-        .newRouteParams = Bake__getProdNewRouteParamsJSFunction(global),
-        .setAsyncLocalStorage = setAsyncLocalStorage,
     };
 }
 

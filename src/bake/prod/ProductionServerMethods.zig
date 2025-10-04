@@ -84,13 +84,10 @@ pub fn ProductionServerMethods(protocol_enum: bun.api.server.Protocol, developme
                 .{ .stack = req },
                 resp,
                 server_request_callback,
-                5,
+                2,
                 .{
                     args.route_index,
                     args.params,
-                    args.dataForInitialization,
-                    args.newRouteParams,
-                    args.setAsyncLocalStorage,
                 },
             );
         }

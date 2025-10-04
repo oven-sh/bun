@@ -56,36 +56,37 @@ export namespace RouteInfo {
 let routeInfos: Array<UninitializedRouteInfo | RouteInfo> = [];
 
 interface Exports {
-  initializeRouteInfos: (length: number) => void;
-  handleRequest: (
-    req: Request,
-    routeIndex: number,
-    params: Record<string, string> | null,
+  initialize: (
+    length: number,
+    setAsyncLocalStorage: Function,
     dataForInitialization: (req: Request, routeIndex: number) => RouteArgs,
     newRouteParams: (
       req: Request,
       url: string,
-    ) => [routeIndex: number, routeInfo: RouteInfo, params: Record<string, string> | null] | Blob,
-    setAsyncLocalStorage: Function,
-  ) => Promise<Response>;
+    ) => [routeIndex: number, routeInfo: RouteInfo, params: Record<string, string> | null],
+  ) => void;
+  handleRequest: (req: Request, routeIndex: number, params: Record<string, string> | null) => Promise<Response>;
 }
+
+let dataForInitialization: (req: Request, routeIndex: number) => RouteArgs = undefined as any;
+let newRouteParams: (
+  req: Request,
+  url: string,
+) => [routeIndex: number, routeInfo: RouteInfo, params: Record<string, string> | null] | Blob = undefined as any;
 
 declare let server_exports: Exports;
 
 server_exports = {
-  initializeRouteInfos(length) {
+  initialize(length, setAsyncLocalStorage, dataForInitializationFn, newRouteParamsFn) {
     routeInfos = new Array(length);
     for (let i = 0; i < length; i++) {
       routeInfos[i] = [];
     }
+    setAsyncLocalStorage(responseOptionsALS);
+    dataForInitialization = dataForInitializationFn;
+    newRouteParams = newRouteParamsFn;
   },
-  async handleRequest(req, routeIndex, params, dataForInitialization, newRouteParams, setAsyncLocalStorage) {
-    // Set up AsyncLocalStorage if not already done
-    if (!asyncLocalStorageWasSet) {
-      asyncLocalStorageWasSet = true;
-      setAsyncLocalStorage(responseOptionsALS);
-    }
-
+  async handleRequest(req, routeIndex, params) {
     while (true) {
       let routeInfo = routeInfos[routeIndex];
 

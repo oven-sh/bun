@@ -429,10 +429,24 @@ pub const StatWatcher = struct {
         };
 
         // Ignore atime changes when comparing stats
-        var compare = res;
-        compare.atim = this.last_stat.atim;
-
-        if (std.mem.eql(u8, std.mem.asBytes(&compare), std.mem.asBytes(&this.last_stat))) return;
+        // Compare field-by-field to avoid false positives from padding bytes
+        if (res.dev == this.last_stat.dev and
+            res.ino == this.last_stat.ino and
+            res.mode == this.last_stat.mode and
+            res.nlink == this.last_stat.nlink and
+            res.uid == this.last_stat.uid and
+            res.gid == this.last_stat.gid and
+            res.rdev == this.last_stat.rdev and
+            res.size == this.last_stat.size and
+            res.blksize == this.last_stat.blksize and
+            res.blocks == this.last_stat.blocks and
+            res.mtim.sec == this.last_stat.mtim.sec and
+            res.mtim.nsec == this.last_stat.mtim.nsec and
+            res.ctim.sec == this.last_stat.ctim.sec and
+            res.ctim.nsec == this.last_stat.ctim.nsec and
+            res.birthtim.sec == this.last_stat.birthtim.sec and
+            res.birthtim.nsec == this.last_stat.birthtim.nsec)
+            return;
 
         this.last_stat = res;
         this.enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, swapAndCallListenerOnMainThread));

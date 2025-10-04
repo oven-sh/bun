@@ -683,7 +683,7 @@ describe("'bun run' priority", async () => {
           { command: ["echo", "abc"], stdout: "", exitCode: 1, req_run: false },
         ]),
 
-    // TODO: test preloads (https://bun.sh/docs/runtime/bunfig#preload), test $npm_lifecycle_event
+    // TODO: test preloads (https://bun.com/docs/runtime/bunfig#preload), test $npm_lifecycle_event
     // TODO: test with path overrides in tsconfig.json
   ];
   if (isWindows) {

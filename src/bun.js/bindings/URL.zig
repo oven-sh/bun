@@ -74,6 +74,7 @@ pub const URL = opaque {
         return URL__protocol(url);
     }
     pub fn setProtocol(url: *URL, new_protocol: String) void {
+        jsc.markBinding(@src());
         URL__setProtocol(url, new_protocol);
     }
     pub fn href(url: *URL) String {

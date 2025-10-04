@@ -406,6 +406,7 @@ pub const Registry = struct {
         package_name: string,
         loaded_manifest: ?PackageManifest,
         package_manager: *PackageManager,
+        is_extended_manifest: bool,
     ) !PackageVersionResponse {
         switch (response.status_code) {
             400 => return error.BadRequest,
@@ -452,6 +453,7 @@ pub const Registry = struct {
             newly_last_modified,
             new_etag,
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
+            is_extended_manifest,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
                 PackageManifest.Serializer.saveAsync(
@@ -1856,6 +1858,7 @@ pub const PackageManifest = struct {
         last_modified: []const u8,
         etag: []const u8,
         public_max_age: u32,
+        is_extended_manifest: bool,
     ) !?PackageManifest {
         const source = &logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
@@ -2753,8 +2756,7 @@ pub const PackageManifest = struct {
         result.extern_strings_bin_entries = all_extern_strings_bin_entries[0 .. all_extern_strings_bin_entries.len - extern_strings_bin_entries.len];
         result.bundled_deps_buf = bundled_deps_buf;
         result.pkg.public_max_age = public_max_age;
-        // todo: do this better like maybe an param to this function, but for now this should be fine
-        result.pkg.has_extended_manifest = json.asProperty("time") != null;
+        result.pkg.has_extended_manifest = is_extended_manifest;
 
         if (string_builder.ptr) |ptr| {
             result.string_buf = ptr[0..string_builder.len];

@@ -11,6 +11,7 @@ callback: union(Task.Tag) {
     package_manifest: struct {
         loaded_manifest: ?Npm.PackageManifest = null,
         name: strings.StringOrTinyString,
+        is_extended_manifest: bool = false,
     },
     extract: ExtractTarball,
     git_clone: void,
@@ -223,6 +224,7 @@ pub fn forManifest(
         .package_manifest = .{
             .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, FileSystem.FilenameStore.instance),
             .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
+            .is_extended_manifest = needs_extended,
         },
     };
 

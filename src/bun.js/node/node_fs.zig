@@ -3806,7 +3806,7 @@ pub const NodeFS = struct {
             };
         } else {
             return switch (Syscall.fstat(args.fd)) {
-                .result => |result| .{ .result = .init(&Syscall.bunStatToPosixStat(&result), args.big_int) },
+                .result => |result| .{ .result = .init(&Syscall.PosixStat.init(&result), args.big_int) },
                 .err => |err| .{ .err = err },
             };
         }
@@ -3895,7 +3895,7 @@ pub const NodeFS = struct {
             };
         } else {
             return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
-                .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&Syscall.bunStatToPosixStat(&result), args.big_int) } },
+                .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) } },
                 .err => |err| brk: {
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
@@ -5720,7 +5720,7 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
         if (bun.StandaloneModuleGraph.get()) |graph| {
             if (graph.stat(path)) |*result| {
-                return .{ .result = .{ .stats = .init(&Syscall.bunStatToPosixStat(result), args.big_int) } };
+                return .{ .result = .{ .stats = .init(&Syscall.PosixStat.init(result), args.big_int) } };
             }
         }
 
@@ -5739,7 +5739,7 @@ pub const NodeFS = struct {
         } else {
             return switch (Syscall.stat(path)) {
                 .result => |result| .{
-                    .result = .{ .stats = .init(&Syscall.bunStatToPosixStat(&result), args.big_int) },
+                    .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) },
                 },
                 .err => |err| brk: {
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {

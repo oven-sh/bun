@@ -1,7 +1,7 @@
 const log = bun.Output.scoped(.StatWatcher, .visible);
 
 fn statToJSStats(globalThis: *jsc.JSGlobalObject, stats: *const bun.Stat, bigint: bool) bun.JSError!jsc.JSValue {
-    const posix_stat = bun.sys.bunStatToPosixStat(stats);
+    const posix_stat = bun.sys.PosixStat.init(stats);
     if (bigint) {
         return StatsBig.init(&posix_stat).toJS(globalThis);
     } else {

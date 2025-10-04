@@ -622,12 +622,12 @@ fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32
                     const path_span = bun.span(p);
                     const fallback = if (flags & linux.AT.SYMLINK_NOFOLLOW != 0) lstat(path_span) else stat(path_span);
                     return switch (fallback) {
-                        .result => |s| .{ .result = bunStatToPosixStat(&s) },
+                        .result => |s| .{ .result = PosixStat.init(&s) },
                         .err => |e| .{ .err = e },
                     };
                 } else {
                     return switch (fstat(fd)) {
-                        .result => |s| .{ .result = bunStatToPosixStat(&s) },
+                        .result => |s| .{ .result = PosixStat.init(&s) },
                         .err => |e| .{ .err = e },
                     };
                 }
@@ -661,29 +661,6 @@ fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32
     }
 }
 
-pub fn bunStatToPosixStat(stat_: *const bun.Stat) PosixStat {
-    const birthtime_val = if (Environment.isLinux)
-        bun.timespec.epoch
-    else
-        stat_.birthtime();
-
-    return PosixStat{
-        .dev = stat_.dev,
-        .ino = stat_.ino,
-        .mode = stat_.mode,
-        .nlink = stat_.nlink,
-        .uid = stat_.uid,
-        .gid = stat_.gid,
-        .rdev = stat_.rdev,
-        .size = stat_.size,
-        .blksize = stat_.blksize,
-        .blocks = stat_.blocks,
-        .atim = .{ .sec = stat_.atim.sec, .nsec = stat_.atim.nsec },
-        .mtim = .{ .sec = stat_.mtim.sec, .nsec = stat_.mtim.nsec },
-        .ctim = .{ .sec = stat_.ctim.sec, .nsec = stat_.ctim.nsec },
-        .birthtim = .{ .sec = birthtime_val.sec, .nsec = birthtime_val.nsec },
-    };
-}
 
 pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(PosixStat) {
     const mask: u32 = comptime brk: {

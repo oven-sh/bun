@@ -311,10 +311,8 @@ pub const BunTest = struct {
             bun.destroy(this);
             buntest_weak.deinit();
         }
-        pub fn bunTest(this: *RefData) ?*BunTest {
-            var buntest_strong = this.buntest_weak.clone().upgrade() orelse return null;
-            defer buntest_strong.deinit();
-            return buntest_strong.get();
+        pub fn bunTest(this: *RefData) ?BunTestPtr {
+            return this.buntest_weak.upgrade() orelse return null;
         }
     };
     pub fn getCurrentStateData(this: *BunTest) RefDataValue {
@@ -380,7 +378,7 @@ pub const BunTest = struct {
         const refdata: *RefData = this_ptr.asPromisePtr(RefData);
         defer refdata.deref();
         const has_one_ref = refdata.ref_count.hasOneRef();
-        var this_strong = refdata.buntest_weak.clone().upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
+        var this_strong = refdata.buntest_weak.upgrade() orelse return group.log("bunTestThenOrCatch -> the BunTest is no longer active", .{});
         defer this_strong.deinit();
         const this = this_strong.get();
 
@@ -434,7 +432,7 @@ pub const BunTest = struct {
 
         if (!should_run) return .js_undefined;
 
-        var strong = ref_in.buntest_weak.clone().upgrade() orelse return .js_undefined;
+        var strong = ref_in.buntest_weak.upgrade() orelse return .js_undefined;
         defer strong.deinit();
         const buntest = strong.get();
         buntest.addResult(ref_in.phase);
@@ -467,7 +465,7 @@ pub const BunTest = struct {
         errdefer bun.destroy(done_callback_test);
         const task = jsc.ManagedTask.New(RunTestsTask, RunTestsTask.call).init(done_callback_test);
         const vm = globalThis.bunVM();
-        var strong = weak.clone().upgrade() orelse {
+        var strong = weak.upgrade() orelse {
             if (bun.Environment.ci_assert) bun.assert(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
         };
@@ -483,7 +481,7 @@ pub const BunTest = struct {
         pub fn call(this: *RunTestsTask) void {
             defer bun.destroy(this);
             defer this.weak.deinit();
-            var strong = this.weak.clone().upgrade() orelse return;
+            var strong = this.weak.upgrade() orelse return;
             defer strong.deinit();
             BunTest.run(strong, this.globalThis) catch |e| {
                 strong.get().onUncaughtException(this.globalThis, this.globalThis.takeException(e), false, this.phase);

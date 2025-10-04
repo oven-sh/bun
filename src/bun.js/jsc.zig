@@ -44,6 +44,7 @@ pub const AnyPromise = @import("./bindings/AnyPromise.zig").AnyPromise;
 pub const array_buffer = @import("./jsc/array_buffer.zig");
 pub const ArrayBuffer = array_buffer.ArrayBuffer;
 pub const MarkedArrayBuffer = array_buffer.MarkedArrayBuffer;
+pub const JSCArrayBuffer = array_buffer.JSCArrayBuffer;
 pub const CachedBytecode = @import("./bindings/CachedBytecode.zig").CachedBytecode;
 pub const CallFrame = @import("./bindings/CallFrame.zig").CallFrame;
 pub const CommonAbortReason = @import("./bindings/CommonAbortReason.zig").CommonAbortReason;
@@ -275,6 +276,8 @@ pub const math = struct {
         return Bun__JSC__operationMathPow(x, y);
     }
 };
+
+pub const generated = @import("bindgen_generated");
 
 const bun = @import("bun");
 const std = @import("std");

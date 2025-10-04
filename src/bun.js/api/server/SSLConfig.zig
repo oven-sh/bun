@@ -1,65 +1,60 @@
 const SSLConfig = @This();
 
-server_name: [*c]const u8 = null,
+server_name: ?[*:0]const u8 = null,
 
-key_file_name: [*c]const u8 = null,
-cert_file_name: [*c]const u8 = null,
+key_file_name: ?[*:0]const u8 = null,
+cert_file_name: ?[*:0]const u8 = null,
 
-ca_file_name: [*c]const u8 = null,
-dh_params_file_name: [*c]const u8 = null,
+ca_file_name: ?[*:0]const u8 = null,
+dh_params_file_name: ?[*:0]const u8 = null,
 
-passphrase: [*c]const u8 = null,
+passphrase: ?[*:0]const u8 = null,
 
-key: ?[][*c]const u8 = null,
-key_count: u32 = 0,
-
-cert: ?[][*c]const u8 = null,
-cert_count: u32 = 0,
-
-ca: ?[][*c]const u8 = null,
-ca_count: u32 = 0,
+key: ?[][*:0]const u8 = null,
+cert: ?[][*:0]const u8 = null,
+ca: ?[][*:0]const u8 = null,
 
 secure_options: u32 = 0,
 request_cert: i32 = 0,
 reject_unauthorized: i32 = 0,
 ssl_ciphers: ?[*:0]const u8 = null,
 protos: ?[*:0]const u8 = null,
-protos_len: usize = 0,
 client_renegotiation_limit: u32 = 0,
 client_renegotiation_window: u32 = 0,
 requires_custom_request_ctx: bool = false,
 is_using_default_ciphers: bool = true,
 low_memory_mode: bool = false,
 
-const BlobFileContentResult = struct {
-    data: [:0]const u8,
-
-    fn init(comptime fieldname: []const u8, js_obj: jsc.JSValue, global: *jsc.JSGlobalObject) bun.JSError!?BlobFileContentResult {
-        {
-            const body = try jsc.WebCore.Body.Value.fromJS(global, js_obj);
-            if (body == .Blob and body.Blob.store != null and body.Blob.store.?.data == .file) {
-                var fs: jsc.Node.fs.NodeFS = .{};
-                const read = fs.readFileWithOptions(.{ .path = body.Blob.store.?.data.file.pathlike }, .sync, .null_terminated);
-                switch (read) {
-                    .err => {
-                        return global.throwValue(read.err.toJS(global));
-                    },
-                    else => {
-                        const str = read.result.null_terminated;
-                        if (str.len > 0) {
-                            return .{ .data = str };
-                        }
-                        return global.throwInvalidArguments(std.fmt.comptimePrint("Invalid {s} file", .{fieldname}), .{});
-                    },
-                }
-            }
-        }
-
-        return null;
-    }
+const ReadFromBlobError = bun.JSError || error{
+    NullStore,
+    NotAFile,
+    EmptyFile,
 };
 
-pub fn asUSockets(this: SSLConfig) uws.SocketContext.BunSocketContextOptions {
+fn readFromBlob(
+    global: *jsc.JSGlobalObject,
+    blob: *bun.webcore.Blob,
+) ReadFromBlobError![:0]const u8 {
+    const store = blob.store orelse return error.NullStore;
+    const file = switch (store.data) {
+        .file => |f| f,
+        else => return error.NotAFile,
+    };
+    var fs: jsc.Node.fs.NodeFS = .{};
+    const maybe = fs.readFileWithOptions(
+        .{ .path = file.pathlike },
+        .sync,
+        .null_terminated,
+    );
+    const result = switch (maybe) {
+        .result => |result| result,
+        .err => |err| return global.throwValue(err.toJS(global)),
+    };
+    if (result.null_terminated.len == 0) return error.EmptyFile;
+    return bun.default_allocator.dupeZ(u8, result.null_terminated);
+}
+
+pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOptions {
     var ctx_opts: uws.SocketContext.BunSocketContextOptions = .{};
 
     if (this.key_file_name != null)
@@ -76,15 +71,15 @@ pub fn asUSockets(this: SSLConfig) uws.SocketContext.BunSocketContextOptions {
 
     if (this.key) |key| {
         ctx_opts.key = key.ptr;
-        ctx_opts.key_count = this.key_count;
+        ctx_opts.key_count = @intCast(key.len);
     }
     if (this.cert) |cert| {
         ctx_opts.cert = cert.ptr;
-        ctx_opts.cert_count = this.cert_count;
+        ctx_opts.cert_count = @intCast(cert.len);
     }
     if (this.ca) |ca| {
         ctx_opts.ca = ca.ptr;
-        ctx_opts.ca_count = this.ca_count;
+        ctx_opts.ca_count = @intCast(ca.len);
     }
 
     if (this.ssl_ciphers != null) {
@@ -96,593 +91,293 @@ pub fn asUSockets(this: SSLConfig) uws.SocketContext.BunSocketContextOptions {
     return ctx_opts;
 }
 
-pub fn isSame(thisConfig: *const SSLConfig, otherConfig: *const SSLConfig) bool {
-    { //strings
-        const fields = .{
-            "server_name",
-            "key_file_name",
-            "cert_file_name",
-            "ca_file_name",
-            "dh_params_file_name",
-            "passphrase",
-            "ssl_ciphers",
-            "protos",
-        };
-
-        inline for (fields) |field| {
-            const lhs = @field(thisConfig, field);
-            const rhs = @field(otherConfig, field);
-            if (lhs != null and rhs != null) {
-                if (!stringsEqual(lhs, rhs))
-                    return false;
-            } else if (lhs != null or rhs != null) {
-                return false;
-            }
-        }
-    }
-
-    {
-        //numbers
-        const fields = .{ "secure_options", "request_cert", "reject_unauthorized", "low_memory_mode" };
-
-        inline for (fields) |field| {
-            const lhs = @field(thisConfig, field);
-            const rhs = @field(otherConfig, field);
-            if (lhs != rhs)
-                return false;
-        }
-    }
-
-    {
-        // complex fields
-        const fields = .{ "key", "ca", "cert" };
-        inline for (fields) |field| {
-            const lhs_count = @field(thisConfig, field ++ "_count");
-            const rhs_count = @field(otherConfig, field ++ "_count");
-            if (lhs_count != rhs_count)
-                return false;
-            if (lhs_count > 0) {
-                const lhs = @field(thisConfig, field);
-                const rhs = @field(otherConfig, field);
-                for (0..lhs_count) |i| {
-                    if (!stringsEqual(lhs.?[i], rhs.?[i]))
-                        return false;
+pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
+    inline for (comptime std.meta.fieldNames(SSLConfig)) |field| {
+        const first = @field(this, field);
+        const second = @field(other, field);
+        switch (@FieldType(SSLConfig, field)) {
+            ?[*:0]const u8 => {
+                const a = first orelse return second == null;
+                const b = second orelse return false;
+                if (!stringsEqual(a, b)) return false;
+            },
+            ?[][*:0]const u8 => {
+                const slice1 = first orelse return second == null;
+                const slice2 = second orelse return false;
+                if (slice1.len != slice2.len) return false;
+                for (slice1, slice2) |a, b| {
+                    if (!stringsEqual(a, b)) return false;
                 }
-            }
+            },
+            else => if (first != second) return false,
         }
     }
-
     return true;
 }
 
-fn stringsEqual(a: [*c]const u8, b: [*c]const u8) bool {
+fn stringsEqual(a: [*:0]const u8, b: [*:0]const u8) bool {
     const lhs = bun.asByteSlice(a);
     const rhs = bun.asByteSlice(b);
     return strings.eqlLong(lhs, rhs, true);
 }
 
-pub fn deinit(this: *SSLConfig) void {
-    const fields = .{
-        "server_name",
-        "key_file_name",
-        "cert_file_name",
-        "ca_file_name",
-        "dh_params_file_name",
-        "passphrase",
-        "protos",
-    };
-
-    if (!this.is_using_default_ciphers) {
-        if (this.ssl_ciphers) |slice_ptr| {
-            const slice = std.mem.span(slice_ptr);
-            if (slice.len > 0) {
-                bun.freeSensitive(bun.default_allocator, slice);
-            }
-        }
+fn freeStrings(slice: *?[][*:0]const u8) void {
+    const inner = slice.* orelse return;
+    for (inner) |string| {
+        bun.freeSensitive(bun.default_allocator, std.mem.span(string));
     }
-
-    inline for (fields) |field| {
-        if (@field(this, field)) |slice_ptr| {
-            const slice = std.mem.span(slice_ptr);
-            if (slice.len > 0) {
-                bun.freeSensitive(bun.default_allocator, slice);
-            }
-            @field(this, field) = "";
-        }
-    }
-
-    if (this.cert) |cert| {
-        for (0..this.cert_count) |i| {
-            const slice = std.mem.span(cert[i]);
-            if (slice.len > 0) {
-                bun.freeSensitive(bun.default_allocator, slice);
-            }
-        }
-
-        bun.default_allocator.free(cert);
-        this.cert = null;
-    }
-
-    if (this.key) |key| {
-        for (0..this.key_count) |i| {
-            const slice = std.mem.span(key[i]);
-            if (slice.len > 0) {
-                bun.freeSensitive(bun.default_allocator, slice);
-            }
-        }
-
-        bun.default_allocator.free(key);
-        this.key = null;
-    }
-
-    if (this.ca) |ca| {
-        for (0..this.ca_count) |i| {
-            const slice = std.mem.span(ca[i]);
-            if (slice.len > 0) {
-                bun.freeSensitive(bun.default_allocator, slice);
-            }
-        }
-
-        bun.default_allocator.free(ca);
-        this.ca = null;
-    }
+    bun.default_allocator.free(inner);
+    slice.* = null;
 }
+
+fn freeString(string: *?[*:0]const u8) void {
+    const inner = string.* orelse return;
+    bun.freeSensitive(bun.default_allocator, std.mem.span(inner));
+    string.* = null;
+}
+
+pub fn deinit(this: *SSLConfig) void {
+    bun.meta.useAllFields(SSLConfig, .{
+        .server_name = freeString(&this.server_name),
+        .key_file_name = freeString(&this.key_file_name),
+        .cert_file_name = freeString(&this.cert_file_name),
+        .ca_file_name = freeString(&this.ca_file_name),
+        .dh_params_file_name = freeString(&this.dh_params_file_name),
+        .passphrase = freeString(&this.passphrase),
+        .key = freeStrings(&this.key),
+        .cert = freeStrings(&this.cert),
+        .ca = freeStrings(&this.ca),
+        .secure_options = {},
+        .request_cert = {},
+        .reject_unauthorized = {},
+        .ssl_ciphers = freeString(&this.ssl_ciphers),
+        .protos = freeString(&this.protos),
+        .client_renegotiation_limit = {},
+        .client_renegotiation_window = {},
+        .requires_custom_request_ctx = {},
+        .is_using_default_ciphers = {},
+        .low_memory_mode = {},
+    });
+}
+
+fn cloneStrings(slice: ?[][*:0]const u8) ?[][*:0]const u8 {
+    const inner = slice orelse return null;
+    const result = bun.handleOom(bun.default_allocator.alloc([*:0]const u8, inner.len));
+    for (inner, result) |string, *out| {
+        out.* = bun.handleOom(bun.default_allocator.dupeZ(u8, std.mem.span(string)));
+    }
+    return result;
+}
+
+fn cloneString(string: ?[*:0]const u8) ?[*:0]const u8 {
+    return bun.handleOom(bun.default_allocator.dupeZ(u8, std.mem.span(string orelse return null)));
+}
+
 pub fn clone(this: *const SSLConfig) SSLConfig {
-    var cloned: SSLConfig = .{
+    return .{
+        .server_name = cloneString(this.server_name),
+        .key_file_name = cloneString(this.key_file_name),
+        .cert_file_name = cloneString(this.cert_file_name),
+        .ca_file_name = cloneString(this.ca_file_name),
+        .dh_params_file_name = cloneString(this.dh_params_file_name),
+        .passphrase = cloneString(this.passphrase),
+        .key = cloneStrings(this.key),
+        .cert = cloneStrings(this.cert),
+        .ca = cloneStrings(this.ca),
         .secure_options = this.secure_options,
         .request_cert = this.request_cert,
         .reject_unauthorized = this.reject_unauthorized,
+        .ssl_ciphers = cloneString(this.ssl_ciphers),
+        .protos = cloneString(this.protos),
         .client_renegotiation_limit = this.client_renegotiation_limit,
         .client_renegotiation_window = this.client_renegotiation_window,
         .requires_custom_request_ctx = this.requires_custom_request_ctx,
         .is_using_default_ciphers = this.is_using_default_ciphers,
         .low_memory_mode = this.low_memory_mode,
-        .protos_len = this.protos_len,
     };
-    const fields_cloned_by_memcopy = .{
-        "server_name",
-        "key_file_name",
-        "cert_file_name",
-        "ca_file_name",
-        "dh_params_file_name",
-        "passphrase",
-        "protos",
-    };
-
-    if (!this.is_using_default_ciphers) {
-        if (this.ssl_ciphers) |slice_ptr| {
-            const slice = std.mem.span(slice_ptr);
-            if (slice.len > 0) {
-                cloned.ssl_ciphers = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
-            } else {
-                cloned.ssl_ciphers = null;
-            }
-        }
-    }
-
-    inline for (fields_cloned_by_memcopy) |field| {
-        if (@field(this, field)) |slice_ptr| {
-            const slice = std.mem.span(slice_ptr);
-            @field(cloned, field) = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
-        }
-    }
-
-    const array_fields_cloned_by_memcopy = .{
-        "cert",
-        "key",
-        "ca",
-    };
-    inline for (array_fields_cloned_by_memcopy) |field| {
-        if (@field(this, field)) |array| {
-            const cloned_array = bun.handleOom(bun.default_allocator.alloc([*c]const u8, @field(this, field ++ "_count")));
-            @field(cloned, field) = cloned_array;
-            @field(cloned, field ++ "_count") = @field(this, field ++ "_count");
-            for (0..@field(this, field ++ "_count")) |i| {
-                const slice = std.mem.span(array[i]);
-                if (slice.len > 0) {
-                    cloned_array[i] = bun.handleOom(bun.default_allocator.dupeZ(u8, slice));
-                } else {
-                    cloned_array[i] = "";
-                }
-            }
-        }
-    }
-    return cloned;
 }
 
 pub const zero = SSLConfig{};
 
-pub fn fromJS(vm: *jsc.VirtualMachine, global: *jsc.JSGlobalObject, obj: jsc.JSValue) bun.JSError!?SSLConfig {
-    var result = zero;
+pub fn fromJS(
+    vm: *jsc.VirtualMachine,
+    global: *jsc.JSGlobalObject,
+    value: jsc.JSValue,
+) bun.JSError!?SSLConfig {
+    var generated: jsc.generated.SSLConfig = try .fromJS(global, value);
+    defer generated.deinit();
+    var result: SSLConfig = zero;
     errdefer result.deinit();
-
-    var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-
-    if (!obj.isObject()) {
-        return global.throwInvalidArguments("tls option expects an object", .{});
-    }
-
     var any = false;
 
-    result.reject_unauthorized = @intFromBool(vm.getTLSRejectUnauthorized());
-
-    // Required
-    if (try obj.getTruthy(global, "keyFile")) |key_file_name| {
-        var sliced = try key_file_name.toSlice(global, bun.default_allocator);
-        defer sliced.deinit();
-        if (sliced.len > 0) {
-            result.key_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            if (std.posix.system.access(result.key_file_name, std.posix.F_OK) != 0) {
-                return global.throwInvalidArguments("Unable to access keyFile path", .{});
-            }
-            any = true;
-            result.requires_custom_request_ctx = true;
-        }
-    }
-
-    if (try obj.getTruthy(global, "key")) |js_obj| {
-        if (js_obj.jsType().isArray()) {
-            const count = try js_obj.getLength(global);
-            if (count > 0) {
-                const native_array = try bun.default_allocator.alloc([*c]const u8, count);
-
-                var valid_count: u32 = 0;
-                for (0..count) |i| {
-                    const item = try js_obj.getIndex(global, @intCast(i));
-                    if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
-                        defer sb.deinit();
-                        const sliced = sb.slice();
-                        if (sliced.len > 0) {
-                            native_array[valid_count] = try bun.default_allocator.dupeZ(u8, sliced);
-                            valid_count += 1;
-                            any = true;
-                            result.requires_custom_request_ctx = true;
-                        }
-                    } else if (try BlobFileContentResult.init("key", item, global)) |content| {
-                        if (content.data.len > 0) {
-                            native_array[valid_count] = content.data.ptr;
-                            valid_count += 1;
-                            result.requires_custom_request_ctx = true;
-                            any = true;
-                        } else {
-                            // mark and free all CA's
-                            result.cert = native_array;
-                            result.deinit();
-                            return null;
-                        }
-                    } else {
-                        // mark and free all keys
-                        result.key = native_array;
-                        return global.throwInvalidArguments("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-                    }
-                }
-
-                if (valid_count == 0) {
-                    bun.default_allocator.free(native_array);
-                } else {
-                    result.key = native_array;
-                }
-
-                result.key_count = valid_count;
-            }
-        } else if (try BlobFileContentResult.init("key", js_obj, global)) |content| {
-            if (content.data.len > 0) {
-                const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-                native_array[0] = content.data.ptr;
-                result.key = native_array;
-                result.key_count = 1;
-                any = true;
-                result.requires_custom_request_ctx = true;
-            } else {
-                result.deinit();
-                return null;
-            }
-        } else {
-            const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-            if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
-                defer sb.deinit();
-                const sliced = sb.slice();
-                if (sliced.len > 0) {
-                    native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
-                    any = true;
-                    result.requires_custom_request_ctx = true;
-                    result.key = native_array;
-                    result.key_count = 1;
-                } else {
-                    bun.default_allocator.free(native_array);
-                }
-            } else {
-                // mark and free all certs
-                result.key = native_array;
-                return global.throwInvalidArguments("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-            }
-        }
-    }
-
-    if (try obj.getTruthy(global, "certFile")) |cert_file_name| {
-        var sliced = try cert_file_name.toSlice(global, bun.default_allocator);
-        defer sliced.deinit();
-        if (sliced.len > 0) {
-            result.cert_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            if (std.posix.system.access(result.cert_file_name, std.posix.F_OK) != 0) {
-                return global.throwInvalidArguments("Unable to access certFile path", .{});
-            }
-            any = true;
-            result.requires_custom_request_ctx = true;
-        }
-    }
-
-    if (try obj.getTruthy(global, "ALPNProtocols")) |protocols| {
-        if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
-            defer sb.deinit();
-            const sliced = sb.slice();
-            if (sliced.len > 0) {
-                result.protos = try bun.default_allocator.dupeZ(u8, sliced);
-                result.protos_len = sliced.len;
-            }
-
-            any = true;
-            result.requires_custom_request_ctx = true;
-        } else {
-            return global.throwInvalidArguments("ALPNProtocols argument must be an string, Buffer or TypedArray", .{});
-        }
-    }
-
-    if (try obj.getTruthy(global, "cert")) |js_obj| {
-        if (js_obj.jsType().isArray()) {
-            const count = try js_obj.getLength(global);
-            if (count > 0) {
-                const native_array = try bun.default_allocator.alloc([*c]const u8, count);
-
-                var valid_count: u32 = 0;
-                for (0..count) |i| {
-                    const item = try js_obj.getIndex(global, @intCast(i));
-                    if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
-                        defer sb.deinit();
-                        const sliced = sb.slice();
-                        if (sliced.len > 0) {
-                            native_array[valid_count] = try bun.default_allocator.dupeZ(u8, sliced);
-                            valid_count += 1;
-                            any = true;
-                            result.requires_custom_request_ctx = true;
-                        }
-                    } else if (try BlobFileContentResult.init("cert", item, global)) |content| {
-                        if (content.data.len > 0) {
-                            native_array[valid_count] = content.data.ptr;
-                            valid_count += 1;
-                            result.requires_custom_request_ctx = true;
-                            any = true;
-                        } else {
-                            // mark and free all CA's
-                            result.cert = native_array;
-                            result.deinit();
-                            return null;
-                        }
-                    } else {
-                        // mark and free all certs
-                        result.cert = native_array;
-                        return global.throwInvalidArguments("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-                    }
-                }
-
-                if (valid_count == 0) {
-                    bun.default_allocator.free(native_array);
-                } else {
-                    result.cert = native_array;
-                }
-
-                result.cert_count = valid_count;
-            }
-        } else if (try BlobFileContentResult.init("cert", js_obj, global)) |content| {
-            if (content.data.len > 0) {
-                const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-                native_array[0] = content.data.ptr;
-                result.cert = native_array;
-                result.cert_count = 1;
-                any = true;
-                result.requires_custom_request_ctx = true;
-            } else {
-                result.deinit();
-                return null;
-            }
-        } else {
-            const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-            if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
-                defer sb.deinit();
-                const sliced = sb.slice();
-                if (sliced.len > 0) {
-                    native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
-                    any = true;
-                    result.requires_custom_request_ctx = true;
-                    result.cert = native_array;
-                    result.cert_count = 1;
-                } else {
-                    bun.default_allocator.free(native_array);
-                }
-            } else {
-                // mark and free all certs
-                result.cert = native_array;
-                return global.throwInvalidArguments("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-            }
-        }
-    }
-
-    if (try obj.getBooleanStrict(global, "requestCert")) |request_cert| {
-        result.request_cert = if (request_cert) 1 else 0;
+    if (generated.passphrase.get()) |passphrase| {
+        result.passphrase = passphrase.toOwnedSliceZ(bun.default_allocator);
         any = true;
     }
-
-    if (try obj.getBooleanStrict(global, "rejectUnauthorized")) |reject_unauthorized| {
-        result.reject_unauthorized = if (reject_unauthorized) 1 else 0;
+    if (generated.dh_params_file.get()) |dh_params_file| {
+        result.dh_params_file_name = try handlePath(global, "dhParamsFile", dh_params_file);
         any = true;
     }
-
-    if (try obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
-        var sliced = try ssl_ciphers.toSlice(global, bun.default_allocator);
-        defer sliced.deinit();
-        if (sliced.len > 0) {
-            result.ssl_ciphers = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            result.is_using_default_ciphers = false;
-            any = true;
-            result.requires_custom_request_ctx = true;
-        }
-    }
-    if (result.is_using_default_ciphers) {
-        result.ssl_ciphers = global.bunVM().rareData().tlsDefaultCiphers() orelse null;
+    if (generated.server_name.get()) |server_name| {
+        result.server_name = server_name.toOwnedSliceZ(bun.default_allocator);
+        result.requires_custom_request_ctx = true;
     }
 
-    if (try obj.getTruthy(global, "serverName") orelse try obj.getTruthy(global, "servername")) |server_name| {
-        var sliced = try server_name.toSlice(global, bun.default_allocator);
-        defer sliced.deinit();
-        if (sliced.len > 0) {
-            result.server_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            any = true;
-            result.requires_custom_request_ctx = true;
-        }
+    result.low_memory_mode = generated.low_memory_mode;
+    result.reject_unauthorized = @intFromBool(
+        generated.reject_unauthorized orelse vm.getTLSRejectUnauthorized(),
+    );
+    result.request_cert = @intFromBool(generated.request_cert);
+    result.secure_options = generated.secure_options;
+    any = any or
+        result.low_memory_mode or
+        generated.reject_unauthorized != null or
+        generated.request_cert or
+        result.secure_options != 0;
+
+    result.ca = try handleFileForField(global, "ca", &generated.ca);
+    result.cert = try handleFileForField(global, "cert", &generated.cert);
+    result.key = try handleFileForField(global, "key", &generated.key);
+    result.requires_custom_request_ctx = result.requires_custom_request_ctx or
+        result.ca != null or
+        result.cert != null or
+        result.key != null;
+
+    if (generated.key_file.get()) |key_file| {
+        result.key_file_name = try handlePath(global, "keyFile", key_file);
+        result.requires_custom_request_ctx = true;
+    }
+    if (generated.cert_file.get()) |cert_file| {
+        result.cert_file_name = try handlePath(global, "certFile", cert_file);
+        result.requires_custom_request_ctx = true;
+    }
+    if (generated.ca_file.get()) |ca_file| {
+        result.ca_file_name = try handlePath(global, "caFile", ca_file);
+        result.requires_custom_request_ctx = true;
     }
 
-    if (try obj.getTruthy(global, "ca")) |js_obj| {
-        if (js_obj.jsType().isArray()) {
-            const count = try js_obj.getLength(global);
-            if (count > 0) {
-                const native_array = try bun.default_allocator.alloc([*c]const u8, count);
-
-                var valid_count: u32 = 0;
-                for (0..count) |i| {
-                    const item = try js_obj.getIndex(global, @intCast(i));
-                    if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
-                        defer sb.deinit();
-                        const sliced = sb.slice();
-                        if (sliced.len > 0) {
-                            native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
-                            valid_count += 1;
-                            any = true;
-                            result.requires_custom_request_ctx = true;
-                        }
-                    } else if (try BlobFileContentResult.init("ca", item, global)) |content| {
-                        if (content.data.len > 0) {
-                            native_array[valid_count] = content.data.ptr;
-                            valid_count += 1;
-                            any = true;
-                            result.requires_custom_request_ctx = true;
-                        } else {
-                            // mark and free all CA's
-                            result.cert = native_array;
-                            result.deinit();
-                            return null;
-                        }
-                    } else {
-                        // mark and free all CA's
-                        result.cert = native_array;
-                        return global.throwInvalidArguments("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-                    }
-                }
-
-                if (valid_count == 0) {
-                    bun.default_allocator.free(native_array);
-                } else {
-                    result.ca = native_array;
-                }
-
-                result.ca_count = valid_count;
-            }
-        } else if (try BlobFileContentResult.init("ca", js_obj, global)) |content| {
-            if (content.data.len > 0) {
-                const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-                native_array[0] = content.data.ptr;
-                result.ca = native_array;
-                result.ca_count = 1;
-                any = true;
-                result.requires_custom_request_ctx = true;
-            } else {
-                result.deinit();
-                return null;
-            }
-        } else {
-            const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
-            if (try jsc.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
-                defer sb.deinit();
-                const sliced = sb.slice();
-                if (sliced.len > 0) {
-                    native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
-                    any = true;
-                    result.requires_custom_request_ctx = true;
-                    result.ca = native_array;
-                    result.ca_count = 1;
-                } else {
-                    bun.default_allocator.free(native_array);
-                }
-            } else {
-                // mark and free all certs
-                result.ca = native_array;
-                return global.throwInvalidArguments("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-            }
-        }
+    const protocols = switch (generated.alpn_protocols) {
+        .none => null,
+        .string => |*ref| ref.get().toOwnedSliceZ(bun.default_allocator),
+        .buffer => |*ref| blk: {
+            const buffer: jsc.ArrayBuffer = ref.get().asArrayBuffer();
+            break :blk try bun.default_allocator.dupeZ(u8, buffer.byteSlice());
+        },
+    };
+    if (protocols) |some_protocols| {
+        result.protos = some_protocols;
+        result.requires_custom_request_ctx = true;
+    }
+    if (generated.ciphers.get()) |ciphers| {
+        result.ssl_ciphers = ciphers.toOwnedSliceZ(bun.default_allocator);
+        result.is_using_default_ciphers = false;
+        result.requires_custom_request_ctx = true;
     }
 
-    if (try obj.getTruthy(global, "caFile")) |ca_file_name| {
-        var sliced = try ca_file_name.toSlice(global, bun.default_allocator);
-        defer sliced.deinit();
-        if (sliced.len > 0) {
-            result.ca_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            if (std.posix.system.access(result.ca_file_name, std.posix.F_OK) != 0) {
-                return global.throwInvalidArguments("Invalid caFile path", .{});
-            }
-        }
+    result.client_renegotiation_limit = generated.client_renegotiation_limit;
+    result.client_renegotiation_window = generated.client_renegotiation_window;
+    any = any or
+        result.requires_custom_request_ctx or
+        result.client_renegotiation_limit != 0 or
+        generated.client_renegotiation_window != 0;
+
+    // We don't need to deinit `result` if `any` is false.
+    return if (any) result else null;
+}
+
+fn handlePath(
+    global: *jsc.JSGlobalObject,
+    comptime field: []const u8,
+    string: bun.string.WTFStringImpl,
+) bun.JSError![:0]const u8 {
+    const name = string.toOwnedSliceZ(bun.default_allocator);
+    errdefer bun.freeSensitive(bun.default_allocator, name);
+    if (std.posix.system.access(name, std.posix.F_OK) != 0) {
+        return global.throwInvalidArguments(
+            std.fmt.comptimePrint("Unable to access {s} path", .{field}),
+            .{},
+        );
     }
-    // Optional
-    if (any) {
-        if (try obj.getTruthy(global, "secureOptions")) |secure_options| {
-            if (secure_options.isNumber()) {
-                result.secure_options = secure_options.toU32();
-            }
-        }
+    return name;
+}
 
-        if (try obj.getTruthy(global, "clientRenegotiationLimit")) |client_renegotiation_limit| {
-            if (client_renegotiation_limit.isNumber()) {
-                result.client_renegotiation_limit = client_renegotiation_limit.toU32();
-            }
-        }
+fn handleFileForField(
+    global: *jsc.JSGlobalObject,
+    comptime field: []const u8,
+    file: *const jsc.generated.SSLConfigFile,
+) bun.JSError!?[][*:0]const u8 {
+    return handleFile(global, file) catch |err| switch (err) {
+        error.JSError => return error.JSError,
+        error.OutOfMemory => return error.OutOfMemory,
+        error.EmptyFile => return global.throwInvalidArguments(
+            std.fmt.comptimePrint("TLSOptions.{s} is an empty file", .{field}),
+            .{},
+        ),
+        error.NullStore, error.NotAFile => return global.throwInvalidArguments(
+            std.fmt.comptimePrint(
+                "TLSOptions.{s} is not a valid BunFile (non-BunFile `Blob`s are not supported)",
+                .{field},
+            ),
+            .{},
+        ),
+    };
+}
 
-        if (try obj.getTruthy(global, "clientRenegotiationWindow")) |client_renegotiation_window| {
-            if (client_renegotiation_window.isNumber()) {
-                result.client_renegotiation_window = client_renegotiation_window.toU32();
-            }
-        }
-
-        if (try obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
-            var sliced = try dh_params_file_name.toSlice(global, bun.default_allocator);
-            defer sliced.deinit();
-            if (sliced.len > 0) {
-                result.dh_params_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
-                if (std.posix.system.access(result.dh_params_file_name, std.posix.F_OK) != 0) {
-                    return global.throwInvalidArguments("Invalid dhParamsFile path", .{});
-                }
-            }
-        }
-
-        if (try obj.getTruthy(global, "passphrase")) |passphrase| {
-            var sliced = try passphrase.toSlice(global, bun.default_allocator);
-            defer sliced.deinit();
-            if (sliced.len > 0) {
-                result.passphrase = try bun.default_allocator.dupeZ(u8, sliced.slice());
-            }
-        }
-
-        if (try obj.get(global, "lowMemoryMode")) |low_memory_mode| {
-            if (low_memory_mode.isBoolean() or low_memory_mode.isUndefined()) {
-                result.low_memory_mode = low_memory_mode.toBoolean();
-                any = true;
-            } else {
-                return global.throw("Expected lowMemoryMode to be a boolean", .{});
-            }
-        }
-    }
-
-    if (!any)
-        return null;
+fn handleFile(
+    global: *jsc.JSGlobalObject,
+    file: *const jsc.generated.SSLConfigFile,
+) ReadFromBlobError!?[][*:0]const u8 {
+    const single = try handleSingleFile(global, switch (file.*) {
+        .none => return null,
+        .string => |*ref| .{ .string = ref.get() },
+        .buffer => |*ref| .{ .buffer = ref.get() },
+        .file => |*ref| .{ .file = ref.get() },
+        .array => |*list| return try handleFileArray(global, list.items()),
+    });
+    errdefer bun.freeSensitive(bun.default_allocator, single);
+    const result = try bun.default_allocator.alloc([*:0]const u8, 1);
+    result[0] = single;
     return result;
+}
+
+fn handleFileArray(
+    global: *jsc.JSGlobalObject,
+    elements: []const jsc.generated.SSLConfigSingleFile,
+) ReadFromBlobError!?[][*:0]const u8 {
+    if (elements.len == 0) return null;
+    var result: bun.collections.ArrayListDefault([*:0]const u8) = try .initCapacity(elements.len);
+    errdefer {
+        for (result.items()) |string| {
+            bun.freeSensitive(bun.default_allocator, std.mem.span(string));
+        }
+        result.deinit();
+    }
+    for (elements) |*elem| {
+        result.appendAssumeCapacity(try handleSingleFile(global, switch (elem.*) {
+            .string => |*ref| .{ .string = ref.get() },
+            .buffer => |*ref| .{ .buffer = ref.get() },
+            .file => |*ref| .{ .file = ref.get() },
+        }));
+    }
+    return try result.toOwnedSlice();
+}
+
+fn handleSingleFile(
+    global: *jsc.JSGlobalObject,
+    file: union(enum) {
+        string: bun.string.WTFStringImpl,
+        buffer: *jsc.JSCArrayBuffer,
+        file: *bun.webcore.Blob,
+    },
+) ReadFromBlobError![:0]const u8 {
+    return switch (file) {
+        .string => |string| string.toOwnedSliceZ(bun.default_allocator),
+        .buffer => |jsc_buffer| blk: {
+            const buffer: jsc.ArrayBuffer = jsc_buffer.asArrayBuffer();
+            break :blk try bun.default_allocator.dupeZ(u8, buffer.byteSlice());
+        },
+        .file => |blob| try readFromBlob(global, blob),
+    };
 }
 
 const std = @import("std");

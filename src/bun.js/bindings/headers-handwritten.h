@@ -322,11 +322,10 @@ BunString toStringView(WTF::StringView view);
 
 typedef struct {
     char* ptr;
-    size_t offset;
     size_t len;
     size_t byte_len;
-    uint8_t cell_type;
     int64_t _value;
+    uint8_t cell_type;
     bool shared;
 } Bun__ArrayBuffer;
 

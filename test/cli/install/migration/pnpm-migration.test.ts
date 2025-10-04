@@ -70,7 +70,7 @@ test("version is number with dot", async () => {
   let [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(1);
-  expect(err).toContain("pnpm-lock.yaml version is too old (< v7)");
+  expect(err).toContain("pnpm-lock.yaml version is too old (less than v7)");
 });
 
 describe.todo("bin", () => {

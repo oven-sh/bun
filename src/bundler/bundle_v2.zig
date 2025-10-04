@@ -1652,8 +1652,18 @@ pub const BundleV2 = struct {
                     const output_path = brk: {
                         var pathname = source.path.name;
 
+                        const relative_asset_path = bun.path.relativePlatform(this.transpiler.options.root_dir, source.path.text, .loose, false);
+                        const needs_virtual_fs_path = this.transpiler.options.compile or
+                            (this.transpiler.options.public_path.len > 0 and
+                            (strings.hasPrefixComptime(this.transpiler.options.public_path, "/$bunfs/") or
+                            strings.hasPrefixComptime(this.transpiler.options.public_path, "B:/~BUN/")));
+                        const normalized_asset_path = if (needs_virtual_fs_path)
+                            bun.path.normalizeString(relative_asset_path, false, .loose)
+                        else
+                            relative_asset_path;
+
                         // TODO: outbase
-                        pathname = Fs.PathName.init(bun.path.relativePlatform(this.transpiler.options.root_dir, source.path.text, .loose, false));
+                        pathname = Fs.PathName.init(normalized_asset_path);
 
                         template.placeholder.name = pathname.base;
                         template.placeholder.dir = pathname.dir;

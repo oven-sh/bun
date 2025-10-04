@@ -3799,13 +3799,17 @@ pub const NodeFS = struct {
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
-        return switch (if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic))
-            Syscall.fstatx(args.fd, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
-        else
-            Syscall.fstat(args.fd)) {
-            .result => |*result| .{ .result = .init(result, args.big_int) },
-            .err => |err| .{ .err = err },
-        };
+        if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
+            return switch (Syscall.fstatx(args.fd, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+                .result => |result| .{ .result = .init(&result, args.big_int) },
+                .err => |err| .{ .err = err },
+            };
+        } else {
+            return switch (Syscall.fstat(args.fd)) {
+                .result => |result| .{ .result = .init(&Syscall.bunStatToPosixStat(&result), args.big_int) },
+                .err => |err| .{ .err = err },
+            };
+        }
     }
 
     pub fn fsync(_: *NodeFS, args: Arguments.Fsync, _: Flavor) Maybe(Return.Fsync) {
@@ -3879,18 +3883,27 @@ pub const NodeFS = struct {
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
-        return switch (if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic))
-            Syscall.lstatx(args.path.sliceZ(&this.sync_error_buf), &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
-        else
-            Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |*result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
-            .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                    return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
-                }
-                break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
-            },
-        };
+        if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
+            return switch (Syscall.lstatx(args.path.sliceZ(&this.sync_error_buf), &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+                .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&result, args.big_int) } },
+                .err => |err| brk: {
+                    if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                        return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
+                    }
+                    break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
+                },
+            };
+        } else {
+            return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
+                .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&Syscall.bunStatToPosixStat(&result), args.big_int) } },
+                .err => |err| brk: {
+                    if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                        return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
+                    }
+                    break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
+                },
+            };
+        }
     }
 
     pub fn mkdir(this: *NodeFS, args: Arguments.Mkdir, _: Flavor) Maybe(Return.Mkdir) {
@@ -5707,24 +5720,35 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
         if (bun.StandaloneModuleGraph.get()) |graph| {
             if (graph.stat(path)) |*result| {
-                return .{ .result = .{ .stats = .init(result, args.big_int) } };
+                return .{ .result = .{ .stats = .init(&Syscall.bunStatToPosixStat(result), args.big_int) } };
             }
         }
 
-        return switch (if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic))
-            Syscall.statx(path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })
-        else
-            Syscall.stat(path)) {
-            .result => |*result| .{
-                .result = .{ .stats = .init(result, args.big_int) },
-            },
-            .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                    return .{ .result = .{ .not_found = {} } };
-                }
-                break :brk .{ .err = err.withPath(args.path.slice()) };
-            },
-        };
+        if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
+            return switch (Syscall.statx(path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+                .result => |result| .{
+                    .result = .{ .stats = .init(&result, args.big_int) },
+                },
+                .err => |err| brk: {
+                    if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                        return .{ .result = .{ .not_found = {} } };
+                    }
+                    break :brk .{ .err = err.withPath(args.path.slice()) };
+                },
+            };
+        } else {
+            return switch (Syscall.stat(path)) {
+                .result => |result| .{
+                    .result = .{ .stats = .init(&Syscall.bunStatToPosixStat(&result), args.big_int) },
+                },
+                .err => |err| brk: {
+                    if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                        return .{ .result = .{ .not_found = {} } };
+                    }
+                    break :brk .{ .err = err.withPath(args.path.slice()) };
+                },
+            };
+        }
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, _: Flavor) Maybe(Return.Symlink) {

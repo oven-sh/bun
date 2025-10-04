@@ -4,10 +4,14 @@ pub fn StatType(comptime big: bool) type {
         pub const new = bun.TrivialNew(@This());
         pub const deinit = bun.TrivialDeinit(@This());
 
-        value: bun.Stat,
+        value: Syscall.PosixStat,
 
-        const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
+        const StatTimespec = bun.timespec;
         const Float = if (big) i64 else f64;
+
+        pub inline fn init(stat_: *const Syscall.PosixStat) @This() {
+            return .{ .value = stat_.* };
+        }
 
         inline fn toNanoseconds(ts: StatTimespec) u64 {
             if (ts.sec < 0) {
@@ -44,28 +48,8 @@ pub fn StatType(comptime big: bool) type {
             }
         }
 
-        fn getBirthtime(stat_: *const bun.Stat) StatTimespec {
-            if (!Environment.isLinux) {
-                return stat_.birthtime();
-            }
-
-            // On Linux, birthtime is stored in the __unused fields via statx
-            if (comptime Environment.isX64) {
-                // __unused: [3]isize - tv_sec in [0], tv_nsec in [2]
-                return .{
-                    .sec = @intCast(stat_.__unused[0]),
-                    .nsec = @intCast(stat_.__unused[2]),
-                };
-            } else if (comptime Environment.isAarch64) {
-                // __pad: usize for tv_sec, __unused: [2]u32 for tv_nsec
-                return .{
-                    .sec = @intCast(stat_.__pad),
-                    .nsec = @intCast(stat_.__unused[0]),
-                };
-            } else {
-                // Unsupported architecture - return zero
-                return .{ .sec = 0, .nsec = 0 };
-            }
+        fn getBirthtime(stat_: *const Syscall.PosixStat) StatTimespec {
+            return stat_.birthtim;
         }
 
         pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -80,7 +64,7 @@ pub fn StatType(comptime big: bool) type {
             return @intCast(@min(@max(value, 0), std.math.maxInt(i64)));
         }
 
-        fn statToJS(stat_: *const bun.Stat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        fn statToJS(stat_: *const Syscall.PosixStat, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
@@ -146,12 +130,6 @@ pub fn StatType(comptime big: bool) type {
                 birthtime_ms,
             );
         }
-
-        pub fn init(stat_: *const bun.Stat) @This() {
-            return @This(){
-                .value = stat_.*,
-            };
-        }
     };
 }
 extern fn Bun__JSBigIntStatsObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
@@ -205,7 +183,7 @@ pub const Stats = union(enum) {
     big: StatsBig,
     small: StatsSmall,
 
-    pub inline fn init(stat_: *const bun.Stat, big: bool) Stats {
+    pub inline fn init(stat_: *const Syscall.PosixStat, big: bool) Stats {
         if (big) {
             return .{ .big = StatsBig.init(stat_) };
         } else {
@@ -233,3 +211,4 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const jsc = bun.jsc;
+const Syscall = bun.sys;

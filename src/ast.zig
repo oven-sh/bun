@@ -155,8 +155,9 @@ pub const NameMinifier = struct {
     head: std.ArrayList(u8),
     tail: std.ArrayList(u8),
 
-    pub const default_head = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
-    pub const default_tail = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
+    // Characters ordered by frequency of use in JavaScript code for better gzip compression
+    pub const default_head: [54]u8 align(64) = "etnriaoscludfpmhg_vybxSCwTEDOkAjMNPFILRzBVHUWGKqJYXZQ$".*;
+    pub const default_tail: [64]u8 align(64) = "etnriaoscludfpmhg_vybxSCwTEDOkAjMNPFILRzBVHUWGKqJYXZQ$1024368579".*;
 
     pub fn init(allocator: std.mem.Allocator) NameMinifier {
         return .{

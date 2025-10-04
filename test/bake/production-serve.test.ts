@@ -1,7 +1,7 @@
-import { describe, test, expect } from "bun:test";
-import { tempDirWithBakeDeps } from "./bake-harness";
-import { bunExe, bunEnv } from "harness";
 import { Subprocess } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { tempDirWithBakeDeps } from "./bake-harness";
 
 async function startProductionServer(
   dir: string,

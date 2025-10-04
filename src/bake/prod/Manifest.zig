@@ -813,8 +813,6 @@ const RawManifestEntry = struct {
     const Mode = enum { ssr, ssg };
 };
 
-const ParamEntriesHash = u32;
-
 pub const ParamEntry = struct {
     key: []const u8,
     value: Value,
@@ -849,20 +847,13 @@ pub const Styles = bun.BabyList([]const u8);
 const std = @import("std");
 
 const bun = @import("bun");
+const jsc = bun.jsc;
 const strings = bun.strings;
+const E = bun.ast.E;
+const FrameworkRouter = bun.bake.FrameworkRouter;
+
 const logger = bun.logger;
 const Loc = logger.Loc;
 
-const jsc = bun.jsc;
-const CallFrame = jsc.CallFrame;
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSValue = jsc.JSValue;
-const E = bun.ast.E;
-
-const DirInfo = bun.resolver.DirInfo;
-const Resolver = bun.resolver.Resolver;
-
 const mem = std.mem;
 const Allocator = mem.Allocator;
-
-const FrameworkRouter = bun.bake.FrameworkRouter;

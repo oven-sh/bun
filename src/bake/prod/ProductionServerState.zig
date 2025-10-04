@@ -1,6 +1,3 @@
-const log = Output.scoped(.bake_prod, .visible);
-const httplog = log;
-
 const Self = @This();
 
 route_list: jsc.Strong,
@@ -399,38 +396,24 @@ pub fn reconstructPathFromParams(
     return try parts.toOwnedSlice();
 }
 
-const bun = @import("bun");
-const bake = bun.bake;
-const strings = bun.strings;
-const logger = bun.logger;
-const Loc = logger.Loc;
+const std = @import("std");
 
-const Route = bun.bake.FrameworkRouter.Route;
+const bun = @import("bun");
+const JSError = bun.JSError;
+const strings = bun.strings;
+const ServerConfig = bun.api.server.ServerConfig;
+
+const bake = bun.bake;
+const Manifest = bun.bake.Manifest;
 const SSRRouteList = bun.bake.SSRRouteList;
 
+const FrameworkRouter = bun.bake.FrameworkRouter;
+const Route = bun.bake.FrameworkRouter.Route;
+
 const jsc = bun.jsc;
-const JSError = bun.JSError;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const E = bun.ast.E;
-
-const DirInfo = bun.resolver.DirInfo;
-const Resolver = bun.resolver.Resolver;
 
 const mem = std.mem;
 const Allocator = mem.Allocator;
-const Manifest = bun.bake.Manifest;
-
-const ServerConfig = bun.api.server.ServerConfig;
-const AnyServer = bun.api.server.AnyServer;
-
-const Output = bun.Output;
-const FileRoute = bun.api.server.FileRoute;
-const StaticRoute = bun.api.server.StaticRoute;
-
-const Environment = bun.Environment;
-
-const FrameworkRouter = bun.bake.FrameworkRouter;
-const std = @import("std");
-const uws = bun.uws;

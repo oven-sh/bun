@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { tempDirWithBakeDeps } from "./bake-harness";
 

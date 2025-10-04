@@ -573,7 +573,11 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
                 try headers.put(.Location, result.url, globalThis);
                 response.redirected = true;
                 response.init.headers = headers;
-                return bun.new(Response, response);
+                var allocated_response = bun.new(Response, response);
+                if (thisValue != .zero) {
+                    allocated_response.this_jsvalue = .initWeak(thisValue);
+                }
+                return allocated_response;
             }
         }
     }
@@ -628,8 +632,11 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, t
     });
 
     response.calculateEstimatedByteSize();
-    if (thisValue != .zero and readable_stream_value != .zero) {
-        response.body.value.Locked.readable.setValue(.{ .Response = thisValue }, readable_stream_value, response.body.value.Locked.global);
+    if (thisValue != .zero) {
+        response.this_jsvalue = .initWeak(thisValue);
+        if (readable_stream_value != .zero) {
+            response.body.value.Locked.readable.setValue(.{ .Response = thisValue }, readable_stream_value, response.body.value.Locked.global);
+        }
     }
     return response;
 }

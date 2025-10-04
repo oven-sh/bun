@@ -140,7 +140,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
     }
 
     if (readableStreamTee[0] != encodedJSValue()) {
-        this->m_body.set(vm, clone, JSValue::decode(readableStreamTee[0]));
+        this->m_body.set(vm, this, JSValue::decode(readableStreamTee[0]));
     }
 
     if (readableStreamTee[1] != encodedJSValue()) {

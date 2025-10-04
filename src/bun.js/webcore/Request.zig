@@ -644,7 +644,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                         else => {
                             req.body.value = try response.body.value.clone(.empty, globalThis, readable_stream_tee);
                             if (readable_stream_tee) |tee_value| {
-                                Response.js.gc.body.set(value, globalThis, tee_value[1]);
+                                Response.js.gc.body.set(value, globalThis, tee_value[0]);
                             }
 
                             fields.insert(.body);

@@ -447,13 +447,6 @@ ${Object.keys(opts)
 });
 
 describe("HOME directory .npmrc", () => {
-  // Ensure registry is started before running these tests
-  beforeAll(async () => {
-    if (!registry.process) {
-      await registry.start();
-    }
-  });
-
   test("reads .npmrc from HOME when HOME env is modified", async () => {
     const { packageDir } = await registry.createTestDir();
     const customHome = join(packageDir, "custom_home");

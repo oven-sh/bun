@@ -76,6 +76,9 @@ route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, Rou
 /// Map from worker source index to its RouteBundle index
 /// Workers are bundled as separate entry points, similar to routes
 worker_lookup: std.AutoHashMapUnmanaged(bun.ast.Index, RouteBundle.Index) = .{},
+/// Map from worker path to its RouteBundle index for HTTP request routing
+/// This allows us to serve workers when requested by path
+worker_path_lookup: bun.StringArrayHashMapUnmanaged(RouteBundle.Index) = .{},
 /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
 /// Used to identify what route a connected WebSocket is on, so that only
 /// the active pages are notified of a hot updates.
@@ -681,6 +684,7 @@ pub fn deinit(dev: *DevServer) void {
         },
         .route_lookup = dev.route_lookup.deinit(alloc),
         .worker_lookup = dev.worker_lookup.deinit(alloc),
+        .worker_path_lookup = dev.worker_path_lookup.deinit(alloc),
         .source_maps = {
             for (dev.source_maps.entries.values()) |*value| {
                 bun.assert(value.ref_count > 0);
@@ -1017,6 +1021,11 @@ const RequestEnsureRouteBundledCtx = struct {
                 this.resp,
                 this.req.method(),
             ),
+            .worker_bundle => this.dev.onWorkerRequestWithBundle(
+                this.route_bundle_index,
+                this.resp,
+                .GET, // Workers are always GET requests
+            ),
         }
     }
 
@@ -1207,6 +1216,10 @@ fn deferRequest(
             .bundled_html_page => brk: {
                 resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
                 break :brk .{ .bundled_html_page = .{ .response = resp, .method = method } };
+            },
+            .worker_bundle => brk: {
+                resp.onAborted(*DeferredRequest, DeferredRequest.onAbort, &deferred.data);
+                break :brk .{ .worker_bundle = .{ .response = resp, .method = method } };
             },
             .server_handler => brk: {
                 const server_handler = switch (req) {
@@ -1498,6 +1511,54 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
     blob.onWithMethod(method, resp);
 }
 
+fn generateWorkerBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u8 {
+    assert(route_bundle.server_state == .loaded);
+    assert(route_bundle.data == .worker);
+
+    const worker = &route_bundle.data.worker;
+
+    // Workers are bundled on the server graph with HMR runtime
+    // They run in a separate context from the main page
+    _ = worker;
+
+    // TODO: Actually generate the worker bundle with HMR runtime
+    // This needs to:
+    // 1. Bundle the worker file and its dependencies using bundle_v2
+    // 2. Include the HMR runtime for hot reloading
+    // 3. Wrap in worker-appropriate context
+    // 4. Generate source maps
+
+    // Temporary MVP implementation: just return a placeholder
+    // Real implementation will call bundle_v2.bundle() with worker entry point
+    const temp_code = "// Worker bundle - full implementation pending\nself.postMessage('Worker loaded');\n";
+    return try dev.allocator().dupe(u8, temp_code);
+}
+
+fn onWorkerRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method) void {
+    const route_bundle = dev.routeBundlePtr(route_bundle_index);
+    assert(route_bundle.data == .worker);
+    const worker = &route_bundle.data.worker;
+
+    const blob = worker.cached_bundle orelse generate: {
+        // Generate the bundled worker code with HMR runtime
+        const payload = bun.handleOom(dev.generateWorkerBundle(route_bundle));
+        errdefer dev.allocator().free(payload);
+
+        worker.cached_bundle = StaticRoute.initFromAnyBlob(
+            &.fromOwnedSlice(dev.allocator(), payload),
+            .{
+                .mime_type = &.javascript,
+                .server = dev.server orelse unreachable,
+            },
+        );
+        break :generate worker.cached_bundle.?;
+    };
+
+    // Add source map reference (workers can have source maps too)
+    dev.source_maps.addWeakRef(route_bundle.sourceMapId());
+    blob.onWithMethod(method, resp);
+}
+
 /// This payload is used to unref the source map weak reference if the page
 /// starts loading but the JavaScript code is not reached. The event handler
 /// is replaced by the HMR runtime to one that handles things better.
@@ -1759,6 +1820,8 @@ pub const DeferredRequest = struct {
         server_handler: bun.jsc.API.SavedRequest,
         /// For a .html route. Serve the bundled HTML page.
         bundled_html_page: ResponseAndMethod,
+        /// For a .worker route. Serve the bundled worker JS.
+        worker_bundle: ResponseAndMethod,
         /// Do nothing and free this node. To simplify lifetimes,
         /// the `DeferredRequest` is not freed upon abortion. Which
         /// is okay since most requests do not abort.
@@ -1769,6 +1832,7 @@ pub const DeferredRequest = struct {
         const Kind = enum {
             server_handler,
             bundled_html_page,
+            worker_bundle,
         };
     };
 
@@ -1804,7 +1868,7 @@ pub const DeferredRequest = struct {
 
         switch (this.handler) {
             .server_handler => |*saved| saved.deinit(),
-            .bundled_html_page, .aborted => {},
+            .bundled_html_page, .worker_bundle, .aborted => {},
         }
     }
 
@@ -1819,7 +1883,7 @@ pub const DeferredRequest = struct {
                 saved.ctx.setSignalAborted(.ConnectionClosed);
                 saved.js_request.deinit();
             },
-            .bundled_html_page => |r| {
+            .bundled_html_page, .worker_bundle => |r| {
                 r.response.endWithoutBody(true);
             },
             .aborted => {},
@@ -2846,7 +2910,7 @@ pub fn finalizeBundle(
                     saved.deinit();
                     break :brk DevResponse{ .http = resp };
                 },
-                .bundled_html_page => |ram| DevResponse{ .http = ram.response },
+                .bundled_html_page, .worker_bundle => |ram| DevResponse{ .http = ram.response },
             };
 
             try dev.sendSerializedFailures(
@@ -2983,6 +3047,7 @@ pub fn finalizeBundle(
             .aborted => continue,
             .server_handler => |saved| try dev.onFrameworkRequestWithBundle(req.route_bundle_index, .{ .saved = saved }, saved.response),
             .bundled_html_page => |ram| dev.onHtmlRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
+            .worker_bundle => |ram| dev.onWorkerRequestWithBundle(req.route_bundle_index, ram.response, ram.method),
         }
     }
 }
@@ -3141,9 +3206,65 @@ pub fn routeBundlePtr(dev: *DevServer, idx: RouteBundle.Index) *RouteBundle {
     return &dev.route_bundles.items[idx.get()];
 }
 
+/// Try to serve a worker bundle if the URL matches a known worker source
+/// Returns true if the request was handled, false otherwise
+fn tryServeWorker(dev: *DevServer, url: []const u8, resp: AnyResponse) bool {
+    // Convert URL to absolute path
+    // Workers are referenced with paths like "./worker.js" or "/worker.js"
+    // We need to resolve these to absolute paths in the project
+    const path_buffer = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buffer);
+
+    // Remove leading slash if present
+    const url_path = if (url.len > 0 and url[0] == '/') url[1..] else url;
+
+    // Build absolute path from root
+    const abs_path = bun.path.joinAbsStringBuf(
+        dev.root,
+        path_buffer,
+        &[_][]const u8{url_path},
+        .auto,
+    );
+
+    // Check if this path is a known worker
+    dev.graph_safety_lock.lock();
+    const bundle_index_opt = dev.worker_path_lookup.get(abs_path);
+    dev.graph_safety_lock.unlock();
+
+    const bundle_index = bundle_index_opt orelse return false;
+
+    // This is a worker! Ensure it's bundled and serve it
+    var ctx = RequestEnsureRouteBundledCtx{
+        .dev = dev,
+        .req = .{ .req = undefined }, // Not used for workers
+        .resp = resp,
+        .kind = .worker_bundle,
+        .route_bundle_index = bundle_index,
+    };
+
+    dev.ensureRouteIsBundled(
+        bundle_index,
+        RequestEnsureRouteBundledCtx,
+        &ctx,
+    ) catch |err| switch (err) {
+        error.JSError => dev.vm.global.reportActiveExceptionAsUnhandled(err),
+        error.OutOfMemory => bun.outOfMemory(),
+    };
+
+    return true;
+}
+
 fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
+    const url = req.url();
+
+    // Check if this is a worker request
+    // Workers are served directly from their source paths
+    if (dev.tryServeWorker(url, AnyResponse.init(resp))) {
+        return;
+    }
+
     var params: FrameworkRouter.MatchedParams = undefined;
-    if (dev.router.matchSlow(req.url(), &params)) |route_index| {
+    if (dev.router.matchSlow(url, &params)) |route_index| {
         var ctx = RequestEnsureRouteBundledCtx{
             .dev = dev,
             .req = .{ .req = req },
@@ -3292,11 +3413,14 @@ pub fn getOrCreateWorkerBundle(
     const incremental_graph_index = try dev.server_graph.insertStaleExtra(worker_path, false, true);
 
     try dev.route_bundles.ensureUnusedCapacity(dev.allocator(), 1);
+    const worker_path_owned = try dev.allocator().dupe(u8, worker_path);
+    errdefer dev.allocator().free(worker_path_owned);
+
     dev.route_bundles.appendAssumeCapacity(.{
         .data = .{ .worker = .{
             .bundled_file = incremental_graph_index,
             .source_index = source_index,
-            .worker_path = try dev.allocator().dupe(u8, worker_path),
+            .worker_path = worker_path_owned,
             .cached_bundle = null,
         } },
         .client_script_generation = std.crypto.random.int(u32),
@@ -3306,6 +3430,7 @@ pub fn getOrCreateWorkerBundle(
     });
 
     try dev.worker_lookup.put(dev.allocator(), source_index, bundle_index);
+    try dev.worker_path_lookup.put(dev.allocator(), worker_path_owned, bundle_index);
     return bundle_index;
 }
 

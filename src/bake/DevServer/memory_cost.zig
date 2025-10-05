@@ -167,6 +167,9 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .worker_lookup = {
             other_bytes += memoryCostAutoHashMap(dev.worker_lookup);
         },
+        .worker_path_lookup = {
+            other_bytes += memoryCostArrayHashMap(dev.worker_path_lookup);
+        },
         .testing_batch_events = switch (dev.testing_batch_events) {
             .disabled => {},
             .enabled => |batch| {

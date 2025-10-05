@@ -1474,7 +1474,7 @@ pub const PackageManifest = struct {
         return null;
     }
 
-    pub fn excludeFromAgeFilter(this: *const PackageManifest, exclusions: ?[]const []const u8) bool {
+    pub fn shouldExcludeFromAgeFilter(this: *const PackageManifest, exclusions: ?[]const []const u8) bool {
         if (exclusions) |excl| {
             const pkg_name = this.name();
             for (excl) |excluded| {
@@ -1528,6 +1528,12 @@ pub const PackageManifest = struct {
                     else if (prev_package_blocked_from_age) |prev_package| {
                         // only try to go backwards for a max of 7 days on top of existing minimum age
                         if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
+                            if (best_version == null) {
+                                best_version = .{
+                                    .version = version,
+                                    .package = package,
+                                };
+                            }
                             break;
                         }
 
@@ -1617,7 +1623,7 @@ pub const PackageManifest = struct {
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
         const dist_result = this.findByDistTag(tag) orelse return .{ .err = .not_found };
-        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
+        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
         const min_age_ms = min_age_gate_ms orelse {
             return .{ .found = dist_result };
         };
@@ -1652,7 +1658,6 @@ pub const PackageManifest = struct {
             const package = &packages[idx];
 
             if (version.order(latest_version, this.string_buf, this.string_buf) == .gt) continue;
-            if (package.publish_timestamp_ms == 0) continue;
             if (latest_version_tag_before_dot) |expected_tag| {
                 const package_tag = version.tag.pre.slice(this.string_buf);
                 const actual_tag =
@@ -1670,13 +1675,10 @@ pub const PackageManifest = struct {
             if (prev_package_blocked_from_age) |prev_package| {
                 // only try to go backwards for a max of 7 days on top of existing minimum age
                 if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
-                    if (best_version) |result| {
-                        return .{ .found_with_filter = .{
-                            .result = result,
-                            .newest_filtered = dist_result.version,
-                        } };
-                    }
-                    break;
+                    return .{ .found_with_filter = .{
+                        .result = best_version orelse .{ .version = version, .package = package },
+                        .newest_filtered = dist_result.version,
+                    } };
                 }
 
                 const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
@@ -1724,7 +1726,7 @@ pub const PackageManifest = struct {
 
         const left = group.head.head.range.left;
         var newest_filtered: ?Semver.Version = null;
-        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.excludeFromAgeFilter(exclusions)) min_age_ms else null else null;
+        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
 
         if (left.op == .eql) {
             const result = this.findByVersion(left.version);

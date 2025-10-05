@@ -152,37 +152,6 @@ $ bun install --frozen-lockfile
 
 For more information on Bun's lockfile `bun.lock`, refer to [Package manager > Lockfile](https://bun.com/docs/install/lockfile).
 
-## Minimum release age
-
-To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in seconds) will be filtered out during installation.
-
-```bash
-# Only install package versions published at least 3 days ago
-$ bun add @types/bun --minimum-release-age 259200
-```
-
-You can also configure this in `bunfig.toml`:
-
-```toml
-[install]
-# Only install package versions published at least 3 days ago
-minimumReleaseAge = 259200
-
-# Exclude trusted packages from the age gate
-minimumReleaseAgeExcludes = ["@types/node", "typescript"]
-```
-
-When the minimum age filter is active:
-
-- Only affects new package resolution - existing packages in `bun.lock` remain unchanged
-- All dependencies (direct and transitive) are filtered to meet the age requirement when being resolved
-- When versions are blocked by the age gate, a stability check detects rapid bugfix patterns
-  - If multiple versions were published close together just outside your age gate, it extends the filter to skip those potentially unstable versions and selects an older, more mature version
-  - Searches up to 7 days after the age gate, however if still finding rapid releases it ignores stability check
-  - Exact version requests (like `package@1.1.1`) still respect the age gate but bypass the stability check
-
-For more advanced security scanning, including integration with services & custom filtering, see [Package manager > Security Scanner API](https://bun.com/docs/install/security-scanner-api).
-
 ## Omitting dependencies
 
 To omit dev, peer, or optional dependencies use the `--omit` flag.
@@ -252,6 +221,39 @@ Bun uses a global cache at `~/.bun/install/cache/` to minimize disk usage. Packa
 
 For complete documentation refer to [Package manager > Global cache](https://bun.com/docs/install/cache).
 
+## Minimum release age
+
+To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in seconds) will be filtered out during installation.
+
+```bash
+# Only install package versions published at least 3 days ago
+$ bun add @types/bun --minimum-release-age 259200 # seconds
+```
+
+You can also configure this in `bunfig.toml`:
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200 # seconds
+
+# Exclude trusted packages from the age gate
+minimumReleaseAgeExcludes = ["@types/node", "typescript"]
+```
+
+When the minimum age filter is active:
+
+- Only affects new package resolution - existing packages in `bun.lock` remain unchanged
+- All dependencies (direct and transitive) are filtered to meet the age requirement when being resolved
+- When versions are blocked by the age gate, a stability check detects rapid bugfix patterns
+  - If multiple versions were published close together just outside your age gate, it extends the filter to skip those potentially unstable versions and selects an older, more mature version
+  - Searches up to 7 days after the age gate, however if still finding rapid releases it ignores stability check
+  - Exact version requests (like `package@1.1.1`) still respect the age gate but bypass the stability check
+- Versions without a `time` field are treated as passing the age check (npm registry should always provide timestamps)
+
+For more advanced security scanning, including integration with services & custom filtering, see [Package manager > Security Scanner API](https://bun.com/docs/install/security-scanner-api).
+
+
 ## Configuration
 
 The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
@@ -286,6 +288,10 @@ concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 # installation strategy: "hoisted" or "isolated"
 # default: "hoisted"
 linker = "hoisted"
+
+# minimum age config
+minimumReleaseAge = 259200 # seconds
+minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 
 ## CI/CD
@@ -335,5 +341,6 @@ jobs:
       - name: Build app
         run: bun run build
 ```
+
 
 {% bunCLIUsage command="install" /%}

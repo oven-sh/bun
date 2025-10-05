@@ -948,6 +948,10 @@ describe("minimum-release-age", () => {
 
   describe("7-day give-up threshold", () => {
     test("stops searching after 7 days beyond minimum age", async () => {
+      // old-package has: 1.0.0 (20d), 1.1.0 (15d), 2.0.0 (2d)
+      // With 3-day filter, search window is 3 + 7 = 10 days
+      // - 2.0.0 (2 days): BLOCKED
+      // - 1.1.0 (15 days): Beyond search window, but should be returned as fallback
       using dir = tempDir("seven-day-threshold", {
         "package.json": JSON.stringify({
           dependencies: { "old-package": "*" },
@@ -955,28 +959,25 @@ describe("minimum-release-age", () => {
         ".npmrc": `registry=${mockRegistryUrl}`,
       });
 
-      const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`],
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
+      const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
 
-      // This test is tricky - with the 7-day give-up threshold,
-      // all versions might be beyond the search window
-      if (exitCode === 0) {
-        const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-        // Should not have 2.0.0 (too recent)
-        expect(lockfile).not.toContain("old-package@2.0.0");
-        // Should have an older version as fallback
-        expect(lockfile).toMatch(/old-package@1\.\d\.0/);
-      } else {
-        // Or it might fail if no suitable version found
-        expect(exitCode).toBe(1);
-      }
+      // Should succeed by finding 1.1.0 (first version beyond search window)
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Should not have 2.0.0 (too recent)
+      expect(lockfile).not.toContain("old-package@2.0.0");
+      // Should have 1.1.0 (old but stable, beyond the search window)
+      expect(lockfile).toContain("old-package@1.1.0");
+      expect(stderr.toLowerCase()).not.toContain("no version matching");
     });
 
     test("with daily releases, gets the latest within minimum age (not searching beyond 7 days)", async () => {
@@ -1013,6 +1014,53 @@ describe("minimum-release-age", () => {
       // Should NOT have searched back beyond 7-day threshold
       expect(lockfile).not.toContain("daily-release-package@1.1.0");
       expect(lockfile).not.toContain("daily-release-package@1.2.0");
+    });
+
+    test("version range finds old stable version beyond search window", async () => {
+      // Test for bug where version ranges would error instead of finding
+      // versions older than min_age + 7 days
+      //
+      // Bug scenario:
+      // - old-package has versions: 2.0.0 (2 days), 1.1.0 (15 days), 1.0.0 (20 days)
+      // - User requests "old-package@^1.0.0" with --minimum-release-age=259200 (3 days)
+      // - Search window is 3 days + 7 days = 10 days
+      // - 2.0.0 is blocked (too recent)
+      // - 1.1.0 is 15 days old (beyond the 10-day search window)
+      using dir = tempDir("old-version-search", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "old-package": "^1.0.0", // Range that should match 1.1.0
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // old-package has:
+      // - 1.0.0: 20 days old
+      // - 1.1.0: 15 days old
+      // - 2.0.0: 2 days old
+      //
+      // With 3-day filter:
+      // - 2.0.0 (2 days): BLOCKED
+      // - 1.1.0 (15 days): PASSES age gate, but beyond search window (3 + 7 = 10 days)
+      // - Should return 1.1.0 as best_version before breaking, not error!
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Should install 1.1.0 (old but stable)
+      expect(lockfile).toContain("old-package@1.1.0");
+      // Should NOT error with "No version matching"
+      expect(stderr.toLowerCase()).not.toContain("no version matching");
+      expect(stderr.toLowerCase()).not.toContain("blocked by minimum-release-age");
     });
   });
 

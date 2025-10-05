@@ -725,7 +725,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         if (version.tag == .npm and version.value.npm.version.isExact()) {
                                             if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
                                                 if (this.options.minimum_release_age_ms) |min_age_ms| {
-                                                    if (!loaded_manifest.?.excludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
+                                                    if (!loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
                                                         const package_name = this.lockfile.str(&name);
                                                         const min_age_seconds = min_age_ms / std.time.ms_per_s;
                                                         this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};

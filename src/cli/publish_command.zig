@@ -986,8 +986,17 @@ pub const PublishCommand = struct {
         const registry_url_str = registry_url.href();
         defer registry_url_str.deref();
 
-        const registry_url_str_slice = registry_url_str.toSlice(bun.default_allocator);
-        defer registry_url_str_slice.deinit();
+        const tarball_path_str = bun.String.createFormat("{s}/-/{}", .{
+            package_name,
+            Pack.fmtTarballFilename(package_name, package_version, .raw),
+        }) catch bun.outOfMemory();
+        defer tarball_path_str.deref();
+
+        const tarball_url = jsc.URL.join(registry_url_str, tarball_path_str);
+        defer tarball_url.deref();
+
+        const tarball_url_slice = tarball_url.toSlice(bun.default_allocator);
+        defer tarball_url_slice.deinit();
 
         dist_props[2] = .{
             .key = Expr.init(
@@ -998,11 +1007,7 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try std.fmt.allocPrint(allocator, "{s}/{s}/-/{}", .{
-                        strings.withoutTrailingSlash(registry_url_str_slice.slice()),
-                        package_name,
-                        Pack.fmtTarballFilename(package_name, package_version, .raw),
-                    }),
+                    .data = tarball_url_slice.slice(),
                 },
                 logger.Loc.Empty,
             ),

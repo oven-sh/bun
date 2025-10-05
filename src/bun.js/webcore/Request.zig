@@ -828,10 +828,12 @@ pub fn doClone(
     if (js_wrapper != .zero) {
         if (this.body.value == .Locked and readable_stream_tee[0] != .zero) {
             js.gc.body.set(this_value, globalThis, readable_stream_tee[0]);
+            this.body.value.Locked.readable.setValue(.{ .Request = this_value }, readable_stream_tee[0], globalThis);
         }
 
         if (cloned.body.value == .Locked and readable_stream_tee[1] != .zero) {
             js.gc.body.set(js_wrapper, globalThis, readable_stream_tee[1]);
+            cloned.body.value.Locked.readable.setValue(.{ .Request = js_wrapper }, readable_stream_tee[1], globalThis);
         }
     }
 

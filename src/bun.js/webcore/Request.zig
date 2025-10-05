@@ -15,6 +15,7 @@ weak_ptr_data: WeakRef.Data = .empty,
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 internal_event_callback: InternalJSEventCallback = .{},
+this_jsvalue: jsc.JSRef = .empty(),
 
 pub const js = jsc.Codegen.JSRequest;
 // NOTE: toJS is overridden
@@ -783,7 +784,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
 pub fn constructor(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
-    _: JSValue,
+    thisValue: JSValue,
 ) bun.JSError!*Request {
     const arguments_ = callframe.arguments_old(2);
     const arguments = arguments_.ptr[0..arguments_.len];
@@ -792,8 +793,14 @@ pub fn constructor(
     const request = try constructInto(globalThis, arguments, &readable_stream_tee);
     const result = Request.new(request);
 
-    // Stream is already stored in body.value.Locked.stream (fallback strong ref)
-    // No need to set GC cache since Request doesn't have this_jsvalue field
+    // Initialize this_jsvalue for GC cache support
+    if (thisValue != .zero) {
+        result.this_jsvalue = .initWeak(thisValue);
+        // Store tee'd stream in GC cache and update Ref if body is a stream
+        if (readable_stream_tee[1] != .zero and result.body.value == .Locked) {
+            result.body.value.Locked.readable.setValue(.{ .Request = thisValue }, readable_stream_tee[1], globalThis);
+        }
+    }
 
     return result;
 }

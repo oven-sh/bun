@@ -1830,8 +1830,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         return;
                     }
 
-                    if (lock.getStream(.{ .Response = this.response_jsvalue }, globalThis)) |stream| {
-                        // Consumer holds strong ref - stream is weakly held in Body.Value
+                    if (lock.readable.get(.{ .Response = this.response_jsvalue }, globalThis)) |stream| {
                         {
                             var old = this.readable_stream_ref;
                             this.readable_stream_ref = .init(stream, globalThis);

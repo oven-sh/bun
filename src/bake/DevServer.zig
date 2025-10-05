@@ -73,6 +73,9 @@ incremental_result: IncrementalResult,
 /// are populated as the routes are discovered. The route may not be bundled OR
 /// navigatable, such as the case where a layout's index is looked up.
 route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, RouteIndexAndRecurseFlag),
+/// Map from worker source index to its RouteBundle index
+/// Workers are bundled as separate entry points, similar to routes
+worker_lookup: std.AutoHashMapUnmanaged(bun.ast.Index, RouteBundle.Index) = .{},
 /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
 /// Used to identify what route a connected WebSocket is on, so that only
 /// the active pages are notified of a hot updates.
@@ -677,6 +680,7 @@ pub fn deinit(dev: *DevServer) void {
             dev.next_bundle.promise.deinitIdempotently();
         },
         .route_lookup = dev.route_lookup.deinit(alloc),
+        .worker_lookup = dev.worker_lookup.deinit(alloc),
         .source_maps = {
             for (dev.source_maps.entries.values()) |*value| {
                 bun.assert(value.ref_count > 0);
@@ -1299,6 +1303,10 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
         },
         .html => |*html| {
             try entry_points.append(alloc, html.html_bundle.data.bundle.data.path, .{ .client = true });
+        },
+        .worker => |*worker| {
+            // Workers are bundled on the server side (they run in a separate context)
+            try entry_points.appendJs(alloc, worker.worker_path, .server);
         },
     }
 
@@ -2039,6 +2047,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         else
             null,
         .html => |html| html.bundled_file,
+        .worker => null, // Workers don't have client bundles
     };
 
     // Insert the source map
@@ -2129,6 +2138,10 @@ fn traceAllRouteImports(dev: *DevServer, route_bundle: *RouteBundle, gts: *Graph
         },
         .html => |html| {
             try dev.client_graph.traceImports(html.bundled_file, gts, goal);
+        },
+        .worker => |worker| {
+            // Workers are bundled on the server side
+            try dev.server_graph.traceImports(worker.bundled_file, gts, goal);
         },
     }
 }
@@ -2699,6 +2712,10 @@ pub fn finalizeBundle(
                         blob.deref();
                         html.cached_response = null;
                     },
+                    .worker => |*worker| if (worker.cached_bundle) |blob| {
+                        blob.deref();
+                        worker.cached_bundle = null;
+                    },
                 }
             }
             if (route_bundle.active_viewers == 0 or !will_hear_hot_update) continue;
@@ -2913,6 +2930,7 @@ pub fn finalizeBundle(
                         const abs_path = dev.server_graph.bundled_files.keys()[server_index.get()];
                         break :file_name dev.relativePath(relative_path_buf, abs_path);
                     },
+                    .worker => |worker| dev.relativePath(relative_path_buf, worker.worker_path),
                 };
             };
 
@@ -3251,6 +3269,44 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
 fn registerCatchAllHtmlRoute(dev: *DevServer, html: *HTMLBundle.HTMLBundleRoute) !void {
     const bundle_index = try getOrPutRouteBundle(dev, .{ .html = html });
     dev.html_router.fallback = bundle_index.toOptional();
+}
+
+/// Get or create a RouteBundle for a worker
+/// Workers are bundled as separate entry points, similar to routes
+pub fn getOrCreateWorkerBundle(
+    dev: *DevServer,
+    source_index: bun.ast.Index,
+    worker_path: []const u8,
+) !RouteBundle.Index {
+    // Check if we already have a bundle for this worker
+    if (dev.worker_lookup.get(source_index)) |bundle_index| {
+        return bundle_index;
+    }
+
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+
+    const bundle_index = RouteBundle.Index.init(@intCast(dev.route_bundles.items.len));
+
+    // Insert the worker file into the server graph
+    const incremental_graph_index = try dev.server_graph.insertStaleExtra(worker_path, false, true);
+
+    try dev.route_bundles.ensureUnusedCapacity(dev.allocator(), 1);
+    dev.route_bundles.appendAssumeCapacity(.{
+        .data = .{ .worker = .{
+            .bundled_file = incremental_graph_index,
+            .source_index = source_index,
+            .worker_path = try dev.allocator().dupe(u8, worker_path),
+            .cached_bundle = null,
+        } },
+        .client_script_generation = std.crypto.random.int(u32),
+        .server_state = .unqueued,
+        .client_bundle = null,
+        .active_viewers = 0,
+    });
+
+    try dev.worker_lookup.put(dev.allocator(), source_index, bundle_index);
+    return bundle_index;
 }
 
 const ErrorPageKind = enum {

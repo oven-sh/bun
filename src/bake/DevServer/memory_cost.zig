@@ -164,6 +164,9 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
         .route_lookup = {
             other_bytes += memoryCostArrayHashMap(dev.route_lookup);
         },
+        .worker_lookup = {
+            other_bytes += memoryCostAutoHashMap(dev.worker_lookup);
+        },
         .testing_batch_events = switch (dev.testing_batch_events) {
             .disabled => {},
             .enabled => |batch| {
@@ -199,6 +202,10 @@ pub fn memoryCostSlice(slice: anytype) usize {
 }
 pub fn memoryCostArrayHashMap(map: anytype) usize {
     return @TypeOf(map.entries).capacityInBytes(map.entries.capacity);
+}
+pub fn memoryCostAutoHashMap(map: anytype) usize {
+    // AutoHashMap stores a hash map
+    return map.count() * (@sizeOf(@TypeOf(map).KV) + @sizeOf(u32)); // approximate
 }
 
 const std = @import("std");

@@ -3,12 +3,14 @@ pub const RouteBundle = @This();
 pub const Index = bun.GenericIndex(u30, RouteBundle);
 
 server_state: State,
-/// There are two distinct types of route bundles.
+/// There are three distinct types of route bundles.
 data: union(enum) {
     /// FrameworkRouter provided route
     framework: Framework,
     /// HTMLBundle provided route
     html: HTML,
+    /// Web Worker bundle
+    worker: Worker,
 },
 /// Generated lazily when the client JS is requested.
 /// Invalidated when a downstream client module updates.
@@ -61,6 +63,19 @@ pub const HTML = struct {
     const ByteOffset = bun.GenericIndex(u32, u8);
 };
 
+pub const Worker = struct {
+    /// The worker file in the server-side graph
+    /// Workers are always bundled on the server side (not client)
+    bundled_file: IncrementalGraph(.server).FileIndex,
+    /// Source index from the original import record
+    source_index: bun.ast.Index,
+    /// Path to the worker file (for dev server URL mapping)
+    worker_path: []const u8,
+    /// Cached bundled worker code
+    /// Invalidated when the worker or any of its dependencies change
+    cached_bundle: ?*StaticRoute,
+};
+
 /// A union is not used so that `bundler_failure_logs` can re-use memory, as
 /// this state frequently changes between `loaded` and the failure variants.
 pub const State = enum {
@@ -111,6 +126,12 @@ pub fn deinit(rb: *RouteBundle, allocator: Allocator) void {
             }
             html.html_bundle.deref();
         },
+        .worker => |*worker| {
+            if (worker.cached_bundle) |cached_bundle| {
+                cached_bundle.deref();
+            }
+            allocator.free(worker.worker_path);
+        },
     }
 }
 
@@ -131,6 +152,10 @@ pub fn invalidateClientBundle(rb: *RouteBundle, dev: *DevServer) void {
             cached_response.deref();
             html.cached_response = null;
         },
+        .worker => |*worker| if (worker.cached_bundle) |cached_bundle| {
+            cached_bundle.deref();
+            worker.cached_bundle = null;
+        },
     }
 }
 
@@ -145,6 +170,10 @@ pub fn memoryCost(rb: *const RouteBundle) usize {
         .html => |*html| {
             if (html.bundled_html_text) |text| cost += text.len;
             if (html.cached_response) |cached_response| cost += cached_response.memoryCost();
+        },
+        .worker => |*worker| {
+            cost += worker.worker_path.len;
+            if (worker.cached_bundle) |cached_bundle| cost += cached_bundle.memoryCost();
         },
     }
     return cost;

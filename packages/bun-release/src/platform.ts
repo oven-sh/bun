@@ -10,12 +10,12 @@ export const avx2 =
   arch === "x64" &&
   ((os === "linux" && isLinuxAVX2()) || (os === "darwin" && isDarwinAVX2()) || (os === "win32" && isWindowsAVX2()));
 
-export const abi = os === "linux" && isLinuxMusl() ? "musl" : undefined;
+export const abi = os === "linux" ? (isLinuxMusl() ? "musl" : "glibc") : undefined;
 
 export type Platform = {
   os: string;
   arch: string;
-  abi?: "musl";
+  abi?: "musl" | "glibc";
   avx2?: boolean;
   bin: string;
   exe: string;
@@ -44,12 +44,14 @@ export const platforms: Platform[] = [
   {
     os: "linux",
     arch: "arm64",
+    abi: "glibc",
     bin: "bun-linux-aarch64",
     exe: "bin/bun",
   },
   {
     os: "linux",
     arch: "x64",
+    abi: "glibc",
     avx2: true,
     bin: "bun-linux-x64",
     exe: "bin/bun",
@@ -57,6 +59,7 @@ export const platforms: Platform[] = [
   {
     os: "linux",
     arch: "x64",
+    abi: "glibc",
     bin: "bun-linux-x64-baseline",
     exe: "bin/bun",
   },

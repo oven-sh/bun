@@ -20,8 +20,11 @@ bun upgrade
 - [macOS, x64](https://www.npmjs.com/package/@oven/bun-darwin-x64)
 - [macOS, x64 (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-darwin-x64-baseline)
 - [Linux, arm64](https://www.npmjs.com/package/@oven/bun-linux-aarch64)
+- [Linux, arm64 (musl)](https://www.npmjs.com/package/@oven/bun-linux-aarch64-musl)
 - [Linux, x64](https://www.npmjs.com/package/@oven/bun-linux-x64)
 - [Linux, x64 (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-linux-x64-baseline)
+- [Linux, x64 (musl)](https://www.npmjs.com/package/@oven/bun-linux-x64-musl)
+- [Linux, x64 (without AVX2 instructions, musl)](https://www.npmjs.com/package/@oven/bun-linux-x64-musl-baseline)
 - [Windows](https://www.npmjs.com/package/@oven/bun-windows-x64)
 - [Windows (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-windows-x64-baseline)
 

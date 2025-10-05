@@ -104,7 +104,7 @@ pub fn listObjects(
 ) void {
     var search_params: bun.ByteList = .{};
 
-    bun.handleOom(search_params.append(bun.default_allocator, "?"));
+    bun.handleOom(search_params.appendSlice(bun.default_allocator, "?"));
 
     if (listOptions.continuation_token) |continuation_token| {
         var buff: [1024]u8 = undefined;
@@ -127,9 +127,9 @@ pub fn listObjects(
 
     if (listOptions.encoding_type != null) {
         if (listOptions.continuation_token != null or listOptions.delimiter != null) {
-            bun.handleOom(search_params.append(bun.default_allocator, "&encoding-type=url"));
+            bun.handleOom(search_params.appendSlice(bun.default_allocator, "&encoding-type=url"));
         } else {
-            bun.handleOom(search_params.append(bun.default_allocator, "encoding-type=url"));
+            bun.handleOom(search_params.appendSlice(bun.default_allocator, "encoding-type=url"));
         }
     }
 
@@ -142,9 +142,9 @@ pub fn listObjects(
     }
 
     if (listOptions.continuation_token != null or listOptions.delimiter != null or listOptions.encoding_type != null or listOptions.fetch_owner != null) {
-        bun.handleOom(search_params.append(bun.default_allocator, "&list-type=2"));
+        bun.handleOom(search_params.appendSlice(bun.default_allocator, "&list-type=2"));
     } else {
-        bun.handleOom(search_params.append(bun.default_allocator, "list-type=2"));
+        bun.handleOom(search_params.appendSlice(bun.default_allocator, "list-type=2"));
     }
 
     if (listOptions.max_keys) |max_keys| {
@@ -170,7 +170,7 @@ pub fn listObjects(
         .method = .GET,
         .search_params = search_params.slice(),
     }, true, null) catch |sign_err| {
-        search_params.deinitWithAllocator(bun.default_allocator);
+        search_params.deinit(bun.default_allocator);
 
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
         callback(.{ .failure = .{ .code = error_code_and_message.code, .message = error_code_and_message.message } }, callback_context);
@@ -178,7 +178,7 @@ pub fn listObjects(
         return;
     };
 
-    search_params.deinitWithAllocator(bun.default_allocator);
+    search_params.deinit(bun.default_allocator);
 
     const headers = bun.handleOom(bun.http.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator));
 
@@ -359,7 +359,7 @@ pub const S3UploadStreamWrapper = struct {
         }
     }
 
-    pub fn writeRequestData(this: *@This(), data: []const u8) bool {
+    pub fn writeRequestData(this: *@This(), data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
         return bun.handleOom(this.task.writeBytes(data, false));
     }
@@ -631,14 +631,14 @@ pub fn readableStream(
                     }
                     if (has_more) {
                         readable.ptr.Bytes.onData(
-                            .{ .temporary = bun.ByteList.initConst(chunk.list.items) },
+                            .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk.list.items) },
                             bun.default_allocator,
                         );
                         return;
                     }
 
                     readable.ptr.Bytes.onData(
-                        .{ .temporary_and_done = bun.ByteList.initConst(chunk.list.items) },
+                        .{ .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk.list.items) },
                         bun.default_allocator,
                     );
                     return;
@@ -685,3 +685,4 @@ const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const picohttp = bun.picohttp;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;

@@ -57,12 +57,25 @@ pub const Debug = if (Environment.isDebug) struct {
     pub inline fn exit(_: Debug) void {}
 };
 
+/// Before your code enters JavaScript at the top of the event loop, call
+/// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
+///
+/// When we call into JavaScript, we must drain process.nextTick & microtasks
+/// afterwards (so that promises run). We must only do that once per task in the
+/// event loop. To make that work, we count enter/exit calls and once that
+/// counter reaches 0, we drain the microtasks.
+///
+/// This function increments the counter for the number of times we've entered
+/// the event loop.
 pub fn enter(this: *EventLoop) void {
     log("enter() = {d}", .{this.entered_event_loop_count});
     this.entered_event_loop_count += 1;
     this.debug.enter();
 }
 
+/// "exit" a microtask context in the event loop.
+///
+/// See the documentation for `enter` for more information.
 pub fn exit(this: *EventLoop) void {
     const count = this.entered_event_loop_count;
     log("exit() = {d}", .{count - 1});
@@ -98,7 +111,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
 }
 
 pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
-const log = bun.Output.scoped(.EventLoop, .visible);
+const log = bun.Output.scoped(.EventLoop, .hidden);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
     while (!done.*) {
@@ -180,6 +193,14 @@ comptime {
     @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
     @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
+}
+
+/// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
+pub fn runCallbackWithResultAndForcefullyDrainMicrotasks(this: *EventLoop, callback: jsc.JSValue, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, arguments: []const jsc.JSValue) !jsc.JSValue {
+    const result = try callback.call(globalObject, thisValue, arguments);
+    result.ensureStillAlive();
+    try this.drainMicrotasksWithGlobal(globalObject, globalObject.bunVM().jsc_vm);
+    return result;
 }
 
 pub fn runCallbackWithResult(this: *EventLoop, callback: jsc.JSValue, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, arguments: []const jsc.JSValue) jsc.JSValue {

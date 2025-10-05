@@ -12,7 +12,7 @@ pub fn toBeOneOf(
         return globalThis.throwInvalidArguments("toBeOneOf() takes 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected = try this.getValue(globalThis, thisValue, "toBeOneOf", "<green>expected<r>");
     const list_value: JSValue = arguments[0];
@@ -87,7 +87,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

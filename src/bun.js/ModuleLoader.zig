@@ -1111,7 +1111,7 @@ pub fn transpileSourceCode(
                     .allocator = null,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
+                    .jsvalue_for_export = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
                     .tag = .exports_object,
                 };
             }
@@ -1350,10 +1350,10 @@ pub fn transpileSourceCode(
                 if (virtual_source) |source| {
                     if (globalObject) |globalThis| {
                         // attempt to avoid reading the WASM file twice.
-                        const encoded = jsc.EncodedJSValue{
-                            .asPtr = globalThis,
+                        const decoded: jsc.DecodedJSValue = .{
+                            .u = .{ .ptr = @ptrCast(globalThis) },
                         };
-                        const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
+                        const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
@@ -1947,7 +1947,8 @@ export fn Bun__transpileVirtualModule(
 ) bool {
     jsc.markBinding(@src());
     const jsc_vm = globalObject.bunVM();
-    bun.assert(jsc_vm.plugin_runner != null);
+    // Plugin runner is not required for virtual modules created via build.module()
+    // bun.assert(jsc_vm.plugin_runner != null);
 
     var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
     const specifier = specifier_slice.slice();
@@ -2636,6 +2637,7 @@ pub const FetchFlags = enum {
 pub const HardcodedModule = enum {
     bun,
     @"abort-controller",
+    @"bun:app",
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
@@ -2723,6 +2725,7 @@ pub const HardcodedModule = enum {
     pub const map = bun.ComptimeStringMap(HardcodedModule, [_]struct { []const u8, HardcodedModule }{
         // Bun
         .{ "bun", .bun },
+        .{ "bun:app", .@"bun:app" },
         .{ "bun:ffi", .@"bun:ffi" },
         .{ "bun:jsc", .@"bun:jsc" },
         .{ "bun:main", .@"bun:main" },
@@ -2990,6 +2993,7 @@ pub const HardcodedModule = enum {
         const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
+            .{ "bun:app", .{ .path = "bun:app" } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },

@@ -132,7 +132,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                 const connection: Listener.UnixOrHost = .{ .unix = bun.handleOom(hostname_or_unix.cloneIfNeeded(bun.default_allocator)).slice() };
                 if (ssl_enabled) {
                     if (ssl.?.protos) |p| {
-                        protos = p[0..ssl.?.protos_len];
+                        protos = std.mem.span(p);
                     }
                 }
                 var socket = Listener{
@@ -156,9 +156,10 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                 this.* = socket;
                 //TODO: server_name is not supported on named pipes, I belive its , lets wait for someone to ask for it
 
+                const ssl_ptr = if (ssl) |*s| s else null;
                 this.listener = .{
                     // we need to add support for the backlog parameter on listen here we use the default value of nodejs
-                    .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, ssl, this) catch {
+                    .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, ssl_ptr, this) catch {
                         this.deinit();
                         return globalObject.throwInvalidArguments("Failed to listen at {s}", .{pipe_name});
                     },
@@ -172,8 +173,8 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
             }
         }
     }
-    const ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl != null)
-        jsc.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
+    const ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl) |*some_ssl|
+        some_ssl.asUSockets()
     else
         .{};
 
@@ -203,7 +204,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
 
     if (ssl_enabled) {
         if (ssl.?.protos) |p| {
-            protos = p[0..ssl.?.protos_len];
+            protos = std.mem.span(p);
         }
 
         uws.NewSocketHandler(true).configure(
@@ -411,10 +412,12 @@ pub fn addServerName(this: *Listener, global: *jsc.JSGlobalObject, hostname: JSV
         return global.throwInvalidArguments("hostname pattern cannot be empty", .{});
     }
 
-    if (try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), global, tls)) |ssl_config| {
+    if (try SSLConfig.fromJS(jsc.VirtualMachine.get(), global, tls)) |ssl_config| {
         // to keep nodejs compatibility, we allow to replace the server name
         this.socket_context.?.removeServerName(true, server_name);
         this.socket_context.?.addServerName(true, server_name, ssl_config.asUSockets());
+        var ssl_config_mut = ssl_config;
+        ssl_config_mut.deinit();
     }
 
     return .js_undefined;
@@ -437,6 +440,7 @@ pub fn stop(this: *Listener, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
 fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
+
     defer switch (listener) {
         .uws => |socket| socket.close(this.ssl),
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
@@ -568,7 +572,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
     var protos: ?[]const u8 = null;
     var server_name: ?[]const u8 = null;
     const ssl_enabled = ssl != null;
-    defer if (ssl != null) ssl.?.deinit();
+    defer if (ssl) |*some_ssl| some_ssl.deinit();
 
     vm.eventLoop().ensureWaker();
 
@@ -703,8 +707,8 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
         }
     }
 
-    const ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl != null)
-        jsc.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
+    const ctx_opts: uws.SocketContext.BunSocketContextOptions = if (ssl) |*some_ssl|
+        some_ssl.asUSockets()
     else
         .{};
 
@@ -725,7 +729,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
 
     if (ssl_enabled) {
         if (ssl.?.protos) |p| {
-            protos = p[0..ssl.?.protos_len];
+            protos = std.mem.span(p);
         }
         if (ssl.?.server_name) |s| {
             server_name = bun.handleOom(bun.default_allocator.dupe(u8, s[0..bun.len(s)]));
@@ -906,7 +910,13 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         this.uvPipe.close(onPipeClosed);
     }
 
-    pub fn listen(globalThis: *jsc.JSGlobalObject, path: []const u8, backlog: i32, ssl_config: ?jsc.API.ServerConfig.SSLConfig, listener: *Listener) !*WindowsNamedPipeListeningContext {
+    pub fn listen(
+        globalThis: *jsc.JSGlobalObject,
+        path: []const u8,
+        backlog: i32,
+        ssl_config: ?*const SSLConfig,
+        listener: *Listener,
+    ) !*WindowsNamedPipeListeningContext {
         const this = WindowsNamedPipeListeningContext.new(.{
             .globalThis = globalThis,
             .vm = globalThis.bunVM(),
@@ -916,7 +926,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         if (ssl_config) |ssl_options| {
             bun.BoringSSL.load();
 
-            const ctx_opts: uws.SocketContext.BunSocketContextOptions = jsc.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            const ctx_opts: uws.SocketContext.BunSocketContextOptions = ssl_options.asUSockets();
             var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
             const ctx = ctx_opts.createSSLContext(&err) orelse return error.InvalidOptions; // invalid options
@@ -983,12 +993,17 @@ const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
 const Output = bun.Output;
-const api = bun.api;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
 const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;
 const uv = bun.windows.libuv;
+
+const api = bun.api;
+const Handlers = bun.api.SocketHandlers;
+const TCPSocket = bun.api.TCPSocket;
+const TLSSocket = bun.api.TLSSocket;
+const SSLConfig = bun.api.ServerConfig.SSLConfig;
 
 const NewSocket = api.socket.NewSocket;
 const SocketConfig = api.socket.SocketConfig;
@@ -999,7 +1014,3 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
 const NodePath = jsc.Node.path;
-
-const Handlers = jsc.API.SocketHandlers;
-const TCPSocket = jsc.API.TCPSocket;
-const TLSSocket = jsc.API.TLSSocket;

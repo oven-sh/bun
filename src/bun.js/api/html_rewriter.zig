@@ -178,7 +178,10 @@ pub const HTMLRewriter = struct {
                 return global.throwInvalidArguments("Response body already used", .{});
             }
             const out = try this.beginTransform(global, response);
-            if (out.toError()) |err| return global.throwValue(err);
+            // Check if the returned value is an error and throw it properly
+            if (out.toError()) |err| {
+                return global.throwValue(err);
+            }
             return out;
         }
 
@@ -203,6 +206,10 @@ pub const HTMLRewriter = struct {
                 });
                 defer resp.finalize();
                 const out_response_value = try this.beginTransform(global, resp);
+                // Check if the returned value is an error and throw it properly
+                if (out_response_value.toError()) |err| {
+                    return global.throwValue(err);
+                }
                 out_response_value.ensureStillAlive();
                 var out_response = out_response_value.as(Response) orelse return out_response_value;
                 var blob = out_response.body.value.useAsAnyBlobAllowNonUTF8String();
@@ -270,7 +277,7 @@ pub const HTMLRewriter = struct {
                 return;
             }
 
-            const write_result = this.output.write(.{ .temporary = bun.ByteList.init(bytes) });
+            const write_result = this.output.write(.{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(bytes) });
 
             switch (write_result) {
                 .err => |err| {
@@ -339,7 +346,7 @@ pub const HTMLRewriter = struct {
                     .path = bun.handleOom(bun.default_allocator.dupe(u8, LOLHTML.HTMLString.lastError().slice())),
                 };
             };
-            if (comptime deinit_) bytes.listManaged(bun.default_allocator).deinit();
+            if (comptime deinit_) bytes.deinit(bun.default_allocator);
             return null;
         }
 

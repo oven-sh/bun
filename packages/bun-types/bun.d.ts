@@ -636,7 +636,7 @@ declare module "bun" {
      * import { YAML } from "bun";
      *
      * console.log(YAML.parse("123")) // 123
-     * console.log(YAML.parse("123")) // null
+     * console.log(YAML.parse("null")) // null
      * console.log(YAML.parse("false")) // false
      * console.log(YAML.parse("abc")) // "abc"
      * console.log(YAML.parse("- abc")) // [ "abc" ]
@@ -644,6 +644,46 @@ declare module "bun" {
      * ```
      */
     export function parse(input: string): unknown;
+
+    /**
+     * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
+     * escaped characters, or if a YAML parser would parse them as numbers. Anchors and aliases are inferred from objects, allowing cycles.
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript value to stringify.
+     * @param replacer Currently not supported.
+     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
+     *              Without this parameter, outputs flow-style (single-line) YAML.
+     *              With this parameter, outputs block-style (multi-line) YAML.
+     *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     * @returns A string containing the YAML document.
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * const input = {
+     *   abc: "def",
+     *   num: 123
+     * };
+     *
+     * // Without space - flow style (single-line)
+     * console.log(YAML.stringify(input));
+     * // {abc: def,num: 123}
+     *
+     * // With space - block style (multi-line)
+     * console.log(YAML.stringify(input, null, 2));
+     * // abc: def
+     * // num: 123
+     *
+     * const cycle = {};
+     * cycle.obj = cycle;
+     * console.log(YAML.stringify(cycle, null, 2));
+     * // &1
+     * // obj: *1
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }
 
   /**
@@ -1673,11 +1713,16 @@ declare module "bun" {
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
   interface BuildConfigBase {
-    entrypoints: string[]; // list of file path
+    /**
+     * List of entrypoints, usually file paths
+     */
+    entrypoints: string[];
+
     /**
      * @default "browser"
      */
     target?: Target; // default: "browser"
+
     /**
      * Output module format. Top-level await is only supported for `"esm"`.
      *
@@ -1782,6 +1827,7 @@ declare module "bun" {
           whitespace?: boolean;
           syntax?: boolean;
           identifiers?: boolean;
+          keepNames?: boolean;
         };
 
     /**
@@ -1861,6 +1907,18 @@ declare module "bun" {
      */
     tsconfig?: string;
 
+    /**
+     * JSX configuration options
+     */
+    jsx?: {
+      runtime?: "automatic" | "classic";
+      importSource?: string;
+      factory?: string;
+      fragment?: string;
+      sideEffects?: boolean;
+      development?: boolean;
+    };
+
     outdir?: string;
   }
 
@@ -1908,12 +1966,28 @@ declare module "bun" {
      * ```
      */
     compile: boolean | Bun.Build.Target | CompileBuildOptions;
+
+    /**
+     * Splitting is not currently supported with `.compile`
+     */
+    splitting?: never;
+  }
+
+  interface NormalBuildConfig extends BuildConfigBase {
+    /**
+     * Enable code splitting
+     *
+     * This does not currently work with {@link CompileBuildConfig.compile `compile`}
+     *
+     * @default true
+     */
+    splitting?: boolean;
   }
 
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  type BuildConfig = BuildConfigBase | CompileBuildConfig;
+  type BuildConfig = CompileBuildConfig | NormalBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt
@@ -3633,10 +3707,6 @@ declare module "bun" {
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
 
-    keyFile?: string;
-
-    certFile?: string;
-
     ALPNProtocols?: string | BufferSource;
 
     ciphers?: string;
@@ -3793,6 +3863,11 @@ declare module "bun" {
    * @category HTTP & Networking
    */
   interface Server extends Disposable {
+    /*
+     * Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
+     */
+    closeIdleConnections(): void;
+
     /**
      * Stop listening to prevent new connections from being accepted.
      *
@@ -4968,6 +5043,7 @@ declare module "bun" {
   type SupportedCryptoAlgorithms =
     | "blake2b256"
     | "blake2b512"
+    | "blake2s256"
     | "md4"
     | "md5"
     | "ripemd160"
@@ -5514,6 +5590,11 @@ declare module "bun" {
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
   type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
+  type OnBeforeParseCallback = {
+    napiModule: unknown;
+    symbol: string;
+    external?: unknown | undefined;
+  };
 
   interface OnResolveArgs {
     /**
@@ -5610,14 +5691,7 @@ declare module "bun" {
      * @returns `this` for method chaining
      */
     onEnd(callback: OnEndCallback): this;
-    onBeforeParse(
-      constraints: PluginConstraints,
-      callback: {
-        napiModule: unknown;
-        symbol: string;
-        external?: unknown | undefined;
-      },
-    ): this;
+    onBeforeParse(constraints: PluginConstraints, callback: OnBeforeParseCallback): this;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to

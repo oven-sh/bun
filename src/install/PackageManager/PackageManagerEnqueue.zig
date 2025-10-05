@@ -253,9 +253,6 @@ pub fn enqueuePackageForDownload(
 
     if (task_queue.found_existing) return;
 
-    // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-    if (!this.options.do.prefetch_resolved_tarballs) return;
-
     const is_required = this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired();
 
     if (try this.generateNetworkTaskForTarball(
@@ -449,7 +446,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     if (dependency.behavior.isOptionalPeer()) return;
 
     var name = dependency.realname();
-
     var name_hash = switch (dependency.version.tag) {
         .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
         else => dependency.name_hash,
@@ -1263,7 +1259,7 @@ fn enqueueLocalTarball(
                     ) catch unreachable,
                     .resolution = resolution,
                     .cache_dir = this.getCacheDirectory(),
-                    .temp_dir = this.getTemporaryDirectory(),
+                    .temp_dir = this.getTemporaryDirectory().handle,
                     .dependency_id = dependency_id,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         path,
@@ -1363,7 +1359,6 @@ fn getOrPutResolvedPackageWithFindResult(
         manifest,
         find_result.version,
         find_result.package,
-        manifest.string_buf,
         Features.npm,
     ));
 

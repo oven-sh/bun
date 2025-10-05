@@ -43,7 +43,7 @@ const {
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
-const PromiseReject = Promise.reject;
+const PromiseReject = Promise.$reject;
 
 var isWritable;
 

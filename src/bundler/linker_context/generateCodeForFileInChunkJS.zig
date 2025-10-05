@@ -40,11 +40,11 @@ pub fn generateCodeForFileInChunkJS(
                 return .{ .err = err };
         }
 
-        const main_stmts_len = stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len;
+        const main_stmts_len = stmts.inside_wrapper_prefix.stmts.items.len + stmts.inside_wrapper_suffix.items.len;
         const all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.items.len + 1;
 
-        bun.handleOom(stmts.all_stmts.ensureUnusedCapacity(all_stmts_len));
-        stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+        bun.handleOom(stmts.all_stmts.ensureUnusedCapacity(stmts.allocator, all_stmts_len));
+        stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.stmts.items);
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
 
         const inner = stmts.all_stmts.items[0..main_stmts_len];
@@ -128,7 +128,7 @@ pub fn generateCodeForFileInChunkJS(
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if (flags.wrap != .none and ast.flags.has_explicit_use_strict_directive and !chunk.isEntryPoint() and !output_format.isAlwaysStrictMode()) {
-        stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Directive, .{
+        stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.Directive, .{
             .value = "use strict",
         }, Logger.Loc.Empty)) catch unreachable;
     }
@@ -153,10 +153,10 @@ pub fn generateCodeForFileInChunkJS(
 
         switch (flags.wrap) {
             .esm => {
-                stmts.outside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                stmts.appendSlice(.outside_wrapper_prefix, stmts.inside_wrapper_suffix.items) catch unreachable;
             },
             else => {
-                stmts.inside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                stmts.inside_wrapper_prefix.appendNonDependencySlice(stmts.inside_wrapper_suffix.items) catch unreachable;
             },
         }
 
@@ -291,11 +291,11 @@ pub fn generateCodeForFileInChunkJS(
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    stmts.all_stmts.ensureUnusedCapacity(stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
-    stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+    stmts.all_stmts.ensureUnusedCapacity(stmts.allocator, stmts.inside_wrapper_prefix.stmts.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
+    stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.stmts.items);
     stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
-    stmts.inside_wrapper_prefix.items.len = 0;
-    stmts.inside_wrapper_suffix.items.len = 0;
+    stmts.inside_wrapper_prefix.reset();
+    stmts.inside_wrapper_suffix.clearRetainingCapacity();
 
     if (c.options.minify_syntax) {
         mergeAdjacentLocalStmts(&stmts.all_stmts, temp_allocator);
@@ -365,7 +365,7 @@ pub fn generateCodeForFileInChunkJS(
                             },
                             Logger.Loc.Empty,
                         ),
-                        .args = bun.BabyList(Expr).init(cjs_args),
+                        .args = bun.BabyList(Expr).fromOwnedSlice(cjs_args),
                     },
                     Logger.Loc.Empty,
                 );
@@ -384,11 +384,12 @@ pub fn generateCodeForFileInChunkJS(
                         .value = commonjs_wrapper_definition,
                     };
 
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(
                             S.Local,
                             S.Local{
-                                .decls = G.Decl.List.init(decls),
+                                .decls = G.Decl.List.fromOwnedSlice(decls),
                             },
                             Logger.Loc.Empty,
                         ),
@@ -468,12 +469,12 @@ pub fn generateCodeForFileInChunkJS(
                                 break :stmt Stmt.allocateExpr(temp_allocator, value);
                             },
                             .s_function => {
-                                bun.handleOom(stmts.outside_wrapper_prefix.append(stmt));
+                                bun.handleOom(stmts.append(.outside_wrapper_prefix, stmt));
                                 continue;
                             },
                             .s_class => |class| stmt: {
                                 if (class.class.canBeMoved()) {
-                                    bun.handleOom(stmts.outside_wrapper_prefix.append(stmt));
+                                    bun.handleOom(stmts.append(.outside_wrapper_prefix, stmt));
                                     continue;
                                 }
 
@@ -498,11 +499,12 @@ pub fn generateCodeForFileInChunkJS(
                 }
 
                 if (hoist.decls.items.len > 0) {
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(
                             S.Local,
                             S.Local{
-                                .decls = G.Decl.List.fromList(hoist.decls),
+                                .decls = G.Decl.List.moveFromList(&hoist.decls),
                             },
                             Logger.Loc.Empty,
                         ),
@@ -529,7 +531,7 @@ pub fn generateCodeForFileInChunkJS(
                     // "var init_foo = __esm(...);"
                     const value = Expr.init(E.Call, .{
                         .target = Expr.initIdentifier(c.esm_runtime_ref, Logger.Loc.Empty),
-                        .args = bun.BabyList(Expr).init(esm_args),
+                        .args = bun.BabyList(Expr).fromOwnedSlice(esm_args),
                     }, Logger.Loc.Empty);
 
                     var decls = bun.handleOom(temp_allocator.alloc(G.Decl, 1));
@@ -544,9 +546,10 @@ pub fn generateCodeForFileInChunkJS(
                         .value = value,
                     };
 
-                    stmts.outside_wrapper_prefix.append(
+                    stmts.append(
+                        .outside_wrapper_prefix,
                         Stmt.alloc(S.Local, .{
-                            .decls = G.Decl.List.init(decls),
+                            .decls = G.Decl.List.fromOwnedSlice(decls),
                         }, Logger.Loc.Empty),
                     ) catch |err| bun.handleOom(err);
                 } else {
@@ -577,7 +580,8 @@ pub fn generateCodeForFileInChunkJS(
                             },
                         }, Logger.Loc.Empty);
 
-                        stmts.outside_wrapper_prefix.append(
+                        stmts.append(
+                            .outside_wrapper_prefix,
                             Stmt.alloc(S.Local, .{
                                 .decls = G.Decl.List.fromSlice(temp_allocator, &.{.{
                                     .binding = Binding.alloc(
@@ -624,7 +628,7 @@ pub fn generateCodeForFileInChunkJS(
     );
 }
 
-fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Allocator) void {
+fn mergeAdjacentLocalStmts(stmts: *std.ArrayListUnmanaged(Stmt), allocator: std.mem.Allocator) void {
     if (stmts.items.len == 0)
         return;
 
@@ -642,12 +646,12 @@ fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Alloc
                     if (did_merge_with_previous_local) {
                         // Avoid O(n^2) behavior for repeated variable declarations
                         // Appending to this decls list is safe because did_merge_with_previous_local is true
-                        before.decls.append(allocator, after.decls.slice()) catch unreachable;
+                        before.decls.appendSlice(allocator, after.decls.slice()) catch unreachable;
                     } else {
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
-                        var clone = std.ArrayList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
+                        var clone = bun.BabyList(G.Decl).initCapacity(allocator, before.decls.len + after.decls.len) catch unreachable;
                         clone.appendSliceAssumeCapacity(before.decls.slice());
                         clone.appendSliceAssumeCapacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
@@ -656,7 +660,7 @@ fn mergeAdjacentLocalStmts(stmts: *std.ArrayList(Stmt), allocator: std.mem.Alloc
                             allocator,
                             S.Local,
                             S.Local{
-                                .decls = BabyList(G.Decl).fromList(clone),
+                                .decls = clone,
                                 .is_export = before.is_export,
                                 .was_commonjs_export = before.was_commonjs_export,
                                 .was_ts_import_equals = before.was_ts_import_equals,

@@ -17,7 +17,7 @@ pub const IOReader = Interpreter.IOReader;
 pub const Yield = @import("./Yield.zig").Yield;
 pub const unreachableState = interpret.unreachableState;
 
-const GlobWalker = Glob.GlobWalker_(null, true);
+const GlobWalker = bun.glob.GlobWalker(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
@@ -4098,8 +4098,8 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
             pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
                 var list = bun.handleOom(bun.BabyList(T).initCapacity(bun.default_allocator, n));
-                bun.handleOom(list.append(bun.default_allocator, this.items[0..INLINED_MAX]));
-                bun.handleOom(list.push(bun.default_allocator, new));
+                bun.handleOom(list.appendSlice(bun.default_allocator, this.items[0..INLINED_MAX]));
+                bun.handleOom(list.append(bun.default_allocator, new));
                 return list;
             }
 
@@ -4244,7 +4244,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                     this.inlined.len += 1;
                 },
                 .heap => {
-                    bun.handleOom(this.heap.push(bun.default_allocator, new));
+                    bun.handleOom(this.heap.append(bun.default_allocator, new));
                 },
             }
         }
@@ -4429,7 +4429,6 @@ pub const TestingAPIs = struct {
 
 pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
 
-const Glob = @import("../glob.zig");
 const Syscall = @import("../sys.zig");
 const builtin = @import("builtin");
 

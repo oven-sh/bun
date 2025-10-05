@@ -60,7 +60,8 @@ _read_scripts_in_package_json() {
             ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
     ]] && {
         local re_script=$(echo ${package_json_compreply[@]} | sed 's/[^ ]*/(&)/g');
-        local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/$re_script//");
+        local sanitize_pat='[][\\\/.^\$*+?()\{\}|]'
+        local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/${re_script//${sanitize_pat}/\\&}//");
         COMPREPLY=( $(compgen -W "${new_reply}" -- "${cur_word}") );
         replaced_script="${prev}";
     }

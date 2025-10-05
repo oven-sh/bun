@@ -44,7 +44,7 @@ _read_scripts_in_package_json() {
     [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
         local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
-        local scripts="${matched%%\}*}";
+        local scripts="${matched%\}*}";
         scripts="${scripts//@(\"|\')/}";
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do

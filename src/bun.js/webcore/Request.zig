@@ -354,6 +354,7 @@ pub fn finalizeWithoutDeinit(this: *Request) void {
 }
 
 pub fn finalize(this: *Request) void {
+    this.this_jsvalue.finalize();
     this.finalizeWithoutDeinit();
     _ = this.body.unref();
     if (this.weak_ptr_data.onFinalize()) {

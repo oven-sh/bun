@@ -2207,18 +2207,22 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
                     p.print("new Worker(");
-                    
+
                     // Generate a unique key for the worker instead of the direct path
                     // This will be resolved to the actual worker chunk path later
                     if (p.options.unique_key_prefix.len > 0) {
-                        const unique_key = std.fmt.allocPrint(p.options.allocator, "{s}W{d:0>8}", .{ p.options.unique_key_prefix, e.import_record_index }) catch unreachable;
+                        const import_record = p.importRecord(e.import_record_index);
+                        // Use the source_index from the import record, not the import_record_index
+                        // This allows the linker to map from source_index to chunk_index using entry_point_chunk_indices
+                        const source_index = import_record.source_index.get();
+                        const unique_key = std.fmt.allocPrint(p.options.allocator, "{s}W{d:0>8}", .{ p.options.unique_key_prefix, source_index }) catch unreachable;
                         defer p.options.allocator.free(unique_key);
                         p.printStringLiteralUTF8(unique_key, true);
                     } else {
                         // Fallback to direct path if unique_key_prefix is not available
                         p.printStringLiteralUTF8(p.importRecord(e.import_record_index).path.text, true);
                     }
-                    
+
                     // Print options if present and not missing
                     if (e.options.data != .e_missing) {
                         p.print(",");

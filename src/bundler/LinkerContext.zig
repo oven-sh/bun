@@ -2625,7 +2625,7 @@ pub const LinkerContext = struct {
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
                     break;
                 },
-                .worker => if (index >= count) {
+                .worker => if (index >= c.graph.files.len) {
                     if (bun.Environment.isDebug)
                         bun.Output.debugWarn("Invalid output piece boundary", .{});
                     break;

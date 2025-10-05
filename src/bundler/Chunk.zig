@@ -215,7 +215,7 @@ pub const Chunk = struct {
                                     },
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
-                                    .worker => chunks[index].final_rel_path,
+                                    .worker => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
                                     .html_import => {
                                         count += std.fmt.count("{}", .{HTMLImportManifest.formatEscapedJSON(.{
                                             .index = index,
@@ -303,7 +303,7 @@ pub const Chunk = struct {
                                         break :brk piece_chunk.final_rel_path;
                                     },
                                     .worker => brk: {
-                                        const piece_chunk = chunks[index];
+                                        const piece_chunk = chunks[entry_point_chunks_for_scb[index]];
 
                                         if (enable_source_map_shifts) {
                                             shift.before.advance(piece_chunk.unique_key);

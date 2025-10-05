@@ -966,7 +966,18 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
         assert(!socket.isShutdown());
         assert(!socket.isClosed());
     }
-    const amount = try writeToSocket(is_ssl, socket, to_send);
+    const amount = switch (writeToSocket(is_ssl, socket, to_send)) {
+        .result => |amt| amt,
+        .err => |err| {
+            _ = err; // errno information is available
+            this.closeAndFail(error.WriteFailed, is_ssl, socket);
+            return .{
+                .has_sent_headers = false,
+                .has_sent_body = false,
+                .try_sending_more_data = false,
+            };
+        },
+    };
     if (comptime is_first_call) {
         if (amount == 0) {
             // don't worry about it
@@ -1006,29 +1017,38 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
     this.writeToStream(is_ssl, socket, "");
 }
 
-/// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
-fn writeToSocket(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) !usize {
-    const amount = socket.write(data);
+/// Write data to the socket returning Maybe(usize) with high-quality error information
+fn writeToSocket(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) Maybe(usize) {
+    const amount = socket.write3(data);
     if (amount < 0) {
-        return error.WriteFailed;
+        // write3 returns -errno on error
+        const errno_value: bun.sys.E = @enumFromInt(-amount);
+        const err = bun.sys.Error.fromCode(errno_value, .write);
+        return .{ .err = err };
     }
-    return @intCast(amount);
+    return .{ .result = @intCast(amount) };
 }
 
 /// Write data to the socket and buffer the unwritten data if there is backpressure
-fn writeToSocketWithBufferFallback(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) !usize {
-    const amount = try writeToSocket(is_ssl, socket, data);
+fn writeToSocketWithBufferFallback(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) Maybe(usize) {
+    const amount = switch (writeToSocket(is_ssl, socket, data)) {
+        .result => |amt| amt,
+        .err => |err| return .{ .err = err },
+    };
     if (amount < data.len) {
         bun.handleOom(buffer.write(data[@intCast(amount)..]));
     }
-    return amount;
+    return .{ .result = amount };
 }
 
 /// Write buffered data to the socket returning true if there is backpressure
-fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) !bool {
+fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, buffer: *bun.io.StreamBuffer, data: []const u8) Maybe(bool) {
     const to_send = buffer.slice();
     if (to_send.len > 0) {
-        const amount = try writeToSocket(is_ssl, socket, to_send);
+        const amount = switch (writeToSocket(is_ssl, socket, to_send)) {
+            .result => |amt| amt,
+            .err => |err| return .{ .err = err },
+        };
         this.state.request_sent_len += amount;
         buffer.cursor += amount;
         if (amount < to_send.len) {
@@ -1037,7 +1057,7 @@ fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
                 bun.handleOom(buffer.write(data));
             }
             // failed to send everything so we have backpressure
-            return true;
+            return .{ .result = true };
         }
         if (buffer.isEmpty()) {
             buffer.reset();
@@ -1047,13 +1067,16 @@ fn writeToStreamUsingBuffer(this: *HTTPClient, comptime is_ssl: bool, socket: Ne
     // ok we flushed all pending data so we can reset the backpressure
     if (data.len > 0) {
         // no backpressure everything was sended so we can just try to send
-        const sent = try writeToSocketWithBufferFallback(is_ssl, socket, buffer, data);
+        const sent = switch (writeToSocketWithBufferFallback(is_ssl, socket, buffer, data)) {
+            .result => |amt| amt,
+            .err => |err| return .{ .err = err },
+        };
         this.state.request_sent_len += sent;
         // if we didn't send all the data we have backpressure
-        return sent < data.len;
+        return .{ .result = sent < data.len };
     }
     // no data to send so we are done
-    return false;
+    return .{ .result = false };
 }
 
 pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) void {
@@ -1082,12 +1105,16 @@ pub fn writeToStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
     }
 
     // to simplify things here the buffer contains the raw data we just need to flush to the socket it
-    const has_backpressure = writeToStreamUsingBuffer(this, is_ssl, socket, buffer, data) catch |err| {
-        // we got some critical error so we need to fail and close the connection
-        stream_buffer.release();
-        stream.detach();
-        this.closeAndFail(err, is_ssl, socket);
-        return;
+    const has_backpressure = switch (writeToStreamUsingBuffer(this, is_ssl, socket, buffer, data)) {
+        .result => |bp| bp,
+        .err => |err| {
+            // we got some critical error so we need to fail and close the connection
+            _ = err; // errno information is available but closeAndFail expects anyerror
+            stream_buffer.release();
+            stream.detach();
+            this.closeAndFail(error.WriteFailed, is_ssl, socket);
+            return;
+        },
     };
 
     if (has_backpressure) {
@@ -1189,9 +1216,13 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 .bytes => {
                     const to_send = this.state.request_body;
                     if (to_send.len > 0) {
-                        const sent = writeToSocket(is_ssl, socket, to_send) catch |err| {
-                            this.closeAndFail(err, is_ssl, socket);
-                            return;
+                        const sent = switch (writeToSocket(is_ssl, socket, to_send)) {
+                            .result => |s| s,
+                            .err => |err| {
+                                _ = err; // errno information is available
+                                this.closeAndFail(error.WriteFailed, is_ssl, socket);
+                                return;
+                            },
                         };
 
                         this.state.request_sent_len += sent;
@@ -2554,6 +2585,7 @@ const Arena = bun.allocators.MimallocArena;
 const BoringSSL = bun.BoringSSL.c;
 const api = bun.schema.api;
 const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
+const Maybe = bun.sys.Maybe;
 
 const posix = std.posix;
 const SOCK = posix.SOCK;

@@ -39,6 +39,8 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
+/* For ssize_t and mmsghdr */
+#include <sys/types.h>
 /* For socklen_t */
 #include <sys/socket.h>
 #include <netdb.h>

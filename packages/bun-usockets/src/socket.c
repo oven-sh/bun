@@ -376,6 +376,53 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
     return written < 0 ? 0 : written;
 }
 
+/* Same as us_socket_write but returns -errno on error instead of 0 and does not re-subscribe to poll */
+ssize_t us_socket_write3(int ssl, struct us_socket_t *s, const char *data, int length) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) {
+        return us_internal_ssl_socket_write3((struct us_internal_ssl_socket_t *) s, data, length);
+    }
+#endif
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+        return 0;
+    }
+
+    ssize_t written = bsd_send(us_poll_fd(&s->p), data, length);
+    if (written < 0) {
+#ifdef _WIN32
+        // On Windows with winsock, we need to convert WSA error to errno-like value
+        int wsa_error = WSAGetLastError();
+        switch (wsa_error) {
+            case WSAEWOULDBLOCK: return -EWOULDBLOCK;
+            case WSAECONNRESET: return -ECONNRESET;
+            case WSAECONNABORTED: return -ECONNABORTED;
+            case WSAENETDOWN: return -ENETDOWN;
+            case WSAENETRESET: return -ENETRESET;
+            case WSAENOTCONN: return -ENOTCONN;
+            case WSAESHUTDOWN: return -ESHUTDOWN;
+            case WSAETIMEDOUT: return -ETIMEDOUT;
+            case WSAEACCES: return -EACCES;
+            case WSAEFAULT: return -EFAULT;
+            case WSAEINVAL: return -EINVAL;
+            case WSAEMSGSIZE: return -EMSGSIZE;
+            case WSAENETUNREACH: return -ENETUNREACH;
+            case WSAENOBUFS: return -ENOBUFS;
+            default: return -EIO;
+        }
+#else
+        // On POSIX, errno is already set
+        return -errno;
+#endif
+    }
+
+    if (written != length) {
+        s->context->loop->data.last_write_failed = 1;
+        // Note: we don't re-subscribe to poll in write3
+    }
+
+    return written;
+}
+
 #if !defined(_WIN32)
 /* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
     number is less than the length, the file descriptor was not sent. */

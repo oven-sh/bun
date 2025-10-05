@@ -132,6 +132,14 @@ pub const us_socket_t = opaque {
         return rc;
     }
 
+    /// Same as write but returns -errno on error instead of 0 and does not re-subscribe to poll.
+    /// Returns actual bytes written on success, or -errno on error.
+    pub fn write3(this: *us_socket_t, ssl: bool, data: []const u8) isize {
+        const rc = c.us_socket_write3(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
+        debug("us_socket_write3({p}, {d}) = {d}", .{ this, data.len, rc });
+        return rc;
+    }
+
     pub fn writeFd(this: *us_socket_t, data: []const u8, file_descriptor: bun.FD) i32 {
         if (bun.Environment.isWindows) @compileError("TODO: implement writeFd on Windows");
         const rc = c.us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), file_descriptor.native());
@@ -199,6 +207,7 @@ pub const c = struct {
     pub extern fn us_socket_context(ssl: i32, s: ?*us_socket_t) ?*SocketContext;
 
     pub extern fn us_socket_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;
+    pub extern fn us_socket_write3(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32) isize;
     pub extern fn us_socket_ipc_write_fd(s: ?*us_socket_t, data: [*c]const u8, length: i32, fd: i32) i32;
     pub extern fn us_socket_write2(ssl: i32, *us_socket_t, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
     pub extern fn us_socket_raw_write(ssl: i32, s: ?*us_socket_t, data: [*c]const u8, length: i32) i32;

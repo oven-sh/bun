@@ -418,6 +418,8 @@ struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
 
 int us_internal_ssl_socket_write(us_internal_ssl_socket_r s,
                                  const char *data, int length);
+ssize_t us_internal_ssl_socket_write3(us_internal_ssl_socket_r s,
+                                      const char *data, int length);
 int us_internal_ssl_socket_raw_write(us_internal_ssl_socket_r s,
                                      const char *data, int length);
 

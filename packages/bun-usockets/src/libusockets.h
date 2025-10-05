@@ -16,6 +16,14 @@
  */
 // clang-format off
 #pragma once
+
+/* We need GNU features for mmsghdr and other definitions */
+#ifndef _WIN32
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#endif
+
 #ifndef us_calloc
 #define us_calloc calloc
 #endif
@@ -84,6 +92,9 @@
 #endif
 
 #include "stddef.h"
+#ifndef _WIN32
+#include <sys/types.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -422,6 +433,10 @@ void *us_socket_get_native_handle(int ssl, us_socket_r s) nonnull_fn_decl;
 /* Write up to length bytes of data. Returns actual bytes written.
  * Will call the on_writable callback of active socket context on failure to write everything off in one go. */
 int us_socket_write(int ssl, us_socket_r s, const char * nonnull_arg data, int length) nonnull_fn_decl;
+
+/* Same as us_socket_write but returns -errno on error instead of 0 and does not re-subscribe to poll.
+ * Returns actual bytes written on success, or -errno on error. */
+ssize_t us_socket_write3(int ssl, us_socket_r s, const char * nonnull_arg data, int length) nonnull_fn_decl;
 
 /* Special path for non-SSL sockets. Used to send header and payload in one go. Works like us_socket_write. */
 int us_socket_write2(int ssl, us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;

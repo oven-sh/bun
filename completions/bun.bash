@@ -45,10 +45,11 @@ _read_scripts_in_package_json() {
         local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%\}*}";
-        scripts="${scripts//@(\"|\')/}";
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do
-            package_json_compreply+=( "${completion%%:*}" );
+            [[ "${completion}" =~ "\""(.*)"\""[[:space:]]*":"[[:space:]]*"\""(.*)"\"" ]] && {
+                package_json_compreply+=( "${BASH_REMATCH[1]//\\\\/\\\\\\\\}" ); # '\' in json is '\\'
+            }
         done
         COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }
@@ -59,7 +60,7 @@ _read_scripts_in_package_json() {
         ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
             ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
     ]] && {
-        local re_script=$(echo ${package_json_compreply[@]} | sed 's/[^ ]*/(&)/g');
+        local re_script=$(echo "${package_json_compreply[@]//\\\\\\\\/\\}" | sed 's/[^ ]*/(&)/g'); # restore each json's '\\' as '\'
         local sanitize_pat='[][\\\/.^\$*+?()\{\}|]'
         local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/${re_script//${sanitize_pat}/\\&}//");
         COMPREPLY=( $(compgen -W "${new_reply}" -- "${cur_word}") );

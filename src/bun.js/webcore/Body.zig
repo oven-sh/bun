@@ -1072,14 +1072,11 @@ pub const Value = union(Tag) {
     }
 
     pub fn clone(this: *Value, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalThis: *jsc.JSGlobalObject, readable_stream_tee: ?*[2]jsc.JSValue) bun.JSError!Value {
-        bun.Output.debug("Body.Value.clone: called, this={s}, owner={s}, has_array={}", .{ @tagName(this.*), @tagName(owner), readable_stream_tee != null });
         this.toBlobIfPossible(owner);
 
         if (this.* == .Locked) {
-            bun.Output.debug("Body.Value.clone: calling tee()", .{});
             return try this.tee(owner, globalThis, readable_stream_tee);
         }
-        bun.Output.debug("Body.Value.clone: not Locked, type is {s}", .{@tagName(this.*)});
 
         if (this.* == .InternalBlob) {
             var internal_blob = this.InternalBlob;

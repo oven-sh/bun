@@ -90,23 +90,14 @@ pub const Ref = union(Type) {
     }
 
     pub fn tee(this: *Ref, owner: Owner, global: *jsc.JSGlobalObject, readable_stream_value: ?*[2]jsc.JSValue) bun.JSError!?struct { ReadableStream, ReadableStream } {
-        const stream = get(this, owner, global) orelse {
-            bun.Output.debug("Ref.tee: get() returned null, this={s}, owner={s}", .{ @tagName(this.*), @tagName(owner) });
-            return null;
-        };
+        const stream = get(this, owner, global) orelse return null;
 
-        const result = try stream.tee(global) orelse {
-            bun.Output.debug("Ref.tee: stream.tee() returned null", .{});
-            return null;
-        };
+        const result = try stream.tee(global) orelse return null;
         if (readable_stream_value) |value| {
             value.* = .{ result.@"0".value, result.@"1".value };
-            bun.Output.debug("Ref.tee: populated array with tee'd streams", .{});
         }
         // Always update the original Ref to point to the first tee'd stream
-        bun.Output.debug("Ref.tee: calling this.set(), this was {s}, owner is {s}", .{ @tagName(this.*), @tagName(owner) });
         this.set(owner, result.@"0", global);
-        bun.Output.debug("Ref.tee: after set(), this is now {s}", .{@tagName(this.*)});
         return result;
     }
 

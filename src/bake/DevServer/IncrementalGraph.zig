@@ -1046,6 +1046,15 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 // There is still a case where deduplication must happen.
                 if (import_record.is_unused) continue;
 
+                // Workers are handled as separate entry points in dev mode
+                // They get their own bundles and are served independently
+                if (import_record.kind == .worker) {
+                    log("Worker import detected: {s}", .{import_record.path.keyForIncrementalGraph()});
+                    // TODO: Register worker as entry point
+                    // For now, just log and continue processing as a regular edge
+                    // The worker will still be tracked in the dependency graph
+                }
+
                 if (!import_record.source_index.isRuntime()) try_index_record: {
                     // TODO: move this block into a function
                     const key = import_record.path.keyForIncrementalGraph();

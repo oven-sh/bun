@@ -79,6 +79,10 @@ describe("minimum-release-age", () => {
       async fetch(req) {
         const url = new URL(req.url);
 
+        // Special timestamp helpers for edge case packages
+        const futureTime = new Date(currentTime + 7 * DAY_MS).toISOString();
+        const futureTomorrow = new Date(currentTime + 1 * DAY_MS).toISOString();
+
         // TEST PACKAGE 1: regular-package
         if (url.pathname === "/regular-package") {
           const packageData = {
@@ -651,6 +655,137 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGE 9: no-time-package (missing time field)
+        if (url.pathname === "/no-time-package") {
+          const packageData = {
+            name: "no-time-package",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "no-time-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/no-time-package/-/no-time-package-1.0.0.tgz`,
+                  integrity: "sha512-fake==",
+                },
+              },
+            },
+            // No time field - should skip filtering
+          };
+
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE 10: bad-timestamp-package (invalid timestamps)
+        if (url.pathname === "/bad-timestamp-package") {
+          const packageData = {
+            name: "bad-timestamp-package",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "bad-timestamp-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/bad-timestamp-package/-/bad-timestamp-package-1.0.0.tgz`,
+                  integrity: "sha512-fake==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": "not-a-valid-date", // Invalid timestamp
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE 11: exact-threshold-package (exactly at age boundary)
+        if (url.pathname === "/exact-threshold-package") {
+          const packageData = {
+            name: "exact-threshold-package",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "exact-threshold-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/exact-threshold-package/-/exact-threshold-package-1.0.0.tgz`,
+                  integrity: "sha512-old==",
+                },
+              },
+              "2.0.0": {
+                name: "exact-threshold-package",
+                version: "2.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/exact-threshold-package/-/exact-threshold-package-2.0.0.tgz`,
+                  integrity: "sha512-exact==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(10),
+              "2.0.0": daysAgo(5), // Exactly 5 days old
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE 12: future-package (clock skew scenarios)
+        if (url.pathname === "/future-package") {
+          const packageData = {
+            name: "future-package",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "future-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/future-package/-/future-package-1.0.0.tgz`,
+                  integrity: "sha512-old==",
+                },
+              },
+              "2.0.0": {
+                name: "future-package",
+                version: "2.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/future-package/-/future-package-2.0.0.tgz`,
+                  integrity: "sha512-future==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(10),
+              "2.0.0": futureTime, // Published "in the future" due to clock skew
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE 13: all-future-package (all versions in future)
+        if (url.pathname === "/all-future-package") {
+          const packageData = {
+            name: "all-future-package",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "all-future-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/all-future-package/-/all-future-package-1.0.0.tgz`,
+                  integrity: "sha512-future==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": futureTomorrow, // All versions in the future
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
         // Serve tarballs
         if (url.pathname.includes(".tgz")) {
           // Match both regular and scoped package tarballs
@@ -693,7 +828,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -716,7 +851,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${9.5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${9.5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -742,7 +877,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -810,7 +945,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${1.8 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${1.8 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -849,7 +984,7 @@ describe("minimum-release-age", () => {
       //
       // Result: Selects 1.0.6 (gave up finding stable version)
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -876,7 +1011,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -904,7 +1039,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -929,7 +1064,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${10 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${10 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -992,7 +1127,7 @@ describe("minimum-release-age", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${3 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1139,7 +1274,7 @@ registry = "${mockRegistryUrl}"`,
 
       // CLI says 5 days, bunfig says 10 days
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1305,7 +1440,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1336,7 +1471,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1367,7 +1502,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1396,7 +1531,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1466,7 +1601,7 @@ registry = "${mockRegistryUrl}"`,
 
       // Now update with minimum-release-age
       proc = Bun.spawn({
-        cmd: [bunExe(), "update", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "update", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1544,7 +1679,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1575,7 +1710,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1610,7 +1745,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1640,7 +1775,7 @@ registry = "${mockRegistryUrl}"`,
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1688,7 +1823,14 @@ registry = "${mockRegistryUrl}"`,
       // Now try with frozen lockfile and minimum-release-age
       // Frozen lockfile means no changes to lockfile - versions stay as-is
       proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--frozen-lockfile", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [
+          bunExe(),
+          "install",
+          "--frozen-lockfile",
+          "--minimum-release-age",
+          `${5 * SECONDS_PER_DAY}`,
+          "--no-verify",
+        ],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1729,7 +1871,14 @@ registry = "${mockRegistryUrl}"`,
 
       // Install with frozen lockfile and minimum-release-age
       proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--frozen-lockfile", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [
+          bunExe(),
+          "install",
+          "--frozen-lockfile",
+          "--minimum-release-age",
+          `${5 * SECONDS_PER_DAY}`,
+          "--no-verify",
+        ],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1793,7 +1942,7 @@ linker = "${linker}"
       // - stable-package (latest): 3.2.0 is 30 days old → select 3.2.0 (passes gate, is latest)
       // - stable-package (3.0.0): pinned to 3.0.0 (legacy workspace - no age check on exact versions)
       const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -1884,6 +2033,274 @@ linker = "${linker}"
             }
           }"
         `);
+    });
+  });
+
+  describe("invalid inputs", () => {
+    test("rejects negative minimum-release-age", async () => {
+      using dir = tempDir("negative-age", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "-1"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
+
+      // Should fail with error about invalid value
+      expect(exitCode).toBe(1);
+      expect(stderr.toLowerCase()).toMatch(/invalid|error/);
+    });
+
+    test("rejects non-numeric minimum-release-age", async () => {
+      using dir = tempDir("non-numeric-age", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "abc"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
+
+      // Should fail with error about invalid value
+      expect(exitCode).toBe(1);
+      expect(stderr.toLowerCase()).toMatch(/invalid|error/);
+    });
+  });
+
+  describe("malformed registry data", () => {
+    test("handles package with missing time field", async () => {
+      using dir = tempDir("no-time-field", {
+        "package.json": JSON.stringify({
+          dependencies: { "no-time-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+
+      // Should succeed - packages without time field should skip filtering
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("no-time-package@1.0.0");
+    });
+
+    test("handles invalid timestamp formats", async () => {
+      using dir = tempDir("bad-timestamp", {
+        "package.json": JSON.stringify({
+          dependencies: { "bad-timestamp-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+
+      // Should succeed - invalid timestamps should be skipped gracefully
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("bad-timestamp-package@1.0.0");
+    });
+  });
+
+  describe("boundary conditions", () => {
+    test("handles package released exactly at minimum age threshold", async () => {
+      using dir = tempDir("exact-threshold", {
+        "package.json": JSON.stringify({
+          dependencies: { "exact-threshold-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Should install 2.0.0 (exactly at threshold = passes)
+      expect(lockfile).toContain("exact-threshold-package@2.0.0");
+    });
+  });
+
+  describe("devDependencies and optionalDependencies", () => {
+    test("filters devDependencies with minimum-release-age", async () => {
+      using dir = tempDir("dev-deps", {
+        "package.json": JSON.stringify({
+          devDependencies: {
+            "regular-package": "*",
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // devDependencies should also be filtered
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("filters optionalDependencies with minimum-release-age", async () => {
+      using dir = tempDir("optional-deps", {
+        "package.json": JSON.stringify({
+          optionalDependencies: {
+            "regular-package": "*",
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // optionalDependencies should also be filtered
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    test("filters mixed dependency types", async () => {
+      using dir = tempDir("mixed-deps", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "regular-package": "*",
+          },
+          devDependencies: {
+            "bugfix-package": "*",
+          },
+          optionalDependencies: {
+            "@scope/scoped-package": "*",
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // All dependency types should be filtered
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).toContain("bugfix-package@1.0.0");
+      expect(lockfile).toContain("@scope/scoped-package@1.5.0");
+    });
+  });
+
+  describe("clock skew scenarios", () => {
+    test("handles packages with future timestamps", async () => {
+      using dir = tempDir("future-timestamp", {
+        "package.json": JSON.stringify({
+          dependencies: { "future-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Future timestamps should be treated as "too recent", fallback to 1.0.0
+      expect(lockfile).toContain("future-package@1.0.0");
+      expect(lockfile).not.toContain("future-package@2.0.0");
+    });
+
+    test("handles all versions with future timestamps", async () => {
+      using dir = tempDir("all-future-timestamps", {
+        "package.json": JSON.stringify({
+          dependencies: { "all-future-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
+
+      // Should fail - no versions pass the age gate
+      expect(exitCode).toBe(1);
+      expect(stderr.toLowerCase()).toMatch(/no version|blocked|failed to resolve/);
     });
   });
 });

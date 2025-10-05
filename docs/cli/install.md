@@ -253,7 +253,6 @@ When the minimum age filter is active:
 
 For more advanced security scanning, including integration with services & custom filtering, see [Package manager > Security Scanner API](https://bun.com/docs/install/security-scanner-api).
 
-
 ## Configuration
 
 The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
@@ -341,6 +340,5 @@ jobs:
       - name: Build app
         run: bun run build
 ```
-
 
 {% bunCLIUsage command="install" /%}

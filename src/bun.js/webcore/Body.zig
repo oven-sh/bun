@@ -56,6 +56,9 @@ pub fn deinit(this: *Body, _: std.mem.Allocator) void {
 pub const PendingValue = struct {
     promise: ?JSValue = null,
     readable: jsc.WebCore.ReadableStream.Ref = .empty,
+    /// Fallback STRONG ref when no owner JSValue (e.g., Request without this_jsvalue)
+    /// This acts as the owner since there's nowhere else to store it
+    stream: jsc.Strong.Optional = .empty,
     // writable: jsc.WebCore.Sink
 
     global: *JSGlobalObject,
@@ -106,6 +109,19 @@ pub const PendingValue = struct {
         return this.readable.abort(owner, globalObject);
     }
 
+    /// Get stream from Ref (GC cache) or fallback strong ref
+    pub fn getStream(this: *PendingValue, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalObject: *jsc.JSGlobalObject) ?jsc.WebCore.ReadableStream {
+        // Try GC cache first (for Response with this_jsvalue)
+        if (this.readable.get(owner, globalObject)) |stream| {
+            return stream;
+        }
+        // Fall back to direct strong ref (for Request without this_jsvalue)
+        if (this.stream.get()) |stream_jsvalue| {
+            return jsc.WebCore.ReadableStream.fromJS(stream_jsvalue, globalObject) catch null;
+        }
+        return null;
+    }
+
     pub fn isStreamingOrBuffering(this: *PendingValue) bool {
         return this.readable != .empty or (this.promise != null and !this.promise.?.isEmptyOrUndefinedOrNull());
     }
@@ -133,7 +149,7 @@ pub const PendingValue = struct {
 
     pub fn setPromise(value: *PendingValue, owner: jsc.WebCore.ReadableStream.Ref.Owner, globalThis: *jsc.JSGlobalObject, action: Action) JSValue {
         value.action = action;
-        if (value.readable.get(owner, globalThis)) |readable| {
+        if (value.getStream(owner, globalThis)) |readable| {
             switch (action) {
                 .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer, .getBytes => {
                     const promise = switch (action) {
@@ -458,7 +474,7 @@ pub const Value = union(Tag) {
             },
             .Locked => {
                 var locked = &this.Locked;
-                if (locked.readable.get(owner, globalThis)) |readable| {
+                if (locked.getStream(owner, globalThis)) |readable| {
                     return readable.value;
                 }
                 if (locked.promise != null or locked.action != .none) {
@@ -626,7 +642,11 @@ pub const Value = union(Tag) {
 
             if (readable_stream_value) |readable_stream_ptr| {
                 readable_stream_ptr.* = readable.value;
-                return .{ .Locked = .{ .global = globalThis, .readable = .empty } };
+                return .{ .Locked = .{
+                    .global = globalThis,
+                    .readable = .empty,
+                    .stream = jsc.Strong.Optional.create(readable.value, globalThis),
+                } };
             }
 
             return Body.Value.fromReadableStreamWithoutLockCheck(readable, globalThis);
@@ -947,6 +967,7 @@ pub const Value = union(Tag) {
                 this.Locked.deinit = true;
                 this.Locked.readable.deinit();
                 this.Locked.readable = .empty;
+                this.Locked.stream.deinit();
             }
 
             return;
@@ -979,7 +1000,18 @@ pub const Value = union(Tag) {
             return .Used;
         }
 
-        if (try locked.readable.tee(owner, globalThis, readable_stream_tee)) |result| {
+        // Use getStream to check both GC cache and fallback strong ref
+        if (locked.getStream(owner, globalThis)) |stream| {
+            const result = try stream.tee(globalThis) orelse return .Used;
+
+            // Populate the tee array if requested
+            if (readable_stream_tee) |value| {
+                value.* = .{ result.@"0".value, result.@"1".value };
+            }
+
+            // Update the original Ref to point to the first tee'd stream
+            locked.readable.set(owner, result.@"0", globalThis);
+
             if (readable_stream_tee != null) {
                 return .{
                     .Locked = .{

@@ -3425,21 +3425,25 @@ pub const BundleV2 = struct {
                     if (loader == .html and entry.kind == .asset) {
                         // Overload `path.text` to point to the final URL
                         // This information cannot be queried while printing because a lock wouldn't get held.
-                        const hash = dev_server.assets.getHash(path.text) orelse @panic("cached asset not found");
-                        import_record.path.text = path.text;
-                        import_record.path.namespace = "file";
-                        import_record.path.pretty = std.fmt.allocPrint(this.allocator(), bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
-                            &std.fmt.bytesToHex(std.mem.asBytes(&hash), .lower),
-                            std.fs.path.extension(path.text),
-                        }) catch |err| bun.handleOom(err);
-                        import_record.path.is_disabled = false;
-                    } else {
-                        import_record.path.text = path.text;
-                        import_record.path.pretty = rel;
-                        import_record.path = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
-                        if (loader == .html or entry.kind == .css) {
-                            import_record.path.is_disabled = true;
+                        // If the hash is not found, it means the file was imported with a non-asset loader
+                        // (e.g., `with { type: "text" }`), so fall through to the else block.
+                        if (dev_server.assets.getHash(path.text)) |hash| {
+                            import_record.path.text = path.text;
+                            import_record.path.namespace = "file";
+                            import_record.path.pretty = std.fmt.allocPrint(this.allocator(), bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
+                                &std.fmt.bytesToHex(std.mem.asBytes(&hash), .lower),
+                                std.fs.path.extension(path.text),
+                            }) catch |err| bun.handleOom(err);
+                            import_record.path.is_disabled = false;
+                            continue;
                         }
+                    }
+
+                    import_record.path.text = path.text;
+                    import_record.path.pretty = rel;
+                    import_record.path = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
+                    if (loader == .html or entry.kind == .css) {
+                        import_record.path.is_disabled = true;
                     }
                     continue;
                 }

@@ -874,9 +874,13 @@ pub fn ensureFetchHeaders(
     } else {
         // we don't have a request context, so we need to create an empty headers object
         this._headers = FetchHeaders.createEmpty();
+        const owner: jsc.WebCore.ReadableStream.Ref.Owner = if (this.this_jsvalue.tryGet()) |js_value|
+            .{ .Request = js_value }
+        else
+            .empty;
         const content_type = switch (this.body.value) {
             .Blob => |blob| blob.content_type,
-            .Locked => |locked| if (locked.readable.get(.{ .empty = {} }, globalThis)) |*readable| switch (readable.ptr) {
+            .Locked => |locked| if (locked.readable.get(owner, globalThis)) |*readable| switch (readable.ptr) {
                 .Blob => |blob| blob.content_type,
                 else => null,
             } else null,

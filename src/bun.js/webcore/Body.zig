@@ -500,16 +500,16 @@ pub const Value = union(Tag) {
                 };
 
                 // Use strong ref if owner doesn't have a valid JSValue
-                const should_use_strong = switch (owner) {
-                    .Request => |jsval| jsval == .zero,
-                    .Response => |jsval| jsval == .zero,
-                    .strong, .empty => true,
+                locked.readable = switch (owner) {
+                    .Request => |jsval| if (jsval != .zero) .Request else .{ .strong = .init(stream, globalThis) },
+                    .Response => |jsval| if (jsval != .zero) .Response else .{ .strong = .init(stream, globalThis) },
+                    .strong, .empty => .{ .strong = .init(stream, globalThis) },
                 };
-
-                if (should_use_strong) {
-                    locked.readable = .{ .strong = .init(stream, globalThis) };
-                } else {
-                    locked.readable.set(owner, stream, globalThis);
+                // Only populate GC cache when owner has a valid JSValue
+                switch (owner) {
+                    .Request => |jsval| if (jsval != .zero) locked.readable.set(owner, stream, globalThis),
+                    .Response => |jsval| if (jsval != .zero) locked.readable.set(owner, stream, globalThis),
+                    .strong, .empty => {},
                 }
 
                 if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {

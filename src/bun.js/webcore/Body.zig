@@ -989,7 +989,9 @@ pub const Value = union(Tag) {
                         .readable = switch (owner) {
                             .Response => .Response,
                             .Request => .Request,
-                            else => .empty,
+                            // For owner-less clones, keep a strong ref to the tee'd stream
+                            // until the Request/Response gains a real owner
+                            else => .{ .strong = .init(result.@"1", globalThis) },
                         },
                         .global = globalThis,
                     },

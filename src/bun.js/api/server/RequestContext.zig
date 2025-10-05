@@ -649,6 +649,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
                 // we can already clean this strong refs
                 request.internal_event_callback.deinit();
+
+                // Abort request body stream if still locked (e.g., pending read)
+                // Must do this before deref() so the request is still reachable
+                if (request.body.value == .Locked) {
+                    const owner: jsc.WebCore.ReadableStream.Ref.Owner = if (request.this_jsvalue.tryGet()) |js_value|
+                        .{ .Request = js_value }
+                    else
+                        .empty;
+                    if (request.body.value.Locked.readable.abort(owner, globalThis)) {
+                        any_js_calls = true;
+                    }
+                }
+
                 this.request_weakref.deref();
             }
             // if signal is not aborted, abort the signal
@@ -676,19 +689,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             } else {
                 if (this.endRequestStreaming()) {
                     any_js_calls = true;
-                }
-
-                // Abort request body stream if still locked (e.g., pending read)
-                if (this.request_weakref.get()) |request| {
-                    if (request.body.value == .Locked) {
-                        const owner: jsc.WebCore.ReadableStream.Ref.Owner = if (request.this_jsvalue.tryGet()) |js_value|
-                            .{ .Request = js_value }
-                        else
-                            .empty;
-                        if (request.body.value.Locked.readable.abort(owner, globalThis)) {
-                            any_js_calls = true;
-                        }
-                    }
                 }
 
                 if (this.response_ptr) |response| {

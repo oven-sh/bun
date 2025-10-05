@@ -114,17 +114,18 @@ Status: ✅ Production-ready!
 4. ✅ **Path routing**: URL requests mapped to worker bundles
 5. ✅ **Caching**: Worker bundles cached and served efficiently
 6. ✅ **Integration**: Workers use same RouteBundle system as routes
+7. ✅ **Worker bundling**: Real bundling with HMR runtime and source maps
 
 ## What Needs Implementation
 
 ### Critical Path (For Working Dev Mode):
 
-1. **Implement Real Worker Bundling** 🔴 HIGH PRIORITY
-   - Currently `generateWorkerBundle()` returns placeholder
-   - Need to call `bundle_v2.bundle()` with worker entry point
-   - Bundle worker file + dependencies
-   - Include HMR runtime for hot reloading
-   - Generate source maps
+1. ✅ **~~Implement Real Worker Bundling~~** ✅ COMPLETE
+   - ✅ `generateWorkerBundle()` now uses real bundling logic
+   - ✅ Calls `server_graph.traceImports()` with worker entry point
+   - ✅ Bundles worker file + dependencies on server graph
+   - ✅ Includes HMR runtime for hot reloading
+   - ✅ Generates source maps via `source_maps.putOrIncrementRefCount()`
 
 2. **Worker Registration Hook** 🔴 HIGH PRIORITY
    - Currently workers detected but not registered
@@ -173,6 +174,13 @@ Status: ✅ Production-ready!
 - Added DeferredRequest.Handler.worker_bundle variant
 - Complete request/response flow functional
 - Proper integration with existing bundle system
+
+**Phase 2.1 - Real Worker Bundling:**
+- Replaced placeholder with real bundling implementation
+- Uses server_graph.traceImports() for dependency tracking
+- Generates proper HMR runtime for workers
+- Full source map support via putOrIncrementRefCount()
+- Workers bundled on server graph (correct context)
 
 **Code Quality:**
 - All exhaustive switches handle workers
@@ -255,12 +263,12 @@ Serve via HTTP
 
 **Production:** ✅ **Ready to ship!** Core functionality complete and tested.
 
-**Dev Server:** ⚠️ **Infrastructure complete, bundling implementation needed.**
+**Dev Server:** ⚠️ **Almost there! Bundling complete, registration hook needed.**
 
-The foundation is solid. All the routing, caching, and HTTP serving infrastructure is in place. The remaining work is implementing the actual worker bundling logic (calling bundle_v2) and ensuring workers are registered when discovered.
+The foundation is solid. All the routing, caching, HTTP serving infrastructure, and worker bundling logic is in place. The remaining work is connecting IncrementalGraph worker detection to DevServer registration so workers are actually added to the bundle queue when discovered.
 
-**Estimated remaining work:** 4-6 hours focused development
-- 2-3 hours: Implement real worker bundling
+**Estimated remaining work:** 2-3 hours focused development
+- ~~2-3 hours: Implement real worker bundling~~ ✅ DONE
 - 1-2 hours: Worker registration hookup
 - 1 hour: Testing and debugging
 

@@ -1515,23 +1515,44 @@ fn generateWorkerBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     assert(route_bundle.server_state == .loaded);
     assert(route_bundle.data == .worker);
 
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+
     const worker = &route_bundle.data.worker;
 
-    // Workers are bundled on the server graph with HMR runtime
-    // They run in a separate context from the main page
-    _ = worker;
+    // Prepare bitsets for tracing
+    var sfa_state = std.heap.stackFallback(65536, dev.allocator());
+    const sfa = sfa_state.get();
+    var gts = try dev.initGraphTraceState(sfa, 0);
+    defer gts.deinit(sfa);
 
-    // TODO: Actually generate the worker bundle with HMR runtime
-    // This needs to:
-    // 1. Bundle the worker file and its dependencies using bundle_v2
-    // 2. Include the HMR runtime for hot reloading
-    // 3. Wrap in worker-appropriate context
-    // 4. Generate source maps
+    // Workers are bundled on the server graph
+    // They run in a separate worker context from the main page
+    dev.server_graph.reset();
+    try dev.server_graph.traceImports(worker.bundled_file, &gts, .find_client_modules);
 
-    // Temporary MVP implementation: just return a placeholder
-    // Real implementation will call bundle_v2.bundle() with worker entry point
-    const temp_code = "// Worker bundle - full implementation pending\nself.postMessage('Worker loaded');\n";
-    return try dev.allocator().dupe(u8, temp_code);
+    // Insert source map for the worker
+    const script_id = route_bundle.sourceMapId();
+    mapLog("inc {x}, 1 for generateWorkerBundle", .{script_id.get()});
+    switch (try dev.source_maps.putOrIncrementRefCount(script_id, 1)) {
+        .uninitialized => |entry| {
+            errdefer dev.source_maps.unref(script_id);
+            gts.clearAndFree(sfa);
+            var arena = std.heap.ArenaAllocator.init(sfa);
+            defer arena.deinit();
+            try dev.server_graph.takeSourceMap(arena.allocator(), dev.allocator(), entry);
+        },
+        .shared => {},
+    }
+
+    // Generate the worker bundle with HMR runtime
+    // Server graph uses a simpler options struct (no entry point paths)
+    const worker_bundle = dev.server_graph.takeJSBundle(&.{
+        .kind = .initial_response,
+        .script_id = script_id,
+    });
+
+    return worker_bundle;
 }
 
 fn onWorkerRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Index, resp: AnyResponse, method: bun.http.Method) void {

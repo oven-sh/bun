@@ -13,6 +13,7 @@ $ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool
 ```
 
 ```bash#Ubuntu/Debian
+$ sudo apt update
 $ sudo apt install curl wget lsb-release software-properties-common cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
 ```
 

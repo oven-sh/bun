@@ -177,6 +177,10 @@ pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
 pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
     const value = js.toJSUnchecked(globalObject, this);
+    if (value != .zero) {
+        this.this_jsvalue.finalize();
+        this.this_jsvalue = .initWeak(value);
+    }
     return value;
 }
 
@@ -201,7 +205,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         .zero => "Request",
         else => "BunRequest",
     };
-    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(.{ .empty = {} }), .{}) });
+    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(.empty), .{}) });
     {
         formatter.indent += 1;
         defer formatter.indent -|= 1;

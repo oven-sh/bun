@@ -376,7 +376,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
     return written < 0 ? 0 : written;
 }
 
-/* Same as us_socket_write but returns -errno on error instead of 0 and does not re-subscribe to poll */
+/* Same as us_socket_write but returns -errno on error instead of 0 */
 ssize_t us_socket_write3(int ssl, struct us_socket_t *s, const char *data, int length) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
@@ -388,36 +388,47 @@ ssize_t us_socket_write3(int ssl, struct us_socket_t *s, const char *data, int l
     }
 
     ssize_t written = bsd_send(us_poll_fd(&s->p), data, length);
+
     if (written < 0) {
+        // Handle errors by converting to -errno
+        int error_code;
 #ifdef _WIN32
         // On Windows with winsock, we need to convert WSA error to errno-like value
         int wsa_error = WSAGetLastError();
         switch (wsa_error) {
-            case WSAEWOULDBLOCK: return -EWOULDBLOCK;
-            case WSAECONNRESET: return -ECONNRESET;
-            case WSAECONNABORTED: return -ECONNABORTED;
-            case WSAENETDOWN: return -ENETDOWN;
-            case WSAENETRESET: return -ENETRESET;
-            case WSAENOTCONN: return -ENOTCONN;
-            case WSAESHUTDOWN: return -ESHUTDOWN;
-            case WSAETIMEDOUT: return -ETIMEDOUT;
-            case WSAEACCES: return -EACCES;
-            case WSAEFAULT: return -EFAULT;
-            case WSAEINVAL: return -EINVAL;
-            case WSAEMSGSIZE: return -EMSGSIZE;
-            case WSAENETUNREACH: return -ENETUNREACH;
-            case WSAENOBUFS: return -ENOBUFS;
-            default: return -EIO;
+            case WSAEWOULDBLOCK: error_code = EWOULDBLOCK; break;
+            case WSAECONNRESET: error_code = ECONNRESET; break;
+            case WSAECONNABORTED: error_code = ECONNABORTED; break;
+            case WSAENETDOWN: error_code = ENETDOWN; break;
+            case WSAENETRESET: error_code = ENETRESET; break;
+            case WSAENOTCONN: error_code = ENOTCONN; break;
+            case WSAESHUTDOWN: error_code = ESHUTDOWN; break;
+            case WSAETIMEDOUT: error_code = ETIMEDOUT; break;
+            case WSAEACCES: error_code = EACCES; break;
+            case WSAEFAULT: error_code = EFAULT; break;
+            case WSAEINVAL: error_code = EINVAL; break;
+            case WSAEMSGSIZE: error_code = EMSGSIZE; break;
+            case WSAENETUNREACH: error_code = ENETUNREACH; break;
+            case WSAENOBUFS: error_code = ENOBUFS; break;
+            default: error_code = EIO; break;
         }
 #else
-        // On POSIX, errno is already set
-        return -errno;
+        error_code = errno;
 #endif
+
+        // Only re-subscribe for flow control errors (EAGAIN/EWOULDBLOCK)
+        if (error_code == EAGAIN || error_code == EWOULDBLOCK) {
+            s->context->loop->data.last_write_failed = 1;
+            us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        }
+
+        return -error_code;
     }
 
-    if (written != length) {
+    // Re-subscribe on partial writes (incomplete but successful)
+    if (written < length) {
         s->context->loop->data.last_write_failed = 1;
-        // Note: we don't re-subscribe to poll in write3
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 
     return written;

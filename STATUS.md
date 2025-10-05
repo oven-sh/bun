@@ -111,10 +111,11 @@ Status: ✅ Production-ready!
 1. ✅ **Production builds**: Workers bundle into separate chunks with correct paths
 2. ✅ **Dev server infrastructure**: Complete HTTP request/response flow
 3. ✅ **Worker detection**: IncrementalGraph detects worker imports
-4. ✅ **Path routing**: URL requests mapped to worker bundles
-5. ✅ **Caching**: Worker bundles cached and served efficiently
-6. ✅ **Integration**: Workers use same RouteBundle system as routes
-7. ✅ **Worker bundling**: Real bundling with HMR runtime and source maps
+4. ✅ **Worker registration**: Automatic registration when workers detected
+5. ✅ **Path routing**: URL requests mapped to worker bundles
+6. ✅ **Caching**: Worker bundles cached and served efficiently
+7. ✅ **Integration**: Workers use same RouteBundle system as routes
+8. ✅ **Worker bundling**: Real bundling with HMR runtime and source maps
 
 ## What Needs Implementation
 
@@ -127,11 +128,11 @@ Status: ✅ Production-ready!
    - ✅ Includes HMR runtime for hot reloading
    - ✅ Generates source maps via `source_maps.putOrIncrementRefCount()`
 
-2. **Worker Registration Hook** 🔴 HIGH PRIORITY
-   - Currently workers detected but not registered
-   - Need to call `getOrCreateWorkerBundle()` when worker import is found
-   - Connect IncrementalGraph detection → DevServer registration
-   - Ensure workers added to bundle queue when discovered
+2. ✅ **~~Worker Registration Hook~~** ✅ COMPLETE
+   - ✅ Workers automatically registered when detected in IncrementalGraph
+   - ✅ Calls `getOrCreateWorkerBundle()` when worker import is found
+   - ✅ Connected IncrementalGraph detection → DevServer registration
+   - ✅ Workers registered on-demand (bundled when HTTP requested)
 
 3. **HMR Runtime for Workers** 🟡 MEDIUM PRIORITY
    - Workers need HMR module system
@@ -181,6 +182,13 @@ Status: ✅ Production-ready!
 - Generates proper HMR runtime for workers
 - Full source map support via putOrIncrementRefCount()
 - Workers bundled on server graph (correct context)
+
+**Phase 2 - Worker Registration Hook:**
+- Automatic worker registration in IncrementalGraph
+- Detects worker imports during dependency processing
+- Calls getOrCreateWorkerBundle() when worker found
+- Workers registered on-demand (bundled when requested)
+- Proper error handling and logging
 
 **Code Quality:**
 - All exhaustive switches handle workers
@@ -263,14 +271,20 @@ Serve via HTTP
 
 **Production:** ✅ **Ready to ship!** Core functionality complete and tested.
 
-**Dev Server:** ⚠️ **Almost there! Bundling complete, registration hook needed.**
+**Dev Server:** ✅ **Ready for testing!** Core functionality complete.
 
-The foundation is solid. All the routing, caching, HTTP serving infrastructure, and worker bundling logic is in place. The remaining work is connecting IncrementalGraph worker detection to DevServer registration so workers are actually added to the bundle queue when discovered.
+All critical infrastructure is in place:
+- ✅ Worker detection during bundling
+- ✅ Automatic registration in DevServer
+- ✅ Real worker bundling with HMR runtime
+- ✅ HTTP serving and caching
+- ✅ Source map support
 
-**Estimated remaining work:** 2-3 hours focused development
+**Remaining work:** Testing and HMR refinement (optional)
 - ~~2-3 hours: Implement real worker bundling~~ ✅ DONE
-- 1-2 hours: Worker registration hookup
-- 1 hour: Testing and debugging
+- ~~1-2 hours: Worker registration hookup~~ ✅ DONE
+- 1-2 hours: Integration testing with real dev server
+- 2-3 hours: HMR runtime improvements (optional)
 
 ---
 

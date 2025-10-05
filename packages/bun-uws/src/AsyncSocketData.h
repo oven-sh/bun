@@ -67,6 +67,10 @@ struct BackPressure {
     size_t totalLength() {
         return buffer.length();
     }
+
+    size_t memoryCost() const {
+        return buffer.capacity();
+    }
 };
 
 /* Depending on how we want AsyncSocket to function, this will need to change */
@@ -83,6 +87,10 @@ struct AsyncSocketData {
 
     /* Or empty */
     AsyncSocketData() = default;
+
+    size_t memoryCost() const {
+        return buffer.memoryCost();
+    }
 };
 
 }

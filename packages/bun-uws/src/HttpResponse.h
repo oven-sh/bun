@@ -760,6 +760,9 @@ public:
         httpResponseData->offset = offset;
     }
 
+    size_t memoryCost() {
+        return sizeof(HttpResponse<SSL>) + this->getHttpResponseData()->memoryCost();
+    }
 };
 
 }

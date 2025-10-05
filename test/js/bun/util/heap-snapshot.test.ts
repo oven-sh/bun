@@ -47,6 +47,25 @@ describe("Native types report their size correctly", () => {
     delete globalThis.request;
   });
 
+  it("Response includes status_text", () => {
+    var withStatusText = new Response("hello", {
+      headers: {
+        "Content-Type": "text/plain",
+      },
+      statusText: "yo yo yo",
+    });
+
+    var withoutStatusText = new Response("hello", {
+      headers: {
+        "Content-Type": "text/plain",
+      },
+    });
+
+    expect(estimateShallowMemoryUsageOf(withStatusText)).toBeGreaterThan(
+      estimateShallowMemoryUsageOf(withoutStatusText),
+    );
+  });
+
   it("Response", () => {
     var response = new Response(Buffer.alloc(1024 * 1024 * 4, "yoo"), {
       headers: {

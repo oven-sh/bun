@@ -73,6 +73,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     estimatedSize: true,
+    memoryCost: true,
     overridesToJS: true,
     klass: {
       json: {

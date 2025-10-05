@@ -116,6 +116,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;
 #endif
+
+    size_t memoryCost() {
+        return sizeof(HttpResponseData<SSL>) + this->AsyncSocketData<SSL>::memoryCost();
+    }
 };
 
 }

@@ -678,6 +678,19 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     any_js_calls = true;
                 }
 
+                // Abort request body stream if still locked (e.g., pending read)
+                if (this.request_weakref.get()) |request| {
+                    if (request.body.value == .Locked) {
+                        const owner: jsc.WebCore.ReadableStream.Ref.Owner = if (request.this_jsvalue.tryGet()) |js_value|
+                            .{ .Request = js_value }
+                        else
+                            .empty;
+                        if (request.body.value.Locked.readable.abort(owner, globalThis)) {
+                            any_js_calls = true;
+                        }
+                    }
+                }
+
                 if (this.response_ptr) |response| {
                     if (response.body.value == .Locked) {
                         if (response.body.value.Locked.readable.abort(.{ .Response = response_jsvalue }, globalThis)) {

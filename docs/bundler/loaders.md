@@ -7,7 +7,7 @@ Bun uses the file extension to determine which built-in _loader_ should be used 
 You can explicitly specify which loader to use using the 'loader' import attribute.
 
 ```ts
-import my_toml from "./my_file" with { loader: "toml" };
+import my_toml from "./my_file" with { type: "toml" };
 ```
 
 ## Built-in loaders

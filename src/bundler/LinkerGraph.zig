@@ -502,6 +502,9 @@ pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
                     // don't use `await`, which don't necessarily make the parent module async.
                     .dynamic => continue,
 
+                    // Workers run in a separate context and don't propagate async dependencies
+                    .worker => continue,
+
                     // `require()` cannot import async modules.
                     .require, .require_resolve => continue,
 

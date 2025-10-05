@@ -2208,10 +2208,16 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
                     p.print("new Worker(");
 
-                    // Generate a unique key for the worker instead of the direct path
-                    // This will be resolved to the actual worker chunk path later
-                    if (p.options.unique_key_prefix.len > 0) {
-                        const import_record = p.importRecord(e.import_record_index);
+                    const import_record = p.importRecord(e.import_record_index);
+
+                    // In dev mode, use the direct path - the dev server will resolve it
+                    // In production mode, use unique keys for chunk path resolution
+                    if (p.options.module_type == .internal_bake_dev) {
+                        // Dev mode: use the original path
+                        // The dev server will serve this worker as a separate bundle
+                        p.printStringLiteralUTF8(import_record.path.pretty, true);
+                    } else if (p.options.unique_key_prefix.len > 0) {
+                        // Production mode: use unique keys for chunk resolution
                         // Use the source_index from the import record, not the import_record_index
                         // This allows the linker to map from source_index to chunk_index using entry_point_chunk_indices
                         const source_index = import_record.source_index.get();
@@ -2220,7 +2226,7 @@ fn NewPrinter(
                         p.printStringLiteralUTF8(unique_key, true);
                     } else {
                         // Fallback to direct path if unique_key_prefix is not available
-                        p.printStringLiteralUTF8(p.importRecord(e.import_record_index).path.text, true);
+                        p.printStringLiteralUTF8(import_record.path.text, true);
                     }
 
                     // Print options if present and not missing

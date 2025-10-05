@@ -2,8 +2,8 @@
 // Using YAML.parse() with eemeli/yaml package as reference
 // Total: 402 test directories
 
-import { test, expect } from "bun:test";
 import { YAML } from "bun";
+import { expect, test } from "bun:test";
 
 test("yaml-test-suite/229Q", () => {
   // Spec Example 2.4. Sequence of Mappings

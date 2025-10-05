@@ -170,6 +170,7 @@ pub fn NewParser_(
         dirname_ref: Ref = Ref.None,
         import_meta_ref: Ref = Ref.None,
         hmr_api_ref: Ref = Ref.None,
+        worker_ref: Ref = Ref.None,
 
         /// If bake is enabled and this is a server-side file, we want to use
         /// special `Response` class inside the `bun:app` built-in module to
@@ -2072,6 +2073,10 @@ pub fn NewParser_(
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
             p.dirname_ref = try p.declareCommonJSSymbol(.unbound, "__dirname");
             p.filename_ref = try p.declareCommonJSSymbol(.unbound, "__filename");
+
+            if (p.options.features.worker_entrypoint) {
+                p.worker_ref = try p.declareCommonJSSymbol(.unbound, "Worker");
+            }
 
             if (p.options.features.inject_jest_globals) {
                 p.jest.describe = try p.declareCommonJSSymbol(.unbound, "describe");

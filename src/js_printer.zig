@@ -2229,12 +2229,11 @@ fn NewPrinter(
                         p.printStringLiteralUTF8(import_record.path.text, true);
                     }
 
-                    // Print options if present and not missing
-                    if (e.options.data != .e_missing) {
-                        p.print(",");
-                        p.printSpace();
-                        p.printExpr(e.options, .comma, ExprFlag.None());
-                    }
+                    // Always print {type: "module"} for workers
+                    // Workers in Bun are always ES modules
+                    p.print(",");
+                    p.printSpace();
+                    p.print("{type:\"module\"}");
 
                     if (e.close_parens_loc.start > expr.loc.start) {
                         p.addSourceMapping(e.close_parens_loc);

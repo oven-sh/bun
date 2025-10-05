@@ -589,6 +589,8 @@ static void NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
+    bool hasConnectionHeader = false;
+
     if (headersObject) {
         if (auto* fetchHeaders = jsDynamicCast<WebCore::JSFetchHeaders*>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
@@ -614,6 +616,11 @@ static void NodeHTTPServer__writeHead(
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
+                // Check if this is a Connection header
+                if (WTF::equalIgnoringASCIICase(key, "connection"_s)) {
+                    hasConnectionHeader = true;
+                }
+
                 writeResponseHeader<isSSL>(response, key, value);
 
                 return true;
@@ -633,8 +640,26 @@ static void NodeHTTPServer__writeHead(
                 String key = propertyNames[i].string();
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, void());
+
+                // Check if this is a Connection header
+                if (WTF::equalIgnoringASCIICase(key, "connection"_s)) {
+                    hasConnectionHeader = true;
+                }
+
                 writeResponseHeader<isSSL>(response, key, value);
             }
+        }
+    }
+
+    // Automatically add Connection header if not already set by user
+    if (!hasConnectionHeader) {
+        auto* data = response->getHttpResponseData();
+        bool shouldClose = data->state & uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
+
+        if (!shouldClose) {
+            writeResponseHeader<isSSL>(response, "connection"_s, "keep-alive"_s);
+        } else {
+            writeResponseHeader<isSSL>(response, "connection"_s, "close"_s);
         }
     }
 

@@ -19,11 +19,11 @@ _long_short_completion() {
     local short_options="${2}"
 
     [[ -z "${cur_word}" || "${cur_word}" =~ ^- ]] && {
-        COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}"));
+        COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}") );
         return;
     }
     [[ "${cur_word}" =~ ^-[A-Za_z]+ ]] && {
-        COMPREPLY=( $(compgen -W "${short_options}" -- "${cur_word}"));
+        COMPREPLY=( $(compgen -W "${short_options}" -- "${cur_word}") );
         return;
     }
 }
@@ -115,7 +115,7 @@ _bun_completions() {
             esac
             return ;;
         --cwd|--public-dir)
-            COMPREPLY=( $(compgen -d -- "${cur_word}" ));
+            COMPREPLY=( $(compgen -d -- "${cur_word}") );
             return;;
         --jsx-runtime)
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
@@ -173,7 +173,7 @@ _bun_completions() {
             # the previous word is not part of the allowed completion
             # the previous word is not an argument to the last two option
             [[ -z "${cur_word}" ]] && {
-                declare -A comp_reply_associative="( $(echo ${COMPREPLY[@]} | sed 's/[^ ]*/[&]=&/g') )";
+                declare -A comp_reply_associative="( $(echo "${COMPREPLY[@]}" | sed 's/[^ ]*/[&]=&/g') )";
                 [[ -z "${comp_reply_associative[${prev}]}" ]] && {
                     local re_prev_prev="(^| )${COMP_WORDS[(( COMP_CWORD - 2 ))]}($| )";
                     local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";

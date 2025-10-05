@@ -1518,11 +1518,64 @@ pub fn VisitExpr(
                     // Check if this is the Worker symbol we declared
                     if (target_ref.eql(p.worker_ref)) {
                         const args = e_.args.slice();
-                        // Check if first argument is a string literal
-                        if (args.len > 0 and args[0].data == .e_string) {
-                            // Convert to e_new_worker
-                            const worker_string = args[0].data.e_string.slice(p.allocator);
-                            const import_record_index = p.addImportRecord(.worker, args[0].loc, worker_string);
+
+                        // Try to extract worker path from first argument
+                        var worker_path_string: ?[]const u8 = null;
+                        var worker_path_loc: logger.Loc = undefined;
+
+                        if (args.len > 0) {
+                            // Check if first argument is a string literal
+                            if (args[0].data == .e_string) {
+                                worker_path_string = args[0].data.e_string.slice(p.allocator);
+                                worker_path_loc = args[0].loc;
+                            }
+                            // Check if first argument is new URL(string, import.meta.url)
+                            else if (args[0].data == .e_new) {
+                                const new_expr = args[0].data.e_new;
+                                // Check if it's new URL(...)
+                                if (new_expr.target.data == .e_identifier) {
+                                    const url_ref = new_expr.target.data.e_identifier.ref;
+                                    if (url_ref.innerIndex() < p.symbols.items.len) {
+                                        const url_symbol = &p.symbols.items[url_ref.innerIndex()];
+                                        // Check if this is the global URL constructor
+                                        if (bun.strings.eqlComptime(url_symbol.original_name, "URL") and
+                                            url_symbol.namespace_alias == null and
+                                            url_symbol.import_item_status == .none)
+                                        {
+                                            const url_args = new_expr.args.slice();
+                                            // Check for new URL(string_literal, import.meta.url)
+                                            if (url_args.len >= 2 and url_args[0].data == .e_string) {
+                                                // Check if second arg is import.meta.url
+                                                const is_import_meta_url = blk: {
+                                                    if (url_args[1].data != .e_dot) break :blk false;
+                                                    const dot = url_args[1].data.e_dot;
+                                                    if (!bun.strings.eqlComptime(dot.name, "url")) break :blk false;
+                                                    if (dot.target.data != .e_import_meta) break :blk false;
+                                                    break :blk true;
+                                                };
+
+                                                if (is_import_meta_url) {
+                                                    // Resolve the URL relative to current file
+                                                    const relative_path = url_args[0].data.e_string.slice(p.allocator);
+                                                    const current_file_dir = std.fs.path.dirname(p.source.path.text) orelse ".";
+                                                    const resolved = std.fs.path.resolve(p.allocator, &[_][]const u8{
+                                                        current_file_dir,
+                                                        relative_path,
+                                                    }) catch unreachable;
+
+                                                    worker_path_string = resolved;
+                                                    worker_path_loc = url_args[0].loc;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // If we got a worker path, create the e_new_worker expression
+                        if (worker_path_string) |worker_string| {
+                            const import_record_index = p.addImportRecord(.worker, worker_path_loc, worker_string);
 
                             // Create e_new_worker expression
                             return Expr.init(E.NewWorker, E.NewWorker{

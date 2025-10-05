@@ -276,7 +276,8 @@ pub fn load(
         }
 
         for (dynamic_import_entry_points) |id| {
-            bun.assert(this.code_splitting); // this should never be a thing without code splitting
+            // Workers must be separate entry points even without code splitting
+            // because they run in separate threads
 
             if (entry_point_kinds[id] != .none) {
                 // You could dynamic import a file that is already an entry point

@@ -347,7 +347,14 @@ pub const BundleV2 = struct {
                             v.additional_files_imported_by_css_and_inlined.set(import_record.source_index.get());
                         }
 
-                        v.visit(import_record.source_index, check_dynamic_imports and (import_record.kind == .dynamic or import_record.kind == .worker), check_dynamic_imports);
+                        // Workers must ALWAYS be separate entry points (they run in separate threads)
+                        // Dynamic imports only become entry points when code splitting is enabled
+                        if (import_record.kind == .worker) {
+                            // Workers always get treated as dynamic imports
+                            v.visit(import_record.source_index, true, true);
+                        } else {
+                            v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
+                        }
                     }
                 }
 

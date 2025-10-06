@@ -31,6 +31,13 @@ declare module "bun" {
       ? {}
       : import("node:stream/web").TextDecoderStream;
 
+    type LibEmptyOrNodeStreamWebCompressionStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").CompressionStream;
+    type LibEmptyOrNodeStreamWebDecompressionStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").DecompressionStream;
+
     type LibEmptyOrNodeReadableStream<T> = LibDomIsLoaded extends true
       ? {}
       : import("node:stream/web").ReadableStream<T>;
@@ -1708,6 +1715,18 @@ interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEn
 declare var TextEncoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoderStream",
   { prototype: TextEncoderStream; new (): TextEncoderStream }
+>;
+
+interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "CompressionStream",
+  { prototype: CompressionStream; new (format: "deflate" | "deflate-raw" | "gzip"): CompressionStream }
+>;
+
+interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebDecompressionStream {}
+declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "DecompressionStream",
+  { prototype: DecompressionStream; new (format: "deflate" | "deflate-raw" | "gzip"): DecompressionStream }
 >;
 
 interface URLSearchParams {}

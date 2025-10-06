@@ -350,8 +350,17 @@ pub const BundleV2 = struct {
                         // Workers must ALWAYS be separate entry points (they run in separate threads)
                         // Dynamic imports only become entry points when code splitting is enabled
                         if (import_record.kind == .worker) {
-                            // Workers always get treated as dynamic imports
-                            v.visit(import_record.source_index, true, true);
+                            // Mark the worker itself as an entry point, but traverse its graph
+                            // with the original check_dynamic_imports setting so that dynamic
+                            // imports inside the worker don't incorrectly become entry points
+                            if (comptime check_dynamic_imports) {
+                                v.visit(import_record.source_index, true, true);
+                            } else {
+                                // When code splitting is off, still mark worker as entry point
+                                // but don't force dynamic imports in the worker subgraph
+                                v.dynamic_import_entry_points.put(import_record.source_index.get(), {}) catch unreachable;
+                                v.visit(import_record.source_index, false, false);
+                            }
                         } else {
                             v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
                         }

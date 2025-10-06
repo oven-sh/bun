@@ -101,6 +101,9 @@ test("describe/test", async () => {
     (fail) done parameter > done combined with promise error conditions > promise errors only
     (pass) done parameter > second call of done callback ignores triggers error
     (pass) microtasks and rejections are drained after the test callback is executed
+    (pass) after inside test > the test 1
+    (pass) after inside test > the test 2
+    (pass) beforeEach inside test fails
 
     2 tests skipped:
     (skip) LINE 67
@@ -128,13 +131,13 @@ test("describe/test", async () => {
     (fail) done parameter > done combined with promise error conditions > done errors only
     (fail) done parameter > done combined with promise error conditions > promise errors only
 
-     29 pass
+     32 pass
      2 skip
      2 todo
      10 fail
      1 error
-     1 snapshots, 9 expect() calls
-    Ran 43 tests across 1 file."
+     2 snapshots, 10 expect() calls
+    Ran 46 tests across 1 file."
     ,
       "stdout": 
     "bun test <version> (<revision>)
@@ -199,7 +202,16 @@ test("describe/test", async () => {
     afterEach1
     afterEach2
     afterAll1
-    afterAll2"
+    afterAll2
+    after-inside-test: the test 1
+    after-inside-test: afterAll1
+    after-inside-test: afterEach1
+    after-inside-test: afterEach3
+    after-inside-test: the test 2
+    after-inside-test: afterAll2
+    after-inside-test: afterEach2
+    after-inside-test: afterEach3
+    after-inside-test: afterAll3"
     ,
     }
   `);
@@ -222,4 +234,35 @@ test("cross-file safety", async () => {
   const stderr = await result.stderr.text();
   expect(stderr).toInclude("Snapshot matchers cannot be used outside of a test");
   expect(exitCode).toBe(1);
+});
+
+test("multi-file", async () => {
+  const result = await Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      import.meta.dir + "/scheduling/multi-file/test1.fixture.ts",
+      import.meta.dir + "/scheduling/multi-file/test2.fixture.ts",
+      "--preload",
+      import.meta.dir + "/scheduling/multi-file/preload.ts",
+    ],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+  expect(exitCode).toBe(0);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    preload: before first file
+    preload: beforeEach
+    test1
+    preload: afterEach
+    preload: beforeEach
+    test2
+    preload: afterEach
+    preload: after last file"
+  `);
 });

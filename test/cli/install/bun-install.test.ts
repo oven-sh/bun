@@ -4795,7 +4795,7 @@ it("should fail on invalid Git URL", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain('error: "git clone" for "uglify" failed');
+  expect(err.split(/\r?\n/)).toContain("error: InstallFailed cloning repository for uglify");
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);

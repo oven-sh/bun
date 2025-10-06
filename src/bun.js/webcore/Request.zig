@@ -153,7 +153,7 @@ pub fn getFormDataEncoding(this: *Request) bun.JSError!?*bun.FormData.AsyncFormD
     return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding);
 }
 
-pub fn estimatedSize(this: *Request) callconv(.C) usize {
+pub fn estimatedSize(this: *Request) callconv(bun.jsc.conv) usize {
     return this.reported_estimated_size;
 }
 
@@ -176,6 +176,16 @@ pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
 pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
     return js.toJSUnchecked(globalObject, this);
+}
+
+extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) callconv(jsc.conv) jsc.JSValue;
+pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject) bun.JSError!JSValue {
+    return bun.jsc.fromJSHostCall(
+        globalObject,
+        @src(),
+        Bun__JSRequest__createForBake,
+        .{ globalObject, this },
+    );
 }
 
 extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;

@@ -431,6 +431,27 @@ pub const StandaloneModuleGraph = struct {
                 }
             };
 
+            if (comptime bun.Environment.is_canary or bun.Environment.isDebug) {
+                if (bun.getenvZ("BUN_FEATURE_FLAG_DUMP_CODE")) |dump_code_dir| {
+                    const buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(buf);
+                    const dest_z = bun.path.joinAbsStringBufZ(dump_code_dir, buf, &.{dest_path}, .auto);
+
+                    // Scoped block to handle dump failures without skipping module emission
+                    dump: {
+                        const file = bun.sys.File.makeOpen(dest_z, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664).unwrap() catch |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open {s}: {s}", .{ dest_path, @errorName(err) });
+                            break :dump;
+                        };
+                        defer file.close();
+                        file.writeAll(output_file.value.buffer.bytes).unwrap() catch |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write {s}: {s}", .{ dest_path, @errorName(err) });
+                            break :dump;
+                        };
+                    }
+                }
+            }
+
             var module = CompiledModuleGraphFile{
                 .name = string_builder.fmtAppendCountZ("{s}{s}", .{
                     prefix,

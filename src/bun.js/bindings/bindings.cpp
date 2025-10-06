@@ -3410,8 +3410,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result)));
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject,
-    JSC::EncodedJSValue JSValue2)
+[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue2)
 {
     JSValue value = JSC::JSValue::decode(JSValue2);
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "Promise.reject cannot be called with a empty JSValue");
@@ -3428,8 +3427,8 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
 
     arg0->reject(globalObject, exception);
 }
-[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1,
-    JSC::EncodedJSValue JSValue2)
+
+[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
@@ -3442,8 +3441,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::
     return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1,
-    JSC::EncodedJSValue JSValue2)
+[[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     JSValue target = JSValue::decode(JSValue2);
 
@@ -3457,8 +3455,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::resolve
-void JSC__JSPromise__resolveOnNextTick(JSC::JSPromise* promise, JSC::JSGlobalObject* lexicalGlobalObject,
-    JSC::EncodedJSValue encoedValue)
+void JSC__JSPromise__resolveOnNextTick(JSC::JSPromise* promise, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue encoedValue)
 {
     return JSC__JSPromise__resolve(promise, lexicalGlobalObject, encoedValue);
 }
@@ -3585,8 +3582,8 @@ JSC::JSInternalPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* glob
     return JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
 }
 
-void JSC__JSInternalPromise__reject(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* globalObject,
-    JSC::EncodedJSValue JSValue2)
+[[ZIG_EXPORT(check_slow)]]
+void JSC__JSInternalPromise__reject(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue2)
 {
     JSValue value = JSC::JSValue::decode(JSValue2);
     auto& vm = JSC::getVM(globalObject);
@@ -3618,8 +3615,8 @@ JSC::JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObj
         JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
 
-void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1,
-    JSC::EncodedJSValue JSValue2)
+[[ZIG_EXPORT(check_slow)]]
+void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
@@ -5524,6 +5521,18 @@ bool JSC__VM__executionForbidden(JSC::VM* arg0)
 bool JSC__VM__isEntered(JSC::VM* arg0)
 {
     return (*arg0).isEntered();
+}
+
+[[ZIG_EXPORT(nothrow)]]
+bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
+{
+    return vm->isTerminationException(exception);
+}
+
+[[ZIG_EXPORT(nothrow)]]
+bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
+{
+    return vm->hasTerminationRequest() || vm->hasExceptionsAfterHandlingTraps();
 }
 
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)

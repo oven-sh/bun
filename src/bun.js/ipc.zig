@@ -206,6 +206,10 @@ const json = struct {
                     globalThis.clearException();
                     return IPCDecodeError.InvalidFormat;
                 },
+                error.JSTerminated => {
+                    globalThis.clearException();
+                    return IPCDecodeError.InvalidFormat;
+                },
                 error.OutOfMemory => return bun.outOfMemory(),
             };
 
@@ -546,14 +550,14 @@ pub const SendQueue = struct {
         jsc.VirtualMachine.get().enqueueTask(this.close_next_tick.?);
     }
 
-    fn _closeSocketTask(this: *SendQueue) void {
+    fn _closeSocketTask(this: *SendQueue) bun.JSError!void {
         log("SendQueue#closeSocketTask", .{});
         bun.assert(this.close_next_tick != null);
         this.close_next_tick = null;
         this.closeSocket(.normal, .user);
     }
 
-    fn _onAfterIPCClosed(this: *SendQueue) void {
+    fn _onAfterIPCClosed(this: *SendQueue) bun.JSError!void {
         log("SendQueue#_onAfterIPCClosed", .{});
         if (this.close_event_sent) return;
         this.close_event_sent = true;
@@ -1138,7 +1142,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                     log("hit NotEnoughBytes", .{});
                     return;
                 },
-                error.InvalidFormat, error.JSError => {
+                error.InvalidFormat, error.JSError, error.JSTerminated => {
                     send_queue.closeSocket(.failure, .user);
                     return;
                 },
@@ -1171,7 +1175,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 log("hit NotEnoughBytes2", .{});
                 return;
             },
-            error.InvalidFormat, error.JSError => {
+            error.InvalidFormat, error.JSError, error.JSTerminated => {
                 send_queue.closeSocket(.failure, .user);
                 return;
             },

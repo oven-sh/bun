@@ -61,7 +61,7 @@ pub const CopyFile = struct {
         bun.destroy(this);
     }
 
-    pub fn reject(this: *CopyFile, promise: *jsc.JSPromise) void {
+    pub fn reject(this: *CopyFile, promise: *jsc.JSPromise) bun.JSTerminated!void {
         const globalThis = this.globalThis;
         var system_error: SystemError = this.system_error orelse SystemError{ .message = .empty };
         if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
@@ -76,18 +76,18 @@ pub const CopyFile = struct {
         if (this.store) |store| {
             store.deref();
         }
-        promise.reject(globalThis, instance);
+        try promise.reject(globalThis, instance);
     }
 
-    pub fn then(this: *CopyFile, promise: *jsc.JSPromise) void {
+    pub fn then(this: *CopyFile, promise: *jsc.JSPromise) bun.JSTerminated!void {
         this.source_store.?.deref();
 
         if (this.system_error != null) {
-            this.reject(promise);
+            try this.reject(promise);
             return;
         }
 
-        promise.resolve(this.globalThis, jsc.JSValue.jsNumberFromUint64(this.read_len));
+        try promise.resolve(this.globalThis, .jsNumberFromUint64(this.read_len));
     }
 
     pub fn run(this: *CopyFile) void {
@@ -994,7 +994,7 @@ pub const CopyFileWindows = struct {
         this.event_loop.refConcurrently();
     }
 
-    pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
+    pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) bun.JSTerminated!void {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
         const err_instance = err.toJS(globalThis);
@@ -1003,7 +1003,7 @@ pub const CopyFileWindows = struct {
         event_loop.enter();
         defer event_loop.exit();
         this.deinit();
-        promise.reject(globalThis, err_instance);
+        try promise.reject(globalThis, err_instance);
     }
 
     fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
@@ -1044,7 +1044,7 @@ pub const CopyFileWindows = struct {
         this.onComplete(req.statbuf.size);
     }
 
-    pub fn onComplete(this: *CopyFileWindows, written_actual: usize) void {
+    pub fn onComplete(this: *CopyFileWindows, written_actual: usize) bun.JSTerminated!void {
         var written = written_actual;
         if (written != @as(@TypeOf(written), @intCast(this.size)) and this.size != Blob.max_size) {
             this.truncate();
@@ -1057,7 +1057,7 @@ pub const CopyFileWindows = struct {
         defer event_loop.exit();
 
         this.deinit();
-        promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written));
+        try promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written));
     }
 
     fn truncate(this: *CopyFileWindows) void {

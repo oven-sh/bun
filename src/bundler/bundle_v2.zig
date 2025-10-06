@@ -2071,7 +2071,7 @@ pub const BundleV2 = struct {
             return value != .js_undefined;
         }
 
-        fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) void {
+        fn toJSError(this: *JSBundleCompletionTask, promise: *jsc.JSPromise, globalThis: *jsc.JSGlobalObject) bun.JSTerminated!void {
             const throw_on_error = this.config.throw_on_error;
 
             const build_result = jsc.JSValue.createEmptyObject(globalThis, 3);
@@ -2094,14 +2094,12 @@ pub const BundleV2 = struct {
                     const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, aggregate_error) catch |err| {
                         const exception = globalThis.takeException(err);
-                        promise.reject(globalThis, exception);
-                        return;
+                        return promise.reject(globalThis, exception);
                     };
                 } else {
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, .js_undefined) catch |err| {
                         const exception = globalThis.takeException(err);
-                        promise.reject(globalThis, exception);
-                        return;
+                        return promise.reject(globalThis, exception);
                     };
                 }
             } else false;
@@ -2109,14 +2107,14 @@ pub const BundleV2 = struct {
             if (!didHandleCallbacks) {
                 if (throw_on_error) {
                     const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
-                    promise.reject(globalThis, aggregate_error);
+                    return promise.reject(globalThis, aggregate_error);
                 } else {
-                    promise.resolve(globalThis, build_result);
+                    return promise.resolve(globalThis, build_result);
                 }
             }
         }
 
-        pub fn onComplete(this: *JSBundleCompletionTask) void {
+        pub fn onComplete(this: *JSBundleCompletionTask) bun.JSTerminated!void {
             var globalThis = this.globalThis;
             defer this.deref();
 
@@ -2148,7 +2146,7 @@ pub const BundleV2 = struct {
 
             switch (this.result) {
                 .pending => unreachable,
-                .err => this.toJSError(promise, globalThis),
+                .err => try this.toJSError(promise, globalThis),
                 .value => |*build| {
                     const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
                     const output_files = build.output_files.items;
@@ -2198,7 +2196,9 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch return; // TODO: properly propagate exception upwards
+                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result) catch |err| {
+                            return promise.reject(globalThis, err);
+                        };
                     }
 
                     build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
@@ -2213,12 +2213,11 @@ pub const BundleV2 = struct {
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
                         const exception = globalThis.takeException(err);
-                        promise.reject(globalThis, exception);
-                        return;
+                        return promise.reject(globalThis, exception);
                     } else false;
 
                     if (!didHandleCallbacks) {
-                        promise.resolve(globalThis, build_output);
+                        return promise.resolve(globalThis, build_output);
                     }
                 },
             }

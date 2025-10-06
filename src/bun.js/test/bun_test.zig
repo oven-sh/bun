@@ -493,7 +493,7 @@ pub const BunTest = struct {
         globalThis: *jsc.JSGlobalObject,
         phase: RefDataValue,
 
-        pub fn call(this: *RunTestsTask) void {
+        pub fn call(this: *RunTestsTask) bun.JSError!void {
             defer bun.destroy(this);
             defer this.weak.deinit();
             var strong = this.weak.upgrade() orelse return;
@@ -671,7 +671,7 @@ pub const BunTest = struct {
                     .pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
-                        result.then(globalThis, this_ref, bunTestThen, bunTestCatch);
+                        result.then(globalThis, this_ref, bunTestThen, bunTestCatch) catch {}; // TODO: properly propagate exception upwards
                         return null;
                     },
                     .fulfilled => {

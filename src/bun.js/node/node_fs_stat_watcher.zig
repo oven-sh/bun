@@ -377,23 +377,23 @@ pub const StatWatcher = struct {
         }
     };
 
-    pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
+    pub fn initialStatSuccessOnMainThread(this: *StatWatcher) bun.JSError!void {
         if (this.closed) {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const jsvalue = try statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         this.scheduler.data.append(this);
     }
 
-    pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
+    pub fn initialStatErrorOnMainThread(this: *StatWatcher) bun.JSError!void {
         if (this.closed) {
             return;
         }
 
-        const jsvalue = statToJSStats(this.globalThis, &this.last_stat, this.bigint) catch return; // TODO: properly propagate exception upwards
+        const jsvalue = try statToJSStats(this.globalThis, &this.last_stat, this.bigint);
         this.last_jsvalue = .create(jsvalue, this.globalThis);
 
         _ = js.listenerGetCached(this.js_this).?.call(

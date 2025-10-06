@@ -96,12 +96,12 @@ pub const WriteFile = struct {
         bytes_blob: Blob,
         comptime Context: type,
         context: Context,
-        comptime callback: fn (ctx: Context, bytes: WriteFileResultType) void,
+        comptime callback: fn (ctx: Context, bytes: WriteFileResultType) bun.JSTerminated!void,
         mkdirp_if_not_exists: bool,
     ) !*WriteFile {
         const Handler = struct {
             pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) void {
-                callback(bun.cast(Context, ptr), bytes);
+                callback(bun.cast(Context, ptr), bytes) catch {}; // TODO: properly propagate exception upwards
             }
         };
 
@@ -638,7 +638,7 @@ pub const WriteFileWindows = struct {
 pub const WriteFilePromise = struct {
     promise: JSPromise.Strong = .{},
     globalThis: *JSGlobalObject,
-    pub fn run(handler: *@This(), count: WriteFileResultType) void {
+    pub fn run(handler: *@This(), count: WriteFileResultType) bun.JSTerminated!void {
         var promise = handler.promise.swap();
         const globalThis = handler.globalThis;
         bun.destroy(handler);
@@ -646,10 +646,10 @@ pub const WriteFilePromise = struct {
         value.ensureStillAlive();
         switch (count) {
             .err => |err| {
-                promise.reject(globalThis, err.toErrorInstance(globalThis));
+                try promise.reject(globalThis, err.toErrorInstance(globalThis));
             },
             .result => |wrote| {
-                promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(wrote));
+                try promise.resolve(globalThis, .jsNumberFromUint64(wrote));
             },
         }
     }
@@ -662,10 +662,10 @@ pub const WriteFileWaitFromLockedValueTask = struct {
     mkdirp_if_not_exists: bool = false,
 
     pub fn thenWrap(this: *anyopaque, value: *Body.Value) void {
-        then(bun.cast(*WriteFileWaitFromLockedValueTask, this), value);
+        then(bun.cast(*WriteFileWaitFromLockedValueTask, this), value) catch {}; // TODO: properly propagate exception upwards
     }
 
-    pub fn then(this: *WriteFileWaitFromLockedValueTask, value: *Body.Value) void {
+    pub fn then(this: *WriteFileWaitFromLockedValueTask, value: *Body.Value) bun.JSTerminated!void {
         var promise = this.promise.get();
         var globalThis = this.globalThis;
         var file_blob = this.file_blob;
@@ -675,14 +675,14 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                promise.reject(globalThis, err_ref.toJS(globalThis));
+                try promise.reject(globalThis, err_ref.toJS(globalThis));
             },
             .Used => {
                 file_blob.detach();
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
+                try promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
             },
             .WTFStringImpl,
             .InternalBlob,
@@ -696,22 +696,23 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                     file_blob.detach();
                     this.promise.deinit();
                     bun.destroy(this);
-                    promise.reject(globalThis, err);
+                    try promise.reject(globalThis, err);
                     return;
                 };
+
+                defer bun.destroy(this);
+                defer this.promise.deinit();
+                defer file_blob.detach();
+
                 if (new_promise.asAnyPromise()) |p| {
                     switch (p.unwrap(globalThis.vm(), .mark_handled)) {
                         // Fulfill the new promise using the pending promise
-                        .pending => promise.resolve(globalThis, new_promise),
+                        .pending => try promise.resolve(globalThis, new_promise),
 
-                        .rejected => |err| promise.reject(globalThis, err),
-                        .fulfilled => |result| promise.resolve(globalThis, result),
+                        .rejected => |err| try promise.reject(globalThis, err),
+                        .fulfilled => |result| try promise.resolve(globalThis, result),
                     }
                 }
-
-                file_blob.detach();
-                this.promise.deinit();
-                bun.destroy(this);
             },
             .Locked => {
                 value.Locked.onReceiveValue = thenWrap;

@@ -116,7 +116,7 @@ pub export fn Bun__handleHandledPromise(global: *JSGlobalObject, promise: *jsc.J
     const Context = struct {
         globalThis: *jsc.JSGlobalObject,
         promise: jsc.JSValue,
-        pub fn callback(context: *@This()) void {
+        pub fn callback(context: *@This()) bun.JSError!void {
             _ = context.globalThis.bunVM().handledPromise(context.globalThis, context.promise);
             context.promise.unprotect();
             bun.default_allocator.destroy(context);

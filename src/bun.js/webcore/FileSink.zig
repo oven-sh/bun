@@ -714,7 +714,7 @@ pub fn assignToStream(this: *FileSink, stream: *jsc.WebCore.ReadableStream, glob
                 .pending => {
                     this.writer.enableKeepingProcessAlive(this.event_loop_handle);
                     this.ref();
-                    promise_result.then(globalThis, this, onResolveStream, onRejectStream);
+                    promise_result.then(globalThis, this, onResolveStream, onRejectStream) catch {}; // TODO: properly propagate exception upwards
                 },
                 .fulfilled => {
                     // These don't ref().

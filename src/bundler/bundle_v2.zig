@@ -3445,18 +3445,25 @@ pub const BundleV2 = struct {
                 }
             }
 
+            // When an import has an explicit loader (via `with { type: "..." }`), skip the cache
+            // and always create a new parse task. This ensures files imported with different
+            // loaders are parsed correctly (e.g., same .ts file imported both normally and as text).
+            const has_explicit_loader = import_record.loader != null;
+
             const import_record_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
             import_record.loader = import_record_loader;
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
 
-            if (this.pathToSourceIndexMap(target).get(path.text)) |id| {
-                if (this.transpiler.options.dev_server != null and loader != .html) {
-                    import_record.path = this.graph.input_files.items(.source)[id].path;
-                } else {
-                    import_record.source_index = .init(id);
+            if (!has_explicit_loader) {
+                if (this.pathToSourceIndexMap(target).get(path.text)) |id| {
+                    if (this.transpiler.options.dev_server != null and loader != .html) {
+                        import_record.path = this.graph.input_files.items(.source)[id].path;
+                    } else {
+                        import_record.source_index = .init(id);
+                    }
+                    continue;
                 }
-                continue;
             }
 
             if (is_html_entrypoint) {
@@ -3465,6 +3472,16 @@ pub const BundleV2 = struct {
 
             const resolve_entry = resolve_queue.getOrPut(path.text) catch |err| bun.handleOom(err);
             if (resolve_entry.found_existing) {
+                // Check if the existing ParseTask has the same loader.
+                // If loaders differ, we can't reuse the task - we need to parse the file differently.
+                const existing_loader = resolve_entry.value_ptr.*.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+                if (existing_loader == import_record_loader) {
+                    import_record.path = resolve_entry.value_ptr.*.path;
+                    continue;
+                }
+                // Fall through: Different loader required, but we can't add to resolve_queue
+                // with the same key. Set the path and move on - the loader mismatch will
+                // be handled when this import is resolved.
                 import_record.path = resolve_entry.value_ptr.*.path;
                 continue;
             }

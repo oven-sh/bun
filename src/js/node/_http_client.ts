@@ -55,6 +55,123 @@ const fetch = Bun.fetch;
 
 const { URL } = globalThis;
 
+// Separate class for ReadableStream underlying source to avoid GC keeping ClientRequest alive
+class DirectStreamSource {
+  constructor(bodyChunks, emitDrain, getFinished, handleResponse) {
+    this.bodyChunks = bodyChunks;
+    this.emitDrain = emitDrain;
+    this.getFinished = getFinished;
+    this.handleResponse = handleResponse;
+    this.pulling = false;
+    this.pullAgain = false;
+    this.controller = null;
+    this.resolveNextChunk = null;
+    this.pendingWrites = [];
+  }
+
+  notifyChunk(end) {
+    if (this.resolveNextChunk) {
+      this.resolveNextChunk(end);
+      this.resolveNextChunk = null;
+    }
+  }
+
+  async pull(controller) {
+    this.controller = controller;
+
+    // If already pulling, mark that we need to pull again
+    if (this.pulling) {
+      this.pullAgain = true;
+      return;
+    }
+
+    this.pulling = true;
+
+    try {
+      do {
+        this.pullAgain = false;
+
+        // Write any queued chunks
+        while (this.bodyChunks.length > 0) {
+          const chunk = this.bodyChunks.shift();
+          const result = controller.write(chunk);
+
+          // If write returns a promise, it means there's backpressure
+          if (result instanceof Promise) {
+            await result;
+          }
+
+          // Check if stream finished while awaiting write
+          if (this.getFinished()) {
+            controller.close();
+            this.handleResponse?.();
+            return;
+          }
+        }
+
+        if (this.bodyChunks.length === 0) {
+          this.emitDrain();
+        }
+
+        // If stream is finished, close it
+        if (this.getFinished()) {
+          controller.close();
+          this.handleResponse?.();
+          return;
+        }
+
+        // If no more chunks and not finished, wait for next chunk
+        if (this.bodyChunks.length === 0 && !this.pullAgain) {
+          const chunk = await new Promise(resolve => {
+            this.resolveNextChunk = end => {
+              this.resolveNextChunk = null;
+              if (end) {
+                resolve(undefined);
+              } else {
+                resolve(this.bodyChunks.shift());
+              }
+            };
+          });
+
+          if (chunk === undefined) {
+            // Stream is finished
+            controller.close();
+            this.handleResponse?.();
+            return;
+          }
+
+          const result = controller.write(chunk);
+
+          // Handle backpressure
+          if (result instanceof Promise) {
+            await result;
+          }
+
+          // Check if stream finished while awaiting write
+          if (this.getFinished()) {
+            controller.close();
+            this.handleResponse?.();
+            return;
+          }
+
+          if (this.bodyChunks.length === 0) {
+            this.emitDrain();
+          }
+        }
+      } while (this.pullAgain);
+    } finally {
+      this.pulling = false;
+    }
+  }
+
+  // Check if there's backpressure and return a promise if so
+  checkBackpressure() {
+    if (!this.controller) return null;
+    const result = this.controller.flush();
+    return result instanceof Promise ? result : null;
+  }
+}
+
 // Primordials
 const ObjectAssign = Object.assign;
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -89,28 +206,25 @@ function ClientRequest(input, options, cb) {
   };
 
   let writeCount = 0;
-  let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
+  let streamSource = null;
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
     if (writeCount > 1) {
       startFetch();
     }
-    resolveNextChunk?.(false);
+    streamSource?.notifyChunk(false);
   };
 
   const write_ = (chunk, encoding, callback) => {
-    const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
     const canSkipReEncodingData =
       // UTF-8 string:
       (typeof chunk === "string" && (encoding === "utf-8" || encoding === "utf8" || !encoding)) ||
       // Buffer
       ($isTypedArrayView(chunk) && (!encoding || encoding === "buffer" || encoding === "utf-8"));
-    let bodySize = 0;
     if (!canSkipReEncodingData) {
       chunk = Buffer.from(chunk, encoding);
     }
-    bodySize = chunk.length;
     writeCount++;
 
     if (!this[kBodyChunks]) {
@@ -121,20 +235,21 @@ function ClientRequest(input, options, cb) {
       return true;
     }
 
-    // Signal fake backpressure if the body size is > 1024 * 1024
-    // So that code which loops forever until backpressure is signaled
-    // will eventually exit.
-
-    for (let chunk of this[kBodyChunks]) {
-      bodySize += chunk.length;
-      if (bodySize >= MAX_FAKE_BACKPRESSURE_SIZE) {
-        break;
-      }
-    }
     pushChunk(chunk);
 
+    // Check for backpressure from the stream controller
+    const backpressurePromise = streamSource?.checkBackpressure();
+    if (backpressurePromise) {
+      // There's backpressure, call callback when it resolves
+      if (callback) {
+        backpressurePromise.then(() => callback());
+      }
+      return false;
+    }
+
+    // No backpressure
     if (callback) callback();
-    return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
+    return true;
   };
 
   const oldEnd = this.end;
@@ -176,7 +291,7 @@ function ClientRequest(input, options, cb) {
 
     if (!this.finished) {
       send();
-      resolveNextChunk?.(true);
+      streamSource?.notifyChunk(true);
     }
 
     return this;
@@ -327,85 +442,17 @@ function ClientRequest(input, options, cb) {
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
         } else if (isDuplex) {
-          let pulling = false;
-          let pullAgain = false;
-          let streamController;
+          // Create DirectStreamSource to avoid GC keeping ClientRequest alive
+          streamSource = new DirectStreamSource(
+            self[kBodyChunks],
+            () => self.emit("drain"),
+            () => self.finished,
+            handleResponse,
+          );
 
           fetchOptions.body = new ReadableStream({
             type: "direct",
-            async pull(controller) {
-              streamController = controller;
-
-              // If already pulling, mark that we need to pull again
-              if (pulling) {
-                pullAgain = true;
-                return;
-              }
-
-              pulling = true;
-
-              try {
-                do {
-                  pullAgain = false;
-
-                  // Write any queued chunks
-                  while (self[kBodyChunks]?.length > 0) {
-                    const chunk = self[kBodyChunks].shift();
-                    const result = controller.write(chunk);
-
-                    // If write returns a promise, it means there's backpressure
-                    if (result instanceof Promise) {
-                      await result;
-                    }
-                  }
-
-                  if (self[kBodyChunks]?.length === 0) {
-                    self.emit("drain");
-                  }
-
-                  // If stream is finished, close it
-                  if (self.finished) {
-                    controller.close();
-                    handleResponse?.();
-                    return;
-                  }
-
-                  // If no more chunks and not finished, wait for next chunk
-                  if (self[kBodyChunks]?.length === 0 && !pullAgain) {
-                    const chunk = await new Promise(resolve => {
-                      resolveNextChunk = end => {
-                        resolveNextChunk = undefined;
-                        if (end) {
-                          resolve(undefined);
-                        } else {
-                          resolve(self[kBodyChunks].shift());
-                        }
-                      };
-                    });
-
-                    if (chunk === undefined) {
-                      // Stream is finished
-                      controller.close();
-                      handleResponse?.();
-                      return;
-                    }
-
-                    const result = controller.write(chunk);
-
-                    // Handle backpressure
-                    if (result instanceof Promise) {
-                      await result;
-                    }
-
-                    if (self[kBodyChunks]?.length === 0) {
-                      self.emit("drain");
-                    }
-                  }
-                } while (pullAgain);
-              } finally {
-                pulling = false;
-              }
-            },
+            pull: controller => streamSource.pull(controller),
           });
         }
       }

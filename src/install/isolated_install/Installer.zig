@@ -741,13 +741,23 @@ pub const Installer = struct {
                     const dependencies = lockfile.buffers.dependencies.items;
 
                     for (entry_dependencies[this.entry_id.get()].slice()) |dep| {
-                        const dep_name = dependencies[dep.dep_id].name;
+                        const dep_name = dependencies[dep.dep_id].name.slice(string_buf);
 
                         var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dest.deinit();
 
                         installer.appendStoreNodeModulesPath(&dest, this.entry_id);
-                        dest.append(dep_name.slice(string_buf));
+
+                        dest.append(dep_name);
+
+                        if (installer.entryStoreNodeModulesPackageName(dep_id, pkg_id, &pkg_res, pkg_names)) |entry_node_modules_name| {
+                            if (strings.eqlLong(dep_name, entry_node_modules_name, true)) {
+                                // nest the dependency in another node_modules if the name is the same as the entry name
+                                // in the store node_modules to avoid collision
+                                dest.append("node_modules");
+                                dest.append(dep_name);
+                            }
+                        }
 
                         var dep_store_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dep_store_path.deinit();
@@ -1283,6 +1293,8 @@ pub const Installer = struct {
                     } else {
                         buf.append(pkg_name.slice(string_buf));
                     }
+                } else {
+                    // append nothing. buf is already top_level_dir
                 }
             },
             .workspace => {
@@ -1305,6 +1317,38 @@ pub const Installer = struct {
                 buf.append(pkg_name.slice(string_buf));
             },
         }
+    }
+
+    /// The directory name for the entry store node_modules install
+    /// folder.
+    /// ./node_modules/.bun/jquery@3.7.1/node_modules/jquery
+    ///                                               ^ this one
+    /// Need to know this to avoid collisions with dependencies
+    /// with the same name as the package.
+    pub fn entryStoreNodeModulesPackageName(
+        this: *const Installer,
+        dep_id: DependencyID,
+        pkg_id: PackageID,
+        pkg_res: *const Resolution,
+        pkg_names: []const String,
+    ) ?[]const u8 {
+        const string_buf = this.lockfile.buffers.string_bytes.items;
+
+        return switch (pkg_res.tag) {
+            .root => {
+                if (dep_id != invalid_dependency_id) {
+                    const pkg_name = pkg_names[pkg_id];
+                    if (pkg_name.isEmpty()) {
+                        return std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir);
+                    }
+                    return pkg_name.slice(string_buf);
+                }
+                return null;
+            },
+            .workspace => null,
+            .symlink => null,
+            else => pkg_names[pkg_id].slice(string_buf),
+        };
     }
 };
 
@@ -1332,6 +1376,8 @@ const String = bun.Semver.String;
 
 const install = bun.install;
 const Bin = install.Bin;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;

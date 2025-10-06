@@ -54,6 +54,25 @@ test("basic", async () => {
   expect(err).not.toContain("Saved lockfile");
 });
 
+test("version is number with dot", async () => {
+  const { packageDir } = await verdaccio.createTestDir({
+    files: join(import.meta.dir, "pnpm/version-number-dot"),
+  });
+
+  let proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(err).toContain("pnpm-lock.yaml version is too old (< v7)");
+});
+
 describe.todo("bin", () => {
   test("manifests are fetched for bins", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({

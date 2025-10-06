@@ -313,7 +313,7 @@ test("jsonc", async () => {
       },
       "yaml": {
         "default": {
-          "// my json ": null,
+          "// my json": null,
           "key": "👩‍👧‍👧value",
         },
         "key": "👩‍👧‍👧value",

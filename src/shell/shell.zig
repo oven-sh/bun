@@ -17,7 +17,7 @@ pub const IOReader = Interpreter.IOReader;
 pub const Yield = @import("./Yield.zig").Yield;
 pub const unreachableState = interpret.unreachableState;
 
-const GlobWalker = Glob.GlobWalker_(null, true);
+const GlobWalker = bun.glob.GlobWalker(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
@@ -4429,7 +4429,6 @@ pub const TestingAPIs = struct {
 
 pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
 
-const Glob = @import("../glob.zig");
 const Syscall = @import("../sys.zig");
 const builtin = @import("builtin");
 

@@ -421,9 +421,14 @@ pub const Installer = struct {
                             };
                         },
 
-                        .folder => {
+                        .folder, .root => {
+                            const path = switch (pkg_res.tag) {
+                                .folder => pkg_res.value.folder.slice(string_buf),
+                                .root => ".",
+                                else => unreachable,
+                            };
                             // the folder does not exist in the cache. xdev is per folder dependency
-                            const folder_dir = switch (bun.openDirForIteration(FD.cwd(), pkg_res.value.folder.slice(string_buf))) {
+                            const folder_dir = switch (bun.openDirForIteration(FD.cwd(), path)) {
                                 .result => |fd| fd,
                                 .err => |err| return .failure(.{ .link_package = err }),
                             };
@@ -440,13 +445,15 @@ pub const Installer = struct {
 
                                     installer.appendStorePath(&dest, this.entry_id);
 
-                                    var hardlinker: Hardlinker = .{
-                                        .src_dir = folder_dir,
-                                        .src = src,
-                                        .dest = dest,
-                                    };
+                                    var hardlinker: Hardlinker = try .init(
+                                        folder_dir,
+                                        src,
+                                        dest,
+                                        &.{comptime bun.OSPathLiteral("node_modules")},
+                                    );
+                                    defer hardlinker.deinit();
 
-                                    switch (try hardlinker.link(&.{comptime bun.OSPathLiteral("node_modules")})) {
+                                    switch (try hardlinker.link()) {
                                         .result => {},
                                         .err => |err| {
                                             if (err.getErrno() == .XDEV) {
@@ -501,13 +508,15 @@ pub const Installer = struct {
                                     defer dest.deinit();
                                     installer.appendStorePath(&dest, this.entry_id);
 
-                                    var file_copier: FileCopier = .{
-                                        .src_dir = folder_dir,
-                                        .src_path = src_path,
-                                        .dest_subpath = dest,
-                                    };
+                                    var file_copier: FileCopier = try .init(
+                                        folder_dir,
+                                        src_path,
+                                        dest,
+                                        &.{comptime bun.OSPathLiteral("node_modules")},
+                                    );
+                                    defer file_copier.deinit();
 
-                                    switch (try file_copier.copy(&.{})) {
+                                    switch (try file_copier.copy()) {
                                         .result => {},
                                         .err => |err| {
                                             if (PackageManager.verbose_install) {
@@ -557,6 +566,18 @@ pub const Installer = struct {
                             if (comptime !Environment.isMac) {
                                 installer.supported_backend.store(.hardlink, .monotonic);
                                 continue :backend .hardlink;
+                            }
+
+                            if (installer.manager.options.log_level.isVerbose()) {
+                                bun.Output.prettyErrorln(
+                                    \\Cloning {} to {}
+                                ,
+                                    .{
+                                        bun.fmt.fmtOSPath(pkg_cache_dir_subpath.sliceZ(), .{ .path_sep = .auto }),
+                                        bun.fmt.fmtOSPath(dest_subpath.sliceZ(), .{ .path_sep = .auto }),
+                                    },
+                                );
+                                bun.Output.flush();
                             }
 
                             switch (sys.clonefileat(cache_dir, pkg_cache_dir_subpath.sliceZ(), FD.cwd(), dest_subpath.sliceZ())) {
@@ -613,13 +634,15 @@ pub const Installer = struct {
                             defer src.deinit();
                             src.appendJoin(pkg_cache_dir_subpath.slice());
 
-                            var hardlinker: Hardlinker = .{
-                                .src_dir = cached_package_dir.?,
-                                .src = src,
-                                .dest = dest_subpath,
-                            };
+                            var hardlinker: Hardlinker = try .init(
+                                cached_package_dir.?,
+                                src,
+                                dest_subpath,
+                                &.{},
+                            );
+                            defer hardlinker.deinit();
 
-                            switch (try hardlinker.link(&.{})) {
+                            switch (try hardlinker.link()) {
                                 .result => {},
                                 .err => |err| {
                                     if (err.getErrno() == .XDEV) {
@@ -678,13 +701,15 @@ pub const Installer = struct {
                             defer src_path.deinit();
                             src_path.append(pkg_cache_dir_subpath.slice());
 
-                            var file_copier: FileCopier = .{
-                                .src_dir = cached_package_dir.?,
-                                .src_path = src_path,
-                                .dest_subpath = dest_subpath,
-                            };
+                            var file_copier: FileCopier = try .init(
+                                cached_package_dir.?,
+                                src_path,
+                                dest_subpath,
+                                &.{},
+                            );
+                            defer file_copier.deinit();
 
-                            switch (try file_copier.copy(&.{})) {
+                            switch (try file_copier.copy()) {
                                 .result => {},
                                 .err => |err| {
                                     if (PackageManager.verbose_install) {
@@ -716,13 +741,23 @@ pub const Installer = struct {
                     const dependencies = lockfile.buffers.dependencies.items;
 
                     for (entry_dependencies[this.entry_id.get()].slice()) |dep| {
-                        const dep_name = dependencies[dep.dep_id].name;
+                        const dep_name = dependencies[dep.dep_id].name.slice(string_buf);
 
                         var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dest.deinit();
 
                         installer.appendStoreNodeModulesPath(&dest, this.entry_id);
-                        dest.append(dep_name.slice(string_buf));
+
+                        dest.append(dep_name);
+
+                        if (installer.entryStoreNodeModulesPackageName(dep_id, pkg_id, &pkg_res, pkg_names)) |entry_node_modules_name| {
+                            if (strings.eqlLong(dep_name, entry_node_modules_name, true)) {
+                                // nest the dependency in another node_modules if the name is the same as the entry name
+                                // in the store node_modules to avoid collision
+                                dest.append("node_modules");
+                                dest.append(dep_name);
+                            }
+                        }
 
                         var dep_store_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dep_store_path.deinit();
@@ -1231,6 +1266,7 @@ pub const Installer = struct {
 
         const nodes = this.store.nodes.slice();
         const node_pkg_ids = nodes.items(.pkg_id);
+        const node_dep_ids = nodes.items(.dep_id);
         // const node_peers = nodes.items(.peers);
 
         const pkgs = this.lockfile.packages.slice();
@@ -1240,10 +1276,27 @@ pub const Installer = struct {
         const node_id = entry_node_ids[entry_id.get()];
         // const peers = node_peers[node_id.get()];
         const pkg_id = node_pkg_ids[node_id.get()];
+        const dep_id = node_dep_ids[node_id.get()];
         const pkg_res = pkg_resolutions[pkg_id];
 
         switch (pkg_res.tag) {
-            .root => {},
+            .root => {
+                if (dep_id != invalid_dependency_id) {
+                    const pkg_name = pkg_names[pkg_id];
+                    buf.append("node_modules/" ++ Store.modules_dir_name);
+                    buf.appendFmt("{}", .{
+                        Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
+                    });
+                    buf.append("node_modules");
+                    if (pkg_name.isEmpty()) {
+                        buf.append(std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir));
+                    } else {
+                        buf.append(pkg_name.slice(string_buf));
+                    }
+                } else {
+                    // append nothing. buf is already top_level_dir
+                }
+            },
             .workspace => {
                 buf.append(pkg_res.value.workspace.slice(string_buf));
             },
@@ -1264,6 +1317,38 @@ pub const Installer = struct {
                 buf.append(pkg_name.slice(string_buf));
             },
         }
+    }
+
+    /// The directory name for the entry store node_modules install
+    /// folder.
+    /// ./node_modules/.bun/jquery@3.7.1/node_modules/jquery
+    ///                                               ^ this one
+    /// Need to know this to avoid collisions with dependencies
+    /// with the same name as the package.
+    pub fn entryStoreNodeModulesPackageName(
+        this: *const Installer,
+        dep_id: DependencyID,
+        pkg_id: PackageID,
+        pkg_res: *const Resolution,
+        pkg_names: []const String,
+    ) ?[]const u8 {
+        const string_buf = this.lockfile.buffers.string_bytes.items;
+
+        return switch (pkg_res.tag) {
+            .root => {
+                if (dep_id != invalid_dependency_id) {
+                    const pkg_name = pkg_names[pkg_id];
+                    if (pkg_name.isEmpty()) {
+                        return std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir);
+                    }
+                    return pkg_name.slice(string_buf);
+                }
+                return null;
+            },
+            .workspace => null,
+            .symlink => null,
+            else => pkg_names[pkg_id].slice(string_buf),
+        };
     }
 };
 
@@ -1291,6 +1376,8 @@ const String = bun.Semver.String;
 
 const install = bun.install;
 const Bin = install.Bin;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;

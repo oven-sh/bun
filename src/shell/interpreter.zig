@@ -67,7 +67,7 @@ pub const WorkPool = jsc.WorkPool;
 pub const Pipe = [2]bun.FileDescriptor;
 pub const SmolList = shell.SmolList;
 
-pub const GlobWalker = Glob.BunGlobWalkerZ;
+pub const GlobWalker = bun.glob.BunGlobWalkerZ;
 
 pub const stdin_no = 0;
 pub const stdout_no = 1;
@@ -1957,7 +1957,6 @@ pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
     return bun.Output.panic("Bun shell has reached an unreachable state \"{s}\" in the {s} context. This indicates a bug, please open a GitHub issue.", .{ state, context });
 }
 
-const Glob = @import("../glob.zig");
 const builtin = @import("builtin");
 const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
 

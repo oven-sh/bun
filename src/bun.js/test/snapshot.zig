@@ -53,7 +53,9 @@ pub const Snapshots = struct {
         return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
     }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
-        const bunTest = expect.bunTest() orelse return error.SnapshotFailed;
+        var buntest_strong = expect.bunTest() orelse return error.SnapshotFailed;
+        defer buntest_strong.deinit();
+        const bunTest = buntest_strong.get();
         switch (try this.getSnapshotFile(bunTest.file_id)) {
             .result => {},
             .err => |err| {
@@ -262,9 +264,17 @@ pub const Snapshots = struct {
             var last_byte: usize = 0;
             var last_line: c_ulong = 1;
             var last_col: c_ulong = 1;
+            var last_value: []const u8 = "";
             for (ils_info.items) |ils| {
                 if (ils.line == last_line and ils.col == last_col) {
-                    try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
+                    if (!bun.strings.eql(ils.value, last_value)) {
+                        const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+                        try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}", .{DiffFormatter{
+                            .received_string = ils.value,
+                            .expected_string = last_value,
+                            .globalThis = vm.global,
+                        }});
+                    }
                     continue;
                 }
 
@@ -279,6 +289,7 @@ pub const Snapshots = struct {
                 last_byte += byte_offset_add;
                 last_line = ils.line;
                 last_col = ils.col;
+                last_value = ils.value;
 
                 var next_start = last_byte;
                 inline_snapshot_dbg("-> Found byte {}", .{next_start});

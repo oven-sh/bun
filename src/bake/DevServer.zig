@@ -3231,7 +3231,9 @@ pub fn routeBundlePtr(dev: *DevServer, idx: RouteBundle.Index) *RouteBundle {
 
 /// Try to serve a worker bundle if the URL matches a known worker source
 /// Returns true if the request was handled, false otherwise
-fn tryServeWorker(dev: *DevServer, url: []const u8, resp: AnyResponse) bool {
+fn tryServeWorker(dev: *DevServer, req: *Request, resp: AnyResponse) bool {
+    const url = req.url();
+
     // Convert URL to absolute path
     // Workers are referenced with paths like "./worker.js" or "/worker.js"
     // We need to resolve these to absolute paths in the project
@@ -3269,7 +3271,7 @@ fn tryServeWorker(dev: *DevServer, url: []const u8, resp: AnyResponse) bool {
     // This is a worker! Ensure it's bundled and serve it
     var ctx = RequestEnsureRouteBundledCtx{
         .dev = dev,
-        .req = .{ .req = undefined }, // Not used for workers
+        .req = .{ .req = req },
         .resp = resp,
         .kind = .worker_bundle,
         .route_bundle_index = bundle_index,
@@ -3297,13 +3299,13 @@ fn tryServeWorker(dev: *DevServer, url: []const u8, resp: AnyResponse) bool {
 }
 
 fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
-    const url = req.url();
-
     // Check if this is a worker request
     // Workers are served directly from their source paths
-    if (dev.tryServeWorker(url, AnyResponse.init(resp))) {
+    if (dev.tryServeWorker(req, AnyResponse.init(resp))) {
         return;
     }
+
+    const url = req.url();
 
     var params: FrameworkRouter.MatchedParams = undefined;
     if (dev.router.matchSlow(url, &params)) |route_index| {

@@ -321,8 +321,9 @@ pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
 pub const api = struct {
+    // these are in sync with BunLoaderType in headers-handwritten.h
     pub const Loader = enum(u8) {
-        _none = 255,
+        _none = 254,
         jsx = 1,
         js = 2,
         ts = 3,

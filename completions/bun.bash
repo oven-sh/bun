@@ -40,29 +40,45 @@ _read_scripts_in_package_json() {
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
 
-    [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
+    [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{[[:space:]]*(.*)\} ]] && {
         local package_json_compreply;
-        local matched="${BASH_REMATCH[@]:1}";
+        local matched="${BASH_REMATCH[1]}";
         local scripts="${matched%\}*}";
-        readarray -td, scripts <<<"${scripts}";
-        for completion in "${scripts[@]}"; do
-            [[ "${completion}" =~ "\""(.*)"\""[[:space:]]*":"[[:space:]]*"\""(.*)"\"" ]] && {
-                package_json_compreply+=( "${BASH_REMATCH[1]//\\\\/\\\\\\\\}" );
-            }
+        local scripts_rem="${scripts}";
+        while [[ "${scripts_rem}" =~ ^"\""(([^\"\\]|\\.)+)"\""[[:space:]]*":"[[:space:]]*"\""(([^\"\\]|\\.)*)"\""[[:space:]]*(,[[:space:]]*|$) ]]; do
+            local script_name="${BASH_REMATCH[1]}";
+            package_json_compreply+=( "$script_name" );
+            case "$script_name" in
+                ( "$cur_word"* )
+                    COMPREPLY+=( "$script_name" );
+                ;;
+            esac
+            scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";
         done
-        COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }
 
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
     local re_prev_script="(^| )${prev}($| )";
-    [[
-        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
-            ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
-    ]] && {
-        local re_script=$(echo "${package_json_compreply[@]//\\\\\\\\/\\}" | sed 's/[^ ]*/(&)/g');
-        local sanitize_pat='[][\\\/.^\$*+?\{\}|]'
-        local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/${re_script//${sanitize_pat}/\\&}//");
-        COMPREPLY=( $(compgen -W "${new_reply}" -- "${cur_word}") );
+    [[ ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) ]] && {
+        declare -a new_reply;
+        for comp in "${COMPREPLY[@]}"; do
+            case " ${package_json_compreply[@]} " in
+                ( *[[:space:]]"$comp"[[:space:]]* )
+                    continue;
+                ;;
+                ( * )
+                    case "$comp" in
+                        ( "$cur_word"* )
+                            new_reply+=( "$comp" );
+                        ;;
+                    esac
+                ;;
+            esac
+        done
+        COMPREPLY=();
+        for comp in "${new_reply[@]}"; do
+            COMPREPLY+=( "$comp" );
+        done
         replaced_script="${prev}";
     }
 }
@@ -173,8 +189,11 @@ _bun_completions() {
             # the previous word is not part of the allowed completion
             # the previous word is not an argument to the last two option
             [[ -z "${cur_word}" ]] && {
-                declare -A comp_reply_associative="( $(echo "${COMPREPLY[@]}" | sed 's/[^ ]*/[&]=&/g') )";
-                [[ -z "${comp_reply_associative[${prev}]}" ]] && {
+                declare -A comp_reply_associative
+                    for comp in "${COMPREPLY[@]}"; do
+                        comp_reply_associative["$comp"]="$comp"
+                    done
+                [[ -z "${comp_reply_associative["${prev}"]}" ]] && {
                     local re_prev_prev="(^| )${COMP_WORDS[(( COMP_CWORD - 2 ))]}($| )";
                     local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
                     [[

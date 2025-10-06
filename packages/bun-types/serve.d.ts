@@ -371,7 +371,7 @@ declare module "bun" {
      * @param ws The websocket that sent the message
      * @param message The message received
      */
-    message(ws: ServerWebSocket<T>, message: string | Buffer): void | Promise<void>;
+    message(ws: ServerWebSocket<T>, message: string | Buffer<ArrayBuffer>): void | Promise<void>;
 
     /**
      * Called when a connection is opened.
@@ -534,16 +534,6 @@ declare module "bun" {
     type Handler<Req extends Request, S, Res> = (request: Req, server: S) => MaybePromise<Res>;
 
     type BaseRouteValue = Response | false | HTMLBundle | BunFile;
-
-    type Without<A, B> = A & {
-      [Key in Exclude<keyof B, keyof A>]?: never;
-    };
-
-    type XOR<A, B> = Without<A, B> | Without<B, A>;
-
-    type Prettier<T> = {
-      [Key in keyof T]: T[Key];
-    } & {};
 
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:
@@ -786,15 +776,17 @@ declare module "bun" {
      * } satisfies Bun.Serve.Options<{ name: string }>;
      * ```
      */
-    type Options<WebSocketData, R extends string = never> = XOR<
+    type Options<WebSocketData, R extends string = never> = Bun.__internal.XOR<
       HostnamePortServeOptions<WebSocketData>,
       UnixServeOptions<WebSocketData>
     > &
-      XOR<FetchOrRoutes<WebSocketData, R>, FetchOrRoutesWithWebSocket<WebSocketData, R>>;
+      Bun.__internal.XOR<FetchOrRoutes<WebSocketData, R>, FetchOrRoutesWithWebSocket<WebSocketData, R>>;
   }
 
   interface BunRequest<T extends string = string> extends Request {
-    readonly params: Serve.ExtractRouteParams<T>;
+    readonly params: {
+      [Key in keyof Serve.ExtractRouteParams<T>]: Serve.ExtractRouteParams<T>[Key];
+    } & {};
     readonly cookies: CookieMap;
     clone(): BunRequest<T>;
   }
@@ -1274,7 +1266,7 @@ declare module "bun" {
    * });
    * ```
    */
-  function serve<WebSocketData = undefined, R extends string = never>(
+  function serve<WebSocketData = undefined, R extends string = string>(
     options: Serve.Options<WebSocketData, R>,
   ): Server<WebSocketData>;
 }

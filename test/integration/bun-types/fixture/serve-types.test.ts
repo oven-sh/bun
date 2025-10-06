@@ -20,7 +20,7 @@ export default {
       expectType(ws.data).is<{ name: string }>();
     },
   },
-} satisfies Bun.Serve.Options<{ name: string }>;
+} satisfies Bun.ServeOptions<{ name: string }>;
 
 function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) => T): asserts value is T {
   expect(value).toBeInstanceOf(constructor);
@@ -117,6 +117,7 @@ test("basic + websocket + upgrade", {
     message(ws, message) {
       expectType<typeof ws>().is<Bun.ServerWebSocket<undefined>>();
       ws.send(message);
+      expectType(message).is<string | Buffer<ArrayBuffer>>();
     },
   },
 
@@ -175,7 +176,7 @@ test("basic + websocket + upgrade + all handlers", {
     },
 
     message(ws, message) {
-      expectType(message).is<string | Buffer<ArrayBufferLike>>();
+      expectType(message).is<string | Buffer<ArrayBuffer>>();
       ws.publish("the-group-chat", `${ws.data.name}: ${message.toString()}`);
     },
 

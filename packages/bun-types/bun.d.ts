@@ -18,7 +18,7 @@ declare module "bun" {
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     | NodeJS.TypedArray<TArrayBuffer>
     | DataView<TArrayBuffer>;
-  type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
+  type BufferSource = NodeJS.TypedArray<ArrayBufferLike> | DataView<ArrayBufferLike> | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
   type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
@@ -90,6 +90,12 @@ declare module "bun" {
       };
     type Merge<A, B> = MergeInner<A, B> & MergeInner<B, A>;
     type DistributedMerge<T, Else = T> = T extends T ? Merge<T, Exclude<Else, T>> : never;
+
+    type Without<A, B> = A & {
+      [Key in Exclude<keyof B, keyof A>]?: never;
+    };
+
+    type XOR<A, B> = Without<A, B> | Without<B, A>;
   }
 
   interface ErrorEventInit extends EventInit {

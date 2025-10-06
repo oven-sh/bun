@@ -2,6 +2,21 @@
 
 import { expectType } from "./utilities";
 
+Bun.serve({
+  routes: {
+    "/:id/:test": req => {
+      expectType(req.params).is<{ id: string; test: string }>();
+    },
+  },
+  fetch: () => new Response("hello"),
+  websocket: {
+    message(ws, message) {
+      expectType(ws.data).is<undefined>();
+      expectType(message).is<string | Buffer<ArrayBuffer>>();
+    },
+  },
+});
+
 const s1 = Bun.serve({
   routes: {
     "/ws/:name": req => {

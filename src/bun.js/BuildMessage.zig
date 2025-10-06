@@ -236,6 +236,29 @@ pub const BuildMessage = struct {
         return this.toPrimitive(globalThis, callframe) catch jsc.JSValue.jsNull();
     }
 
+    /// Create a synthetic stack frame for error stack traces
+    pub export fn BuildMessage__createSyntheticStackFrame(this: *BuildMessage, frame: *jsc.ZigStackFrame) void {
+        const location = this.msg.data.location orelse {
+            frame.* = jsc.ZigStackFrame.Zero;
+            return;
+        };
+
+        frame.* = .{
+            .function_name = bun.String.empty,
+            .source_url = bun.String.init(location.file),
+            .position = .{
+                .line = jsc.ZigStackFramePosition.SourcePosition.init(location.line),
+                .column = jsc.ZigStackFramePosition.SourcePosition.init(location.column),
+                .line_stop = jsc.ZigStackFramePosition.SourcePosition.invalid,
+                .column_stop = jsc.ZigStackFramePosition.SourcePosition.invalid,
+                .expression_start = jsc.ZigStackFramePosition.SourcePosition.invalid,
+            },
+            .code_type = .None,
+            .is_async = false,
+            .remapped = true, // Mark as remapped so it's not processed again
+        };
+    }
+
     pub export fn BuildMessage__finalize(this: *BuildMessage) void {
         this.finalize();
     }

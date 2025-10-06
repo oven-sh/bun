@@ -822,9 +822,9 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
-    // Kill all child processes if autokill is enabled
+    // Kill all child processes if autokill is enabled (main thread only)
     // This must happen before cleanup hooks to ensure children are still tracked
-    if (bun.Global.autokill_enabled) {
+    if (this.isMainThread() and bun.Global.autokill_enabled) {
         bun.sys.autokill.killAllChildProcesses();
     }
 

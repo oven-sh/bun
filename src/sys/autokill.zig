@@ -7,24 +7,16 @@ pub fn killAllChildProcesses() void {
 
     const current_pid = std.c.getpid();
 
-    // First, try to kill the entire process group - this is more reliable
-    // on musl systems where process tree detection may be inconsistent
-    _ = std.c.kill(-current_pid, 15); // SIGTERM to entire process group
-
-    // Give processes a brief moment to exit gracefully
-    std.time.sleep(50 * std.time.ns_per_ms);
-
-    // Follow up with SIGKILL to ensure termination
-    _ = std.c.kill(-current_pid, 9); // SIGKILL to entire process group
-
-    // Also walk the process tree as backup for any processes not in our process group
+    // Walk the process tree and kill only child processes
+    // Do NOT kill the entire process group with kill(-pid) as that would
+    // kill the Bun process itself before it can finish shutting down
     var killed = std.AutoHashMap(c_int, void).init(bun.default_allocator);
     defer killed.deinit();
 
     const children = getChildPids(current_pid, current_pid) catch return;
     defer if (children.len > 0) bun.default_allocator.free(children);
 
-    // Kill remaining processes in the tree
+    // Kill each child process and its descendants
     for (children) |child| {
         killProcessTreeRecursive(child, &killed, current_pid, false) catch {};
     }

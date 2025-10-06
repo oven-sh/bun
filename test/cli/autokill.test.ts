@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 
-describe("--autokill", () => {
+describe.skipIf(isWindows)("--autokill", () => {
   test("basic autokill flag works", async () => {
     const dir = tempDirWithFiles("autokill-basic", {
       "simple.js": `

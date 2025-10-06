@@ -280,8 +280,9 @@ function ClientRequest(input, options, cb) {
     this[kBodyChunks].push(chunk);
     // Push callback to maintain order with bodyChunks (use null if no callback)
     chunkCallbacks.push(callback || null);
-    // Start fetch on first write in duplex mode
-    if (writeCount >= 1 && !fetching) {
+    // Start fetch only when there are multiple writes (duplex mode)
+    // Single write will be sent via send() with Content-Length
+    if (writeCount > 1 && !fetching) {
       startFetch();
     }
     if (streamSource) {
@@ -739,6 +740,18 @@ function ClientRequest(input, options, cb) {
     this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
+
+    // Call all pending write callbacks immediately since we're sending the whole body
+    for (const callback of chunkCallbacks) {
+      if (callback) {
+        try {
+          callback();
+        } catch (err) {
+          if (!!$debug) globalReportError(err);
+        }
+      }
+    }
+    chunkCallbacks.length = 0;
 
     try {
       startFetch(body);

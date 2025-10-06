@@ -482,7 +482,7 @@ static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTR
     // Scalar check for the remainder
     for (; i < text_len; ++i) {
         const uint8_t char_ = text[i];
-        if (char_ >= 127 || (char_ < 0x20 && char_ != 0x09) || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
+        if (char_ >= 127 || char_ < 0x20 || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
             return i;
         }
     }

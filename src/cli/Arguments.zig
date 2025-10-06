@@ -212,26 +212,16 @@ pub const test_only_params = [_]ParamType{
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-    var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-        .result => |fd| fd.stdFile(),
+    const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
+        .result => |s| s,
         .err => |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
+            Output.prettyErrorln("{}\nwhile reading config \"{s}\"", .{
                 err,
                 config_path,
             });
             Global.exit(1);
         },
-    };
-
-    defer config_file.close();
-    const contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-        if (auto_loaded) return;
-        Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
-            @errorName(err),
-            config_path,
-        });
-        Global.exit(1);
     };
 
     js_ast.Stmt.Data.Store.create();
@@ -245,7 +235,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
-    try Bunfig.parse(allocator, &logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
+    try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {

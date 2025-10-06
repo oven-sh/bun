@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 import assert from "node:assert";
 // import child from "node:child_process";

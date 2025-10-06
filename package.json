@@ -90,5 +90,8 @@
     "machine:linux:amazonlinux": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=amazonlinux --release=2023",
     "machine:windows:2019": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=windows --release=2019",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
+  },
+  "dependencies": {
+    "no": "^0.0.1"
   }
 }

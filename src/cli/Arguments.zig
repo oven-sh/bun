@@ -1208,6 +1208,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 ctx.runtime_options.restart_policy = policy;
             } else {
                 Output.prettyErrorln("<r><red>error<r>: Invalid restart policy: \"{s}\". Valid options are: no, on-failure, always, unless-stopped", .{restart_policy});
+                Output.flush();
                 Global.exit(1);
             }
         }

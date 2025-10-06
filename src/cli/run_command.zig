@@ -1289,6 +1289,130 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
+    fn _bootWithRestart(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
+        const restart_policy = ctx.runtime_options.restart_policy;
+
+        // If no restart policy, run once directly
+        if (restart_policy == .no) {
+            return _bootAndHandleError(ctx, path, loader);
+        }
+
+        // With restart policy, we need to spawn as subprocess
+        var restart_count: u32 = 0;
+
+        while (true) {
+            const exit_code = _runFileAsSubprocess(ctx, path) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    std.fs.path.basename(path),
+                    @errorName(err),
+                });
+                Global.exit(1);
+            };
+
+            const should_restart = switch (restart_policy) {
+                .no => false,
+                .on_failure => exit_code != 0,
+                .always => true,
+                .unless_stopped => exit_code != 0,
+            };
+
+            if (!should_restart) {
+                if (exit_code != 0) {
+                    Global.exit(exit_code);
+                }
+                return true;
+            }
+
+            restart_count += 1;
+            Output.prettyln("<d>Restarting (attempt {d})...<r>", .{restart_count + 1});
+            Output.flush();
+        }
+    }
+
+    fn _runFileAsSubprocess(ctx: Command.Context, path: string) !u8 {
+        var arena = bun.ArenaAllocator.init(ctx.allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+
+        // Build command: bun <path> [args...]
+        // IMPORTANT: We don't pass --restart flag to the subprocess to avoid infinite recursion
+        var cmd_args = std.ArrayList([]const u8).init(allocator);
+        const bun_exe = bun.selfExePath() catch return error.FailedToGetSelfExe;
+        try cmd_args.append(bun_exe);
+        try cmd_args.append(path);
+
+        // Add any additional positional args (skip the first one which is the path)
+        // Also skip --restart flag to avoid infinite recursion
+        if (ctx.positionals.len > 1) {
+            var skip_next = false;
+            for (ctx.positionals[1..]) |arg| {
+                if (skip_next) {
+                    skip_next = false;
+                    continue;
+                }
+                // Skip --restart and its value
+                if (strings.hasPrefixComptime(arg, "--restart=")) continue;
+                if (strings.eqlComptime(arg, "--restart")) {
+                    skip_next = true;
+                    continue;
+                }
+                try cmd_args.append(arg);
+            }
+        }
+
+        const spawn_result = switch ((bun.spawnSync(&.{
+            .argv = cmd_args.items,
+            .argv0 = null,
+            .envp = null, // Inherit parent environment
+            .cwd = ctx.args.absolute_working_dir orelse "",
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+            .windows = if (Environment.isWindows) .{
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(null, null)),
+            },
+        }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to spawn process: {s}", .{@errorName(err)});
+            return err;
+        })) {
+            .result => |r| r,
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to spawn: {}", .{err});
+                return error.SpawnError;
+            },
+        };
+
+        switch (spawn_result.status) {
+            .exited => |exit_info| {
+                if (exit_info.signal.valid() and exit_info.signal != .SIGINT) {
+                    Output.prettyErrorln("<r><red>error<r>: Process terminated by signal {}<r>", .{exit_info.signal.fmt(Output.enable_ansi_colors_stderr)});
+                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        bun.crash_handler.suppressReporting();
+                    }
+                    Global.raiseIgnoringPanicHandler(exit_info.signal);
+                }
+                return exit_info.code;
+            },
+            .signaled => |signal| {
+                if (signal.valid() and signal != .SIGINT) {
+                    Output.prettyErrorln("<r><red>error<r>: Process terminated by signal {}<r>", .{signal.fmt(Output.enable_ansi_colors_stderr)});
+                }
+                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    bun.crash_handler.suppressReporting();
+                }
+                Global.raiseIgnoringPanicHandler(signal);
+            },
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run process: {}", .{err});
+                return error.SpawnError;
+            },
+            else => {
+                Output.prettyErrorln("<r><red>error<r>: Unexpected process status", .{});
+                return error.UnexpectedStatus;
+            },
+        }
+    }
+
     fn _bootAndHandleError(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
         Global.configureAllocator(.{ .long_running = true });
         Run.boot(ctx, ctx.allocator.dupe(u8, path) catch return false, loader) catch |err| {
@@ -1375,7 +1499,7 @@ pub const RunCommand = struct {
             bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
-        _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
+        _ = _bootWithRestart(ctx, absolute_script_path.?, null);
         return true;
     }
     pub fn exec(
@@ -1579,7 +1703,7 @@ pub const RunCommand = struct {
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
             if (loader.canBeRunByBun() or loader == .html) {
                 log("Resolved to: `{s}`", .{path.text});
-                return _bootAndHandleError(ctx, path.text, loader);
+                return _bootWithRestart(ctx, path.text, loader);
             } else {
                 log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
             }
@@ -1587,7 +1711,7 @@ pub const RunCommand = struct {
             // Support globs for HTML entry points.
             if (strings.hasSuffixComptime(target_name, ".html")) {
                 if (strings.containsChar(target_name, '*')) {
-                    return _bootAndHandleError(ctx, target_name, .html);
+                    return _bootWithRestart(ctx, target_name, .html);
                 }
             }
         }

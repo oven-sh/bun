@@ -2183,7 +2183,7 @@ pub const Data = union(Tag) {
     e_inlined_enum: *E.InlinedEnum,
 
     e_name_of_symbol: *E.NameOfSymbol,
-    
+
     e_new_worker: *E.NewWorker,
 
     comptime {

@@ -183,6 +183,12 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
+extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
+{
+    bool isLocalTime;
+    return WTF::parseES5Date({ string, length }, isLocalTime);
+}
+
 namespace Bun {
 String base64URLEncodeToString(Vector<uint8_t> data)
 {

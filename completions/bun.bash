@@ -30,7 +30,7 @@ _long_short_completion() {
         COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}") );
         return;
     }
-    [[ "${cur_word}" =~ ^-[A-Za_z]+ ]] && {
+    [[ "${cur_word}" =~ ^-[A-Za-z]+ ]] && {
         # shellcheck disable=SC2207 # idem.
         COMPREPLY=( $(compgen -W "${short_options}" -- "${cur_word}") );
         return;

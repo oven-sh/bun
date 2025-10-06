@@ -1635,7 +1635,7 @@ fn getOrPutResolvedPackage(
                 .found => |result| result,
                 .found_with_filter => |filtered| blk: {
                     const package_name = this.lockfile.str(&name);
-                    if (PackageManager.verbose_install or this.options.log_level == .verbose) {
+                    if (this.options.log_level.isVerbose()) {
                         if (filtered.newest_filtered) |newest| {
                             const min_age_seconds = (this.options.minimum_release_age_ms orelse 0) / std.time.ms_per_s;
                             switch (version.tag) {

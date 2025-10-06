@@ -170,8 +170,14 @@ pub const LinkerContext = struct {
     };
 
     pub fn isExternalDynamicImport(this: *LinkerContext, record: *const ImportRecord, source_index: u32) bool {
-        return this.graph.code_splitting and
-            (record.kind == .dynamic or record.kind == .worker) and
+        // Workers must always be external (they run in separate threads)
+        // Dynamic imports only need to be external when code splitting is enabled
+        const is_external = if (record.kind == .worker)
+            true
+        else
+            this.graph.code_splitting and record.kind == .dynamic;
+
+        return is_external and
             this.graph.files.items(.entry_point_kind)[record.source_index.get()].isEntryPoint() and
             record.source_index.get() != source_index;
     }

@@ -3118,6 +3118,14 @@ pub const BundleV2 = struct {
                 continue;
             }
 
+            // Workers must become separate entry points
+            // They will be bundled independently since they run in separate threads
+            if (import_record.kind == .worker) {
+                // Workers get added to the resolve queue AND will become entry points after resolution
+                // We mark them specially so they can be added as entry points later
+                // (We can't add them as entry points now because we don't have the source_index yet)
+            }
+
             if (this.framework) |fw| if (fw.server_components != null) {
                 switch (ast.target.isServerSide()) {
                     inline else => |is_server| {
@@ -3813,6 +3821,21 @@ pub const BundleV2 = struct {
                                     result.source.path.text,
                                     source_index,
                                 ) catch unreachable;
+                            }
+                        }
+
+                        // Workers must be separate entry points because they run in separate threads
+                        // Add them as entry points even without --splitting enabled
+                        if (record.kind == .worker) {
+                            const worker_index = Index.init(source_index);
+                            // Check if already in entry_points to avoid duplicates
+                            const already_entry_point = for (this.graph.entry_points.items) |entry| {
+                                if (entry.get() == source_index) break true;
+                            } else false;
+
+                            if (!already_entry_point) {
+                                this.graph.entry_points.append(this.allocator(), worker_index) catch unreachable;
+                                debug("Added worker as entry point: {d} ({s})", .{ source_index, record.path.text });
                             }
                         }
                     }

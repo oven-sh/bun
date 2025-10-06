@@ -227,11 +227,13 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
             // Ignore uses that aren't top-level symbols
             if (symbol.chunkIndex()) |other_chunk_index| {
                 if (@as(usize, other_chunk_index) != chunk_index) {
-                    if (comptime Environment.allow_assert)
+                    if (comptime Environment.allow_assert) {
+                        const file = c.parse_graph.input_files.get(import_ref.sourceIndex()).source.path.text;
                         debug("Import name: {s} (in {s})", .{
                             symbol.original_name,
-                            c.parse_graph.input_files.get(import_ref.sourceIndex()).source.path.text,
+                            file,
                         });
+                    }
 
                     {
                         var entry = try js

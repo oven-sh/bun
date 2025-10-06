@@ -307,7 +307,7 @@ def __lldb_init_module(debugger, _=None):
     debugger.HandleCommand('type category define --language c99 bun')
     
     # Initialize Bun Data Structures
-    add(debugger, category='bun', regex=True, type='^baby_list\\.BabyList\\(.*\\)$', identifier='bun_BabyList', synth=True, expand=True, summary=True)
+    add(debugger, category='bun', regex=True, type='.*baby_list\\.BabyList\\(.*\\)$', identifier='bun_BabyList', synth=True, expand=True, summary=True)
     
     # Add WTFStringImpl pretty printer - try multiple possible type names
     add(debugger, category='bun', type='WTFStringImpl', identifier='WTFStringImpl', summary=True)

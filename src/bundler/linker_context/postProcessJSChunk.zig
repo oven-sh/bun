@@ -91,6 +91,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                 c,
                 toCommonJSRef,
                 toESMRef,
+                chunk,
                 chunk.entry_point.source_index,
                 worker.allocator,
                 arena.allocator(),
@@ -439,6 +440,7 @@ pub fn generateEntryPointTailJS(
     c: *LinkerContext,
     toCommonJSRef: Ref,
     toESMRef: Ref,
+    chunk: *Chunk,
     source_index: Index.Int,
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
@@ -641,6 +643,10 @@ pub fn generateEntryPointTailJS(
                                     },
                                 ) catch unreachable;
                             } else {
+                                if (chunk.content.javascript.exports_to_other_chunks.get(resolved_export.data.import_ref) != null) {
+                                    continue;
+                                }
+
                                 // Local identifiers can be exported using an export clause. This is done
                                 // this way instead of leaving the "export" keyword on the local declaration
                                 // itself both because it lets the local identifier be minified and because

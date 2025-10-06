@@ -205,6 +205,46 @@ async function run() {
     const empty_file = join(codegenRoot, "bake_empty_file");
     if (!existsSync(empty_file)) writeIfNotChanged(empty_file, "this is used to fulfill a cmake dependency");
   }
+
+  // Build production-runtime-server.ts as an IIFE
+  try {
+    let result = await Bun.build({
+      entrypoints: [join(base_dir, "production-runtime-server.ts")],
+      target: "bun",
+      minify: !debug,
+      drop: debug ? [] : ["DEBUG"],
+    });
+
+    if (!result.success) throw new AggregateError(result.logs);
+    assert(result.outputs.length === 1, "must bundle to a single file");
+
+    let code = await result.outputs[0].text();
+
+    // Remove any export statements
+    code = code.replace(/^export\s+/gm, "");
+
+    // Find where server_exports is defined and ensure we return it
+    if (!code.includes("server_exports")) {
+      throw new Error("production-runtime-server.ts must define server_exports");
+    }
+
+    // Replace import.meta with $importMeta parameter
+    code = code.replaceAll("import.meta", "$importMeta");
+
+    // Wrap in IIFE with $importMeta parameter and return server_exports
+    if (debug) {
+      code = `(($importMeta) => {\n  ${code.replace(/\n/g, "\n  ")}\n  return server_exports;\n})`;
+    } else {
+      code = `(($importMeta)=>{${code};return server_exports})`;
+    }
+
+    writeIfNotChanged(join(codegenRoot, "bake.production-server.js"), code);
+    console.log("-> bake.production-server.js");
+  } catch (err) {
+    console.error("Error while bundling production-runtime-server.ts:");
+    console.error(err);
+    process.exit(1);
+  }
 }
 
 await run();

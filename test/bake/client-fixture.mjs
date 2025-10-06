@@ -118,6 +118,8 @@ function createWindow(windowUrl) {
     #worker;
     #messageHandlers = [];
     #errorHandlers = [];
+    #messageQueue = []; // Queue messages sent before worker is ready
+    #workerReady = false;
     onmessage = null;
     onerror = null;
 
@@ -149,10 +151,45 @@ function createWindow(windowUrl) {
           this.#worker = new window.NodeWorker(
             `
             const { parentPort } = require('worker_threads');
+            const EventEmitter = require('events');
 
-            // Set up worker global scope
+            // Set up worker global scope with full event API
             const self = global;
+            const eventEmitter = new EventEmitter();
+
+            // Event listener management
+            const listeners = new Map(); // type -> Set of handlers
+
+            self.addEventListener = (type, handler) => {
+              if (!listeners.has(type)) {
+                listeners.set(type, new Set());
+              }
+              listeners.get(type).add(handler);
+            };
+
+            self.removeEventListener = (type, handler) => {
+              const typeListeners = listeners.get(type);
+              if (typeListeners) {
+                typeListeners.delete(handler);
+              }
+            };
+
+            self.dispatchEvent = (event) => {
+              const typeListeners = listeners.get(event.type);
+              if (typeListeners) {
+                typeListeners.forEach(handler => handler(event));
+              }
+              // Also call onmessage/onerror if set
+              if (event.type === 'message' && self.onmessage) {
+                self.onmessage(event);
+              } else if (event.type === 'error' && self.onerror) {
+                self.onerror(event);
+              }
+              return true;
+            };
+
             self.onmessage = null;
+            self.onerror = null;
 
             // Override console.log to send messages to parent
             const originalLog = console.log;
@@ -163,9 +200,8 @@ function createWindow(windowUrl) {
 
             // Handle postMessage from main thread
             parentPort.on('message', (data) => {
-              if (self.onmessage) {
-                self.onmessage({ data });
-              }
+              const event = { type: 'message', data };
+              self.dispatchEvent(event);
             });
 
             // Provide postMessage to worker code
@@ -179,6 +215,13 @@ function createWindow(windowUrl) {
             { eval: true },
           );
 
+          // Mark worker as ready and flush queued messages
+          this.#workerReady = true;
+          while (this.#messageQueue.length > 0) {
+            const data = this.#messageQueue.shift();
+            this.#worker.postMessage(data);
+          }
+
           // Forward messages from worker to main thread
           this.#worker.on("message", msg => {
             if (msg.__console) {
@@ -186,7 +229,7 @@ function createWindow(windowUrl) {
               process.send({ type: "message", args: msg.args });
             } else {
               // Regular postMessage
-              const event = { data: msg.data };
+              const event = { type: "message", data: msg.data };
               if (this.onmessage) {
                 this.onmessage(event);
               }
@@ -211,7 +254,7 @@ function createWindow(windowUrl) {
     }
 
     #dispatchError(error) {
-      const event = { error, message: error.message };
+      const event = { type: "error", error, message: error.message };
       if (this.onerror) {
         this.onerror(event);
       }
@@ -219,8 +262,11 @@ function createWindow(windowUrl) {
     }
 
     postMessage(data) {
-      if (this.#worker) {
+      if (this.#workerReady && this.#worker) {
         this.#worker.postMessage(data);
+      } else {
+        // Queue message until worker is ready
+        this.#messageQueue.push(data);
       }
     }
 

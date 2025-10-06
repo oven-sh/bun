@@ -1,11 +1,10 @@
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
-// Note: Worker polyfill has been added to the test harness (client-fixture.mjs)
-// using Node.js worker_threads. However, dev server support for worker bundling
-// is not yet complete - workers need to be discovered and registered in the
-// IncrementalGraph. This test is a placeholder for when that work is done.
-
-devTest.skip = ["linux", "darwin", "win32"] as any;
+// Note: Dev server worker bundling is not yet functional. While the infrastructure
+// exists (IncrementalGraph detects workers, printer outputs paths, tryServeWorker exists),
+// the parser transformation doesn't run in dev mode OR workers aren't registered before
+// serving. Needs investigation into why worker detection doesn't trigger during dev bundling.
+// Production bundling works (see test/bundler/bundler_worker.test.ts - 4 tests passing).
 
 devTest("worker can be instantiated with string path", {
   skip: ["linux", "darwin", "win32"],

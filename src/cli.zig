@@ -368,6 +368,11 @@ pub const Command = struct {
         },
     };
 
+    /// Restart policy for `bun run --restart`
+    /// - `no`: No automatic restart (default)
+    /// - `on_failure`: Restart only on non-zero exit
+    /// - `always`: Always restart regardless of exit code
+    /// - `unless_stopped`: In CLI context, behaves like `on_failure` (no persistent state between runs)
     pub const RestartPolicy = enum {
         no,
         on_failure,

@@ -1292,12 +1292,13 @@ pub const RunCommand = struct {
     fn _bootWithRestart(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
         const restart_policy = ctx.runtime_options.restart_policy;
 
-        // If no restart policy, run once directly
+        // If no restart policy, run once directly using in-process execution
         if (restart_policy == .no) {
             return _bootAndHandleError(ctx, path, loader);
         }
 
-        // With restart policy, we need to spawn as subprocess
+        // With restart policy, spawn as subprocess to enable clean restarts
+        // This differs from package.json script restarts which run in-process.
         var restart_count: u32 = 0;
 
         while (true) {
@@ -1309,6 +1310,9 @@ pub const RunCommand = struct {
                 Global.exit(1);
             };
 
+            // Note: `unless_stopped` behaves like `on_failure` in CLI context.
+            // In a container orchestrator, "unless-stopped" would persist across restarts,
+            // but in CLI we treat it the same as on-failure for simplicity.
             const should_restart = switch (restart_policy) {
                 .no => false,
                 .on_failure => exit_code != 0,
@@ -1326,16 +1330,25 @@ pub const RunCommand = struct {
             restart_count += 1;
             Output.prettyln("<d>Restarting (attempt {d})...<r>", .{restart_count + 1});
             Output.flush();
+
+            // Add throttling after 5 restarts to prevent tight restart loops
+            if (restart_count >= 5) {
+                std.time.sleep(1 * std.time.ns_per_s);
+            }
         }
     }
 
+    /// Spawns a subprocess to run a file, enabling clean restarts.
+    /// The parent process handles the restart loop; the subprocess runs without --restart.
+    /// This differs from package.json scripts which use Global.exit for in-process restarts.
     fn _runFileAsSubprocess(ctx: Command.Context, path: string) !u8 {
         var arena = bun.ArenaAllocator.init(ctx.allocator);
         defer arena.deinit();
         const allocator = arena.allocator();
 
         // Build command: bun <path> [args...]
-        // IMPORTANT: We don't pass --restart flag to the subprocess to avoid infinite recursion
+        // IMPORTANT: We don't pass --restart flag to the subprocess to avoid infinite recursion.
+        // The parent process (this function's caller) handles the restart logic.
         var cmd_args = std.ArrayList([]const u8).init(allocator);
         const bun_exe = bun.selfExePath() catch return error.FailedToGetSelfExe;
         try cmd_args.append(bun_exe);

@@ -426,6 +426,10 @@ function ClientRequest(input, options, cb) {
                 if (self.aborted || !self.emit("response", res)) {
                   res._dump();
                 }
+              } catch (err) {
+                // Errors thrown by user's response handler should not crash the process
+                // This matches Node.js behavior
+                if (!!$debug) globalReportError(err);
               } finally {
                 maybeEmitClose();
                 if (res.statusCode === 304) {

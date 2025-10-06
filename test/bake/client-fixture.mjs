@@ -125,6 +125,12 @@ function createWindow(windowUrl) {
     onerror = null;
 
     constructor(scriptURL, options) {
+      // Note: Worker options (type, credentials, name) are currently not implemented
+      // in this test harness polyfill. Workers always run as ES modules.
+      if (options && Object.keys(options).length > 0) {
+        console.warn("[Worker polyfill] Worker options are not implemented in test harness:", options);
+      }
+
       // Convert URL to absolute path if needed
       let workerPath;
       if (scriptURL instanceof URL) {
@@ -153,10 +159,9 @@ function createWindow(windowUrl) {
           }
 
           // Create a worker that evaluates the fetched code
-          // We use eval in the worker context to run the code
-          this.#worker = new window.NodeWorker(
-            `
-            const { parentPort } = require('worker_threads');
+          // Bootstrap code is separate to avoid code injection from workerCode
+          const bootstrapCode = `
+            const { parentPort, workerData } = require('worker_threads');
             const EventEmitter = require('events');
 
             // Set up worker global scope with full event API
@@ -223,11 +228,14 @@ function createWindow(windowUrl) {
               process.exit(0);
             };
 
-            // Execute the worker code
-            ${workerCode}
-            `,
-            { eval: true },
-          );
+            // Execute the worker code (passed via workerData)
+            eval(workerData);
+          `;
+
+          this.#worker = new window.NodeWorker(bootstrapCode, {
+            eval: true,
+            workerData: workerCode,
+          });
 
           // Check again if terminated after creating worker
           if (this.#terminated) {

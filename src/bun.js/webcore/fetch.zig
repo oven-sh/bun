@@ -876,7 +876,10 @@ pub const FetchTasklet = struct {
         if (this.http) |http_| {
             http_.enableResponseBodyStreaming();
 
-            // If the server has an open connection but hasn't sent
+            // If the server sent the headers and the response body in two separate socket writes
+            // and if the server doesn't close the connection by itself
+            // and doesn't send any follow-up data
+            // then we must make sure the HTTP thread flushes.
             bun.http.http_thread.scheduleResponseBodyDrain(http_.async_http_id);
         }
 

@@ -777,8 +777,6 @@ pub fn installWithManager(
 
         switch (manager.options.node_linker) {
             .hoisted,
-            // TODO
-            .auto,
             => break :install_summary try installHoistedPackages(
                 manager,
                 ctx,
@@ -788,7 +786,9 @@ pub fn installWithManager(
                 null,
             ),
 
-            .isolated => break :install_summary installIsolatedPackages(
+            .isolated,
+            .auto,
+            => break :install_summary installIsolatedPackages(
                 manager,
                 ctx,
                 install_root_dependencies,

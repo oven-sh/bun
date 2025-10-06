@@ -593,8 +593,6 @@ pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.Ref
     groupLog.begin(@src());
     defer groupLog.end();
 
-    if (bun.jsc.Jest.Jest.runner) |runner| runner.current_file.printIfNeeded();
-
     const sequence, const group = this.getCurrentAndValidExecutionSequence(user_data) orelse return .show_unhandled_error_between_tests;
     _ = group;
 

@@ -2741,7 +2741,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // apply SNI routes if any
                 if (this.config.sni) |*sni| {
                     for (sni.slice()) |*sni_ssl_config| {
-                        const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name);
+                        const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name.?);
                         if (sni_servername.len > 0) {
                             app.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
                                 if (!globalThis.hasException()) {

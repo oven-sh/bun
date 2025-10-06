@@ -1,6 +1,7 @@
 pub const jsc = @import("./bun.js/jsc.zig");
 pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
+pub const bindgen = @import("./bun.js/bindgen.zig");
 
 pub const Run = struct {
     ctx: Command.Context,

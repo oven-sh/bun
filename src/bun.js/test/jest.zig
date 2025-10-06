@@ -7,8 +7,15 @@ const CurrentFile = struct {
     } = .{},
     has_printed_filename: bool = false,
 
-    pub fn set(this: *CurrentFile, title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
-        if (Output.isAIAgent()) {
+    pub fn set(
+        this: *CurrentFile,
+        title: string,
+        prefix: string,
+        repeat_count: u32,
+        repeat_index: u32,
+        reporter: *CommandLineReporter,
+    ) void {
+        if (Output.isAIAgent() or reporter.reporters.dots) {
             this.freeAndClear();
             this.title = bun.handleOom(bun.default_allocator.dupe(u8, title));
             this.prefix = bun.handleOom(bun.default_allocator.dupe(u8, prefix));
@@ -28,14 +35,19 @@ const CurrentFile = struct {
     }
 
     fn print(title: string, prefix: string, repeat_count: u32, repeat_index: u32) void {
+        const enable_buffering = Output.enableBufferingScope();
+        defer enable_buffering.deinit();
+
+        Output.prettyError("<r>\n", .{});
+
         if (repeat_count > 0) {
             if (repeat_count > 1) {
-                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
+                Output.prettyErrorln("{s}{s}: <d>(run #{d})<r>\n", .{ prefix, title, repeat_index + 1 });
             } else {
-                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+                Output.prettyErrorln("{s}{s}:\n", .{ prefix, title });
             }
         } else {
-            Output.prettyErrorln("<r>\n{s}{s}:\n", .{ prefix, title });
+            Output.prettyErrorln("{s}{s}:\n", .{ prefix, title });
         }
 
         Output.flush();
@@ -44,6 +56,7 @@ const CurrentFile = struct {
     pub fn printIfNeeded(this: *CurrentFile) void {
         if (this.has_printed_filename) return;
         this.has_printed_filename = true;
+
         print(this.title, this.prefix, this.repeat_info.count, this.repeat_info.index);
     }
 };
@@ -114,9 +127,8 @@ pub const TestRunner = struct {
         const file_path = this.files.items(.source)[file_id].path.text;
 
         // Check if the file path matches any of the glob patterns
-        const glob = @import("../../glob.zig");
         for (glob_patterns) |pattern| {
-            const result = glob.match(this.allocator, pattern, file_path);
+            const result = bun.glob.match(pattern, file_path);
             if (result == .match) return true;
         }
         return false;
@@ -464,7 +476,7 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
 
 pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObject) u32 {
     if (Jest.runner) |runner| {
-        if (runner.test_options.file_reporter == .junit) {
+        if (runner.test_options.reporters.junit) {
             return bun.cpp.Bun__CallFrame__getLineNumber(callframe, globalThis);
         }
     }
@@ -483,6 +495,7 @@ const string = []const u8;
 pub const bun_test = @import("./bun_test.zig");
 
 const std = @import("std");
+const CommandLineReporter = @import("../../cli/test_command.zig").CommandLineReporter;
 const Snapshots = @import("./snapshot.zig").Snapshots;
 
 const expect = @import("./expect.zig");

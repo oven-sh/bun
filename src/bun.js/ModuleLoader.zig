@@ -1350,10 +1350,10 @@ pub fn transpileSourceCode(
                 if (virtual_source) |source| {
                     if (globalObject) |globalThis| {
                         // attempt to avoid reading the WASM file twice.
-                        const encoded = jsc.EncodedJSValue{
-                            .asPtr = globalThis,
+                        const decoded: jsc.DecodedJSValue = .{
+                            .u = .{ .ptr = @ptrCast(globalThis) },
                         };
-                        const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
+                        const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),

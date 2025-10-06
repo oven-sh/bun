@@ -4,6 +4,7 @@
 import { Window } from "happy-dom";
 import assert from "node:assert/strict";
 import util from "node:util";
+import { Worker as NodeWorker } from "node:worker_threads";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
 const args = process.argv.slice(2);
@@ -69,6 +70,9 @@ function createWindow(windowUrl) {
     window.internal = internal;
   };
 
+  // Make NodeWorker available in window scope for the Worker polyfill
+  window.NodeWorker = NodeWorker;
+
   const original_window_fetch = window.fetch;
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
@@ -106,6 +110,140 @@ function createWindow(windowUrl) {
     close() {
       super.close();
       webSockets = webSockets.filter(ws => ws !== this);
+    }
+  };
+
+  // Provide Worker using Node.js worker_threads
+  window.Worker = class Worker {
+    #worker;
+    #messageHandlers = [];
+    #errorHandlers = [];
+    onmessage = null;
+    onerror = null;
+
+    constructor(scriptURL, options) {
+      // Convert URL to absolute path if needed
+      let workerPath;
+      if (scriptURL instanceof URL) {
+        workerPath = scriptURL.href;
+      } else {
+        workerPath = new URL(scriptURL, window.location.href).href;
+      }
+
+      // Fetch the worker script from the dev server
+      window
+        .fetch(workerPath)
+        .then(response => {
+          if (!response.ok) {
+            const error = new Error(`Failed to load worker script: ${workerPath}`);
+            this.#dispatchError(error);
+            return;
+          }
+          return response.text();
+        })
+        .then(workerCode => {
+          if (!workerCode) return;
+
+          // Create a worker that evaluates the fetched code
+          // We use eval in the worker context to run the code
+          this.#worker = new window.NodeWorker(
+            `
+            const { parentPort } = require('worker_threads');
+
+            // Set up worker global scope
+            const self = global;
+            self.onmessage = null;
+
+            // Override console.log to send messages to parent
+            const originalLog = console.log;
+            console.log = (...args) => {
+              parentPort.postMessage({ __console: true, args });
+              originalLog(...args);
+            };
+
+            // Handle postMessage from main thread
+            parentPort.on('message', (data) => {
+              if (self.onmessage) {
+                self.onmessage({ data });
+              }
+            });
+
+            // Provide postMessage to worker code
+            self.postMessage = (data) => {
+              parentPort.postMessage({ __console: false, data });
+            };
+
+            // Execute the worker code
+            ${workerCode}
+            `,
+            { eval: true },
+          );
+
+          // Forward messages from worker to main thread
+          this.#worker.on("message", msg => {
+            if (msg.__console) {
+              // Forward console.log to the main client
+              process.send({ type: "message", args: msg.args });
+            } else {
+              // Regular postMessage
+              const event = { data: msg.data };
+              if (this.onmessage) {
+                this.onmessage(event);
+              }
+              this.#messageHandlers.forEach(handler => handler(event));
+            }
+          });
+
+          // Forward errors from worker to main thread
+          this.#worker.on("error", error => {
+            this.#dispatchError(error);
+          });
+
+          this.#worker.on("exit", code => {
+            if (code !== 0) {
+              this.#dispatchError(new Error(`Worker stopped with exit code ${code}`));
+            }
+          });
+        })
+        .catch(error => {
+          this.#dispatchError(error);
+        });
+    }
+
+    #dispatchError(error) {
+      const event = { error, message: error.message };
+      if (this.onerror) {
+        this.onerror(event);
+      }
+      this.#errorHandlers.forEach(handler => handler(event));
+    }
+
+    postMessage(data) {
+      if (this.#worker) {
+        this.#worker.postMessage(data);
+      }
+    }
+
+    terminate() {
+      if (this.#worker) {
+        this.#worker.terminate();
+      }
+    }
+
+    addEventListener(type, handler) {
+      if (type === "message") {
+        this.#messageHandlers.push(handler);
+      } else if (type === "error") {
+        this.#errorHandlers.push(handler);
+      }
+    }
+
+    removeEventListener(type, handler) {
+      if (type === "message") {
+        this.#messageHandlers = this.#messageHandlers.filter(h => h !== handler);
+      } else if (type === "error") {
+        this.#errorHandlers = this.#errorHandlers.filter(h => h !== handler);
+      }
     }
   };
 

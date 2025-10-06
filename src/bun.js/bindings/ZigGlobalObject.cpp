@@ -772,20 +772,42 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
-{
+// Zig functions to extract location from BunErrorData and create synthetic stack frames
+extern "C" void* Bun__getBuildMessage(void* bunErrorData);
+extern "C" void* Bun__getResolveMessage(void* bunErrorData);
+extern "C" void BuildMessage__createSyntheticStackFrame(void* buildMessage, ZigStackFrame* frame);
+extern "C" void ResolveMessage__createSyntheticStackFrame(void* resolveMessage, ZigStackFrame* frame);
 
+static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, void* bunErrorData = nullptr)
+{
     Zig::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
 
+    // If this is a BuildMessage or ResolveMessage with an empty stack, inject synthetic location
+    if (bunErrorData != nullptr && stackTrace.isEmpty()) {
+        void* buildMessage = Bun__getBuildMessage(bunErrorData);
+        void* resolveMessage = Bun__getResolveMessage(bunErrorData);
+
+        if (buildMessage != nullptr || resolveMessage != nullptr) {
+            ZigStackFrame syntheticFrame = {};
+            if (buildMessage) {
+                BuildMessage__createSyntheticStackFrame(buildMessage, &syntheticFrame);
+            } else {
+                ResolveMessage__createSyntheticStackFrame(resolveMessage, &syntheticFrame);
+            }
+
+            if (!syntheticFrame.source_url.isEmpty()) {
+                sourceURL = syntheticFrame.source_url.toWTFString();
+                // ZigStackFrame position fields are stored as zero-based, convert to one-based
+                line = OrdinalNumber::fromOneBasedInt(syntheticFrame.position.line_zero_based + 1);
+                column = OrdinalNumber::fromOneBasedInt(syntheticFrame.position.column_zero_based + 1);
+                syntheticFrame.source_url.deref();
+            }
+        }
+    }
+
     return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
 }
-
-// Zig functions to extract location from BunErrorData
-extern "C" void* Bun__getBuildMessage(void* bunErrorData);
-extern "C" void* Bun__getResolveMessage(void* bunErrorData);
-extern "C" JSC::EncodedJSValue BuildMessage__getPosition(void* buildMessage, JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue ResolveMessage__getPosition(void* resolveMessage, JSC::JSGlobalObject*);
 
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
@@ -795,15 +817,35 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // If this is a BuildMessage or ResolveMessage, suppress the stack trace
-    // The source location is already shown in the error message itself via writeFormat()
-    if (bunErrorData != nullptr) {
+    // If this is a BuildMessage or ResolveMessage with an empty stack, inject a synthetic stack frame
+    // from the location data in the message
+    if (bunErrorData != nullptr && stackTrace.isEmpty()) {
         void* buildMessage = Bun__getBuildMessage(bunErrorData);
         void* resolveMessage = Bun__getResolveMessage(bunErrorData);
 
         if (buildMessage != nullptr || resolveMessage != nullptr) {
-            // Clear the stack trace - BuildMessage/ResolveMessage show location in the message
-            stackTrace.clear();
+            // Create a synthetic ZigStackFrame with the correct source location
+            ZigStackFrame syntheticFrame = {};
+            if (buildMessage) {
+                BuildMessage__createSyntheticStackFrame(buildMessage, &syntheticFrame);
+            } else {
+                ResolveMessage__createSyntheticStackFrame(resolveMessage, &syntheticFrame);
+            }
+
+            // Only add the frame if it has valid location data
+            if (!syntheticFrame.source_url.isEmpty()) {
+                // Create a JSC StackFrame from the synthetic frame
+                // We need to create a minimal StackFrame that will be formatted correctly
+                // For now, just update the sourceURL and line/column parameters
+                // which will be used by formatStackTrace
+                sourceURL = syntheticFrame.source_url.toWTFString();
+                // ZigStackFrame position fields are stored as zero-based, convert to one-based
+                line = OrdinalNumber::fromOneBasedInt(syntheticFrame.position.line_zero_based + 1);
+                column = OrdinalNumber::fromOneBasedInt(syntheticFrame.position.column_zero_based + 1);
+
+                // Clean up the synthetic frame
+                syntheticFrame.source_url.deref();
+            }
         }
     }
 
@@ -849,13 +891,11 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
 
 static String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
 {
-    UNUSED_PARAM(bunErrorData);
-
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
+    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL, bunErrorData);
     if (scope.exception()) {
         // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
         // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker

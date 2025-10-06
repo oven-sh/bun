@@ -195,6 +195,8 @@ fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
     });
 }
 
+pub const TaggedUnion = @import("./meta/tagged_union.zig").TaggedUnion;
+
 pub fn hasStableMemoryLayout(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     return switch (tyinfo) {

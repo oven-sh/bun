@@ -244,9 +244,13 @@ pub const Bunfig = struct {
                         if (expr.get("junit")) |junit_expr| {
                             try this.expectString(junit_expr);
                             if (junit_expr.data.e_string.len() > 0) {
-                                this.ctx.test_options.file_reporter = .junit;
+                                this.ctx.test_options.reporters.junit = true;
                                 this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
                             }
+                        }
+                        if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
+                            try this.expect(dots_expr, .e_boolean);
+                            this.ctx.test_options.reporters.dots = dots_expr.data.e_boolean.value;
                         }
                     }
 
@@ -659,6 +663,40 @@ pub const Bunfig = struct {
                             }
                         } else {
                             try this.addError(security_obj.loc, "Invalid security config, expected an object");
+                        }
+                    }
+
+                    if (install_obj.get("minimumReleaseAge")) |min_age| {
+                        switch (min_age.data) {
+                            .e_number => |days| {
+                                if (days.value < 0) {
+                                    try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
+                                    return;
+                                }
+                                install.minimum_release_age_ms = days.value * std.time.ms_per_s;
+                            },
+                            else => {
+                                try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");
+                            },
+                        }
+                    }
+
+                    if (install_obj.get("minimumReleaseAgeExcludes")) |exclusions| {
+                        switch (exclusions.data) {
+                            .e_array => |arr| brk: {
+                                const raw_exclusions = arr.items.slice();
+                                if (raw_exclusions.len == 0) break :brk;
+
+                                const exclusions_list = try this.allocator.alloc(string, raw_exclusions.len);
+                                for (raw_exclusions, 0..) |p, i| {
+                                    try this.expectString(p);
+                                    exclusions_list[i] = try p.data.e_string.string(allocator);
+                                }
+                                install.minimum_release_age_excludes = exclusions_list;
+                            },
+                            else => {
+                                try this.addError(exclusions.loc, "Expected array for minimumReleaseAgeExcludes");
+                            },
                         }
                     }
                 }

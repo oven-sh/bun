@@ -39,6 +39,7 @@
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertObject.h"
+#include "JSDOMConvertOptional.h"
 #include "JSDOMConvertRecord.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertSerializedScriptValue.h"

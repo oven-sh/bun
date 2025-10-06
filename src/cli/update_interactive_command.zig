@@ -602,14 +602,14 @@ pub const UpdateInteractiveCommand = struct {
 
                             const abs_res_path = path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &path_buf, &[_]string{res_path}, .posix);
 
-                            if (!glob.walk.matchImpl(allocator, pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
+                            if (!glob.match(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;
                             }
                         },
                         .name => |pattern| {
                             const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                            if (!glob.walk.matchImpl(allocator, pattern, name).matches()) {
+                            if (!glob.match(pattern, name).matches()) {
                                 break :matched false;
                             }
                         },
@@ -749,16 +749,17 @@ pub const UpdateInteractiveCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
+                    manager.options.minimum_release_age_ms != null,
                 ) orelse continue;
 
-                const latest = manifest.findByDistTag("latest") orelse continue;
+                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse continue;
 
                 // In interactive mode, show the constrained update version as "Target"
                 // but always include packages (don't filter out breaking changes)
                 const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse latest
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest
                 else
-                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse latest;
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest;
 
                 // Skip only if both the constrained update AND the latest version are the same as current
                 // This ensures we show packages where latest is newer even if constrained update isn't

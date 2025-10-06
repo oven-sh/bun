@@ -1,4 +1,5 @@
 #include "root.h"
+#include "StrongRef.h"
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"
@@ -24,11 +25,6 @@ extern "C" JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, 
     handleSet->writeBarrier<false>(handleSlot, value);
     *handleSlot = value;
     return handleSlot;
-}
-
-extern "C" JSC::EncodedJSValue Bun__StrongRef__get(JSC::JSValue* _Nonnull handleSlot)
-{
-    return JSC::JSValue::encode(*handleSlot);
 }
 
 extern "C" void Bun__StrongRef__set(JSC::JSValue* _Nonnull handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)

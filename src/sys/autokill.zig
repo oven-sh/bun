@@ -12,7 +12,8 @@ pub fn killAllChildProcesses() void {
     // kill the Bun process itself before it can finish shutting down
 
     // Pass 1: freeze entire tree with SIGSTOP to minimize reparenting races
-    const children_freeze = getChildPids(current_pid, current_pid) catch return;
+    // If enumeration fails, continue to pass 2 anyway to ensure we attempt termination
+    const children_freeze = getChildPids(current_pid, current_pid) catch &[_]c_int{};
     defer if (children_freeze.len > 0) bun.default_allocator.free(children_freeze);
     var seen_stop = std.AutoHashMap(c_int, void).init(bun.default_allocator);
     defer seen_stop.deinit();
@@ -21,7 +22,7 @@ pub fn killAllChildProcesses() void {
     }
 
     // Pass 2: terminate (SIGTERM then SIGKILL)
-    const children_kill = getChildPids(current_pid, current_pid) catch return;
+    const children_kill = getChildPids(current_pid, current_pid) catch &[_]c_int{};
     defer if (children_kill.len > 0) bun.default_allocator.free(children_kill);
     var seen_kill = std.AutoHashMap(c_int, void).init(bun.default_allocator);
     defer seen_kill.deinit();
@@ -37,7 +38,10 @@ fn getChildPids(parent: c_int, current_pid: c_int) ![]c_int {
             bun.default_allocator,
             "/proc/{d}/task/{d}/children",
             .{ parent, parent },
-        ) catch return &[_]c_int{};
+        ) catch {
+            // Allocation failed; fall back to /proc scanning
+            return getChildPidsFallback(parent, current_pid);
+        };
         defer bun.default_allocator.free(children_path);
 
         const file = std.fs.openFileAbsolute(children_path, .{}) catch {
@@ -59,6 +63,9 @@ fn getChildPids(parent: c_int, current_pid: c_int) ![]c_int {
         return list.toOwnedSlice();
     } else if (Environment.isMac) {
         // Use proc_listpids with PROC_PPID_ONLY
+        // Note: 2048 is a reasonable limit for most scenarios. If a process has more
+        // than 2048 direct children, the list will be truncated. This is acceptable
+        // for autokill's use case as processes with thousands of children are rare.
         var pids: [2048]c_int = undefined;
         const bytes = bun.c.proc_listpids(bun.c.PROC_PPID_ONLY, @as(u32, @intCast(parent)), &pids, @sizeOf(@TypeOf(pids)));
 

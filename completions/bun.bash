@@ -138,7 +138,7 @@ _bun_completions() {
                 a|add|remove|rm|install|i)
                     # shellcheck disable=SC2207 # the literal space separated string is used, each element has no whitspace characrters inside.
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
-                    ;;
+                ;;
             esac
             return;;
         --cwd|--public-dir)
@@ -204,7 +204,7 @@ _bun_completions() {
             # determine if completion should be continued
             # when the current word is an empty string
             # the previous word is not part of the allowed completion
-            # the previous word is not an argument to the last two option
+            # the previous word is not an argument to the last two options
             [[ -z "${cur_word}" ]] && {
                 declare -A comp_reply_associative
                     for comp in "${COMPREPLY[@]}"; do
@@ -222,7 +222,6 @@ _bun_completions() {
             }
             return;;
     esac
-
 }
 
 complete -F _bun_completions bun

@@ -783,8 +783,9 @@ static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTra
     Zig::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
 
-    // If this is a BuildMessage or ResolveMessage with an empty stack, inject synthetic location
-    if (bunErrorData != nullptr && stackTrace.isEmpty()) {
+    // If this is a BuildMessage or ResolveMessage, replace any existing stack with synthetic location
+    // The captured stack will be from bundler internals, not user code
+    if (bunErrorData != nullptr) {
         void* buildMessage = Bun__getBuildMessage(bunErrorData);
         void* resolveMessage = Bun__getResolveMessage(bunErrorData);
 
@@ -817,9 +818,9 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // If this is a BuildMessage or ResolveMessage with an empty stack, inject a synthetic stack frame
-    // from the location data in the message
-    if (bunErrorData != nullptr && stackTrace.isEmpty()) {
+    // If this is a BuildMessage or ResolveMessage, replace any existing stack with synthetic location
+    // The captured stack will be from bundler internals, not user code
+    if (bunErrorData != nullptr) {
         void* buildMessage = Bun__getBuildMessage(bunErrorData);
         void* resolveMessage = Bun__getResolveMessage(bunErrorData);
 

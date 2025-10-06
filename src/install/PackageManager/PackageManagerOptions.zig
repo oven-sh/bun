@@ -74,9 +74,14 @@ node_linker: NodeLinker = .auto,
 // Security scanner module path
 security_scanner: ?[]const u8 = null,
 
+// Minimum release age in ms (security feature)
+// Only install packages published at least N ms ago
+minimum_release_age_ms: ?f64 = null,
+// Packages to exclude from minimum release age checking
+minimum_release_age_excludes: ?[]const []const u8 = null,
+
 /// Override CPU architecture for optional dependencies filtering
 cpu: Npm.Architecture = Npm.Architecture.current,
-
 /// Override OS for optional dependencies filtering
 os: Npm.OperatingSystem = Npm.OperatingSystem.current,
 
@@ -373,6 +378,14 @@ pub fn load(
             }
         }
 
+        if (config.minimum_release_age_ms) |min_age_ms| {
+            this.minimum_release_age_ms = min_age_ms;
+        }
+
+        if (config.minimum_release_age_excludes) |exclusions| {
+            this.minimum_release_age_excludes = exclusions;
+        }
+
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
     }
 
@@ -546,6 +559,10 @@ pub fn load(
 
         if (cli.save_text_lockfile) |save_text_lockfile| {
             this.save_text_lockfile = save_text_lockfile;
+        }
+
+        if (cli.minimum_release_age_ms) |min_age_ms| {
+            this.minimum_release_age_ms = min_age_ms;
         }
 
         this.lockfile_only = cli.lockfile_only;

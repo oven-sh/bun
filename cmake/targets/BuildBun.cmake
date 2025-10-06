@@ -395,6 +395,54 @@ register_command(
     ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
 
+set(BUN_BINDGENV2_SCRIPT ${CWD}/src/codegen/bindgenv2/script.ts)
+
+absolute_sources(BUN_BINDGENV2_SOURCES ${CWD}/cmake/sources/BindgenV2Sources.txt)
+# These sources include the script itself.
+absolute_sources(BUN_BINDGENV2_INTERNAL_SOURCES
+  ${CWD}/cmake/sources/BindgenV2InternalSources.txt)
+string(REPLACE ";" "," BUN_BINDGENV2_SOURCES_COMMA_SEPARATED
+  "${BUN_BINDGENV2_SOURCES}")
+
+execute_process(
+  COMMAND ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+    --command=list-outputs
+    --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
+    --codegen-path=${CODEGEN_PATH}
+  RESULT_VARIABLE bindgen_result
+  OUTPUT_VARIABLE bindgen_outputs
+)
+if(${bindgen_result})
+  message(FATAL_ERROR "bindgenv2/script.ts exited with non-zero status")
+endif()
+foreach(output IN LISTS bindgen_outputs)
+  if(output MATCHES "\.cpp$")
+    list(APPEND BUN_BINDGENV2_CPP_OUTPUTS ${output})
+  elseif(output MATCHES "\.zig$")
+    list(APPEND BUN_BINDGENV2_ZIG_OUTPUTS ${output})
+  else()
+    message(FATAL_ERROR "unexpected bindgen output: [${output}]")
+  endif()
+endforeach()
+
+register_command(
+  TARGET
+    bun-bindgen-v2
+  COMMENT
+    "Generating bindings (v2)"
+  COMMAND
+    ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+      --command=generate
+      --codegen-path=${CODEGEN_PATH}
+      --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
+  SOURCES
+    ${BUN_BINDGENV2_SOURCES}
+    ${BUN_BINDGENV2_INTERNAL_SOURCES}
+  OUTPUTS
+    ${BUN_BINDGENV2_CPP_OUTPUTS}
+    ${BUN_BINDGENV2_ZIG_OUTPUTS}
+)
+
 set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
 
 absolute_sources(BUN_BINDGEN_SOURCES ${CWD}/cmake/sources/BindgenSources.txt)
@@ -573,6 +621,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_CPP_OUTPUTS}
+  ${BUN_BINDGENV2_ZIG_OUTPUTS}
 )
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
@@ -636,6 +685,7 @@ register_command(
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Denable_valgrind=$<IF:$<BOOL:${ENABLE_VALGRIND}>,true,false>
+      -Duse_mimalloc=$<IF:$<BOOL:${USE_MIMALLOC_AS_DEFAULT_ALLOCATOR}>,true,false>
       -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}
       -Dversion=${VERSION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
@@ -712,6 +762,7 @@ list(APPEND BUN_CPP_SOURCES
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_OBJECT_LUT_OUTPUTS}
   ${BUN_BINDGEN_CPP_OUTPUTS}
+  ${BUN_BINDGENV2_CPP_OUTPUTS}
 )
 
 if(WIN32)
@@ -847,6 +898,10 @@ if(WIN32)
     _CRT_SECURE_NO_WARNINGS
     BORINGSSL_NO_CXX=1 # lol
   )
+endif()
+
+if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
+  target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
 endif()
 
 target_compile_definitions(${bun} PRIVATE

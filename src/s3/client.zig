@@ -585,7 +585,7 @@ pub fn downloadStream(
         },
     );
     // enable streaming
-    task.http.enableBodyStreaming();
+    task.http.enableResponseBodyStreaming();
     // queue http request
     bun.http.HTTPThread.init(&.{});
     var batch = bun.ThreadPool.Batch{};

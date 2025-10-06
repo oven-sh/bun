@@ -1072,14 +1072,14 @@ pub const WindowsBufferedReader = struct {
                     pipe.close(onPipeClose);
                 },
                 .tty => |tty| {
-                    if (tty == &Source.stdin_tty) {
-                        Source.stdin_tty = undefined;
-                        Source.stdin_tty_init = false;
+                    if (Source.StdinTTY.isStdinTTY(tty)) {
+                        // Node only ever closes stdin on process exit.
+                    } else {
+                        tty.data = tty;
+                        tty.close(onTTYClose);
                     }
 
-                    tty.data = tty;
                     this.flags.is_paused = true;
-                    tty.close(onTTYClose);
                 },
             }
             this.source = null;

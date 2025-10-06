@@ -107,6 +107,7 @@ pub fn callback(task: *ThreadPool.Task) void {
                 manifest.name.slice(),
                 manifest.network.callback.package_manifest.loaded_manifest,
                 manager,
+                manifest.network.callback.package_manifest.is_extended_manifest,
             ) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 

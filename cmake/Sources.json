@@ -36,6 +36,14 @@
     "paths": ["src/**/*.bind.ts"]
   },
   {
+    "output": "BindgenV2Sources.txt",
+    "paths": ["src/**/*.bindv2.ts"]
+  },
+  {
+    "output": "BindgenV2InternalSources.txt",
+    "paths": ["src/codegen/bindgenv2/**/*.ts"]
+  },
+  {
     "output": "ZigSources.txt",
     "paths": ["src/**/*.zig"]
   },

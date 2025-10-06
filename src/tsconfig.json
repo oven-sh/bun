@@ -4,10 +4,11 @@
     // Path remapping
     "baseUrl": ".",
     "paths": {
-      "bindgen": ["./codegen/bindgen-lib.ts"]
+      "bindgen": ["./codegen/bindgen-lib.ts"],
+      "bindgenv2": ["./codegen/bindgenv2/lib.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx", "bake/bake.private.d.ts"],
   // separate projects have extra settings that only apply in those scopes
-  "exclude": ["js", "bake"]
+  "exclude": ["js", "bake", "init", "create", "bun.js/bindings/libuv"]
 }

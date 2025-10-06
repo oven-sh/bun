@@ -2332,6 +2332,7 @@ pub fn finalizeBundle(
             result.chunks,
             null,
             false,
+            false,
         );
 
         // Create an entry for this file.

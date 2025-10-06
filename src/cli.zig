@@ -352,7 +352,10 @@ pub const Command = struct {
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
 
-        file_reporter: ?TestCommand.FileReporter = null,
+        reporters: struct {
+            dots: bool = false,
+            junit: bool = false,
+        } = .{},
         reporter_outfile: ?[]const u8 = null,
     };
 

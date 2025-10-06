@@ -58,6 +58,7 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
+#include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
@@ -2080,10 +2081,9 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
     RETURN_IF_EXCEPTION(scope, false);
     if (!returnedValue) return false;
 
-    auto results = Detail::SequenceConverter<IDLAny>::convert(*lexicalGlobalObject, *returnedValue);
+    auto results = convert<IDLSequence<IDLRawAny, std::array<JSValue, 2>>>(*lexicalGlobalObject, *returnedValue);
     RETURN_IF_EXCEPTION(scope, false);
 
-    ASSERT(results.size() == 2);
     *possibleReadableStream1 = JSValue::encode(results[0]);
     *possibleReadableStream2 = JSValue::encode(results[1]);
     return true;

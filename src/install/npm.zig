@@ -1708,15 +1708,13 @@ pub const PackageManifest = struct {
         minimum_release_age_ms: ?f64,
         exclusions: ?[]const []const u8,
     ) FindVersionResult {
-        if (minimum_release_age_ms != null) {
-            bun.debugAssert(this.pkg.has_extended_manifest);
-        }
         const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
         const min_age_ms = min_age_gate_ms orelse {
             const result = this.findBestVersion(group, group_buf);
             if (result) |r| return .{ .found = r };
             return .{ .err = .not_found };
         };
+        bun.debugAssert(this.pkg.has_extended_manifest);
 
         const left = group.head.head.range.left;
         var newest_filtered: ?Semver.Version = null;

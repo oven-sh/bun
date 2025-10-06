@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 describe("--autokill", () => {
   test("basic autokill flag works", async () => {
@@ -51,7 +51,7 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const childPid = parseInt(output.trim());
     expect(childPid).toBeGreaterThan(0);
 
@@ -100,7 +100,7 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const childPids = JSON.parse(output.trim());
     expect(childPids).toBeArray();
     expect(childPids.length).toBe(5);
@@ -149,7 +149,7 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const shellPid = parseInt(output.trim());
     expect(shellPid).toBeGreaterThan(0);
 
@@ -195,7 +195,7 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const level1Pid = parseInt(output.trim());
     expect(level1Pid).toBeGreaterThan(0);
 
@@ -251,7 +251,7 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const pids = JSON.parse(output.trim());
     expect(pids).toBeArray();
     expect(pids.length).toBe(2);
@@ -303,7 +303,7 @@ describe("--autokill", () => {
 
     // Should exit with non-zero due to uncaught exception
     expect(exitCode).not.toBe(0);
-    
+
     const childPid = parseInt(output.trim());
     expect(childPid).toBeGreaterThan(0);
 
@@ -348,7 +348,7 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(42);
-    
+
     const childPid = parseInt(output.trim());
     expect(childPid).toBeGreaterThan(0);
 
@@ -393,13 +393,13 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const childPid = parseInt(output.trim());
     expect(childPid).toBeGreaterThan(0);
 
     // Without autokill, child should still be alive briefly
     await Bun.sleep(100);
-    
+
     let alive = false;
     try {
       process.kill(childPid, 0);
@@ -447,7 +447,7 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const pids = JSON.parse(output.trim());
     expect(pids).toBeArray();
     expect(pids.length).toBe(10);
@@ -531,7 +531,7 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
+
     const spawnerPid = parseInt(output.trim());
     expect(spawnerPid).toBeGreaterThan(0);
 
@@ -585,8 +585,8 @@ describe("--autokill", () => {
     ]);
 
     expect(exitCode).toBe(0);
-    
-    const lines = output.trim().split('\n');
+
+    const lines = output.trim().split("\n");
     const childPid = parseInt(lines[lines.length - 1]);
     expect(childPid).toBeGreaterThan(0);
 

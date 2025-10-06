@@ -827,7 +827,7 @@ pub fn onExit(this: *VirtualMachine) void {
     if (bun.Global.autokill_enabled) {
         bun.sys.autokill.killAllChildProcesses();
     }
-    
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 

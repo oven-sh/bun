@@ -120,6 +120,7 @@ function createWindow(windowUrl) {
     #errorHandlers = [];
     #messageQueue = []; // Queue messages sent before worker is ready
     #workerReady = false;
+    #terminated = false;
     onmessage = null;
     onerror = null;
 
@@ -145,6 +146,11 @@ function createWindow(windowUrl) {
         })
         .then(workerCode => {
           if (!workerCode) return;
+
+          // Bail out if worker was terminated before fetch completed
+          if (this.#terminated) {
+            return;
+          }
 
           // Create a worker that evaluates the fetched code
           // We use eval in the worker context to run the code
@@ -209,11 +215,26 @@ function createWindow(windowUrl) {
               parentPort.postMessage({ __console: false, data });
             };
 
+            // Support self.close() to shut down the worker
+            self.close = () => {
+              if (parentPort) {
+                parentPort.close();
+              }
+              process.exit(0);
+            };
+
             // Execute the worker code
             ${workerCode}
             `,
             { eval: true },
           );
+
+          // Check again if terminated after creating worker
+          if (this.#terminated) {
+            this.#worker.terminate();
+            this.#worker = null;
+            return;
+          }
 
           // Mark worker as ready and flush queued messages
           this.#workerReady = true;
@@ -264,15 +285,19 @@ function createWindow(windowUrl) {
     postMessage(data) {
       if (this.#workerReady && this.#worker) {
         this.#worker.postMessage(data);
-      } else {
-        // Queue message until worker is ready
+      } else if (!this.#terminated) {
+        // Queue message until worker is ready (unless already terminated)
         this.#messageQueue.push(data);
       }
     }
 
     terminate() {
+      this.#terminated = true;
+      this.#messageQueue.length = 0;
+      this.#workerReady = false;
       if (this.#worker) {
         this.#worker.terminate();
+        this.#worker = null;
       }
     }
 

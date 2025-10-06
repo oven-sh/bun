@@ -178,7 +178,7 @@ _bun_completions() {
             return;;
         upgrade)
             # shellcheck disable=SC2207 # see above
-            COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
+            COMPREPLY=( $(compgen -W "--version --cwd --help -v -h" -- "${cur_word}") );
             return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";

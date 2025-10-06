@@ -1555,15 +1555,9 @@ pub fn VisitExpr(
                                                 };
 
                                                 if (is_import_meta_url) {
-                                                    // Resolve the URL relative to current file
-                                                    const relative_path = url_args[0].data.e_string.slice(p.allocator);
-                                                    const current_file_dir = std.fs.path.dirname(p.source.path.text) orelse ".";
-                                                    const resolved = std.fs.path.resolve(p.allocator, &[_][]const u8{
-                                                        current_file_dir,
-                                                        relative_path,
-                                                    }) catch unreachable;
-
-                                                    worker_path_string = resolved;
+                                                    // Extract the relative path from new URL('./path', import.meta.url)
+                                                    // The bundler's import resolver will handle path resolution
+                                                    worker_path_string = url_args[0].data.e_string.slice(p.allocator);
                                                     worker_path_loc = url_args[0].loc;
                                                 }
                                             }

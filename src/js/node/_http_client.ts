@@ -59,11 +59,16 @@ const { URL } = globalThis;
  * Separate class for ReadableStream underlying source to avoid GC keeping ClientRequest alive.
  * Implements the underlying source for a direct ReadableStream that streams request body chunks
  * with proper backpressure handling.
+ *
+ * Note: This class shares references to bodyChunks and chunkCallbacks arrays with the ClientRequest,
+ * and the callback functions close over the ClientRequest instance. This is intentional - the arrays
+ * need to be shared for coordination, and the callbacks need access to emit events. The DirectStreamSource
+ * will be GC'd when the stream closes and the ReadableStream releases its reference to the pull() function.
  */
 class DirectStreamSource {
   /**
-   * @param {Array} bodyChunks - Array of buffered chunks to write
-   * @param {Map} chunkCallbacks - Map of chunks to their write callbacks
+   * @param {Array} bodyChunks - Shared array of buffered chunks to write
+   * @param {Map} chunkCallbacks - Shared map of chunks to their write callbacks
    * @param {Function} emitDrain - Callback to emit 'drain' event
    * @param {Function} getFinished - Callback to check if request is finished
    * @param {Function} getNeedDrain - Callback to get needDrain flag state

@@ -242,7 +242,10 @@ extern "C" JSC::EncodedJSValue ResolveMessage__toJS(void* resolveMessage, JSC::J
     JSC::Structure* structure = zigGlobalObject->m_JSResolveMessageClassStructure.get(zigGlobalObject);
 
     // Create the ErrorInstance with our custom structure
-    JSC::ErrorInstance* errorInstance = JSC::ErrorInstance::create(vm, structure, message, {});
+    // Pass false for useCurrentFrame to avoid capturing bundler internal stack frames
+    JSC::ErrorInstance* errorInstance = JSC::ErrorInstance::create(
+        vm, structure, message, {}, nullptr,
+        JSC::RuntimeType::TypeNothing, JSC::ErrorType::Error, false);
 
     // Create tagged pointer and set it as bunErrorData
     errorInstance->setBunErrorData(resolveMessage);

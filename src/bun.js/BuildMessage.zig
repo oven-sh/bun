@@ -48,10 +48,10 @@ pub const BuildMessage = struct {
         // resolve_result: *const Resolver.Result,
     ) bun.OOM!jsc.JSValue {
         const build_error = try allocator.create(BuildMessage);
-        // Don't clone the msg - the metadata ranges point to offsets in msg.data.text
-        // Cloning creates a new text buffer but keeps the same ranges, causing use-after-poison
+        // Clone the msg to preserve line_text and other location data
+        // The source buffer may be reused/deallocated after the error is created
         build_error.* = BuildMessage{
-            .msg = msg,
+            .msg = try msg.clone(allocator),
             // .resolve_result = resolve_result.*,
             .allocator = allocator,
         };

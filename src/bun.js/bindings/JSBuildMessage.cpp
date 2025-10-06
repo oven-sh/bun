@@ -207,7 +207,10 @@ extern "C" JSC::EncodedJSValue BuildMessage__toJS(void* buildMessage, JSC::JSGlo
     JSC::Structure* structure = zigGlobalObject->m_JSBuildMessageClassStructure.get(zigGlobalObject);
 
     // Create the ErrorInstance with our custom structure
-    JSC::ErrorInstance* errorInstance = JSC::ErrorInstance::create(vm, structure, message, {});
+    // Pass false for useCurrentFrame to avoid capturing bundler internal stack frames
+    JSC::ErrorInstance* errorInstance = JSC::ErrorInstance::create(
+        vm, structure, message, {}, nullptr,
+        JSC::RuntimeType::TypeNothing, JSC::ErrorType::Error, false);
 
     errorInstance->setBunErrorData(buildMessage);
 

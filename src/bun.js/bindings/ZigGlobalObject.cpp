@@ -781,15 +781,31 @@ static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTra
     return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
 }
 
+// Zig functions to extract location from BunErrorData
+extern "C" void* Bun__getBuildMessage(void* bunErrorData);
+extern "C" void* Bun__getResolveMessage(void* bunErrorData);
+extern "C" JSC::EncodedJSValue BuildMessage__getPosition(void* buildMessage, JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue ResolveMessage__getPosition(void* resolveMessage, JSC::JSGlobalObject*);
+
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
-    UNUSED_PARAM(bunErrorData);
-
     Zig::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
     lexicalGlobalObject = errorInstance->globalObject();
     globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // If this is a BuildMessage or ResolveMessage, suppress the stack trace
+    // The source location is already shown in the error message itself via writeFormat()
+    if (bunErrorData != nullptr) {
+        void* buildMessage = Bun__getBuildMessage(bunErrorData);
+        void* resolveMessage = Bun__getResolveMessage(bunErrorData);
+
+        if (buildMessage != nullptr || resolveMessage != nullptr) {
+            // Clear the stack trace - BuildMessage/ResolveMessage show location in the message
+            stackTrace.clear();
+        }
+    }
 
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
     if (!globalObject) {

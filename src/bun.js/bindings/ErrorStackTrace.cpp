@@ -801,7 +801,3 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 }
 }
 
-extern "C" void Bun__errorInstance__finalize(void* bunErrorData)
-{
-    UNUSED_PARAM(bunErrorData);
-}

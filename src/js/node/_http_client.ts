@@ -140,7 +140,12 @@ class DirectStreamSource {
           // Call the callback after write completes (after backpressure resolves)
           // The callback is called when write is done, not necessarily when data is sent
           if (callback) {
-            callback();
+            try {
+              callback();
+            } catch (err) {
+              // Log or handle callback errors, but don't break the stream
+              if (!!$debug) globalReportError(err);
+            }
           }
 
           // NOTE: Don't check getFinished() here - we need to write all queued chunks
@@ -151,7 +156,12 @@ class DirectStreamSource {
         if (this.bodyChunks.length === 0 && this.hadBackpressure && this.getNeedDrain()) {
           this.hadBackpressure = false;
           this.setNeedDrain(false);
-          this.emitDrain();
+          try {
+            this.emitDrain();
+          } catch (err) {
+            // Log or handle drain event errors, but don't break the stream
+            if (!!$debug) globalReportError(err);
+          }
         }
 
         // If no more chunks, wait for notification or check if finished
@@ -163,7 +173,12 @@ class DirectStreamSource {
             this.controller = null;
             controller.end();
             // Emit finish event after stream ends
-            this.emitFinish();
+            try {
+              this.emitFinish();
+            } catch (err) {
+              // Log or handle finish event errors, but don't break the stream
+              if (!!$debug) globalReportError(err);
+            }
             return;
           }
 
@@ -182,7 +197,12 @@ class DirectStreamSource {
             this.controller = null;
             controller.end();
             // Emit finish event after stream ends
-            this.emitFinish();
+            try {
+              this.emitFinish();
+            } catch (err) {
+              // Log or handle finish event errors, but don't break the stream
+              if (!!$debug) globalReportError(err);
+            }
             return;
           }
           // Otherwise, loop again to process newly arrived chunks
@@ -195,7 +215,12 @@ class DirectStreamSource {
         this.resolveNextChunk = null;
         this.controller = null;
         controller.end();
-        this.emitFinish();
+        try {
+          this.emitFinish();
+        } catch (err) {
+          // Log or handle finish event errors, but don't break the stream
+          if (!!$debug) globalReportError(err);
+        }
       }
     } finally {
       this.pulling = false;

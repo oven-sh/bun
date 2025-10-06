@@ -9,6 +9,7 @@
 #include "ErrorCode.h"
 #include "openssl/base.h"
 #include "openssl/bio.h"
+#include "openssl/x509.h"
 #include "../../packages/bun-usockets/src/crypto/root_certs_header.h"
 
 namespace Bun {
@@ -44,7 +45,7 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
     auto size = sk_X509_num(root_extra_cert_instances);
     if (size < 0) size = 0; // root_extra_cert_instances is nullptr
 
-    auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
+    JSC::MarkedArgumentBuffer args;
     for (auto i = 0; i < size; i++) {
         BIO* bio = BIO_new(BIO_s_mem());
         if (!bio) {
@@ -65,11 +66,82 @@ JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalOb
         }
 
         auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
-        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+        args.append(JSC::jsString(vm, str));
         BIO_free(bio);
     }
 
+    if (args.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    auto rootCertificates = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args);
+    RETURN_IF_EXCEPTION(scope, {});
+
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    VM& vm = globalObject->vm();
+
+    STACK_OF(X509)* root_system_cert_instances = us_get_root_system_cert_instances();
+
+    auto size = sk_X509_num(root_system_cert_instances);
+    if (size < 0) size = 0; // root_system_cert_instances is nullptr
+
+    JSC::MarkedArgumentBuffer args;
+    for (auto i = 0; i < size; i++) {
+        BIO* bio = BIO_new(BIO_s_mem());
+        if (!bio) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        X509* cert = sk_X509_value(root_system_cert_instances, i);
+        if (!cert) {
+            BIO_free(bio);
+            continue;
+        }
+        if (!PEM_write_bio_X509(bio, cert)) {
+            BIO_free(bio);
+            continue;
+        }
+
+        char* bioData;
+        long bioLen = BIO_get_mem_data(bio, &bioData);
+        if (bioLen <= 0) {
+            BIO_free(bio);
+            continue;
+        }
+
+        auto str = WTF::String::fromUTF8(std::span { bioData, static_cast<size_t>(bioLen) });
+        args.append(JSC::jsString(vm, str));
+        BIO_free(bio);
+    }
+
+    if (args.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    auto rootCertificates = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
+}
+
+extern "C" JSC::EncodedJSValue Bun__getTLSDefaultCiphers(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue Bun__setTLSDefaultCiphers(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+
+JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return Bun__getTLSDefaultCiphers(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return Bun__setTLSDefaultCiphers(globalObject, callFrame);
 }
 
 } // namespace Bun

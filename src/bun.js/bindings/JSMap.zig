@@ -1,43 +1,29 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
+/// Opaque type for working with JavaScript `Map` objects.
 pub const JSMap = opaque {
-    extern fn JSC__JSMap__create(*JSGlobalObject) JSValue;
-    extern fn JSC__JSMap__get_(?*JSMap, *JSGlobalObject, JSValue) JSValue;
-    extern fn JSC__JSMap__has(arg0: ?*JSMap, arg1: *JSGlobalObject, JSValue2: JSValue) bool;
-    extern fn JSC__JSMap__remove(arg0: ?*JSMap, arg1: *JSGlobalObject, JSValue2: JSValue) bool;
-    extern fn JSC__JSMap__set(arg0: ?*JSMap, arg1: *JSGlobalObject, JSValue2: JSValue, JSValue3: JSValue) void;
+    pub const create = bun.cpp.JSC__JSMap__create;
+    pub const set = bun.cpp.JSC__JSMap__set;
 
-    pub fn create(globalObject: *JSGlobalObject) JSValue {
-        return JSC__JSMap__create(globalObject);
-    }
+    /// Retrieve a value from this JS Map object.
+    ///
+    /// Note this shares semantics with the JS `Map.prototype.get` method, and
+    /// will return .js_undefined if a value is not found.
+    pub const get = bun.cpp.JSC__JSMap__get;
 
-    pub fn set(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue, value: JSValue) void {
-        return JSC__JSMap__set(this, globalObject, key, value);
-    }
+    /// Test whether this JS Map object has a given key.
+    pub const has = bun.cpp.JSC__JSMap__has;
 
-    pub fn get_(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) JSValue {
-        return JSC__JSMap__get_(this, globalObject, key);
-    }
+    /// Attempt to remove a key from this JS Map object.
+    pub const remove = bun.cpp.JSC__JSMap__remove;
 
-    pub fn get(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) ?JSValue {
-        const value = get_(this, globalObject, key);
-        if (value.isEmpty()) {
-            return null;
-        }
-        return value;
-    }
+    /// Clear all entries from this JS Map object.
+    pub const clear = bun.cpp.JSC__JSMap__clear;
 
-    pub fn has(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) bool {
-        return JSC__JSMap__has(this, globalObject, key);
-    }
+    /// Retrieve the number of entries in this JS Map object.
+    pub const size = bun.cpp.JSC__JSMap__size;
 
-    pub fn remove(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) bool {
-        return JSC__JSMap__remove(this, globalObject, key);
-    }
-
+    /// Attempt to convert a `JSValue` to a `*JSMap`.
+    ///
+    /// Returns `null` if the value is not a Map.
     pub fn fromJS(value: JSValue) ?*JSMap {
         if (value.jsTypeLoose() == .Map) {
             return bun.cast(*JSMap, value.asEncoded().asPtr.?);
@@ -46,3 +32,8 @@ pub const JSMap = opaque {
         return null;
     }
 };
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

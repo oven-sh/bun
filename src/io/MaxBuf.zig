@@ -1,3 +1,5 @@
+const MaxBuf = @This();
+
 // null after subprocess finalize
 owned_by_subprocess: ?*Subprocess,
 // null after pipereader finalize
@@ -11,7 +13,7 @@ pub fn createForSubprocess(owner: *Subprocess, ptr: *?*MaxBuf, initial: ?i64) vo
         ptr.* = null;
         return;
     }
-    const maxbuf = bun.default_allocator.create(MaxBuf) catch bun.outOfMemory();
+    const maxbuf = bun.handleOom(bun.default_allocator.create(MaxBuf));
     maxbuf.* = .{
         .owned_by_subprocess = owner,
         .owned_by_reader = false,
@@ -81,5 +83,4 @@ pub const Kind = enum {
 
 const bun = @import("bun");
 const std = @import("std");
-const Subprocess = bun.JSC.Subprocess;
-const MaxBuf = @This();
+const Subprocess = bun.jsc.Subprocess;

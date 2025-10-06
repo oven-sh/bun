@@ -451,7 +451,7 @@ pub const String = extern struct {
         return @as(Pointer, @bitCast(@as(u64, @as(u63, @truncate(@as(u64, @bitCast(this)))))));
     }
 
-    pub fn toJS(this: *const String, buffer: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
+    pub fn toJS(this: *const String, buffer: []const u8, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return bun.String.createUTF8ForJS(globalThis, this.slice(buffer));
     }
 
@@ -644,17 +644,19 @@ pub const String = extern struct {
     }
 };
 
-const assert = bun.assert;
+const string = []const u8;
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const strings = bun.strings;
 
-const JSC = bun.JSC;
+const bun = @import("bun");
+const Environment = bun.Environment;
 const IdentityContext = bun.IdentityContext;
 const OOM = bun.OOM;
+const assert = bun.assert;
+const jsc = bun.jsc;
+const strings = bun.strings;
 const Lockfile = bun.install.Lockfile;
+
 const ExternalString = bun.Semver.ExternalString;
 const SlicedString = bun.Semver.SlicedString;

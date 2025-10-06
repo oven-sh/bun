@@ -1,37 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.CLI.Command;
-const Install = bun.install;
-const PackageManager = Install.PackageManager;
-const Lockfile = Install.Lockfile;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const libarchive = @import("../libarchive/libarchive.zig").lib;
-const Archive = libarchive.Archive;
-const Expr = bun.js_parser.Expr;
-const Semver = bun.Semver;
-const File = bun.sys.File;
-const FD = bun.FD;
-const strings = bun.strings;
-const glob = bun.glob;
-const PathBuffer = bun.PathBuffer;
-const DirIterator = bun.DirIterator;
-const Environment = bun.Environment;
-const RunCommand = bun.RunCommand;
-const OOM = bun.OOM;
-const js_printer = bun.js_printer;
-const E = bun.js_parser.E;
-const Progress = bun.Progress;
-const JSON = bun.JSON;
-const sha = bun.sha;
-const LogLevel = PackageManager.Options.LogLevel;
-const FileDescriptor = bun.FileDescriptor;
-const Publish = bun.CLI.PublishCommand;
-const Dependency = Install.Dependency;
-const CowString = bun.ptr.CowString;
-
 pub const PackCommand = struct {
     pub const Context = struct {
         manager: *PackageManager,
@@ -327,7 +293,7 @@ pub const PackCommand = struct {
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
                         const match_path = if (include.flags.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.walk.matchImpl(allocator, include.glob.slice(), match_path)) {
+                        switch (glob.match(include.glob.slice(), match_path)) {
                             .match => included = true,
                             .negate_no_match, .negate_match => unreachable,
                             else => {},
@@ -344,7 +310,7 @@ pub const PackCommand = struct {
                         const match_path = if (exclude.flags.@"leading **/") entry_name else entry_subpath;
                         // NOTE: These patterns have `!` so `.match` logic is
                         // inverted here
-                        switch (glob.walk.matchImpl(allocator, exclude.glob.slice(), match_path)) {
+                        switch (glob.match(exclude.glob.slice(), match_path)) {
                             .negate_no_match => included = false,
                             else => {},
                         }
@@ -1068,7 +1034,7 @@ pub const PackCommand = struct {
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
-                switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
+                switch (glob.match(pattern, entry_name)) {
                     .match => {
                         // cannot be reversed
                         return .{
@@ -1095,7 +1061,7 @@ pub const PackCommand = struct {
 
         for (default_ignore_patterns) |pattern_info| {
             const pattern, const can_override = pattern_info;
-            switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
+            switch (glob.match(pattern, entry_name)) {
                 .match => {
                     if (can_override) {
                         ignored = true;
@@ -1137,7 +1103,7 @@ pub const PackCommand = struct {
                 if (pattern.flags.dirs_only and entry.kind != .directory) continue;
 
                 const match_path = if (pattern.flags.rel_path) rel else entry_name;
-                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob.slice(), match_path)) {
+                switch (glob.match(pattern.glob.slice(), match_path)) {
                     .match => {
                         ignored = true;
                         ignore_pattern = pattern.glob.slice();
@@ -2516,14 +2482,14 @@ pub const PackCommand = struct {
 };
 
 pub const bindings = struct {
-    const JSC = bun.JSC;
-    const JSValue = JSC.JSValue;
-    const JSGlobalObject = JSC.JSGlobalObject;
-    const CallFrame = JSC.CallFrame;
-    const ZigString = JSC.ZigString;
+    const jsc = bun.jsc;
+    const JSValue = jsc.JSValue;
+    const JSGlobalObject = jsc.JSGlobalObject;
+    const CallFrame = jsc.CallFrame;
+    const ZigString = jsc.ZigString;
     const String = bun.String;
-    const JSArray = JSC.JSArray;
-    const JSObject = JSC.JSObject;
+    const JSArray = jsc.JSArray;
+    const JSObject = jsc.JSObject;
 
     pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         const args = callFrame.arguments_old(1).slice();
@@ -2552,7 +2518,7 @@ pub const bindings = struct {
         defer sha1.deinit();
         sha1.update(tarball);
         sha1.final(&sha1_digest);
-        const shasum_str = String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
+        const shasum_str = bun.handleOom(String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}));
 
         var sha512_digest: sha.SHA512.Digest = undefined;
         var sha512 = sha.SHA512.init();
@@ -2561,7 +2527,7 @@ pub const bindings = struct {
         sha512.final(&sha512_digest);
         var base64_buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
         const encode_count = bun.simdutf.base64.encode(&sha512_digest, &base64_buf, false);
-        const integrity_str = String.cloneUTF8(base64_buf[0..encode_count]);
+        const integrity_value = try String.createUTF8ForJS(global, base64_buf[0..encode_count]);
 
         const EntryInfo = struct {
             pathname: String,
@@ -2622,25 +2588,34 @@ pub const bindings = struct {
                     return global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
                 },
                 else => {
-                    const pathname = archive_entry.pathname();
+                    const pathname_string = if (bun.Environment.isWindows) blk: {
+                        const pathname_w = archive_entry.pathnameW();
+                        const list = std.ArrayList(u8).init(bun.default_allocator);
+                        var result = bun.handleOom(bun.strings.toUTF8ListWithType(list, []const u16, pathname_w));
+                        defer result.deinit();
+                        break :blk String.cloneUTF8(result.items);
+                    } else String.cloneUTF8(archive_entry.pathname());
+
                     const kind = bun.sys.kindFromMode(archive_entry.filetype());
                     const perm = archive_entry.perm();
 
                     var entry_info: EntryInfo = .{
-                        .pathname = String.cloneUTF8(pathname),
+                        .pathname = pathname_string,
                         .kind = String.static(@tagName(kind)),
                         .perm = perm,
                     };
 
                     if (kind == .file) {
                         const size: usize = @intCast(archive_entry.size());
-                        read_buf.resize(size) catch bun.outOfMemory();
+                        bun.handleOom(read_buf.resize(size));
                         defer read_buf.clearRetainingCapacity();
 
                         const read = archive.readData(read_buf.items);
                         if (read < 0) {
-                            return global.throw("failed to read archive entry \"{}\": {s}", .{
-                                bun.fmt.fmtPath(u8, pathname, .{}),
+                            const pathname_utf8 = pathname_string.toUTF8(bun.default_allocator);
+                            defer pathname_utf8.deinit();
+                            return global.throw("failed to read archive entry \"{s}\": {s}", .{
+                                pathname_utf8.slice(),
                                 Archive.errorString(@ptrCast(archive)),
                             });
                         }
@@ -2648,7 +2623,7 @@ pub const bindings = struct {
                         entry_info.contents = String.cloneUTF8(read_buf.items);
                     }
 
-                    entries_info.append(entry_info) catch bun.outOfMemory();
+                    bun.handleOom(entries_info.append(entry_info));
                 },
             }
         }
@@ -2683,8 +2658,48 @@ pub const bindings = struct {
         result.put(global, "entries", entries);
         result.put(global, "size", JSValue.jsNumber(tarball.len));
         result.put(global, "shasum", shasum_str.toJS(global));
-        result.put(global, "integrity", integrity_str.toJS(global));
+        result.put(global, "integrity", integrity_value);
 
         return result;
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const std = @import("std");
+
+const libarchive = @import("../libarchive/libarchive.zig").lib;
+const Archive = libarchive.Archive;
+
+const bun = @import("bun");
+const DirIterator = bun.DirIterator;
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FileDescriptor = bun.FileDescriptor;
+const Global = bun.Global;
+const JSON = bun.json;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const Progress = bun.Progress;
+const RunCommand = bun.RunCommand;
+const Semver = bun.Semver;
+const glob = bun.glob;
+const js_printer = bun.js_printer;
+const sha = bun.sha;
+const strings = bun.strings;
+const CowString = bun.ptr.CowString;
+const File = bun.sys.File;
+
+const Command = bun.cli.Command;
+const Publish = bun.cli.PublishCommand;
+
+const Install = bun.install;
+const Dependency = Install.Dependency;
+const Lockfile = Install.Lockfile;
+const PackageManager = Install.PackageManager;
+const LogLevel = PackageManager.Options.LogLevel;
+
+const E = bun.js_parser.E;
+const Expr = bun.js_parser.Expr;

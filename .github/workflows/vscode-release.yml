@@ -1,0 +1,52 @@
+name: VSCode Extension Publish
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.0.25) - Check the marketplace for the latest version"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    name: "Publish to VS Code Marketplace"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.2.18"
+
+      - name: Install dependencies (root)
+        run: bun install
+
+      - name: Install dependencies
+        run: bun install
+        working-directory: packages/bun-vscode
+
+      - name: Set Version
+        run: bun pm version ${{ github.event.inputs.version }} --no-git-tag-version --allow-same-version
+        working-directory: packages/bun-vscode
+
+      - name: Build (inspector protocol)
+        run: bun install && bun run build
+        working-directory: packages/bun-inspector-protocol
+
+      - name: Build (vscode extension)
+        run: bun run build
+        working-directory: packages/bun-vscode
+
+      - name: Publish
+        if: success()
+        run: bunx vsce publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCODE_EXTENSION }}
+        working-directory: packages/bun-vscode/extension
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bun-vscode-${{ github.event.inputs.version }}.vsix
+          path: packages/bun-vscode/extension/bun-vscode-${{ github.event.inputs.version }}.vsix

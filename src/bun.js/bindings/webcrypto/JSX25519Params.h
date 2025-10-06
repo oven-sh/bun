@@ -20,7 +20,6 @@
 
 #pragma once
 
-
 #if ENABLE(WEB_CRYPTO)
 
 #include "CryptoAlgorithmX25519Params.h"

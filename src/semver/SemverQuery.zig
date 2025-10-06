@@ -1,3 +1,5 @@
+const Query = @This();
+
 /// Linked-list of AND ranges
 /// "^1 ^2"
 /// ----|-----
@@ -423,9 +425,9 @@ pub const Token = struct {
                 .right = .{
                     .op = .lte,
                     .version = .{
-                        .major = std.math.maxInt(u32),
-                        .minor = std.math.maxInt(u32),
-                        .patch = std.math.maxInt(u32),
+                        .major = std.math.maxInt(u64),
+                        .minor = std.math.maxInt(u64),
+                        .patch = std.math.maxInt(u64),
                     },
                 },
             },
@@ -435,8 +437,8 @@ pub const Token = struct {
                         .op = .lte,
                         .version = .{
                             .major = version.major orelse 0,
-                            .minor = std.math.maxInt(u32),
-                            .patch = std.math.maxInt(u32),
+                            .minor = std.math.maxInt(u64),
+                            .patch = std.math.maxInt(u64),
                         },
                     },
                 },
@@ -456,8 +458,8 @@ pub const Token = struct {
                         .op = .gt,
                         .version = .{
                             .major = version.major orelse 0,
-                            .minor = std.math.maxInt(u32),
-                            .patch = std.math.maxInt(u32),
+                            .minor = std.math.maxInt(u64),
+                            .patch = std.math.maxInt(u64),
                         },
                     },
                 },
@@ -481,7 +483,7 @@ pub const Token = struct {
                         .version = .{
                             .major = version.major orelse 0,
                             .minor = version.minor orelse 0,
-                            .patch = std.math.maxInt(u32),
+                            .patch = std.math.maxInt(u64),
                         },
                     },
                 },
@@ -502,7 +504,7 @@ pub const Token = struct {
                         .version = .{
                             .major = version.major orelse 0,
                             .minor = version.minor orelse 0,
-                            .patch = std.math.maxInt(u32),
+                            .patch = std.math.maxInt(u64),
                         },
                     },
                 },
@@ -774,18 +776,18 @@ pub fn parse(
     return list;
 }
 
-const Query = @This();
+const string = []const u8;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
 
+const bun = @import("bun");
+const Environment = bun.Environment;
 const OOM = bun.OOM;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+
+const Range = bun.Semver.Range;
 const SlicedString = bun.Semver.SlicedString;
 const Version = bun.Semver.Version;
-const Range = bun.Semver.Range;
-const assert = bun.assert;

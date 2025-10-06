@@ -1,3 +1,5 @@
+const Cp = @This();
+
 opts: Opts = .{},
 state: union(enum) {
     idle,
@@ -188,7 +190,7 @@ pub fn writeFailingError(this: *Cp, buf: []const u8, exit_code: ExitCode) Yield 
     return this.bltn().done(exit_code);
 }
 
-pub fn onIOWriterChunk(this: *Cp, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Cp, _: usize, e: ?jsc.SystemError) Yield {
     if (e) |err| err.deref();
     if (this.state == .waiting_write_err) {
         return this.bltn().done(1);
@@ -217,17 +219,17 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
                     err.sys.path.eqlUTF8(task.src_absolute.?)))
             {
                 log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
-                this.state.exec.ebusy.tasks.append(bun.default_allocator, task) catch bun.outOfMemory();
+                bun.handleOom(this.state.exec.ebusy.tasks.append(bun.default_allocator, task));
                 this.next().run();
                 return;
             }
         } else {
             const tgt_absolute = task.tgt_absolute;
             task.tgt_absolute = null;
-            if (tgt_absolute) |tgt| this.state.exec.ebusy.absolute_targets.put(bun.default_allocator, tgt, {}) catch bun.outOfMemory();
+            if (tgt_absolute) |tgt| this.state.exec.ebusy.absolute_targets.put(bun.default_allocator, tgt, {}) catch |err| bun.handleOom(err);
             const src_absolute = task.src_absolute;
             task.src_absolute = null;
-            if (src_absolute) |tgt| this.state.exec.ebusy.absolute_srcs.put(bun.default_allocator, tgt, {}) catch bun.outOfMemory();
+            if (src_absolute) |tgt| this.state.exec.ebusy.absolute_srcs.put(bun.default_allocator, tgt, {}) catch |err| bun.handleOom(err);
         }
     }
 
@@ -306,12 +308,12 @@ pub const ShellCpTask = struct {
     verbose_output_lock: bun.Mutex = .{},
     verbose_output: ArrayList(u8) = ArrayList(u8).init(bun.default_allocator),
 
-    task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
-    event_loop: JSC.EventLoopHandle,
-    concurrent_task: JSC.EventLoopTask,
+    task: jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
+    event_loop: jsc.EventLoopHandle,
+    concurrent_task: jsc.EventLoopTask,
     err: ?bun.shell.ShellErr = null,
 
-    const debug = bun.Output.scoped(.ShellCpTask, false);
+    const debug = bun.Output.scoped(.ShellCpTask, .visible);
 
     fn deinit(this: *ShellCpTask) void {
         debug("deinit", .{});
@@ -335,7 +337,7 @@ pub const ShellCpTask = struct {
 
     pub fn create(
         cp: *Cp,
-        evtloop: JSC.EventLoopHandle,
+        evtloop: jsc.EventLoopHandle,
         opts: Opts,
         operands: usize,
         src: [:0]const u8,
@@ -350,7 +352,7 @@ pub const ShellCpTask = struct {
             .tgt = tgt,
             .cwd_path = cwd_path,
             .event_loop = evtloop,
-            .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         });
     }
 
@@ -360,10 +362,10 @@ pub const ShellCpTask = struct {
         return out;
     }
 
-    pub fn ensureDest(nodefs: *JSC.Node.fs.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
-        return switch (nodefs.mkdirRecursiveOSPath(dest, JSC.Node.Arguments.Mkdir.DefaultMode, false)) {
+    pub fn ensureDest(nodefs: *jsc.Node.fs.NodeFS, dest: bun.OSPathSliceZ) Maybe(void) {
+        return switch (nodefs.mkdirRecursiveOSPath(dest, jsc.Node.Arguments.Mkdir.DefaultMode, false)) {
             .err => |err| Maybe(void){ .err = err },
-            .result => Maybe(void).success,
+            .result => .success,
         };
     }
 
@@ -464,12 +466,12 @@ pub const ShellCpTask = struct {
 
         // Any source directory without -R is an error
         if (src_is_dir and !this.opts.recursive) {
-            const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory();
+            const errmsg = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}));
             return .{ .custom = errmsg };
         }
 
         if (!src_is_dir and bun.strings.eql(src, tgt)) {
-            const errmsg = std.fmt.allocPrint(bun.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }) catch bun.outOfMemory();
+            const errmsg = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }));
             return .{ .custom = errmsg };
         }
 
@@ -507,15 +509,15 @@ pub const ShellCpTask = struct {
             } else if (this.operands == 2) {
                 // source_dir -> new_target_dir
             } else {
-                const errmsg = std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}) catch bun.outOfMemory();
+                const errmsg = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}));
                 return .{ .custom = errmsg };
             }
             copying_many = true;
         }
         // Handle the "3rd synopsis": source_files... -> target
         else {
-            if (src_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}) catch bun.outOfMemory() };
-            if (!tgt_exists or !tgt_is_dir) return .{ .custom = std.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{this.tgt}) catch bun.outOfMemory() };
+            if (src_is_dir) return .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src})) };
+            if (!tgt_exists or !tgt_is_dir) return .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{this.tgt})) };
             const basename = ResolvePath.basename(src[0..src.len]);
             const parts: []const []const u8 = &.{
                 tgt[0..tgt.len],
@@ -525,12 +527,12 @@ pub const ShellCpTask = struct {
             copying_many = true;
         }
 
-        this.src_absolute = bun.default_allocator.dupeZ(u8, src[0..src.len]) catch bun.outOfMemory();
-        this.tgt_absolute = bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]) catch bun.outOfMemory();
+        this.src_absolute = bun.handleOom(bun.default_allocator.dupeZ(u8, src[0..src.len]));
+        this.tgt_absolute = bun.handleOom(bun.default_allocator.dupeZ(u8, tgt[0..tgt.len]));
 
-        const args = JSC.Node.fs.Arguments.Cp{
-            .src = JSC.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
-            .dest = JSC.Node.PathLike{ .string = bun.PathString.init(this.tgt_absolute.?) },
+        const args = jsc.Node.fs.Arguments.Cp{
+            .src = jsc.Node.PathLike{ .string = bun.PathString.init(this.src_absolute.?) },
+            .dest = jsc.Node.PathLike{ .string = bun.PathString.init(this.tgt_absolute.?) },
             .flags = .{
                 .mode = @enumFromInt(0),
                 .recursive = this.opts.recursive,
@@ -542,7 +544,7 @@ pub const ShellCpTask = struct {
 
         debug("Scheduling {s} -> {s}", .{ this.src_absolute.?, this.tgt_absolute.? });
         if (this.event_loop == .js) {
-            const vm: *JSC.VirtualMachine = this.event_loop.js.getVmImpl();
+            const vm: *jsc.VirtualMachine = this.event_loop.js.getVmImpl();
             debug("Yoops", .{});
             _ = bun.api.node.fs.ShellAsyncCpTask.createWithShellTask(
                 vm.global,
@@ -577,7 +579,7 @@ pub const ShellCpTask = struct {
         log("onCopy: {s} -> {s}\n", .{ src, dest });
         defer this.verbose_output_lock.unlock();
         var writer = this.verbose_output.writer();
-        writer.print("{s} -> {s}\n", .{ src, dest }) catch bun.outOfMemory();
+        bun.handleOom(writer.print("{s} -> {s}\n", .{ src, dest }));
     }
 
     pub fn cpOnCopy(this: *ShellCpTask, src_: anytype, dest_: anytype) void {
@@ -727,30 +729,34 @@ const Opts = packed struct(u16) {
 };
 
 // --
-const log = bun.Output.scoped(.cp, true);
-const ArrayList = std.ArrayList;
-const Syscall = bun.sys;
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
+const log = bun.Output.scoped(.cp, .hidden);
+
 const interpreter = @import("../interpreter.zig");
+const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
-const Builtin = Interpreter.Builtin;
-const Result = Interpreter.Builtin.Result;
+const OutputSrc = interpreter.OutputSrc;
+const OutputTask = interpreter.OutputTask;
 const ParseError = interpreter.ParseError;
 const ParseFlagResult = interpreter.ParseFlagResult;
-const ExitCode = shell.ExitCode;
-const Cp = @This();
-const OutputTask = interpreter.OutputTask;
+const unsupportedFlag = interpreter.unsupportedFlag;
+
+const Builtin = Interpreter.Builtin;
+const Result = Interpreter.Builtin.Result;
+
+const bun = @import("bun");
+const ResolvePath = bun.path;
 const assert = bun.assert;
 
-const OutputSrc = interpreter.OutputSrc;
-const JSC = bun.JSC;
-const Maybe = bun.sys.Maybe;
-const std = @import("std");
-const FlagParser = interpreter.FlagParser;
+const jsc = bun.jsc;
+const WorkPool = jsc.WorkPool;
+const WorkPoolTask = jsc.WorkPoolTask;
 
-const unsupportedFlag = interpreter.unsupportedFlag;
-const WorkPool = JSC.WorkPool;
-const WorkPoolTask = JSC.WorkPoolTask;
-const ResolvePath = bun.path;
+const shell = bun.shell;
+const ExitCode = shell.ExitCode;
+const Yield = shell.Yield;
+
+const Syscall = bun.sys;
+const Maybe = bun.sys.Maybe;
+
+const std = @import("std");
+const ArrayList = std.ArrayList;

@@ -71,6 +71,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
     clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
     clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+    clap.parseParam("--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)") catch unreachable,
     clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
 };
 pub const runtime_params_ = [_]ParamType{
@@ -103,17 +104,22 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+    clap.parseParam("--use-system-ca                   Use the system's trusted certificate authorities") catch unreachable,
+    clap.parseParam("--use-openssl-ca                  Use OpenSSL's default CA store") catch unreachable,
+    clap.parseParam("--use-bundled-ca                  Use bundled CA store") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     clap.parseParam("--sql-preconnect                  Preconnect to PostgreSQL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
+    clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
+    clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
@@ -138,6 +144,7 @@ pub const bunx_commands = [_]ParamType{
 pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
+    clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -163,6 +170,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
     clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
     clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+    clap.parseParam("--keep-names                     Preserve original function and class names when minifying") catch unreachable,
     clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
     clap.parseParam("--dump-environment-variables") catch unreachable,
     clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
@@ -171,6 +179,11 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
     clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
     clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
+    clap.parseParam("--windows-title <STR>            When using --compile targeting Windows, set the executable product name") catch unreachable,
+    clap.parseParam("--windows-publisher <STR>        When using --compile targeting Windows, set the executable company name") catch unreachable,
+    clap.parseParam("--windows-version <STR>          When using --compile targeting Windows, set the executable version (e.g. 1.2.3.4)") catch unreachable,
+    clap.parseParam("--windows-description <STR>      When using --compile targeting Windows, set the executable description") catch unreachable,
+    clap.parseParam("--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright") catch unreachable,
 } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
     clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     clap.parseParam("--debug-no-minify                When --app is set, do not minify anything") catch unreachable,
@@ -182,39 +195,33 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
-    clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
+    clap.parseParam("--concurrent                     Treat all tests as `test.concurrent()` tests") catch unreachable,
+    clap.parseParam("--randomize                      Run tests in random order") catch unreachable,
+    clap.parseParam("--seed <INT>                     Set the random seed for test randomization") catch unreachable,
     clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
     clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-    clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
-    clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
+    clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output.") catch unreachable,
+    clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
+    clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
+    clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-    var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-        .result => |fd| fd.stdFile(),
+    const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
+        .result => |s| s,
         .err => |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
+            Output.prettyErrorln("{}\nwhile reading config \"{s}\"", .{
                 err,
                 config_path,
             });
             Global.exit(1);
         },
-    };
-
-    defer config_file.close();
-    const contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-        if (auto_loaded) return;
-        Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
-            @errorName(err),
-            config_path,
-        });
-        Global.exit(1);
     };
 
     js_ast.Stmt.Data.Store.create();
@@ -228,7 +235,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
-    try Bunfig.parse(allocator, &logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
+    try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
@@ -379,6 +386,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     if (cmd == .RunCommand or cmd == .AutoCommand) {
         ctx.filters = args.options("--filter");
+        ctx.workspaces = args.flag("--workspaces");
+        ctx.if_present = args.flag("--if-present");
 
         if (args.option("--elide-lines")) |elide_lines| {
             if (elide_lines.len > 0) {
@@ -400,6 +409,15 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
+        if (args.option("--max-concurrency")) |max_concurrency| {
+            if (max_concurrency.len > 0) {
+                ctx.test_options.max_concurrency = std.fmt.parseInt(u32, max_concurrency, 10) catch {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid max-concurrency: \"{s}\"", .{max_concurrency});
+                    Global.exit(1);
+                };
+            }
+        }
+
         if (!ctx.test_options.coverage.enabled) {
             ctx.test_options.coverage.enabled = args.flag("--coverage");
         }
@@ -412,7 +430,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 } else if (bun.strings.eqlComptime(reporter, "lcov")) {
                     ctx.test_options.coverage.reporters.lcov = true;
                 } else {
-                    Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
+                    Output.prettyErrorln("<r><red>error<r>: invalid coverage reporter '{s}'. Available options: 'text' (console output), 'lcov' (code coverage file)", .{reporter});
                     Global.exit(1);
                 }
             }
@@ -425,14 +443,21 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--reporter")) |reporter| {
             if (strings.eqlComptime(reporter, "junit")) {
                 if (ctx.test_options.reporter_outfile == null) {
-                    Output.errGeneric("--reporter=junit expects an output file from --reporter-outfile", .{});
+                    Output.errGeneric("--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report", .{});
                     Global.crash();
                 }
-                ctx.test_options.file_reporter = .junit;
+                ctx.test_options.reporters.junit = true;
+            } else if (strings.eqlComptime(reporter, "dots") or strings.eqlComptime(reporter, "dot")) {
+                ctx.test_options.reporters.dots = true;
             } else {
-                Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
+                Output.errGeneric("unsupported reporter format '{s}'. Available options: 'junit' (for XML test results), 'dots'", .{reporter});
                 Global.crash();
             }
+        }
+
+        // Handle --dots flag as shorthand for --reporter=dots
+        if (args.flag("--dots")) {
+            ctx.test_options.reporters.dots = true;
         }
 
         if (args.option("--coverage-dir")) |dir| {
@@ -479,7 +504,16 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
-        ctx.test_options.only = args.flag("--only");
+        ctx.test_options.concurrent = args.flag("--concurrent");
+        ctx.test_options.randomize = args.flag("--randomize");
+
+        if (args.option("--seed")) |seed_str| {
+            ctx.test_options.randomize = true;
+            ctx.test_options.seed = std.fmt.parseInt(u32, seed_str, 10) catch {
+                Output.prettyErrorln("<red>error<r>: Invalid seed value: {s}", .{seed_str});
+                std.process.exit(1);
+            };
+        }
     }
 
     ctx.args.absolute_working_dir = cwd;
@@ -637,6 +671,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
+        if (args.option("--user-agent")) |user_agent| {
+            bun.http.overridden_default_user_agent = user_agent;
+        }
+
         ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
             Bunfig.OfflineMode.offline
         else if (args.flag("--prefer-latest"))
@@ -693,7 +731,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-wait")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -705,7 +743,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .wait_for_connection = true,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-brk")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -719,7 +757,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .set_breakpoint_on_first_line = true,
                 } };
 
-            bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
         if (args.flag("--no-deprecation")) {
@@ -734,6 +772,33 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--zero-fill-buffers")) {
             Bun__Node__ZeroFillBuffers = true;
         }
+        const use_system_ca = args.flag("--use-system-ca");
+        const use_openssl_ca = args.flag("--use-openssl-ca");
+        const use_bundled_ca = args.flag("--use-bundled-ca");
+
+        // Disallow any combination > 1
+        if (@as(u8, @intFromBool(use_system_ca)) + @as(u8, @intFromBool(use_openssl_ca)) + @as(u8, @intFromBool(use_bundled_ca)) > 1) {
+            Output.prettyErrorln("<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca", .{});
+            Global.exit(1);
+        }
+
+        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        if (use_bundled_ca) {
+            Bun__Node__CAStore = .bundled;
+        } else if (use_openssl_ca) {
+            Bun__Node__CAStore = .openssl;
+        } else if (use_system_ca) {
+            Bun__Node__CAStore = .system;
+        } else {
+            if (bun.getenvZ("NODE_USE_SYSTEM_CA")) |val| {
+                if (val.len > 0 and val[0] == '1') {
+                    Bun__Node__CAStore = .system;
+                }
+            }
+        }
+
+        // Back-compat boolean used by native code until fully migrated
+        Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
     }
 
     if (opts.port != null and opts.origin == null) {
@@ -786,6 +851,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
         ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
         ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+        ctx.bundler_options.keep_names = args.flag("--keep-names");
 
         ctx.bundler_options.css_chunking = args.flag("--css-chunking");
 
@@ -881,6 +947,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
         }
 
+        if (args.option("--compile-exec-argv")) |compile_exec_argv| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--compile-exec-argv requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.compile_exec_argv = compile_exec_argv;
+        }
+
         if (args.flag("--windows-hide-console")) {
             // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
             // does, all of these customization options have been gated to windows-only
@@ -892,7 +966,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--windows-hide-console requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_hide_console = true;
+            ctx.bundler_options.windows.hide_console = true;
         }
         if (args.option("--windows-icon")) |path| {
             if (!Environment.isWindows) {
@@ -903,7 +977,62 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("--windows-icon requires --compile", .{});
                 Global.crash();
             }
-            ctx.bundler_options.windows_icon = path;
+            ctx.bundler_options.windows.icon = path;
+        }
+        if (args.option("--windows-title")) |title| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-title requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.title = title;
+        }
+        if (args.option("--windows-publisher")) |publisher| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-publisher requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.publisher = publisher;
+        }
+        if (args.option("--windows-version")) |version| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-version requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.version = version;
+        }
+        if (args.option("--windows-description")) |description| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-description requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.description = description;
+        }
+        if (args.option("--windows-copyright")) |copyright| {
+            if (!Environment.isWindows) {
+                Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--windows-copyright requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.windows.copyright = copyright;
         }
 
         if (args.option("--outdir")) |outdir| {
@@ -1046,6 +1175,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     const jsx_fragment = args.option("--jsx-fragment");
     const jsx_import_source = args.option("--jsx-import-source");
     const jsx_runtime = args.option("--jsx-runtime");
+    const jsx_side_effects = args.flag("--jsx-side-effects");
 
     if (cmd == .AutoCommand or cmd == .RunCommand) {
         // "run.silent" in bunfig.toml
@@ -1064,7 +1194,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (opts.define) |define| {
             if (define.keys.len > 0)
-                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
+                bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
     }
 
@@ -1092,6 +1222,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 .import_source = (jsx_import_source orelse &default_import_source),
                 .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                 .development = false,
+                .side_effects = jsx_side_effects,
             };
         } else {
             opts.jsx = Api.Jsx{
@@ -1100,6 +1231,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                 .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                 .development = false,
+                .side_effects = jsx_side_effects,
             };
         }
     }
@@ -1172,28 +1304,35 @@ export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
-const bun = @import("bun");
-const std = @import("std");
-const Environment = bun.Environment;
-const Api = bun.Schema.Api;
-const logger = bun.logger;
-const strings = bun.strings;
-const string = bun.string;
-const clap = bun.clap;
+pub const BunCAStore = enum(u8) { bundled, openssl, system };
+pub export var Bun__Node__CAStore: BunCAStore = .bundled;
+pub export var Bun__Node__UseSystemCA = false;
+
+const string = []const u8;
+
 const builtin = @import("builtin");
-const FeatureFlags = bun.FeatureFlags;
-const Command = CLI.Command;
-const Output = bun.Output;
-const Global = bun.Global;
-const debug_flags = CLI.debug_flags;
-const js_ast = bun.js_ast;
-const resolve_path = bun.path;
+const std = @import("std");
+
+const bun = @import("bun");
 const Bunfig = bun.Bunfig;
+const Environment = bun.Environment;
+const FeatureFlags = bun.FeatureFlags;
+const Global = bun.Global;
 const OOM = bun.OOM;
-const options = bun.options;
-const printVersionAndExit = CLI.printVersionAndExit;
-const printRevisionAndExit = CLI.printRevisionAndExit;
-const CLI = bun.CLI;
+const Output = bun.Output;
 const RegularExpression = bun.RegularExpression;
+const clap = bun.clap;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const options = bun.options;
+const resolve_path = bun.path;
+const strings = bun.strings;
+const Api = bun.schema.api;
+
+const CLI = bun.cli;
+const Command = CLI.Command;
 const DefineColonList = CLI.DefineColonList;
 const LoaderColonList = CLI.LoaderColonList;
+const debug_flags = CLI.debug_flags;
+const printRevisionAndExit = CLI.printRevisionAndExit;
+const printVersionAndExit = CLI.printVersionAndExit;

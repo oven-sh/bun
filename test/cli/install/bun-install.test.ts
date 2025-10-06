@@ -17,6 +17,7 @@ import {
   bunExe,
   bunEnv as env,
   isWindows,
+  joinP,
   readdirSorted,
   runBunInstall,
   tempDirWithFiles,
@@ -4448,7 +4449,7 @@ it("should report error on invalid format for package.json", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
+  expect(err.replaceAll(joinP(package_dir + sep), "[dir]/").replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);
@@ -4472,7 +4473,7 @@ it("should report error on invalid format for dependencies", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
+  expect(err.replaceAll(joinP(package_dir + sep), "[dir]/")).toMatchSnapshot();
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);
@@ -4497,7 +4498,7 @@ it("should report error on invalid format for optionalDependencies", async () =>
   });
 
   let err = await stderr.text();
-  err = err.replaceAll(package_dir + sep, "[dir]/");
+  err = err.replaceAll(joinP(package_dir + sep), "[dir]/");
   err = err.substring(0, err.indexOf("\n", err.lastIndexOf("[dir]/package.json:"))).trim();
   expect(err.split("\n")).toEqual([
     `1 | {"name":"foo","version":"0.0.1","optionalDependencies":"bar"}`,
@@ -4533,7 +4534,7 @@ it("should report error on invalid format for workspaces", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
+  expect(err.replaceAll(joinP(package_dir + sep), "[dir]/")).toMatchSnapshot();
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);
@@ -4794,7 +4795,7 @@ it("should fail on invalid Git URL", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain('error: "git clone" for "uglify" failed');
+  expect(err.split(/\r?\n/)).toContain("error: InstallFailed cloning repository for uglify");
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);
@@ -6196,6 +6197,65 @@ it("should handle --frozen-lockfile", async () => {
   const err = await stderr.text();
   expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
   expect(await exited).toBe(1);
+});
+
+it("should handle bun ci alias (to --frozen-lockfile)", async () => {
+  let urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+  );
+
+  // save the lockfile once
+  expect(
+    await spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "ignore",
+      env,
+    }).exited,
+  ).toBe(0);
+
+  // change version of baz in package.json
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: { baz: "0.0.5" },
+    }),
+  );
+
+  const { stderr: stderr1, exited: exited1 } = spawn({
+    cmd: [bunExe(), "ci"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited1).toBe(1);
+
+  // test that it works even if ci isn't first "arg"
+  const { stderr: stderr2, exited: exited2 } = spawn({
+    cmd: [bunExe(), "--save", "ci"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited2).toBe(1);
 });
 
 it("should handle frozenLockfile in config file", async () => {

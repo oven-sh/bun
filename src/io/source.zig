@@ -1,8 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const uv = bun.windows.libuv;
-
-const log = bun.Output.scoped(.PipeSource, true);
+const log = bun.Output.scoped(.PipeSource, .hidden);
 
 pub const Source = union(enum) {
     pipe: *Pipe,
@@ -102,65 +98,89 @@ pub const Source = union(enum) {
         };
     }
 
-    pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Pipe) {
+    pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Pipe) {
         log("openPipe (fd = {})", .{fd});
-        const pipe = bun.default_allocator.create(Source.Pipe) catch bun.outOfMemory();
+        const pipe = bun.default_allocator.create(Source.Pipe) catch |err| bun.handleOom(err);
         // we should never init using IPC here see ipc.zig
         switch (pipe.init(loop, false)) {
             .err => |err| {
+                bun.default_allocator.destroy(pipe);
                 return .{ .err = err };
             },
             else => {},
         }
 
-        return switch (pipe.open(fd)) {
-            .err => |err| .{
-                .err = err,
+        switch (pipe.open(fd)) {
+            .err => |err| {
+                bun.default_allocator.destroy(pipe);
+                return .{
+                    .err = err,
+                };
             },
-            .result => .{
-                .result = pipe,
-            },
-        };
+            .result => {},
+        }
+
+        return .{ .result = pipe };
     }
 
-    pub var stdin_tty: uv.uv_tty_t = undefined;
-    pub var stdin_tty_init = false;
+    pub const StdinTTY = struct {
+        var data: uv.uv_tty_t = undefined;
+        var lock: bun.Mutex = .{};
+        var initialized = std.atomic.Value(bool).init(false);
+        const value: *uv.uv_tty_t = &data;
 
-    pub fn openTty(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Tty) {
+        pub fn isStdinTTY(tty: *const Source.Tty) bool {
+            return tty == StdinTTY.value;
+        }
+
+        fn getStdinTTY(loop: *uv.Loop) bun.sys.Maybe(*Source.Tty) {
+            StdinTTY.lock.lock();
+            defer StdinTTY.lock.unlock();
+
+            if (StdinTTY.initialized.swap(true, .monotonic) == false) {
+                const rc = uv.uv_tty_init(loop, StdinTTY.value, 0, 0);
+                if (rc.toError(.open)) |err| {
+                    StdinTTY.initialized.store(false, .monotonic);
+                    return .{ .err = err };
+                }
+            }
+
+            return .{ .result = StdinTTY.value };
+        }
+    };
+
+    pub fn openTty(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Tty) {
         log("openTTY (fd = {})", .{fd});
 
         const uv_fd = fd.uv();
 
         if (uv_fd == 0) {
-            if (!stdin_tty_init) {
-                switch (stdin_tty.init(loop, uv_fd)) {
-                    .err => |err| return .{ .err = err },
-                    .result => {},
-                }
-                stdin_tty_init = true;
-            }
-
-            return .{ .result = &stdin_tty };
+            return StdinTTY.getStdinTTY(loop);
         }
 
-        const tty = bun.default_allocator.create(Source.Tty) catch bun.outOfMemory();
-        return switch (tty.init(loop, uv_fd)) {
-            .err => |err| .{ .err = err },
-            .result => .{ .result = tty },
-        };
+        const tty = bun.default_allocator.create(Source.Tty) catch |err| bun.handleOom(err);
+        switch (tty.init(loop, uv_fd)) {
+            .err => |err| {
+                bun.default_allocator.destroy(tty);
+                return .{ .err = err };
+            },
+            .result => {},
+        }
+
+        return .{ .result = tty };
     }
 
     pub fn openFile(fd: bun.FileDescriptor) *Source.File {
         bun.assert(fd.isValid() and fd.uv() != -1);
         log("openFile (fd = {})", .{fd});
-        const file = bun.default_allocator.create(Source.File) catch bun.outOfMemory();
+        const file = bun.handleOom(bun.default_allocator.create(Source.File));
 
         file.* = std.mem.zeroes(Source.File);
         file.file = fd.uv();
         return file;
     }
 
-    pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
+    pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(Source) {
         const rc = bun.windows.libuv.uv_guess_handle(fd.uv());
         log("open(fd: {}, type: {d})", .{ fd, @tagName(rc) });
 
@@ -209,7 +229,7 @@ pub const Source = union(enum) {
                 {
                     return .{ .err = err };
                 } else {
-                    return .{ .result = {} };
+                    return .success;
                 }
             },
             else => .{
@@ -224,12 +244,22 @@ pub const Source = union(enum) {
 };
 
 export fn Source__setRawModeStdin(raw: bool) c_int {
-    const tty = switch (Source.openTty(bun.JSC.VirtualMachine.get().uvLoop(), .stdin())) {
+    const tty = switch (Source.openTty(bun.jsc.VirtualMachine.get().uvLoop(), .stdin())) {
         .result => |tty| tty,
         .err => |e| return e.errno,
     };
-    if (tty.setMode(if (raw) .raw else .normal).toError(.uv_tty_set_mode)) |err| {
+    // UV_TTY_MODE_RAW_VT is a variant of UV_TTY_MODE_RAW that enables control
+    // sequence processing on the TTY implementer side, rather than having libuv
+    // translate keypress events into control sequences, aligning behavior more
+    // closely with POSIX platforms. This is also required to support some
+    // control sequences at all on Windows, such as bracketed paste mode. The
+    // Node.js readline implementation handles differences between these modes.
+    if (tty.setMode(if (raw) .vt else .normal).toError(.uv_tty_set_mode)) |err| {
         return err.errno;
     }
     return 0;
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const uv = bun.windows.libuv;

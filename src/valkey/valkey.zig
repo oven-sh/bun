@@ -2,18 +2,33 @@
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-pub const ValkeyContext = @import("ValkeyContext.zig");
+pub const ValkeyContext = @import("./ValkeyContext.zig");
 
 /// Connection flags to track Valkey client state
-pub const ConnectionFlags = packed struct(u8) {
+pub const ConnectionFlags = struct {
+    // TODO(markovejnovic): I am not a huge fan of these flags. I would
+    // consider refactoring them into an enumerated state machine, as that
+    // feels significantly more natural compared to a bag of booleans.
     is_authenticated: bool = false,
     is_manually_closed: bool = false,
+    is_selecting_db_internal: bool = false,
     enable_offline_queue: bool = true,
     needs_to_open_socket: bool = true,
     enable_auto_reconnect: bool = true,
     is_reconnecting: bool = false,
-    auto_pipelining: bool = true,
+    failed: bool = false,
+    enable_auto_pipelining: bool = true,
     finalized: bool = false,
+    // This flag is a slight hack to allow returning the client instance in the
+    // promise which resolves when the connection is established. There are two
+    // modes through which a client may connect:
+    //   1. Connect through `client.connect()` which has the semantics of
+    //      resolving the promise with the connection information.
+    //   2. Through `client.duplicate()` which creates a promise through
+    //      `onConnect()` which resolves with the client instance itself.
+    // This flag is set to true in the latter case to indicate to the promise
+    // resolution delegation to resolve the promise with the client.
+    connection_promise_returns_client: bool = false,
 };
 
 /// Valkey connection status
@@ -21,8 +36,14 @@ pub const Status = enum {
     disconnected,
     connecting,
     connected,
-    failed,
 };
+
+pub fn isActive(this: *const Status) bool {
+    return switch (this.*) {
+        .connected, .connecting => true,
+        else => false,
+    };
+}
 
 pub const Command = @import("./ValkeyCommand.zig");
 
@@ -64,7 +85,14 @@ pub const Protocol = enum {
 pub const TLS = union(enum) {
     none,
     enabled,
-    custom: JSC.API.ServerConfig.SSLConfig,
+    custom: jsc.API.ServerConfig.SSLConfig,
+
+    pub fn clone(this: *const TLS) TLS {
+        return switch (this.*) {
+            .custom => |*ssl_config| .{ .custom = ssl_config.clone() },
+            else => this.*,
+        };
+    }
 
     pub fn deinit(this: *TLS) void {
         switch (this.*) {
@@ -73,7 +101,7 @@ pub const TLS = union(enum) {
         }
     }
 
-    pub fn rejectUnauthorized(this: *const TLS, vm: *JSC.VirtualMachine) bool {
+    pub fn rejectUnauthorized(this: *const TLS, vm: *jsc.VirtualMachine) bool {
         return switch (this.*) {
             .custom => |*ssl_config| ssl_config.reject_unauthorized != 0,
             .enabled => vm.getTLSRejectUnauthorized(),
@@ -101,6 +129,13 @@ pub const Address = union(enum) {
         host: []const u8,
         port: u16,
     },
+
+    pub fn hostname(this: *const Address) []const u8 {
+        return switch (this.*) {
+            .unix => |unix_addr| unix_addr,
+            .host => |h| h.host,
+        };
+    }
 
     pub fn connect(this: *const Address, client: *ValkeyClient, ctx: *bun.uws.SocketContext, is_tls: bool) !uws.AnySocket {
         switch (is_tls) {
@@ -151,6 +186,7 @@ pub const ValkeyClient = struct {
     username: []const u8 = "",
     database: u32 = 0,
     address: Address,
+    protocol: Protocol,
 
     connection_strings: []u8 = &.{},
 
@@ -169,10 +205,10 @@ pub const ValkeyClient = struct {
     // Auto-pipelining
     auto_flusher: AutoFlusher = .{},
 
-    vm: *JSC.VirtualMachine,
+    vm: *jsc.VirtualMachine,
 
     /// Clean up resources used by the Valkey client
-    pub fn deinit(this: *@This(), globalObjectOrFinalizing: ?*JSC.JSGlobalObject) void {
+    pub fn deinit(this: *@This(), globalObjectOrFinalizing: ?*jsc.JSGlobalObject) void {
         var pending = this.in_flight;
         this.in_flight = .init(this.allocator);
         defer pending.deinit();
@@ -207,6 +243,8 @@ pub const ValkeyClient = struct {
         }
 
         this.allocator.free(this.connection_strings);
+        // Note there is no need to deallocate username, password and hostname since they are
+        // within the this.connection_strings buffer.
         this.write_buffer.deinit(this.allocator);
         this.read_buffer.deinit(this.allocator);
         this.tls.deinit();
@@ -214,7 +252,7 @@ pub const ValkeyClient = struct {
     }
 
     // ** Auto-pipelining **
-    fn registerAutoFlusher(this: *ValkeyClient, vm: *JSC.VirtualMachine) void {
+    fn registerAutoFlusher(this: *ValkeyClient, vm: *jsc.VirtualMachine) void {
         if (!this.auto_flusher.registered) {
             AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, vm);
             this.auto_flusher.registered = true;
@@ -254,7 +292,7 @@ pub const ValkeyClient = struct {
                 this.in_flight.writeItem(.{
                     .meta = command.meta,
                     .promise = command.promise,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
 
                 total += 1;
                 total_bytelength += command.serialized_data.len;
@@ -262,9 +300,9 @@ pub const ValkeyClient = struct {
             break :brk to_process[0..total];
         };
 
-        this.write_buffer.byte_list.ensureUnusedCapacity(this.allocator, total_bytelength) catch bun.outOfMemory();
+        bun.handleOom(this.write_buffer.byte_list.ensureUnusedCapacity(this.allocator, total_bytelength));
         for (pipelineable_commands) |*command| {
-            this.write_buffer.write(this.allocator, command.serialized_data) catch bun.outOfMemory();
+            bun.handleOom(this.write_buffer.write(this.allocator, command.serialized_data));
             // Free the serialized data since we've copied it to the write buffer
             this.allocator.free(command.serialized_data);
         }
@@ -283,9 +321,9 @@ pub const ValkeyClient = struct {
 
     /// Get the appropriate timeout interval based on connection state
     pub fn getTimeoutInterval(this: *const ValkeyClient) u32 {
+        if (this.flags.failed) return 0;
         return switch (this.status) {
             .connected => this.idle_timeout_interval_ms,
-            .failed => 0,
             else => this.connection_timeout_ms,
         };
     }
@@ -320,7 +358,7 @@ pub const ValkeyClient = struct {
     }
 
     /// Reject all pending commands with an error
-    fn rejectAllPendingCommands(pending_ptr: *Command.PromisePair.Queue, entries_ptr: *Command.Entry.Queue, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, jsvalue: JSC.JSValue) void {
+    fn rejectAllPendingCommands(pending_ptr: *Command.PromisePair.Queue, entries_ptr: *Command.Entry.Queue, globalThis: *jsc.JSGlobalObject, allocator: std.mem.Allocator, jsvalue: jsc.JSValue) void {
         var pending = pending_ptr.*;
         var entries = entries_ptr.*;
         defer pending.deinit();
@@ -350,13 +388,14 @@ pub const ValkeyClient = struct {
         if (wrote > 0) {
             this.write_buffer.consume(@intCast(wrote));
         }
-        return this.write_buffer.len() > 0;
+        const has_remaining = this.write_buffer.len() > 0;
+        return has_remaining;
     }
 
     const DeferredFailure = struct {
         message: []const u8,
         err: protocol.RedisError,
-        globalThis: *JSC.JSGlobalObject,
+        globalThis: *jsc.JSGlobalObject,
         in_flight: Command.PromisePair.Queue,
         queue: Command.Entry.Queue,
 
@@ -372,23 +411,23 @@ pub const ValkeyClient = struct {
 
         pub fn enqueue(this: *DeferredFailure) void {
             debug("enqueueing deferred failure", .{});
-            const managed_task = JSC.ManagedTask.New(DeferredFailure, run).init(this);
-            JSC.VirtualMachine.get().eventLoop().enqueueTask(managed_task);
+            const managed_task = jsc.ManagedTask.New(DeferredFailure, run).init(this);
+            jsc.VirtualMachine.get().eventLoop().enqueueTask(managed_task);
         }
     };
 
     /// Mark the connection as failed with error message
     pub fn fail(this: *ValkeyClient, message: []const u8, err: protocol.RedisError) void {
-        debug("failed: {s}: {s}", .{ message, @errorName(err) });
-        if (this.status == .failed) return;
+        debug("failed: {s}: {}", .{ message, err });
+        if (this.flags.failed) return;
 
         if (this.flags.finalized) {
             // We can't run promises inside finalizers.
             if (this.queue.count + this.in_flight.count > 0) {
                 const vm = this.vm;
-                const deferred_failrue = bun.new(DeferredFailure, .{
+                const deferred_failure = bun.new(DeferredFailure, .{
                     // This memory is not owned by us.
-                    .message = bun.default_allocator.dupe(u8, message) catch bun.outOfMemory(),
+                    .message = bun.handleOom(bun.default_allocator.dupe(u8, message)),
 
                     .err = err,
                     .globalThis = vm.global,
@@ -397,7 +436,7 @@ pub const ValkeyClient = struct {
                 });
                 this.in_flight = .init(this.allocator);
                 this.queue = .init(this.allocator);
-                deferred_failrue.enqueue();
+                deferred_failure.enqueue();
             }
 
             // Allow the finalizer to call .close()
@@ -408,11 +447,12 @@ pub const ValkeyClient = struct {
         this.failWithJSValue(globalThis, protocol.valkeyErrorToJS(globalThis, message, err));
     }
 
-    pub fn failWithJSValue(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
-        this.status = .failed;
+    pub fn failWithJSValue(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
+        if (this.flags.failed) return;
+        this.flags.failed = true;
         rejectAllPendingCommands(&this.in_flight, &this.queue, globalThis, this.allocator, jsvalue);
 
-        if (!this.flags.is_authenticated) {
+        if (!this.connectionReady()) {
             this.flags.is_manually_closed = true;
             this.close();
         }
@@ -427,7 +467,7 @@ pub const ValkeyClient = struct {
     /// Handle connection closed event
     pub fn onClose(this: *ValkeyClient) void {
         this.unregisterAutoFlusher();
-        this.write_buffer.deinit(this.allocator);
+        this.write_buffer.clearAndFree(this.allocator);
 
         // If manually closing, don't attempt to reconnect
         if (this.flags.is_manually_closed) {
@@ -458,15 +498,16 @@ pub const ValkeyClient = struct {
 
         debug("reconnect in {d}ms (attempt {d}/{d})", .{ delay_ms, this.retry_attempts, this.max_retries });
 
-        this.status = .disconnected;
         this.flags.is_reconnecting = true;
+        this.flags.is_authenticated = false;
+        this.flags.is_selecting_db_internal = false;
 
         // Signal reconnect timer should be started
         this.onValkeyReconnect();
     }
 
     pub fn sendNextCommand(this: *ValkeyClient) void {
-        if (this.write_buffer.remaining().len == 0 and this.flags.is_authenticated) {
+        if (this.write_buffer.remaining().len == 0 and this.connectionReady()) {
             if (this.queue.readableLength() > 0) {
                 // Check the command at the head of the queue
                 const flags = &this.queue.peekItem(0).meta;
@@ -498,9 +539,10 @@ pub const ValkeyClient = struct {
     }
 
     /// Process data received from socket
+    ///
+    /// Caller refs / derefs.
     pub fn onData(this: *ValkeyClient, data: []const u8) void {
-        // Caller refs / derefs.
-
+        debug("Low-level onData called with {d} bytes: {s}", .{ data.len, data });
         // Path 1: Buffer already has data, append and process from buffer
         if (this.read_buffer.remaining().len > 0) {
             this.read_buffer.write(this.allocator, data) catch @panic("failed to write to read buffer");
@@ -543,7 +585,7 @@ pub const ValkeyClient = struct {
                     return;
                 };
 
-                if (this.status == .disconnected or this.status == .failed) {
+                if (this.status == .disconnected or this.flags.failed) {
                     return;
                 }
                 this.sendNextCommand();
@@ -594,7 +636,7 @@ pub const ValkeyClient = struct {
             };
 
             // Check connection status after handling
-            if (this.status == .disconnected or this.status == .failed) {
+            if (this.status == .disconnected or this.flags.failed) {
                 return;
             }
 
@@ -605,6 +647,80 @@ pub const ValkeyClient = struct {
         }
 
         // If the loop finishes, the entire 'data' was processed without needing the buffer.
+    }
+
+    /// Try handling this response as a subscriber-state response.
+    /// Returns `handled` if we handled it, `fallthrough` if we did not.
+    fn handleSubscribeResponse(
+        this: *ValkeyClient,
+        value: *protocol.RESPValue,
+        pair: ?*ValkeyCommand.PromisePair,
+    ) bun.JSError!enum { handled, fallthrough } {
+        // Resolve the promise with the potentially transformed value
+        const globalThis = this.globalObject();
+        const loop = this.vm.eventLoop();
+
+        debug("Handling a subscribe response: {any}", .{value.*});
+        loop.enter();
+        defer loop.exit();
+
+        return switch (value.*) {
+            .Error => {
+                if (pair) |p| {
+                    p.promise.reject(globalThis, value.toJS(globalThis));
+                }
+                return .handled;
+            },
+            .Push => |push| {
+                const p = this.parent();
+                const sub_count = try p._subscription_ctx.channelsSubscribedToCount(globalThis);
+
+                if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
+                    switch (msg_type) {
+                        .message => {
+                            this.onValkeyMessage(push.data);
+                            return .handled;
+                        },
+                        .subscribe => {
+                            p.addSubscription();
+                            this.onValkeySubscribe(value);
+
+                            // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
+                            // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
+                            if (pair) |req_pair| {
+                                req_pair.promise.promise.resolve(globalThis, .jsNumber(sub_count));
+                            }
+                            return .handled;
+                        },
+                        .unsubscribe => {
+                            try this.onValkeyUnsubscribe();
+                            p.removeSubscription();
+
+                            // For UNSUBSCRIBE responses, only resolve the promise if we have one
+                            // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
+                            if (pair) |req_pair| {
+                                req_pair.promise.promise.resolve(globalThis, .js_undefined);
+                            }
+                            return .handled;
+                        },
+                    }
+                } else {
+                    // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,
+                    // then this is an unexpected path.
+                    @branchHint(.cold);
+                    this.fail(
+                        "Push message is not a subscription message.",
+                        protocol.RedisError.InvalidResponseType,
+                    );
+                    return .handled;
+                }
+            },
+            else => {
+                // This may be a regular command response. Let's pass it down
+                // to the next handler.
+                return .fallthrough;
+            },
+        };
     }
 
     fn handleHelloResponse(this: *ValkeyClient, value: *protocol.RESPValue) void {
@@ -664,7 +780,6 @@ pub const ValkeyClient = struct {
 
     /// Handle Valkey protocol response
     fn handleResponse(this: *ValkeyClient, value: *protocol.RESPValue) !void {
-        debug("onData() {any}", .{value.*});
         // Special handling for the initial HELLO response
         if (!this.flags.is_authenticated) {
             this.handleHelloResponse(value);
@@ -673,9 +788,105 @@ pub const ValkeyClient = struct {
             return;
         }
 
+        // Handle initial SELECT response
+        if (this.flags.is_selecting_db_internal) {
+            this.flags.is_selecting_db_internal = false;
+
+            return switch (value.*) {
+                .Error => |err_str| {
+                    this.fail(err_str, protocol.RedisError.InvalidCommand);
+                },
+                .SimpleString => |ok_str| {
+                    if (!std.mem.eql(u8, ok_str, "OK")) {
+                        // SELECT returned something other than "OK"
+                        this.fail("SELECT command failed with non-OK response", protocol.RedisError.InvalidResponse);
+                        return;
+                    }
+
+                    // SELECT was successful.
+                    debug("SELECT {d} successful", .{this.database});
+                    // Connection is now fully ready on the specified database.
+                    // If any commands were queued while waiting for SELECT, try to send them.
+                    this.sendNextCommand();
+                },
+                else => { // Unexpected response type for SELECT
+                    this.fail("Received non-SELECT response while in the SELECT state.", protocol.RedisError.InvalidResponse);
+                },
+            };
+        }
+        // Check if this is a subscription push message that might not need a promise pair
+        var should_consume_promise_pair = true;
+        var pair_maybe: ?ValkeyCommand.PromisePair = null;
+
+        // For subscription clients, check if this is a push message that doesn't need a promise pair
+        if (this.parent().isSubscriber()) {
+            switch (value.*) {
+                .Push => |push| {
+                    if (protocol.SubscriptionPushMessage.map.get(push.kind)) |msg_type| {
+                        switch (msg_type) {
+                            .message => {
+                                // Message pushes never need promise pairs
+                                should_consume_promise_pair = false;
+                            },
+                            .subscribe, .unsubscribe => {
+                                // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
+                                if (this.in_flight.readableLength() == 0) {
+                                    should_consume_promise_pair = false;
+                                }
+                            },
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        // Only consume promise pair if we determined we need one
+        // The reaosn we consume pairs is that a SUBSCRIBE message may actually be followed by a number of SUBSCRIBE
+        // responses which indicate all the channels we have connected to. As a stop-gap, we currently ignore the
+        // actual of content of the SUBSCRIBE responses and just resolve the first one with the count of channels.
+        // TODO(markovejnovic): Do better.
+        if (should_consume_promise_pair) {
+            pair_maybe = this.in_flight.readItem();
+        }
+
+        // We handle subscriptions specially because they are not regular commands and their failure will potentially
+        // cause the client to drop out of subscriber mode.
+        const request_is_subscribe = if (pair_maybe) |p| p.meta.subscription_request else false;
+        if (this.parent().isSubscriber() or request_is_subscribe) {
+            debug("This client is a subscriber. Handling as subscriber...", .{});
+
+            switch (value.*) {
+                .Error => |err| {
+                    this.fail(err, protocol.RedisError.InvalidResponse);
+                    return;
+                },
+                .Push => |push| {
+                    if (protocol.SubscriptionPushMessage.map.get(push.kind)) |_| {
+                        if ((try this.handleSubscribeResponse(value, if (pair_maybe) |*pm| pm else null)) == .handled) {
+                            return;
+                        }
+                    } else {
+                        @branchHint(.cold);
+                        this.fail(
+                            "Unexpected push message kind without promise",
+                            protocol.RedisError.InvalidResponseType,
+                        );
+                        return;
+                    }
+                },
+                else => {
+                    // In the else case, we fall through to the regular
+                    // handler. Subscribers can send .Push commands which have
+                    // the same semantics as regular commands.
+                },
+            }
+
+            debug("Treating subscriber response as a regular command...", .{});
+        }
+
         // For regular commands, get the next command+promise pair from the queue
-        var pair = this.in_flight.readItem() orelse {
-            debug("Received response but no promise in queue", .{});
+        var pair = pair_maybe orelse {
             return;
         };
 
@@ -754,21 +965,32 @@ pub const ValkeyClient = struct {
                 this.fail("Failed to write SELECT command", err);
                 return;
             };
+            this.flags.is_selecting_db_internal = true;
         }
     }
 
     /// Handle socket open event
     pub fn onOpen(this: *ValkeyClient, socket: uws.AnySocket) void {
         this.socket = socket;
-        this.write_buffer.deinit(this.allocator);
-        this.read_buffer.deinit(this.allocator);
-        this.start();
+        this.write_buffer.clearAndFree(this.allocator);
+        this.read_buffer.clearAndFree(this.allocator);
+        if (this.socket == .SocketTCP) {
+            // if is tcp, we need to start the connection process
+            // if is tls, we need to wait for the handshake to complete
+            this.start();
+        }
     }
 
     /// Start the connection process
-    fn start(this: *ValkeyClient) void {
+    pub fn start(this: *ValkeyClient) void {
         this.authenticate();
         _ = this.flushData();
+    }
+
+    /// Test whether we are ready to run "normal" RESP commands, such as
+    /// get/set, pub/sub, etc.
+    fn connectionReady(this: *const ValkeyClient) bool {
+        return this.flags.is_authenticated and !this.flags.is_selecting_db_internal;
     }
 
     /// Process queued commands in the offline queue
@@ -782,16 +1004,18 @@ pub const ValkeyClient = struct {
             }
         }
 
-        const offline_cmd = this.queue.readItem() orelse return false;
+        const offline_cmd = this.queue.readItem() orelse {
+            return false;
+        };
 
         // Add the promise to the command queue first
         this.in_flight.writeItem(.{
             .meta = offline_cmd.meta,
             .promise = offline_cmd.promise,
-        }) catch bun.outOfMemory();
+        }) catch |err| bun.handleOom(err);
         const data = offline_cmd.serialized_data;
 
-        if (this.flags.is_authenticated and this.write_buffer.remaining().len == 0) {
+        if (this.connectionReady() and this.write_buffer.remaining().len == 0) {
             // Optimization: avoid cloning the data an extra time.
             defer this.allocator.free(data);
 
@@ -800,14 +1024,14 @@ pub const ValkeyClient = struct {
 
             if (unwritten.len > 0) {
                 // Handle incomplete write.
-                this.write_buffer.write(this.allocator, unwritten) catch bun.outOfMemory();
+                bun.handleOom(this.write_buffer.write(this.allocator, unwritten));
             }
 
             return true;
         }
 
         // Write the pre-serialized data directly to the output buffer
-        _ = this.write(data) catch bun.outOfMemory();
+        _ = bun.handleOom(this.write(data));
         bun.default_allocator.free(data);
 
         return true;
@@ -821,7 +1045,7 @@ pub const ValkeyClient = struct {
     }
 
     fn enqueue(this: *ValkeyClient, command: *const Command, promise: *Command.Promise) !void {
-        const can_pipeline = command.meta.supports_auto_pipelining and this.flags.auto_pipelining;
+        const can_pipeline = command.meta.supports_auto_pipelining and this.flags.enable_auto_pipelining;
 
         // For commands that don't support pipelining, we need to wait for the queue to drain completely
         // before sending the command. This ensures proper order of execution for state-changing commands.
@@ -833,14 +1057,15 @@ pub const ValkeyClient = struct {
             // With auto pipelining, we can accept commands regardless of in_flight commands
             (!can_pipeline and this.in_flight.readableLength() > 0) or
             // We need authentication before processing commands
-            !this.flags.is_authenticated or
+            !this.connectionReady() or
             // Commands that don't support pipelining must wait for the entire queue to drain
             must_wait_for_queue or
             // If can pipeline, we can accept commands regardless of in_flight commands
             can_pipeline)
         {
             // We serialize the bytes in here, so we don't need to worry about the lifetime of the Command itself.
-            try this.queue.writeItem(try Command.Entry.create(this.allocator, command, promise.*));
+            const entry = try Command.Entry.create(this.allocator, command, promise.*);
+            try this.queue.writeItem(entry);
 
             // If we're connected and using auto pipelining, schedule a flush
             if (this.status == .connected and can_pipeline) {
@@ -851,9 +1076,11 @@ pub const ValkeyClient = struct {
         }
 
         switch (this.status) {
-            .connecting, .connected => command.write(this.writer()) catch {
-                promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
-                return;
+            .connecting, .connected => {
+                command.write(this.writer()) catch {
+                    promise.reject(this.globalObject(), this.globalObject().createOutOfMemoryError());
+                    return;
+                };
             },
             else => unreachable,
         }
@@ -869,35 +1096,47 @@ pub const ValkeyClient = struct {
         _ = this.flushData();
     }
 
-    pub fn send(this: *ValkeyClient, globalThis: *JSC.JSGlobalObject, command: *const Command) !*JSC.JSPromise {
-        var promise = Command.Promise.create(globalThis, command.meta);
+    pub fn send(this: *ValkeyClient, globalThis: *jsc.JSGlobalObject, command: *const Command) !*jsc.JSPromise {
+        // FIX: Check meta before using it for routing decisions
+        var checked_command = command.*;
+        checked_command.meta = command.meta.check(command);
+
+        var promise = Command.Promise.create(globalThis, checked_command.meta);
 
         const js_promise = promise.promise.get();
-        // Handle disconnected state with offline queue
-        switch (this.status) {
-            .connecting, .connected => {
-                try this.enqueue(command, &promise);
+        if (this.flags.failed) {
+            promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
+        } else {
+            // Handle disconnected state with offline queue
+            switch (this.status) {
+                .connected => {
+                    try this.enqueue(&checked_command, &promise);
 
-                // Schedule auto-flushing to process this command if pipelining is enabled
-                if (this.flags.auto_pipelining and
-                    command.meta.supports_auto_pipelining and
-                    this.status == .connected and
-                    this.queue.readableLength() > 0)
-                {
-                    this.registerAutoFlusher(this.vm);
-                }
-            },
-            .disconnected => {
-                // Only queue if offline queue is enabled
-                if (this.flags.enable_offline_queue) {
-                    try this.enqueue(command, &promise);
-                } else {
-                    promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection is closed and offline queue is disabled", .{}).toJS());
-                }
-            },
-            .failed => {
-                promise.reject(globalThis, globalThis.ERR(.REDIS_CONNECTION_CLOSED, "Connection has failed", .{}).toJS());
-            },
+                    // Schedule auto-flushing to process this command if pipelining is enabled
+                    if (this.flags.enable_auto_pipelining and
+                        checked_command.meta.supports_auto_pipelining and
+                        this.status == .connected and
+                        this.queue.readableLength() > 0)
+                    {
+                        this.registerAutoFlusher(this.vm);
+                    }
+                },
+                .connecting, .disconnected => {
+                    // Only queue if offline queue is enabled
+                    if (this.flags.enable_offline_queue) {
+                        try this.enqueue(&checked_command, &promise);
+                    } else {
+                        promise.reject(
+                            globalThis,
+                            globalThis.ERR(
+                                .REDIS_CONNECTION_CLOSED,
+                                "Connection is closed and offline queue is disabled",
+                                .{},
+                            ).toJS(),
+                        );
+                    }
+                },
+            }
         }
 
         return js_promise;
@@ -908,7 +1147,6 @@ pub const ValkeyClient = struct {
         this.flags.is_manually_closed = true;
         this.unregisterAutoFlusher();
         if (this.status == .connected or this.status == .connecting) {
-            this.status = .disconnected;
             this.close();
         }
     }
@@ -937,12 +1175,24 @@ pub const ValkeyClient = struct {
         return @fieldParentPtr("client", this);
     }
 
-    inline fn globalObject(this: *ValkeyClient) *JSC.JSGlobalObject {
+    inline fn globalObject(this: *ValkeyClient) *jsc.JSGlobalObject {
         return this.parent().globalObject;
     }
 
     pub fn onValkeyConnect(this: *ValkeyClient, value: *protocol.RESPValue) void {
         this.parent().onValkeyConnect(value);
+    }
+
+    pub fn onValkeySubscribe(this: *ValkeyClient, value: *protocol.RESPValue) void {
+        this.parent().onValkeySubscribe(value);
+    }
+
+    pub fn onValkeyUnsubscribe(this: *ValkeyClient) bun.JSError!void {
+        return this.parent().onValkeyUnsubscribe();
+    }
+
+    pub fn onValkeyMessage(this: *ValkeyClient, value: []protocol.RESPValue) void {
+        this.parent().onValkeyMessage(value);
     }
 
     pub fn onValkeyReconnect(this: *ValkeyClient) void {
@@ -959,13 +1209,14 @@ pub const ValkeyClient = struct {
 };
 
 // Auto-pipelining
-const AutoFlusher = JSC.WebCore.AutoFlusher;
+const debug = bun.Output.scoped(.Redis, .visible);
 
-const JSValkeyClient = JSC.API.Valkey;
-
-const JSC = bun.JSC;
+const ValkeyCommand = @import("./ValkeyCommand.zig");
+const protocol = @import("./valkey_protocol.zig");
 const std = @import("std");
+
 const bun = @import("bun");
-const protocol = @import("valkey_protocol.zig");
-const debug = bun.Output.scoped(.Redis, false);
+const jsc = bun.jsc;
 const uws = bun.uws;
+const AutoFlusher = jsc.WebCore.AutoFlusher;
+const JSValkeyClient = jsc.API.Valkey;

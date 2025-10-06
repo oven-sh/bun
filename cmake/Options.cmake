@@ -57,6 +57,23 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+# Windows Code Signing Option
+if(WIN32)
+  optionx(ENABLE_WINDOWS_CODESIGNING BOOL "Enable Windows code signing with DigiCert KeyLocker" DEFAULT OFF)
+
+  if(ENABLE_WINDOWS_CODESIGNING)
+    message(STATUS "Windows code signing: ENABLED")
+
+    # Check for required environment variables
+    if(NOT DEFINED ENV{SM_API_KEY})
+      message(WARNING "SM_API_KEY not set - code signing may fail")
+    endif()
+    if(NOT DEFINED ENV{SM_CLIENT_CERT_FILE})
+      message(WARNING "SM_CLIENT_CERT_FILE not set - code signing may fail")
+    endif()
+  endif()
+endif()
+
 if(LINUX)
   if(EXISTS "/etc/alpine-release")
     set(DEFAULT_ABI "musl")
@@ -97,11 +114,18 @@ endif()
 
 if(DEBUG AND ((APPLE AND ARCH STREQUAL "aarch64") OR LINUX))
   set(DEFAULT_ASAN ON)
+  set(DEFAULT_VALGRIND OFF)
 else()
   set(DEFAULT_ASAN OFF)
+  set(DEFAULT_VALGRIND OFF)
 endif()
 
 optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ${DEFAULT_ASAN})
+optionx(ENABLE_ZIG_ASAN BOOL "If Zig ASAN support should be enabled" DEFAULT ${ENABLE_ASAN})
+
+if (NOT ENABLE_ASAN)
+  set(ENABLE_ZIG_ASAN OFF)
+endif()
 
 if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)
@@ -139,10 +163,10 @@ endif()
 optionx(REVISION STRING "The git revision of the build" DEFAULT ${DEFAULT_REVISION})
 
 # Used in process.version, process.versions.node, napi, and elsewhere
-optionx(NODEJS_VERSION STRING "The version of Node.js to report" DEFAULT "24.3.0")
+setx(NODEJS_VERSION "24.3.0")
 
 # Used in process.versions.modules and compared while loading V8 modules
-optionx(NODEJS_ABI_VERSION STRING "The ABI version of Node.js to report" DEFAULT "137")
+setx(NODEJS_ABI_VERSION "137")
 
 if(APPLE)
   set(DEFAULT_STATIC_SQLITE OFF)
@@ -177,5 +201,10 @@ endif()
 optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAULT_WEBKIT_ICU})
 
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
+
+# This is not an `option` because setting this variable to OFF is experimental
+# and unsupported. This replaces the `use_mimalloc` variable previously in
+# bun.zig, and enables C++ code to also be aware of the option.
+set(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR ON)
 
 list(APPEND CMAKE_ARGS -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)

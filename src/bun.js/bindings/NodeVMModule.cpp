@@ -81,6 +81,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         VM_RETURN_IF_EXCEPTION(scope, {});
     } else if (syntheticThis) {
         record = syntheticThis->moduleRecord(globalObject);
+        VM_RETURN_IF_EXCEPTION(scope, {});
     } else {
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid module type");
     }

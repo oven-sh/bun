@@ -20,7 +20,6 @@
 pub fn generateCompileResultForHtmlChunk(task: *ThreadPoolLib.Task) void {
     const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
     const ctx = part_range.ctx;
-    defer ctx.wg.finish();
     var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
     defer worker.unget();
 
@@ -52,7 +51,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         added_head_tags: bool,
 
         pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
-            this.output.appendSlice(bytes) catch bun.outOfMemory();
+            bun.handleOom(this.output.appendSlice(bytes));
         }
 
         pub fn onHTMLParseError(_: *@This(), err: []const u8) void {
@@ -82,11 +81,15 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
 
             if (this.linker.dev_server != null) {
                 if (unique_key_for_additional_files.len > 0) {
-                    element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
+                    element.setAttribute(url_attribute, unique_key_for_additional_files) catch {
+                        std.debug.panic("unexpected error from Element.setAttribute", .{});
+                    };
                 } else if (import_record.path.is_disabled or loader.isJavaScriptLike() or loader.isCSS()) {
                     element.remove();
                 } else {
-                    element.setAttribute(url_attribute, import_record.path.pretty) catch bun.outOfMemory();
+                    element.setAttribute(url_attribute, import_record.path.pretty) catch {
+                        std.debug.panic("unexpected error from Element.setAttribute", .{});
+                    };
                 }
                 return;
             }
@@ -103,7 +106,9 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             }
             if (unique_key_for_additional_files.len > 0) {
                 // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-                element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
+                element.setAttribute(url_attribute, unique_key_for_additional_files) catch {
+                    std.debug.panic("unexpected error from Element.setAttribute", .{});
+                };
                 return;
             }
         }
@@ -137,16 +142,16 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 try endTag.before(slice, true);
         }
 
-        fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) std.BoundedArray([]const u8, 2) {
-            var array: std.BoundedArray([]const u8, 2) = .{};
+        fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) bun.BoundedArray([]const u8, 2) {
+            var array: bun.BoundedArray([]const u8, 2) = .{};
             // Put CSS before JS to reduce changes of flash of unstyled content
             if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                const link_tag = std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
+                const link_tag = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}));
                 array.appendAssumeCapacity(link_tag);
             }
             if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
-                const script = std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
+                const script = bun.handleOom(std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}));
                 array.appendAssumeCapacity(script);
             }
             return array;
@@ -185,7 +190,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
 
     // HTML bundles for dev server must be allocated to it, as it must outlive
     // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
-    const output_allocator = if (c.dev_server) |dev| dev.allocator else worker.allocator;
+    const output_allocator = if (c.dev_server) |dev| dev.allocator() else worker.allocator;
 
     var html_loader: HTMLLoader = .{
         .linker = c,
@@ -209,7 +214,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
     HTMLScanner.HTMLProcessor(HTMLLoader, true).run(
         &html_loader,
         sources[chunk.entry_point.source_index].contents,
-    ) catch bun.outOfMemory();
+    ) catch std.debug.panic("unexpected error from HTMLProcessor.run", .{});
 
     // There are some cases where invalid HTML will make it so </head> is
     // never emitted, even if the literal text DOES appear. These cases are
@@ -234,7 +239,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             const allocator = html_appender.get();
             const slices = html_loader.getHeadTags(allocator);
             for (slices.slice()) |slice| {
-                html_loader.output.appendSlice(slice) catch bun.outOfMemory();
+                bun.handleOom(html_loader.output.appendSlice(slice));
                 allocator.free(slice);
             }
         }
@@ -248,31 +253,30 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
     } };
 }
 
-const bun = @import("bun");
-const Loader = bun.Loader;
-const HTMLScanner = bun.bundle_v2.HTMLScanner;
-const Logger = bun.logger;
-const Index = bun.bundle_v2.Index;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPoolLib = bun.ThreadPool;
-
-const debug = LinkerContext.debug;
-
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
-
-const lol = bun.LOLHTML;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const ImportKind = bun.ImportKind;
+const ImportRecord = bun.ImportRecord;
+const Loader = bun.Loader;
+const Logger = bun.logger;
+const Output = bun.Output;
+const ThreadPoolLib = bun.ThreadPool;
+const default_allocator = bun.default_allocator;
+const lol = bun.LOLHTML;
+const strings = bun.strings;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const CompileResult = bundler.CompileResult;
+const HTMLScanner = bun.bundle_v2.HTMLScanner;
+const Index = bun.bundle_v2.Index;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;
+const debug = LinkerContext.debug;

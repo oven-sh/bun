@@ -77,8 +77,6 @@ pub const FieldMessage = union(FieldType) {
     }
 };
 
-// @sortImports
-
 const std = @import("std");
 const FieldType = @import("./FieldType.zig").FieldType;
 const NewReader = @import("./NewReader.zig").NewReader;

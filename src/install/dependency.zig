@@ -1,19 +1,4 @@
-const bun = @import("bun");
-const logger = bun.logger;
-const Environment = @import("../env.zig");
-const Install = @import("./install.zig");
-const PackageManager = Install.PackageManager;
-const Features = Install.Features;
-const PackageNameHash = Install.PackageNameHash;
-const Repository = @import("./repository.zig").Repository;
-const Semver = bun.Semver;
-const SlicedString = Semver.SlicedString;
-const String = Semver.String;
-const std = @import("std");
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
 const Dependency = @This();
-const JSC = bun.JSC;
 
 const URI = union(Tag) {
     local: String,
@@ -262,6 +247,20 @@ pub inline fn isRemoteTarball(dependency: string) bool {
     return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
 }
 
+pub fn splitVersionAndMaybeName(str: []const u8) struct { []const u8, ?[]const u8 } {
+    if (strings.indexOfChar(str, '@')) |at_index| {
+        if (at_index != 0) {
+            return .{ str[at_index + 1 ..], str[0..at_index] };
+        }
+
+        const second_at_index = (strings.indexOfChar(str[1..], '@') orelse return .{ str, null }) + 1;
+
+        return .{ str[second_at_index + 1 ..], str[0..second_at_index] };
+    }
+
+    return .{ str, null };
+}
+
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
 pub fn splitNameAndMaybeVersion(str: string) struct { string, ?string } {
     if (strings.indexOfChar(str, '@')) |at_index| {
@@ -324,8 +323,8 @@ pub const Version = struct {
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 
-    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        const object = JSC.JSValue.createEmptyObject(globalThis, 2);
+    pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        const object = jsc.JSValue.createEmptyObject(globalThis, 2);
         object.put(globalThis, "type", bun.String.static(@tagName(dep.tag)).toJS(globalThis));
 
         switch (dep.tag) {
@@ -350,7 +349,7 @@ pub const Version = struct {
                 object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
                 var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
                 object.put(globalThis, "version", version_str.transferToJS(globalThis));
-                object.put(globalThis, "alias", JSC.JSValue.jsBoolean(dep.value.npm.is_alias));
+                object.put(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
             .symlink => {
                 object.put(globalThis, "path", try dep.value.symlink.toJS(buf, globalThis));
@@ -780,7 +779,7 @@ pub const Version = struct {
             return .npm;
         }
 
-        pub fn inferFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        pub fn inferFromJS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             const arguments = callframe.arguments_old(1).slice();
             if (arguments.len == 0 or !arguments[0].isString()) {
                 return .js_undefined;
@@ -1274,7 +1273,7 @@ pub fn parseWithTag(
     }
 }
 
-pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+pub fn fromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(2).slice();
     if (arguments.len == 1) {
         return try bun.install.PackageManager.UpdateRequest.fromJS(globalThis, arguments[0]);
@@ -1284,7 +1283,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
 
-    const alias_value: JSC.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
+    const alias_value: jsc.JSValue = if (arguments.len > 0) arguments[0] else .js_undefined;
 
     if (!alias_value.isString()) {
         return .js_undefined;
@@ -1296,7 +1295,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
         return .js_undefined;
     }
 
-    const name_value: JSC.JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
+    const name_value: jsc.JSValue = if (arguments.len > 1) arguments[1] else .js_undefined;
     const name_slice = try name_value.toSlice(globalThis, allocator);
     defer name_slice.deinit();
 
@@ -1306,7 +1305,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     var buf = alias;
 
     if (name_value.isString()) {
-        var builder = bun.StringBuilder.initCapacity(allocator, name_slice.len + alias_slice.len) catch bun.outOfMemory();
+        var builder = bun.handleOom(bun.StringBuilder.initCapacity(allocator, name_slice.len + alias_slice.len));
         name = builder.append(name_slice.slice());
         alias = builder.append(alias_slice.slice());
         buf = builder.allocatedSlice();
@@ -1454,3 +1453,23 @@ pub const Behavior = packed struct(u8) {
         bun.assert(@as(u8, @bitCast(Behavior{ .workspace = true })) == (1 << 5));
     }
 };
+
+const string = []const u8;
+
+const Environment = @import("../env.zig");
+const std = @import("std");
+const Repository = @import("./repository.zig").Repository;
+
+const Install = @import("./install.zig");
+const Features = Install.Features;
+const PackageManager = Install.PackageManager;
+const PackageNameHash = Install.PackageNameHash;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const Semver = bun.Semver;
+const SlicedString = Semver.SlicedString;
+const String = Semver.String;

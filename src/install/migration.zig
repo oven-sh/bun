@@ -1,33 +1,4 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const logger = bun.logger;
-const File = bun.sys.File;
-
-const Install = @import("./install.zig");
-const Resolution = @import("./resolution.zig").Resolution;
-const Dependency = @import("./dependency.zig");
-const Npm = @import("./npm.zig");
-const Integrity = @import("./integrity.zig").Integrity;
-const Bin = @import("./bin.zig").Bin;
-
-const Semver = bun.Semver;
-const String = Semver.String;
-const stringHash = String.Builder.stringHash;
-
-const Lockfile = @import("./lockfile.zig");
-const LoadResult = Lockfile.LoadResult;
-
-const JSAst = bun.JSAst;
-const E = JSAst.E;
-
-const debug = Output.scoped(.migrate, false);
+const debug = Output.scoped(.migrate, .visible);
 
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,
@@ -55,14 +26,6 @@ pub fn detectAndLoadOtherLockfile(
                 , .{});
                 Global.exit(1);
             }
-            if (Environment.isDebug) {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
-                Global.exit(1);
-            }
             return LoadResult{ .err = .{
                 .step = .migrating,
                 .value = err,
@@ -75,6 +38,102 @@ pub fn detectAndLoadOtherLockfile(
             Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
             Output.prettyError(" ", .{});
             Output.prettyErrorln("<d>migrated lockfile from <r><green>package-lock.json<r>", .{});
+            Output.flush();
+        }
+
+        return migrate_result;
+    }
+
+    yarn: {
+        var timer = std.time.Timer.start() catch unreachable;
+        const lockfile = File.openat(dir, "yarn.lock", bun.O.RDONLY, 0).unwrap() catch break :yarn;
+        defer lockfile.close();
+        const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
+        const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "yarn.lock",
+                .format = .binary,
+            } };
+        };
+
+        if (migrate_result == .ok) {
+            Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
+            Output.prettyError(" ", .{});
+            Output.prettyErrorln("<d>migrated lockfile from <r><green>yarn.lock<r>", .{});
+            Output.flush();
+        }
+
+        return migrate_result;
+    }
+
+    pnpm: {
+        var timer = std.time.Timer.start() catch unreachable;
+        const lockfile = File.openat(dir, "pnpm-lock.yaml", bun.O.RDONLY, 0).unwrap() catch break :pnpm;
+        defer lockfile.close();
+        const data = lockfile.readToEnd(allocator).unwrap() catch break :pnpm;
+        const migrate_result = @import("./pnpm.zig").migratePnpmLockfile(this, manager, allocator, log, data, dir) catch |err| {
+            switch (err) {
+                error.PnpmLockfileTooOld => {
+                    Output.prettyErrorln(
+                        \\<red><b>warning<r><d>:<r> pnpm-lock.yaml version is too old (\< v7)
+                        \\
+                        \\Please upgrade using 'pnpm install --lockfile-only' first, then try again.
+                    , .{});
+                },
+                error.NonExistentWorkspaceDependency => {
+                    Output.warn("Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
+                },
+                error.RelativeLinkDependency => {
+                    Output.warn("Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>", .{});
+                },
+                error.WorkspaceNameMissing => {
+                    if (log.hasErrors()) {
+                        log.print(Output.errorWriter()) catch {};
+                    }
+                    Output.warn("pnpm-lock.yaml migration failed due to missing workspace name.", .{});
+                },
+                error.YamlParseError => {
+                    if (log.hasErrors()) {
+                        log.print(Output.errorWriter()) catch {};
+                    }
+                    Output.warn("Failed to parse pnpm-lock.yaml.", .{});
+                },
+                error.PnpmLockfileNotObject,
+                error.PnpmLockfileMissingVersion,
+                error.PnpmLockfileVersionInvalid,
+                error.PnpmLockfileMissingImporters,
+                error.PnpmLockfileMissingRootPackage,
+                error.PnpmLockfileInvalidSnapshot,
+                error.PnpmLockfileInvalidDependency,
+                error.PnpmLockfileMissingDependencyVersion,
+                error.PnpmLockfileInvalidOverride,
+                error.PnpmLockfileInvalidPatchedDependency,
+                error.PnpmLockfileMissingCatalogEntry,
+                error.PnpmLockfileUnresolvableDependency,
+                => {
+                    // These errors are continuable - log the error but don't exit
+                    // The install will continue with a fresh install instead of migration
+                    if (log.hasErrors()) {
+                        log.print(Output.errorWriter()) catch {};
+                    }
+                },
+                else => {},
+            }
+            log.reset();
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "pnpm-lock.yaml",
+                .format = .binary,
+            } };
+        };
+
+        if (migrate_result == .ok) {
+            Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
+            Output.prettyError(" ", .{});
+            Output.prettyErrorln("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>", .{});
             Output.flush();
         }
 
@@ -124,7 +183,7 @@ pub fn migrateNPMLockfile(
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(abs_path, data);
-    const json = bun.JSON.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
+    const json = bun.json.parseUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
 
     if (json.data != .e_object) {
         return error.InvalidNPMLockfile;
@@ -140,7 +199,7 @@ pub fn migrateNPMLockfile(
         return error.InvalidNPMLockfile;
     }
 
-    bun.Analytics.Features.lockfile_migration_from_package_lock += 1;
+    bun.analytics.Features.lockfile_migration_from_package_lock += 1;
 
     // Count pass
 
@@ -376,7 +435,7 @@ pub fn migrateNPMLockfile(
                             const pkg_name = packageNameFromPath(pkg_path);
                             if (!strings.eqlLong(wksp_entry.name, pkg_name, true)) {
                                 const pkg_name_hash = stringHash(pkg_name);
-                                const path_entry = this.workspace_paths.getOrPut(allocator, pkg_name_hash) catch bun.outOfMemory();
+                                const path_entry = bun.handleOom(this.workspace_paths.getOrPut(allocator, pkg_name_hash));
                                 if (!path_entry.found_existing) {
                                     // Package resolve path is an entry in the workspace map, but
                                     // the package name is different. This package doesn't exist
@@ -388,7 +447,7 @@ pub fn migrateNPMLockfile(
                                         const sliced_version = Semver.SlicedString.init(version_string, version_string);
                                         const result = Semver.Version.parse(sliced_version);
                                         if (result.valid and result.wildcard == .none) {
-                                            this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()) catch bun.outOfMemory();
+                                            bun.handleOom(this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()));
                                         }
                                     }
                                 }
@@ -1047,3 +1106,32 @@ fn packageNameFromPath(pkg_path: []const u8) []const u8 {
 
     return pkg_path[pkg_name_start..];
 }
+
+const string = []const u8;
+
+const Dependency = @import("./dependency.zig");
+const Install = @import("./install.zig");
+const Npm = @import("./npm.zig");
+const std = @import("std");
+const Bin = @import("./bin.zig").Bin;
+const Integrity = @import("./integrity.zig").Integrity;
+const Resolution = @import("./resolution.zig").Resolution;
+const Allocator = std.mem.Allocator;
+
+const Lockfile = @import("./lockfile.zig");
+const LoadResult = Lockfile.LoadResult;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const logger = bun.logger;
+const strings = bun.strings;
+const File = bun.sys.File;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+const stringHash = String.Builder.stringHash;
+
+const JSAst = bun.ast;
+const E = JSAst.E;

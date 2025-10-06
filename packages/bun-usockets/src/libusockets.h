@@ -226,11 +226,11 @@ struct us_bun_socket_context_options_t {
     const char *ca_file_name;
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
-    const char **key;
+    const char * const *key;
     unsigned int key_count;
-    const char **cert;
+    const char * const *cert;
     unsigned int cert_count;
-    const char **ca;
+    const char * const *ca;
     unsigned int ca_count;
     unsigned int secure_options;
     int reject_unauthorized;
@@ -262,6 +262,7 @@ enum create_bun_socket_error_t {
   CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE,
   CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
   CREATE_BUN_SOCKET_ERROR_INVALID_CA,
+  CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
 };
 
 struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop,

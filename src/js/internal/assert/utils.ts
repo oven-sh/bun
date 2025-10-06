@@ -8,7 +8,6 @@ function loadAssertionError() {
   }
 }
 
-// const { Buffer } = require('node:buffer');
 // const {
 //   isErrorStackTraceLimitWritable,
 //   overrideStackTrace,

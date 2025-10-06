@@ -1,39 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Command = bun.CLI.Command;
-const Output = bun.Output;
-const Global = bun.Global;
-const http = bun.http;
-const OOM = bun.OOM;
-const HeaderBuilder = http.HeaderBuilder;
-const MutableString = bun.MutableString;
-const URL = bun.URL;
-const install = bun.install;
-const PackageManager = install.PackageManager;
-const strings = bun.strings;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const File = bun.sys.File;
-const JSON = bun.JSON;
-const sha = bun.sha;
-const path = bun.path;
-const FileSystem = bun.fs.FileSystem;
-const Environment = bun.Environment;
-const Archive = bun.libarchive.lib.Archive;
-const logger = bun.logger;
-const Dependency = install.Dependency;
-const Pack = bun.CLI.PackCommand;
-const Lockfile = install.Lockfile;
-const MimeType = http.MimeType;
-const Expr = bun.js_parser.Expr;
-const prompt = bun.CLI.InitCommand.prompt;
-const Npm = install.Npm;
-const Run = bun.CLI.RunCommand;
-const DotEnv = bun.DotEnv;
-const Open = @import("../open.zig");
-const E = bun.JSAst.E;
-const G = bun.JSAst.G;
-
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {
         return struct {
@@ -487,6 +451,83 @@ pub const PublishCommand = struct {
         NeedAuth,
     };
 
+    fn checkPackageVersionExists(
+        allocator: std.mem.Allocator,
+        package_name: string,
+        version: string,
+        registry: *const Npm.Registry.Scope,
+    ) bool {
+        var url_buf = std.ArrayList(u8).init(allocator);
+        defer url_buf.deinit();
+        const registry_url = strings.withoutTrailingSlash(registry.url.href);
+        const encoded_name = bun.fmt.dependencyUrl(package_name);
+
+        // Try to get package metadata to check if version exists
+        url_buf.writer().print("{s}/{s}", .{ registry_url, encoded_name }) catch return false;
+
+        const package_url = URL.parse(url_buf.items);
+
+        var response_buf = MutableString.init(allocator, 1024) catch return false;
+        defer response_buf.deinit();
+
+        var headers = http.HeaderBuilder{};
+        headers.count("accept", "application/json");
+
+        var auth_buf = std.ArrayList(u8).init(allocator);
+        defer auth_buf.deinit();
+
+        if (registry.token.len > 0) {
+            auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
+            headers.count("authorization", auth_buf.items);
+        } else if (registry.auth.len > 0) {
+            auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
+            headers.count("authorization", auth_buf.items);
+        }
+
+        headers.allocate(allocator) catch return false;
+        headers.append("accept", "application/json");
+
+        if (registry.token.len > 0) {
+            auth_buf.clearRetainingCapacity();
+            auth_buf.writer().print("Bearer {s}", .{registry.token}) catch return false;
+            headers.append("authorization", auth_buf.items);
+        } else if (registry.auth.len > 0) {
+            auth_buf.clearRetainingCapacity();
+            auth_buf.writer().print("Basic {s}", .{registry.auth}) catch return false;
+            headers.append("authorization", auth_buf.items);
+        }
+
+        var req = http.AsyncHTTP.initSync(
+            allocator,
+            .GET,
+            package_url,
+            headers.entries,
+            headers.content.ptr.?[0..headers.content.len],
+            &response_buf,
+            "",
+            null,
+            null,
+            .follow,
+        );
+
+        const res = req.sendSync() catch return false;
+        if (res.status_code != 200) return false;
+
+        // Parse the response to check if this specific version exists
+        const source = logger.Source.initPathString("???", response_buf.list.items);
+        var log = logger.Log.init(allocator);
+        const json = JSON.parseUTF8(&source, &log, allocator) catch return false;
+
+        // Check if the version exists in the versions object
+        if (json.get("versions")) |versions| {
+            if (versions.get(version)) |_| {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     pub fn publish(
         comptime directory_publish: bool,
         ctx: *const Context(directory_publish),
@@ -495,6 +536,22 @@ pub const PublishCommand = struct {
 
         if (registry.token.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
             return error.NeedAuth;
+        }
+
+        const tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
+        if (tolerate_republish) {
+            const version_without_build_tag = Dependency.withoutBuildTag(ctx.package_version);
+            const package_exists = checkPackageVersionExists(
+                ctx.allocator,
+                ctx.package_name,
+                version_without_build_tag,
+                registry,
+            );
+
+            if (package_exists) {
+                Output.warn("Registry already knows about version {s}; skipping.", .{version_without_build_tag});
+                return;
+            }
         }
 
         // continues from `printSummary`
@@ -936,7 +993,7 @@ pub const PublishCommand = struct {
 
         try json.set(allocator, "dist", Expr.init(
             E.Object,
-            .{ .properties = G.Property.List.init(dist_props) },
+            .{ .properties = G.Property.List.fromOwnedSlice(dist_props) },
             logger.Loc.Empty,
         ));
 
@@ -1024,7 +1081,7 @@ pub const PublishCommand = struct {
                     json.data.e_object.properties.ptr[bin_query.i].value = Expr.init(
                         E.Object,
                         .{
-                            .properties = G.Property.List.fromList(bin_props),
+                            .properties = G.Property.List.moveFromList(&bin_props),
                         },
                         logger.Loc.Empty,
                     );
@@ -1100,7 +1157,7 @@ pub const PublishCommand = struct {
 
                     json.data.e_object.properties.ptr[bin_query.i].value = Expr.init(
                         E.Object,
-                        .{ .properties = G.Property.List.fromList(bin_props) },
+                        .{ .properties = G.Property.List.moveFromList(&bin_props) },
                         logger.Loc.Empty,
                     );
                 },
@@ -1189,7 +1246,11 @@ pub const PublishCommand = struct {
                     }
                 }
 
-                try json.set(allocator, "bin", Expr.init(E.Object, .{ .properties = G.Property.List.fromList(bin_props) }, logger.Loc.Empty));
+                try json.set(allocator, "bin", Expr.init(
+                    E.Object,
+                    .{ .properties = G.Property.List.moveFromList(&bin_props) },
+                    logger.Loc.Empty,
+                ));
             }
         }
 
@@ -1377,3 +1438,45 @@ pub const PublishCommand = struct {
         return buf.items;
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Open = @import("../open.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const DotEnv = bun.DotEnv;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const MutableString = bun.MutableString;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const URL = bun.URL;
+const logger = bun.logger;
+const path = bun.path;
+const sha = bun.sha;
+const strings = bun.strings;
+const Expr = bun.js_parser.Expr;
+const File = bun.sys.File;
+const FileSystem = bun.fs.FileSystem;
+const Archive = bun.libarchive.lib.Archive;
+
+const E = bun.ast.E;
+const G = bun.ast.G;
+
+const Command = bun.cli.Command;
+const Pack = bun.cli.PackCommand;
+const Run = bun.cli.RunCommand;
+const prompt = bun.cli.InitCommand.prompt;
+
+const http = bun.http;
+const HeaderBuilder = http.HeaderBuilder;
+const MimeType = http.MimeType;
+
+const install = bun.install;
+const Dependency = install.Dependency;
+const Lockfile = install.Lockfile;
+const Npm = install.Npm;
+const PackageManager = install.PackageManager;

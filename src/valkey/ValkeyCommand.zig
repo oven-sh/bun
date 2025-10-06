@@ -1,3 +1,5 @@
+const Command = @This();
+
 command: []const u8,
 args: Args,
 meta: Meta = .{},
@@ -68,7 +70,8 @@ pub const Entry = struct {
     ) !Entry {
         return Entry{
             .serialized_data = try command.serialize(allocator),
-            .meta = command.meta.check(command),
+            .meta = command.meta, // TODO(markovejnovic): We should be calling .check against command here but due
+            // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             .promise = promise,
         };
     }
@@ -82,7 +85,8 @@ pub const Meta = packed struct(u8) {
     return_as_bool: bool = false,
     supports_auto_pipelining: bool = true,
     return_as_buffer: bool = false,
-    _padding: u5 = 0,
+    subscription_request: bool = false,
+    _padding: u4 = 0,
 
     const not_allowed_autopipeline_commands = bun.ComptimeStringMap(void, .{
         .{"AUTH"},
@@ -113,17 +117,17 @@ pub const Meta = packed struct(u8) {
 /// Promise for a Valkey command
 pub const Promise = struct {
     meta: Meta,
-    promise: JSC.JSPromise.Strong,
+    promise: jsc.JSPromise.Strong,
 
-    pub fn create(globalObject: *JSC.JSGlobalObject, meta: Meta) Promise {
-        const promise = JSC.JSPromise.Strong.init(globalObject);
+    pub fn create(globalObject: *jsc.JSGlobalObject, meta: Meta) Promise {
+        const promise = jsc.JSPromise.Strong.init(globalObject);
         return Promise{
             .meta = meta,
             .promise = promise,
         };
     }
 
-    pub fn resolve(self: *Promise, globalObject: *JSC.JSGlobalObject, value: *protocol.RESPValue) void {
+    pub fn resolve(self: *Promise, globalObject: *jsc.JSGlobalObject, value: *protocol.RESPValue) void {
         const options = protocol.RESPValue.ToJSOptions{
             .return_as_buffer = self.meta.return_as_buffer,
         };
@@ -135,7 +139,7 @@ pub const Promise = struct {
         self.promise.resolve(globalObject, js_value);
     }
 
-    pub fn reject(self: *Promise, globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+    pub fn reject(self: *Promise, globalObject: *jsc.JSGlobalObject, jsvalue: JSError!jsc.JSValue) void {
         self.promise.reject(globalObject, jsvalue);
     }
 
@@ -151,17 +155,16 @@ pub const PromisePair = struct {
 
     pub const Queue = std.fifo.LinearFifo(PromisePair, .Dynamic);
 
-    pub fn rejectCommand(self: *PromisePair, globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+    pub fn rejectCommand(self: *PromisePair, globalObject: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
         self.promise.reject(globalObject, jsvalue);
     }
 };
 
-const Command = @This();
+const protocol = @import("./valkey_protocol.zig");
+const std = @import("std");
 
 const bun = @import("bun");
-const JSC = bun.JSC;
-const protocol = @import("valkey_protocol.zig");
-const std = @import("std");
-const Slice = JSC.ZigString.Slice;
-
+const JSError = bun.JSError;
+const jsc = bun.jsc;
 const node = bun.api.node;
+const Slice = jsc.ZigString.Slice;

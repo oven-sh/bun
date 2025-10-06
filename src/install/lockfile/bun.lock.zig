@@ -1652,9 +1652,15 @@ pub fn parseIntoBinaryLockfile(
                 return error.InvalidPackageResolution;
             };
 
-            const name_str, const res_str = Dependency.splitNameAndVersion(res_info_str) catch {
-                try log.addError(source, res_info.loc, "Invalid package resolution");
-                return error.InvalidPackageResolution;
+            const name_str, const res_str = name_and_res: {
+                if (strings.hasPrefixComptime(res_info_str, "@root:")) {
+                    break :name_and_res .{ "", res_info_str[1..] };
+                }
+
+                break :name_and_res Dependency.splitNameAndVersion(res_info_str) catch {
+                    try log.addError(source, res_info.loc, "Invalid package resolution");
+                    return error.InvalidPackageResolution;
+                };
             };
 
             const name_hash = String.Builder.stringHash(name_str);
@@ -2193,34 +2199,40 @@ fn parseAppendDependencies(
     return .{ @intCast(off), @intCast(end - off) };
 }
 
+const string = []const u8;
+
+const ExtractTarball = @import("../extract_tarball.zig");
 const std = @import("std");
+const Integrity = @import("../integrity.zig").Integrity;
+
 const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const PackageManager = bun.install.PackageManager;
+const Environment = bun.Environment;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const logger = bun.logger;
-const BinaryLockfile = bun.install.Lockfile;
-const JSON = bun.JSON;
+const strings = bun.strings;
 const Expr = bun.js_parser.Expr;
-const DependencySlice = BinaryLockfile.DependencySlice;
-const Install = bun.install;
-const Dependency = Install.Dependency;
-const PackageID = Install.PackageID;
+
 const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
 const String = Semver.String;
-const Resolution = Install.Resolution;
+
+const Install = bun.install;
+const Bin = Install.Bin;
+const Dependency = Install.Dependency;
+const DependencyID = Install.DependencyID;
+const PackageID = Install.PackageID;
+const PackageManager = bun.install.PackageManager;
 const PackageNameHash = Install.PackageNameHash;
 const Repository = Install.Repository;
-const Environment = bun.Environment;
-const LoadResult = BinaryLockfile.LoadResult;
+const Resolution = Install.Resolution;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
 const invalid_package_id = Install.invalid_package_id;
-const Npm = Install.Npm;
-const ExtractTarball = @import("../extract_tarball.zig");
-const Integrity = @import("../integrity.zig").Integrity;
+
+const BinaryLockfile = bun.install.Lockfile;
+const DependencySlice = BinaryLockfile.DependencySlice;
+const LoadResult = BinaryLockfile.LoadResult;
 const Meta = BinaryLockfile.Package.Meta;
+
+const Npm = Install.Npm;
 const Negatable = Npm.Negatable;
-const DependencyID = Install.DependencyID;
-const Bin = Install.Bin;
-const ExternalString = Semver.ExternalString;

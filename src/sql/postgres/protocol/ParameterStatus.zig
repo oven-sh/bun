@@ -1,3 +1,5 @@
+const ParameterStatus = @This();
+
 name: Data = .{ .empty = {} },
 value: Data = .{ .empty = {} },
 
@@ -18,10 +20,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(ParameterStatus, decodeInternal).decode;
 
-// @sortImports
-
-const ParameterStatus = @This();
 const bun = @import("bun");
-const Data = @import("../Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const NewReader = @import("./NewReader.zig").NewReader;

@@ -1,5 +1,5 @@
 // TODO determine size and alignment automatically
-const size = 56;
+const size = if (Environment.allow_assert or Environment.enable_asan) 56 else 8;
 const alignment = 8;
 
 /// Binding for JSC::CatchScope. This should be used rarely, only at translation boundaries between
@@ -77,7 +77,7 @@ pub const CatchScope = struct {
 
     /// Intended for use with `try`. Returns if there is already a pending exception or if traps cause
     /// an exception to be thrown (this is the same as how RETURN_IF_EXCEPTION behaves in C++)
-    pub fn returnIfException(self: *CatchScope) bun.JSError!void {
+    pub fn returnIfException(self: *CatchScope) !void {
         if (self.exceptionIncludingTraps() != null) return error.JSError;
     }
 
@@ -203,6 +203,7 @@ extern fn CatchScope__assertNoException(ptr: *align(alignment) [size]u8) void;
 extern fn CatchScope__destruct(ptr: *align(alignment) [size]u8) void;
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Environment = bun.Environment;
+const jsc = bun.jsc;

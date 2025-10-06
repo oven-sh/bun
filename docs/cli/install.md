@@ -8,6 +8,14 @@ The `bun` CLI contains a Node.js-compatible package manager designed to be a dra
 
 {% /callout %}
 
+{% callout %}
+
+**💾 Disk efficient** — Bun install stores all packages in a global cache (`~/.bun/install/cache/`) and creates hardlinks (Linux) or copy-on-write clones (macOS) to `node_modules`. This means duplicate packages across projects point to the same underlying data, taking up virtually no extra disk space.
+
+For more details, see [Package manager > Global cache](https://bun.com/docs/install/cache).
+
+{% /callout %}
+
 {% details summary="For Linux users" %}
 The recommended minimum Linux Kernel version is 5.6. If you're on Linux kernel 5.1 - 5.5, `bun install` will work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
 
@@ -183,6 +191,68 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
 }
 ```
 
+## Installation strategies
+
+Bun supports two package installation strategies that determine how dependencies are organized in `node_modules`:
+
+### Hoisted installs (default for single projects)
+
+The traditional npm/Yarn approach that flattens dependencies into a shared `node_modules` directory:
+
+```bash
+$ bun install --linker hoisted
+```
+
+### Isolated installs
+
+A pnpm-like approach that creates strict dependency isolation to prevent phantom dependencies:
+
+```bash
+$ bun install --linker isolated
+```
+
+Isolated installs create a central package store in `node_modules/.bun/` with symlinks in the top-level `node_modules`. This ensures packages can only access their declared dependencies.
+
+For complete documentation on isolated installs, refer to [Package manager > Isolated installs](https://bun.com/docs/install/isolated).
+
+## Disk efficiency
+
+Bun uses a global cache at `~/.bun/install/cache/` to minimize disk usage. Packages are stored once and linked to `node_modules` using hardlinks (Linux/Windows) or copy-on-write (macOS), so duplicate packages across projects don't consume additional disk space.
+
+For complete documentation refer to [Package manager > Global cache](https://bun.com/docs/install/cache).
+
+## Minimum release age
+
+To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in seconds) will be filtered out during installation.
+
+```bash
+# Only install package versions published at least 3 days ago
+$ bun add @types/bun --minimum-release-age 259200 # seconds
+```
+
+You can also configure this in `bunfig.toml`:
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200 # seconds
+
+# Exclude trusted packages from the age gate
+minimumReleaseAgeExcludes = ["@types/node", "typescript"]
+```
+
+When the minimum age filter is active:
+
+- Only affects new package resolution - existing packages in `bun.lock` remain unchanged
+- All dependencies (direct and transitive) are filtered to meet the age requirement when being resolved
+- When versions are blocked by the age gate, a stability check detects rapid bugfix patterns
+  - If multiple versions were published close together just outside your age gate, it extends the filter to skip those potentially unstable versions and selects an older, more mature version
+  - Searches up to 7 days after the age gate, however if still finding rapid releases it ignores stability check
+  - Exact version requests (like `package@1.1.1`) still respect the age gate but bypass the stability check
+- Versions without a `time` field are treated as passing the age check (npm registry should always provide timestamps)
+
+For more advanced security scanning, including integration with services & custom filtering, see [Package manager > Security Scanner API](https://bun.com/docs/install/security-scanner-api).
+
 ## Configuration
 
 The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
@@ -213,11 +283,19 @@ dryRun = false
 
 # equivalent to `--concurrent-scripts` flag
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
+
+# installation strategy: "hoisted" or "isolated"
+# default: "hoisted"
+linker = "hoisted"
+
+# minimum age config
+minimumReleaseAge = 259200 # seconds
+minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 
 ## CI/CD
 
-Looking to speed up your CI? Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline.
+Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline:
 
 ```yaml#.github/workflows/release.yml
 name: bun-types
@@ -232,6 +310,33 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: bun install
+      - name: Build app
+        run: bun run build
+```
+
+For CI/CD environments that want to enforce reproducible builds, use `bun ci` to fail the build if the package.json is out of sync with the lockfile:
+
+```bash
+$ bun ci
+```
+
+This is equivalent to `bun install --frozen-lockfile`. It installs exact versions from `bun.lock` and fails if `package.json` doesn't match the lockfile. To use `bun ci` or `bun install --frozen-lockfile`, you must commit `bun.lock` to version control.
+
+And instead of running `bun install`, run `bun ci`.
+
+```yaml#.github/workflows/release.yml
+name: bun-types
+jobs:
+  build:
+    name: build-app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun ci
       - name: Build app
         run: bun run build
 ```

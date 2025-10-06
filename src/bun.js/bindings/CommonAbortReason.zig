@@ -1,8 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
 pub const CommonAbortReason = enum(u8) {
     Timeout = 1,
     UserAbort = 2,
@@ -14,3 +9,9 @@ pub const CommonAbortReason = enum(u8) {
 
     extern fn WebCore__CommonAbortReason__toJS(*JSGlobalObject, CommonAbortReason) JSValue;
 };
+
+const bun = @import("bun");
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

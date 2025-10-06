@@ -1,16 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const strings = bun.strings;
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.CLI.Command;
-const PackageManager = bun.install.PackageManager;
-const logger = bun.logger;
-const js_ast = bun.js_ast;
-const JSPrinter = bun.js_printer;
-const JSON = bun.JSON;
-
 pub const PmPkgCommand = struct {
     const SubCommand = enum {
         get,
@@ -539,7 +526,7 @@ pub const PmPkgCommand = struct {
         };
         defer {
             for (path_parts.items) |part| {
-                if (part.len > 0) allocator.free(part);
+                allocator.free(part);
             }
             path_parts.deinit();
         }
@@ -726,9 +713,7 @@ pub const PmPkgCommand = struct {
         }
 
         if (!found) return false;
-        var new_props = try allocator.alloc(js_ast.G.Property, old_props.len - 1);
-        var new_index: usize = 0;
-
+        var new_props: bun.BabyList(js_ast.G.Property) = try .initCapacity(allocator, old_props.len - 1);
         for (old_props) |prop| {
             if (prop.key) |k| {
                 switch (k.data) {
@@ -740,11 +725,9 @@ pub const PmPkgCommand = struct {
                     else => {},
                 }
             }
-            new_props[new_index] = prop;
-            new_index += 1;
+            new_props.appendAssumeCapacity(prop);
         }
-        const new_list = js_ast.G.Property.List.init(new_props);
-        obj.data.e_object.properties = new_list;
+        obj.data.e_object.properties = new_props;
 
         return true;
     }
@@ -782,3 +765,18 @@ pub const PmPkgCommand = struct {
         };
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const Output = bun.Output;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+const Command = bun.cli.Command;
+const PackageManager = bun.install.PackageManager;

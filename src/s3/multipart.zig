@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const ACL = @import("./acl.zig").ACL;
-const Storageclass = @import("./storage_class.zig").StorageClass;
-const JSC = bun.JSC;
-const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const S3SimpleRequest = @import("./simple_request.zig");
-const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
-const S3Error = @import("./error.zig").S3Error;
 // When we start the request we will buffer data until partSize is reached or the last chunk is received.
 // If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
 // If we send a single request it will retry until the maximum retry count is reached. The single request do not increase the reference count of MultiPartUpload, as they are the final step.
@@ -118,8 +107,8 @@ pub const MultiPartUpload = struct {
     storage_class: ?Storageclass = null,
     credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
-    vm: *JSC.VirtualMachine,
-    globalThis: *JSC.JSGlobalObject,
+    vm: *jsc.VirtualMachine,
+    globalThis: *jsc.JSGlobalObject,
 
     buffered: bun.io.StreamBuffer = .{},
 
@@ -150,7 +139,7 @@ pub const MultiPartUpload = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    const log = bun.Output.scoped(.S3MultiPartUpload, true);
+    const log = bun.Output.scoped(.S3MultiPartUpload, .hidden);
 
     pub const UploadPart = struct {
         data: []const u8,
@@ -225,8 +214,8 @@ pub const MultiPartUpload = struct {
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
                         .number = this.partNumber,
-                        .etag = bun.default_allocator.dupe(u8, etag) catch bun.outOfMemory(),
-                    }) catch bun.outOfMemory();
+                        .etag = bun.handleOom(bun.default_allocator.dupe(u8, etag)),
+                    }) catch |err| bun.handleOom(err);
                     this.state = .not_assigned;
                     defer this.ctx.deref();
                     // mark as available
@@ -295,7 +284,7 @@ pub const MultiPartUpload = struct {
         if (this.multipart_etags.capacity > 0)
             this.multipart_etags.deinit(bun.default_allocator);
         if (this.multipart_upload_list.cap > 0)
-            this.multipart_upload_list.deinitWithAllocator(bun.default_allocator);
+            this.multipart_upload_list.deinit(bun.default_allocator);
         bun.destroy(this);
     }
 
@@ -348,7 +337,7 @@ pub const MultiPartUpload = struct {
         defer this.currentPartNumber += 1;
         if (this.queue == null) {
             // queueSize will never change and is small (max 255)
-            const queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
+            const queue = bun.handleOom(bun.default_allocator.alloc(UploadPart, queueSize));
             // zero set just in case
             @memset(queue, UploadPart{
                 .data = "",
@@ -361,7 +350,7 @@ pub const MultiPartUpload = struct {
             });
             this.queue = queue;
         }
-        const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
+        const data = if (needs_clone) bun.handleOom(bun.default_allocator.dupe(u8, chunk)) else chunk;
         const allocated_len = if (needs_clone) data.len else allocated_size;
 
         const queue_item = &this.queue.?[index];
@@ -449,15 +438,21 @@ pub const MultiPartUpload = struct {
             // sort the etags
             std.sort.block(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
             // start the multipart upload list
-            this.multipart_upload_list.append(bun.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">") catch bun.outOfMemory();
+            bun.handleOom(this.multipart_upload_list.appendSlice(
+                bun.default_allocator,
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+            ));
             for (this.multipart_etags.items) |tag| {
-                this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }) catch bun.outOfMemory();
+                bun.handleOom(this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }));
 
                 bun.default_allocator.free(tag.etag);
             }
             this.multipart_etags.deinit(bun.default_allocator);
             this.multipart_etags = .{};
-            this.multipart_upload_list.append(bun.default_allocator, "</CompleteMultipartUpload>") catch bun.outOfMemory();
+            bun.handleOom(this.multipart_upload_list.appendSlice(
+                bun.default_allocator,
+                "</CompleteMultipartUpload>",
+            ));
             // will deref and ends after commit
             this.commitMultiPartRequest();
         } else if (this.state == .singlefile_started) {
@@ -709,8 +704,8 @@ pub const MultiPartUpload = struct {
         utf16,
     };
 
-    fn write(this: *@This(), chunk: []const u8, is_last: bool, comptime encoding: WriteEncoding) bun.OOM!bool {
-        if (this.ended) return true; // no backpressure since we are done
+    fn write(this: *@This(), chunk: []const u8, is_last: bool, comptime encoding: WriteEncoding) bun.OOM!ResumableSinkBackpressure {
+        if (this.ended) return .done; // no backpressure since we are done
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         this.ref();
         defer this.deref();
@@ -720,7 +715,7 @@ pub const MultiPartUpload = struct {
             if (this.buffered.size() > 0) {
                 this.processBuffered(this.partSizeInBytes());
             }
-            return !this.hasBackpressure();
+            return if (this.hasBackpressure()) .backpressure else .want_more;
         }
         if (is_last) {
             this.ended = true;
@@ -734,7 +729,7 @@ pub const MultiPartUpload = struct {
             this.processBuffered(this.partSizeInBytes());
         } else {
             // still have more data and receive empty, nothing todo here
-            if (chunk.len == 0) return this.hasBackpressure();
+            if (chunk.len == 0) return if (this.hasBackpressure()) .backpressure else .want_more;
             switch (encoding) {
                 .bytes => try this.buffered.write(chunk),
                 .latin1 => try this.buffered.writeLatin1(chunk, true),
@@ -748,18 +743,33 @@ pub const MultiPartUpload = struct {
 
             // wait for more
         }
-        return !this.hasBackpressure();
+        return if (this.hasBackpressure()) .backpressure else .want_more;
     }
 
-    pub fn writeLatin1(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+    pub fn writeLatin1(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!ResumableSinkBackpressure {
         return try this.write(chunk, is_last, .latin1);
     }
 
-    pub fn writeUTF16(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+    pub fn writeUTF16(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!ResumableSinkBackpressure {
         return try this.write(chunk, is_last, .utf16);
     }
 
-    pub fn writeBytes(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+    pub fn writeBytes(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!ResumableSinkBackpressure {
         return try this.write(chunk, is_last, .bytes);
     }
 };
+
+const std = @import("std");
+const ACL = @import("./acl.zig").ACL;
+const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
+const S3Credentials = @import("./credentials.zig").S3Credentials;
+const S3Error = @import("./error.zig").S3Error;
+const Storageclass = @import("./storage_class.zig").StorageClass;
+
+const S3SimpleRequest = @import("./simple_request.zig");
+const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const strings = bun.strings;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;

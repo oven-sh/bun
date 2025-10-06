@@ -143,7 +143,8 @@ fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), c
 
     // Get children first to avoid race conditions where killing the parent
     // might prevent us from finding the children
-    const children = getChildPids(pid, current_pid) catch return;
+    // If enumeration fails, treat as having no children and continue to kill this process
+    const children = getChildPids(pid, current_pid) catch &[_]c_int{};
     defer if (children.len > 0) bun.default_allocator.free(children);
 
     // Process children first (depth-first)

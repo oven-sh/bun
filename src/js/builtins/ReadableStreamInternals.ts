@@ -569,7 +569,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
   const pullAlgorithm = function () {
     if (teeState.flags & TeeStateFlags.reading) {
       teeState.flags |= TeeStateFlags.readAgain;
-      return $Promise.$resolve();
+      return Promise.$resolve();
     }
     teeState.flags |= TeeStateFlags.reading;
     $Promise.prototype.$then.$call(
@@ -612,7 +612,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
           $readableStreamDefaultControllerEnqueue(teeState.branch2.$readableStreamController, chunk2);
         teeState.flags &= ~TeeStateFlags.reading;
 
-        $Promise.$resolve().$then(() => {
+        Promise.$resolve().$then(() => {
           if (teeState.flags & TeeStateFlags.readAgain) pullAlgorithm();
         });
       },
@@ -621,7 +621,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
         teeState.flags &= ~TeeStateFlags.reading;
       },
     );
-    return $Promise.$resolve();
+    return Promise.$resolve();
   };
   return pullAlgorithm;
 }
@@ -1053,7 +1053,7 @@ export function onPullDirectStream(controller: ReadableStreamDirectController) {
         controller._handleError = $handleDirectStreamErrorReject.bind(controller);
       }
 
-      Promise.prototype.catch.$call(result, controller._handleError);
+      result.catch(controller._handleError);
     }
   } catch (e) {
     return $handleDirectStreamErrorReject.$call(controller, e);
@@ -1204,7 +1204,10 @@ export function onCloseDirectStream(reason) {
       stream = undefined;
       return thisResult;
     };
-  } else if (this._pendingRead) {
+    // We will close after the next $pull is called otherwise we would lost the last chunk
+    return;
+  }
+  if (this._pendingRead) {
     var read = this._pendingRead;
     this._pendingRead = undefined;
     $putByIdDirectPrivate(this, "pull", $noopDoneFunction);
@@ -1796,6 +1799,66 @@ export function readableStreamFromAsyncIterator(target, fn) {
     throw new TypeError("Expected an async generator");
   }
 
+  var runningAsyncIteratorPromise;
+  async function runAsyncIterator(controller) {
+    var closingError: Error | undefined, value, done, immediateTask;
+
+    try {
+      while (!cancelled && !done) {
+        const promise = iter.next(controller);
+
+        if (cancelled) {
+          return;
+        }
+
+        if ($isPromise(promise) && $isPromiseFulfilled(promise)) {
+          clearImmediate(immediateTask);
+          ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
+          $assert(!$isPromise(value), "Expected a value, not a promise");
+        } else {
+          immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));
+          ({ value, done } = await promise);
+
+          if (cancelled) {
+            return;
+          }
+        }
+
+        if (!$isUndefinedOrNull(value)) {
+          controller.write(value);
+        }
+      }
+    } catch (e) {
+      closingError = e;
+    } finally {
+      clearImmediate(immediateTask);
+      immediateTask = undefined;
+      // "iter" will be undefined if the stream was closed above.
+
+      // Stream was closed before we tried writing to it.
+      if (closingError?.code === "ERR_INVALID_THIS") {
+        await iter?.return?.();
+        return;
+      }
+
+      if (closingError) {
+        try {
+          await iter.throw?.(closingError);
+        } finally {
+          iter = undefined;
+          // eslint-disable-next-line no-throw-literal
+          throw closingError;
+        }
+      } else {
+        await controller.end();
+        if (iter) {
+          await iter.return?.();
+        }
+      }
+      iter = undefined;
+    }
+  }
+
   return new ReadableStream({
     type: "direct",
 
@@ -1826,62 +1889,23 @@ export function readableStreamFromAsyncIterator(target, fn) {
     },
 
     async pull(controller) {
-      var closingError: Error | undefined, value, done, immediateTask;
-
-      try {
-        while (!cancelled && !done) {
-          const promise = iter.next(controller);
-
-          if (cancelled) {
-            return;
-          }
-
-          if ($isPromise(promise) && $isPromiseFulfilled(promise)) {
-            clearImmediate(immediateTask);
-            ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
-            $assert(!$isPromise(value), "Expected a value, not a promise");
-          } else {
-            immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));
-            ({ value, done } = await promise);
-
-            if (cancelled) {
-              return;
-            }
-          }
-
-          if (!$isUndefinedOrNull(value)) {
-            controller.write(value);
+      // pull() may be called multiple times before a single call completes.
+      //
+      // But, we only call into the stream once while a stream is in-progress.
+      if (!runningAsyncIteratorPromise) {
+        const asyncIteratorPromise = runAsyncIterator(controller);
+        runningAsyncIteratorPromise = asyncIteratorPromise;
+        try {
+          const result = await asyncIteratorPromise;
+          return result;
+        } finally {
+          if (runningAsyncIteratorPromise === asyncIteratorPromise) {
+            runningAsyncIteratorPromise = undefined;
           }
         }
-      } catch (e) {
-        closingError = e;
-      } finally {
-        clearImmediate(immediateTask);
-        immediateTask = undefined;
-        // "iter" will be undefined if the stream was closed above.
-
-        // Stream was closed before we tried writing to it.
-        if (closingError?.code === "ERR_INVALID_THIS") {
-          await iter?.return?.();
-          return;
-        }
-
-        if (closingError) {
-          try {
-            await iter.throw?.(closingError);
-          } finally {
-            iter = undefined;
-            // eslint-disable-next-line no-throw-literal
-            throw closingError;
-          }
-        } else {
-          await controller.end();
-          if (iter) {
-            await iter.return?.();
-          }
-        }
-        iter = undefined;
       }
+
+      return runningAsyncIteratorPromise;
     },
   });
 }
@@ -2050,7 +2074,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       throw $ERR_INVALID_STATE("Internal error: invalid result from pull. This is a bug in Bun. Please report it.");
     }
 
-    // eslint-disable-next-line no-unused-private-class-members
     #pull(controller) {
       var handle = $getByIdDirectPrivate(this, "stream");
 
@@ -2103,7 +2126,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       }
     }
 
-    // eslint-disable-next-line no-unused-private-class-members
     #cancel(reason) {
       var handle = $getByIdDirectPrivate(this, "stream");
       this.$data = undefined;

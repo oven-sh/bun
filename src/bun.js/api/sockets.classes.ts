@@ -302,7 +302,7 @@ export default [
     JSType: "0b11101110",
     finalize: true,
     construct: true,
-    hasPendingActivity: true,
+    values: ["on_data", "on_drain", "on_error"],
     proto: {
       send: {
         fn: "send",
@@ -459,7 +459,7 @@ export default [
     finalize: true,
     estimatedSize: true,
     // inspectCustom: true,
-    structuredClone: { transferable: false, tag: 251 },
+    structuredClone: { transferable: false, tag: 251, storable: false },
     JSType: "0b11101110",
     klass: {
       isBlockList: {

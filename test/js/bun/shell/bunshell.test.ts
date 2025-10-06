@@ -751,7 +751,7 @@ booga"
           .split("\n")
           .filter(s => s.length > 0)
           .sort(),
-      ).toEqual(temp_files.sort());
+      ).toEqual([...temp_files, "foo", "lmao.txt"].sort());
     });
 
     test("cd -", async () => {

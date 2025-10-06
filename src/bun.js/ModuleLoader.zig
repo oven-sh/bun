@@ -835,7 +835,7 @@ pub fn transpileSourceCode(
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
-        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json or loader == .jsonc)) {
+        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .text or loader == .json or loader == .jsonc)) {
             // Don't print "export default <file path>"
             return ResolvedSource{
                 .allocator = null,
@@ -847,7 +847,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();
@@ -1096,7 +1096,7 @@ pub fn transpileSourceCode(
                 };
             }
 
-            if (loader == .json or loader == .jsonc or loader == .toml) {
+            if (loader == .json or loader == .jsonc or loader == .toml or loader == .yaml) {
                 if (parse_result.empty) {
                     return ResolvedSource{
                         .allocator = null,
@@ -1111,7 +1111,7 @@ pub fn transpileSourceCode(
                     .allocator = null,
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
+                    .jsvalue_for_export = parse_result.ast.parts.at(0).stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch |e| panic("Unexpected JS error: {s}", .{@errorName(e)}),
                     .tag = .exports_object,
                 };
             }
@@ -1350,10 +1350,10 @@ pub fn transpileSourceCode(
                 if (virtual_source) |source| {
                     if (globalObject) |globalThis| {
                         // attempt to avoid reading the WASM file twice.
-                        const encoded = jsc.EncodedJSValue{
-                            .asPtr = globalThis,
+                        const decoded: jsc.DecodedJSValue = .{
+                            .u = .{ .ptr = @ptrCast(globalThis) },
                         };
-                        const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
+                        const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
@@ -1517,7 +1517,7 @@ pub fn transpileSourceCode(
 
             const value = brk: {
                 if (!jsc_vm.origin.isEmpty()) {
-                    var buf = MutableString.init2048(jsc_vm.allocator) catch bun.outOfMemory();
+                    var buf = bun.handleOom(MutableString.init2048(jsc_vm.allocator));
                     defer buf.deinit();
                     var writer = buf.writer();
                     jsc.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
@@ -1600,9 +1600,10 @@ pub export fn Bun__transpileFile(
     ret: *jsc.ErrorableResolvedSource,
     allow_promise: bool,
     is_commonjs_require: bool,
-    force_loader_type: bun.options.Loader.Optional,
+    _force_loader_type: bun.schema.api.Loader,
 ) ?*anyopaque {
     jsc.markBinding(@src());
+    const force_loader_type: bun.options.Loader.Optional = .fromAPI(_force_loader_type);
     var log = logger.Log.init(jsc_vm.transpiler.allocator);
     defer log.deinit();
 
@@ -1947,7 +1948,8 @@ export fn Bun__transpileVirtualModule(
 ) bool {
     jsc.markBinding(@src());
     const jsc_vm = globalObject.bunVM();
-    bun.assert(jsc_vm.plugin_runner != null);
+    // Plugin runner is not required for virtual modules created via build.module()
+    // bun.assert(jsc_vm.plugin_runner != null);
 
     var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
     const specifier = specifier_slice.slice();
@@ -2079,7 +2081,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
         };
         if (vm.source_mappings.get(specifier)) |mappings| {
             defer mappings.deref();
-            const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
+            const map_path = bun.handleOom(std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }));
             defer bun.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});
             defer file.close();
@@ -2319,7 +2321,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (ast_memory_store == null) {
-                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch bun.outOfMemory();
+                ast_memory_store = bun.handleOom(bun.default_allocator.create(js_ast.ASTMemoryAllocator));
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
                     .allocator = allocator,
                     .previous = null,
@@ -2340,7 +2342,7 @@ pub const RuntimeTranspilerStore = struct {
             var log = logger.Log.init(allocator);
             defer {
                 this.log = logger.Log.init(bun.default_allocator);
-                log.cloneToWithRecycled(&this.log, true) catch bun.outOfMemory();
+                bun.handleOom(log.cloneToWithRecycled(&this.log, true));
             }
             var vm = this.vm;
             var transpiler: bun.Transpiler = undefined;
@@ -2636,6 +2638,7 @@ pub const FetchFlags = enum {
 pub const HardcodedModule = enum {
     bun,
     @"abort-controller",
+    @"bun:app",
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
@@ -2723,6 +2726,7 @@ pub const HardcodedModule = enum {
     pub const map = bun.ComptimeStringMap(HardcodedModule, [_]struct { []const u8, HardcodedModule }{
         // Bun
         .{ "bun", .bun },
+        .{ "bun:app", .@"bun:app" },
         .{ "bun:ffi", .@"bun:ffi" },
         .{ "bun:jsc", .@"bun:jsc" },
         .{ "bun:main", .@"bun:main" },
@@ -2990,6 +2994,7 @@ pub const HardcodedModule = enum {
         const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:test", .{ .path = "bun:test", .tag = .bun_test } },
+            .{ "bun:app", .{ .path = "bun:app" } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },

@@ -1,7 +1,7 @@
 // Hardcoded module "node:tls"
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
-const { Duplex } = require("node:stream");
+const Duplex = require("internal/streams/duplex");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
@@ -11,6 +11,7 @@ const { Server: NetServer, Socket: NetSocket } = net;
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
+const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
@@ -503,7 +504,7 @@ function TLSSocket(socket?, options?) {
   this._SNICallback = undefined;
   this.servername = undefined;
   this.authorized = false;
-  this.authorizationError;
+  void this.authorizationError;
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
 
@@ -581,7 +582,7 @@ TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
   if (this[krenegotiationDisabled]) {
     // if renegotiation is disabled should emit error event in nextTick for nodejs compatibility
     const error = $ERR_TLS_RENEGOTIATION_DISABLED();
-    typeof callback === "function" && process.nextTick(callback, error);
+    if (typeof callback === "function") process.nextTick(callback, error);
     return false;
   }
 
@@ -605,11 +606,11 @@ TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
   try {
     socket.renegotiate?.();
     // if renegotiate is successful should emit secure event when done
-    typeof callback === "function" && this.once("secure", () => callback(null));
+    if (typeof callback === "function") this.once("secure", () => callback(null));
     return true;
   } catch (err) {
     // if renegotiate fails should emit error event in nextTick for nodejs compatibility
-    typeof callback === "function" && process.nextTick(callback, err);
+    if (typeof callback === "function") process.nextTick(callback, err);
     return false;
   }
 };
@@ -930,6 +931,8 @@ function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
+const getUseSystemCA = $newZigFunction("bun.zig", "getUseSystemCA", 0);
+
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
@@ -938,6 +941,14 @@ function cacheDefaultCACertificates() {
   const bundled = cacheBundledRootCertificates();
   for (let i = 0; i < bundled.length; ++i) {
     ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
+  }
+
+  // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
+  if (getUseSystemCA() || process.env.NODE_USE_SYSTEM_CA === "1") {
+    const system = cacheSystemCACertificates();
+    for (let i = 0; i < system.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+    }
   }
 
   if (process.env.NODE_EXTRA_CA_CERTS) {
@@ -951,8 +962,10 @@ function cacheDefaultCACertificates() {
   return defaultCACertificates;
 }
 
+let systemCACertificates: string[] | undefined;
 function cacheSystemCACertificates(): string[] {
-  throw new Error("getCACertificates('system') is not yet implemented in Bun");
+  systemCACertificates ||= getSystemCACertificates() as string[];
+  return systemCACertificates;
 }
 
 let extraCACertificates: string[] | undefined;

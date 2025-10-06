@@ -4,7 +4,7 @@ pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, 
     const _arguments = callFrame.arguments_old(2);
     const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const not = this.flags.not;
     if (not) {
@@ -12,10 +12,11 @@ pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, 
         return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n", .{});
     }
 
-    if (this.testScope() == null) {
+    var bunTest_strong = this.bunTest() orelse {
         const signature = comptime getSignature("toThrowErrorMatchingSnapshot", "", true);
         return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n", .{});
-    }
+    };
+    defer bunTest_strong.deinit();
 
     var hint_string: ZigString = ZigString.Empty;
     switch (arguments.len) {
@@ -49,7 +50,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

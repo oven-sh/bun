@@ -12,7 +12,7 @@ pub fn toContainAnyKeys(
         return globalThis.throwInvalidArguments("toContainAnyKeys() takes 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected = arguments[0];
     expected.ensureStillAlive();
@@ -27,14 +27,16 @@ pub fn toContainAnyKeys(
 
     const count = try expected.getLength(globalThis);
 
-    var i: u32 = 0;
+    if (value.isObject()) {
+        var i: u32 = 0;
 
-    while (i < count) : (i += 1) {
-        const key = try expected.getIndex(globalThis, i);
+        while (i < count) : (i += 1) {
+            const key = try expected.getIndex(globalThis, i);
 
-        if (try value.hasOwnPropertyValue(globalThis, key)) {
-            pass = true;
-            break;
+            if (try value.hasOwnPropertyValue(globalThis, key)) {
+                pass = true;
+                break;
+            }
         }
     }
 
@@ -65,7 +67,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

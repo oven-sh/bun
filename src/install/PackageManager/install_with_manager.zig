@@ -1,8 +1,8 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: string,
-    original_cwd: string,
+    root_package_json_path: [:0]const u8,
+    original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
 
@@ -48,9 +48,6 @@ pub fn installWithManager(
     // but we force allowing updates to the lockfile when you do bun add
     var had_any_diffs = false;
     manager.progress = .{};
-
-    // Step 2. Parse the package.json file
-    const root_package_json_source = &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents);
 
     switch (load_result) {
         .err => |cause| {
@@ -109,7 +106,7 @@ pub fn installWithManager(
                         const tag_total = original.tag.pre.len() + original.tag.build.len();
                         if (tag_total > 0) {
                             // clone because don't know if lockfile buffer will reallocate
-                            const tag_buf = manager.allocator.alloc(u8, tag_total) catch bun.outOfMemory();
+                            const tag_buf = bun.handleOom(manager.allocator.alloc(u8, tag_total));
                             var ptr = tag_buf;
                             original.tag = original_resolution.value.npm.version.tag.cloneInto(
                                 lockfile.buffers.string_bytes.items,
@@ -139,13 +136,38 @@ pub fn installWithManager(
                 lockfile.initEmpty(manager.allocator);
                 var maybe_root = Lockfile.Package{};
 
+                const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
+                    manager.allocator,
+                    manager.log,
+                    root_package_json_path,
+                    .{},
+                )) {
+                    .entry => |entry| entry,
+                    .read_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                    .parse_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                };
+
+                const source_copy = root_package_json_entry.source;
+
                 var resolver: void = {};
                 try maybe_root.parse(
                     &lockfile,
                     manager,
                     manager.allocator,
                     manager.log,
-                    root_package_json_source,
+                    &source_copy,
                     void,
                     &resolver,
                     Features.main,
@@ -403,13 +425,38 @@ pub fn installWithManager(
             Global.crash();
         }
 
+        const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            root_package_json_path,
+            .{},
+        )) {
+            .entry => |entry| entry,
+            .read_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+            .parse_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+        };
+
+        const source_copy = root_package_json_entry.source;
+
         var resolver: void = {};
         try root.parse(
             manager.lockfile,
             manager,
             manager.allocator,
             manager.log,
-            root_package_json_source,
+            &source_copy,
             void,
             &resolver,
             Features.main,
@@ -563,7 +610,41 @@ pub fn installWithManager(
                 return error.InstallFailed;
             }
         }
+
         manager.verifyResolutions(log_level);
+
+        if (manager.options.security_scanner != null) {
+            const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install or manager.subcommand == .remove;
+
+            if (is_subcommand_to_run_scanner) {
+                if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
+                    switch (err) {
+                        error.SecurityScannerInWorkspace => {
+                            Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
+                        },
+                        else => {},
+                    }
+
+                    Global.exit(1);
+                }) |results| {
+                    defer {
+                        var results_mut = results;
+                        results_mut.deinit();
+                    }
+
+                    security_scanner.printSecurityAdvisories(manager, &results);
+
+                    if (results.hasFatalAdvisories()) {
+                        Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
+                        Global.exit(1);
+                    } else if (results.hasWarnings()) {
+                        if (!security_scanner.promptForWarnings()) {
+                            Global.exit(1);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // append scripts to lockfile before generating new metahash
@@ -600,7 +681,7 @@ pub fn installWithManager(
                                     @field(manager.lockfile.scripts, Lockfile.Scripts.names[i]).append(
                                         manager.lockfile.allocator,
                                         entry,
-                                    ) catch bun.outOfMemory();
+                                    ) catch |err| bun.handleOom(err);
                                 }
                             }
                         }
@@ -621,7 +702,7 @@ pub fn installWithManager(
                                 @field(manager.lockfile.scripts, Lockfile.Scripts.names[i]).append(
                                     manager.lockfile.allocator,
                                     entry,
-                                ) catch bun.outOfMemory();
+                                ) catch |err| bun.handleOom(err);
                             }
                         }
                     }
@@ -638,7 +719,7 @@ pub fn installWithManager(
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
         if (load_result.loadedFromTextLockfile()) {
-            if (manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator) catch bun.outOfMemory()) {
+            if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {
                 break :frozen_lockfile;
             }
         } else {
@@ -686,53 +767,8 @@ pub fn installWithManager(
         return;
     }
 
-    var path_buf: bun.PathBuffer = undefined;
-    var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
-    // only populated when subcommand is `.install`
-    if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
-        try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
-        for (manager.options.filter_patterns) |pattern| {
-            try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, &path_buf));
-        }
-    }
-    defer workspace_filters.deinit(manager.allocator);
-
-    var install_root_dependencies = workspace_filters.items.len == 0;
-    if (!install_root_dependencies) {
-        const pkg_names = manager.lockfile.packages.items(.name);
-
-        const abs_root_path = abs_root_path: {
-            if (comptime !Environment.isWindows) {
-                break :abs_root_path strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
-            }
-
-            var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, &path_buf);
-            break :abs_root_path strings.withoutTrailingSlash(abs_path[Path.windowsVolumeNameLen(abs_path)[0]..]);
-        };
-
-        for (workspace_filters.items) |filter| {
-            const pattern, const path_or_name = switch (filter) {
-                .name => |pattern| .{ pattern, pkg_names[0].slice(manager.lockfile.buffers.string_bytes.items) },
-                .path => |pattern| .{ pattern, abs_root_path },
-                .all => {
-                    install_root_dependencies = true;
-                    continue;
-                },
-            };
-
-            switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
-                .match, .negate_match => install_root_dependencies = true,
-
-                .negate_no_match => {
-                    // always skip if a pattern specifically says "!<name>"
-                    install_root_dependencies = false;
-                    break;
-                },
-
-                .no_match => {},
-            }
-        }
-    }
+    const workspace_filters, const install_root_dependencies = (try getWorkspaceFilters(manager, original_cwd));
+    defer manager.allocator.free(workspace_filters);
 
     const install_summary: PackageInstall.Summary = install_summary: {
         if (!manager.options.do.install_packages) {
@@ -746,16 +782,18 @@ pub fn installWithManager(
             => break :install_summary try installHoistedPackages(
                 manager,
                 ctx,
-                workspace_filters.items,
+                workspace_filters,
                 install_root_dependencies,
                 log_level,
+                null,
             ),
 
             .isolated => break :install_summary installIsolatedPackages(
                 manager,
                 ctx,
                 install_root_dependencies,
-                workspace_filters.items,
+                workspace_filters,
+                null,
             ) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             },
@@ -791,7 +829,7 @@ pub fn installWithManager(
             (did_meta_hash_change or
                 had_any_diffs or
                 manager.update_requests.len > 0 or
-                (load_result == .ok and load_result.ok.serializer_result.packages_need_update) or
+                (load_result == .ok and (load_result.ok.serializer_result.packages_need_update or load_result.ok.serializer_result.migrated_from_lockb_v2)) or
                 manager.lockfile.isEmpty() or
                 manager.options.enable.force_save_lockfile));
 
@@ -987,8 +1025,63 @@ fn printBlockedPackagesInfo(summary: *const PackageInstall.Summary, global: bool
     }
 }
 
-const string = []const u8;
+pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !struct {
+    []const WorkspaceFilter,
+    bool,
+} {
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
 
+    var workspace_filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
+    // only populated when subcommand is `.install`
+    if (manager.subcommand == .install and manager.options.filter_patterns.len > 0) {
+        try workspace_filters.ensureUnusedCapacity(manager.allocator, manager.options.filter_patterns.len);
+        for (manager.options.filter_patterns) |pattern| {
+            try workspace_filters.append(manager.allocator, try WorkspaceFilter.init(manager.allocator, pattern, original_cwd, path_buf[0..]));
+        }
+    }
+
+    var install_root_dependencies = workspace_filters.items.len == 0;
+    if (!install_root_dependencies) {
+        const pkg_names = manager.lockfile.packages.items(.name);
+
+        const abs_root_path = abs_root_path: {
+            if (comptime !Environment.isWindows) {
+                break :abs_root_path strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+            }
+
+            var abs_path = Path.pathToPosixBuf(u8, FileSystem.instance.top_level_dir, path_buf);
+            break :abs_root_path strings.withoutTrailingSlash(abs_path[Path.windowsVolumeNameLen(abs_path)[0]..]);
+        };
+
+        for (workspace_filters.items) |filter| {
+            const pattern, const path_or_name = switch (filter) {
+                .name => |pattern| .{ pattern, pkg_names[0].slice(manager.lockfile.buffers.string_bytes.items) },
+                .path => |pattern| .{ pattern, abs_root_path },
+                .all => {
+                    install_root_dependencies = true;
+                    continue;
+                },
+            };
+
+            switch (bun.glob.match(pattern, path_or_name)) {
+                .match, .negate_match => install_root_dependencies = true,
+
+                .negate_no_match => {
+                    // always skip if a pattern specifically says "!<name>"
+                    install_root_dependencies = false;
+                    break;
+                },
+
+                .no_match => {},
+            }
+        }
+    }
+
+    return .{ workspace_filters.items, install_root_dependencies };
+}
+
+const security_scanner = @import("./security_scanner.zig");
 const std = @import("std");
 const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
 const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;
@@ -1000,7 +1093,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
-const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 

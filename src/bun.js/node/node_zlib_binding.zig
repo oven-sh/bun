@@ -128,8 +128,8 @@ pub fn CompressionStream(comptime T: type) type {
         pub fn runFromJSThread(this: *T) void {
             const global: *jsc.JSGlobalObject = this.globalThis;
             const vm = global.bunVM();
-            this.poll_ref.unref(vm);
             defer this.deref();
+            defer this.poll_ref.unref(vm);
 
             this.write_in_progress = false;
 
@@ -257,10 +257,10 @@ pub fn CompressionStream(comptime T: type) type {
         }
 
         pub fn emitError(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue, err_: Error) !void {
-            var msg_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.msg, 0) orelse ""}) catch bun.outOfMemory();
+            var msg_str = bun.handleOom(bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.msg, 0) orelse ""}));
             const msg_value = msg_str.transferToJS(globalThis);
             const err_value: jsc.JSValue = .jsNumber(err_.err);
-            var code_str = bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.code, 0) orelse ""}) catch bun.outOfMemory();
+            var code_str = bun.handleOom(bun.String.createFormat("{s}", .{std.mem.sliceTo(err_.code, 0) orelse ""}));
             const code_value = code_str.transferToJS(globalThis);
 
             const callback: jsc.JSValue = T.js.errorCallbackGetCached(this_value) orelse

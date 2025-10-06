@@ -550,11 +550,16 @@ function spawnSync(file, args, options) {
     stderr = null;
   }
 
+  // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
+  // instead of the actual output. We should treat this as no output available.
+  const outputStdout = typeof stdout === "number" ? null : stdout;
+  const outputStderr = typeof stderr === "number" ? null : stderr;
+
   const result = {
     signal: signalCode ?? null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, stdout, stderr],
+    output: [null, outputStdout, outputStderr],
     pid,
   };
 
@@ -562,11 +567,11 @@ function spawnSync(file, args, options) {
     result.error = error;
   }
 
-  if (stdout && encoding && encoding !== "buffer") {
+  if (outputStdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
   }
 
-  if (stderr && encoding && encoding !== "buffer") {
+  if (outputStderr && encoding && encoding !== "buffer") {
     result.output[2] = result.output[2]?.toString(encoding);
   }
 
@@ -1130,17 +1135,39 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const stdin = handle?.stdin;
 
-            if (!stdin)
+            if (!stdin) {
               // This can happen if the process was already killed.
-              return new ShimmedStdin();
+              const Writable = require("internal/streams/writable");
+              const stream = new Writable({
+                write(chunk, encoding, callback) {
+                  // Gracefully handle writes - stream acts as if it's ended
+                  if (callback) callback();
+                  return false;
+                },
+              });
+              // Mark as destroyed to indicate it's not usable
+              stream.destroy();
+              return stream;
+            }
             const result = require("internal/fs/streams").writableFromFileSink(stdin);
             result.readable = false;
             return result;
           }
           case "inherit":
             return null;
-          case "destroyed":
-            return new ShimmedStdin();
+          case "destroyed": {
+            const Writable = require("internal/streams/writable");
+            const stream = new Writable({
+              write(chunk, encoding, callback) {
+                // Gracefully handle writes - stream acts as if it's ended
+                if (callback) callback();
+                return false;
+              },
+            });
+            // Mark as destroyed to indicate it's not usable
+            stream.destroy();
+            return stream;
+          }
           case "undefined":
             return undefined;
           default:
@@ -1153,7 +1180,13 @@ class ChildProcess extends EventEmitter {
           case "pipe": {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
-            if (!value) return new ShimmedStdioOutStream();
+            if (!value) {
+              const Readable = require("internal/streams/readable");
+              const stream = new Readable({ read() {} });
+              // Mark as destroyed to indicate it's not usable
+              stream.destroy();
+              return stream;
+            }
 
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
             this.#closesNeeded++;
@@ -1161,8 +1194,13 @@ class ChildProcess extends EventEmitter {
             if (autoResume) pipe.resume();
             return pipe;
           }
-          case "destroyed":
-            return new ShimmedStdioOutStream();
+          case "destroyed": {
+            const Readable = require("internal/streams/readable");
+            const stream = new Readable({ read() {} });
+            // Mark as destroyed to indicate it's not usable
+            stream.destroy();
+            return stream;
+          }
           case "undefined":
             return undefined;
           default:
@@ -1302,7 +1340,7 @@ class ChildProcess extends EventEmitter {
 
           if (hasSocketsToEagerlyLoad) {
             process.nextTick(() => {
-              this.stdio;
+              void this.stdio;
               $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
             });
           }
@@ -1475,6 +1513,73 @@ class ChildProcess extends EventEmitter {
   unref() {
     if (this.#handle) this.#handle.unref();
   }
+
+  // Static initializer to make stdio properties enumerable on the prototype
+  // This fixes libraries like tinyspawn that use Object.assign(promise, childProcess)
+  static {
+    Object.defineProperties(this.prototype, {
+      stdin: {
+        get: function () {
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+          // Define as own enumerable property on first access
+          Object.defineProperty(this, "stdin", {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          return value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
+      stdout: {
+        get: function () {
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+          // Define as own enumerable property on first access
+          Object.defineProperty(this, "stdout", {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          return value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
+      stderr: {
+        get: function () {
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+          // Define as own enumerable property on first access
+          Object.defineProperty(this, "stderr", {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          return value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
+      stdio: {
+        get: function () {
+          const value = (this.#stdioObject ??= this.#createStdioObject());
+          // Define as own enumerable property on first access
+          Object.defineProperty(this, "stdio", {
+            value: value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+          return value;
+        },
+        enumerable: true,
+        configurable: true,
+      },
+    });
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -1628,44 +1733,6 @@ function abortChildProcess(child, killSignal, reason) {
 class Control extends EventEmitter {
   constructor() {
     super();
-  }
-}
-
-class ShimmedStdin extends EventEmitter {
-  constructor() {
-    super();
-  }
-  write() {
-    return false;
-  }
-  destroy() {}
-  end() {
-    return this;
-  }
-  pipe() {
-    return this;
-  }
-  resume() {
-    return this;
-  }
-}
-
-class ShimmedStdioOutStream extends EventEmitter {
-  pipe() {}
-  get destroyed() {
-    return true;
-  }
-
-  resume() {
-    return this;
-  }
-
-  destroy() {
-    return this;
-  }
-
-  setEncoding() {
-    return this;
   }
 }
 

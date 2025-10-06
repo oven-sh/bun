@@ -57,6 +57,8 @@ class GlobalInternals;
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
+#include "BakeAdditionsToGlobalObject.h"
+#include "WriteBarrierList.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -295,7 +297,6 @@ public:
     Structure* NodeVMSpecialSandboxStructure() const { return m_cachedNodeVMSpecialSandboxStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
-    JSObject* lazyPreloadTestModuleObject() const { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
@@ -312,6 +313,8 @@ public:
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
+
+    Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -370,8 +373,8 @@ public:
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
-        Bun__TestScope__onReject,
-        Bun__TestScope__onResolve,
+        Bun__TestScope__Describe2__bunTestThen,
+        Bun__TestScope__Describe2__bunTestCatch,
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
@@ -450,6 +453,8 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
+    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
+                                                                                                             \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
     V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
@@ -580,7 +585,6 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_lazyRequireCacheObject)                                \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
-    V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyPreloadTestModuleObject)                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMSpecialSandboxStructure)                  \
@@ -621,13 +625,19 @@ public:
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBunRequestStructure)                                \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSBunRequestParamsPrototype)                           \
                                                                                                              \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdin)                                              \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStderr)                                             \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdout)                                             \
+                                                                                                             \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statValues)                                      \
     V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatValues)                               \
     V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
     V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)                             \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
-    V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)
+    V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \
@@ -651,6 +661,11 @@ public:
     std::optional<napi_module> m_pendingNapiModule = {};
 
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
+
+    // LazyProperty accessors for stdin/stderr/stdout
+    JSC::JSObject* bunStdin() const { return m_bunStdin.getInitializedOnMainThread(this); }
+    JSC::JSObject* bunStderr() const { return m_bunStderr.getInitializedOnMainThread(this); }
+    JSC::JSObject* bunStdout() const { return m_bunStdout.getInitializedOnMainThread(this); }
 
     Structure* memoryFootprintStructure()
     {
@@ -724,8 +739,8 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
-    WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+    Bun::WriteBarrierList<JSC::JSFunction> m_ffiFunctions;
 };
 
 class EvalGlobalObject : public GlobalObject {

@@ -94,6 +94,7 @@ Bun supports the following loaders:
 - `file`
 - `json`
 - `toml`
+- `yaml`
 - `wasm`
 - `napi`
 - `base64`
@@ -230,6 +231,23 @@ Set path where coverage reports will be saved. Please notice, that it works only
 [test]
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
+
+### `test.concurrentTestGlob`
+
+Specify a glob pattern to automatically run matching test files with concurrent test execution enabled. Test files matching this pattern will behave as if the `--concurrent` flag was passed, running all tests within those files concurrently.
+
+```toml
+[test]
+concurrentTestGlob = "**/concurrent-*.test.ts"
+```
+
+This is useful for:
+
+- Gradually migrating test suites to concurrent execution
+- Running integration tests concurrently while keeping unit tests sequential
+- Separating fast concurrent tests from tests that require sequential execution
+
+The `--concurrent` CLI flag will override this setting when specified.
 
 ## Package manager
 
@@ -495,6 +513,76 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will 
 [install.lockfile]
 print = "yarn"
 ```
+
+### `install.security.scanner`
+
+Configure a security scanner to scan packages for vulnerabilities before installation.
+
+First, install a security scanner from npm:
+
+```bash
+$ bun add -d @acme/bun-security-scanner
+```
+
+Then configure it in your `bunfig.toml`:
+
+```toml
+[install.security]
+scanner = "@acme/bun-security-scanner"
+```
+
+When a security scanner is configured:
+
+- Auto-install is automatically disabled for security
+- Packages are scanned before installation
+- Installation is cancelled if fatal issues are found
+- Security warnings are displayed during installation
+
+Learn more about [using and writing security scanners](/docs/install/security-scanner-api).
+
+### `install.linker`
+
+Configure the default linker strategy. Default `"hoisted"`.
+
+For complete documentation refer to [Package manager > Isolated installs](https://bun.com/docs/install/isolated).
+
+```toml
+[install]
+linker = "hoisted"
+```
+
+Valid values are:
+
+{% table %}
+
+- Value
+- Description
+
+---
+
+- `"hoisted"`
+- Link dependencies in a shared `node_modules` directory.
+
+---
+
+- `"isolated"`
+- Link dependencies inside each package installation.
+
+{% /table %}
+
+### `install.minimumReleaseAge`
+
+Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200
+# These packages will bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+```
+
+For more details see [Minimum release age](https://bun.com/docs/cli/install#minimum-release-age) in the install documentation.
 
 <!-- ## Debugging -->
 

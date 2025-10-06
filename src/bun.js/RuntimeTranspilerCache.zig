@@ -12,8 +12,9 @@
 /// Version 13: Hoist `import.meta.require` definition, see #15738
 /// Version 14: Updated global defines table list.
 /// Version 15: Updated global defines table list.
-/// Version 16: Emits utf-8 files in rare cases
-const expected_version = 16;
+/// Version 16: Added typeof undefined minification optimization.
+/// Version 17: Emits utf-8 files in rare cases
+const expected_version = 17;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

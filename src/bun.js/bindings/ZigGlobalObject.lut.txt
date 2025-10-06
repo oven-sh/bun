@@ -20,7 +20,7 @@
   setImmediate                    functionSetImmediate                                 Function 1
   setInterval                     functionSetInterval                                  Function 1
   setTimeout                      functionSetTimeout                                   Function 1
-  structuredClone                 functionStructuredClone                              Function 2
+  structuredClone                 WebCore::jsFunctionStructuredClone                    Function 2
   
   global                          GlobalObject_getGlobalThis                           PropertyCallback
   

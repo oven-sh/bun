@@ -50,7 +50,10 @@ fn getChildPids(parent: c_int, current_pid: c_int) ![]c_int {
         };
         defer file.close();
 
-        const contents = file.readToEndAlloc(bun.default_allocator, 4096) catch return &[_]c_int{};
+        const contents = file.readToEndAlloc(bun.default_allocator, 4096) catch {
+            // File unreadable or too large; fall back to /proc scanning
+            return getChildPidsFallback(parent, current_pid);
+        };
         defer bun.default_allocator.free(contents);
 
         var list = std.ArrayList(c_int).init(bun.default_allocator);

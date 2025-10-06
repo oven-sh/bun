@@ -1,5 +1,5 @@
 pub const WriteFileResultType = SystemError.Maybe(SizeType);
-pub const WriteFileOnWriteFileCallback = *const fn (ctx: *anyopaque, count: WriteFileResultType) void;
+pub const WriteFileOnWriteFileCallback = *const fn (ctx: *anyopaque, count: WriteFileResultType) bun.JSTerminated!void;
 pub const WriteFileTask = jsc.WorkTask(WriteFile);
 
 pub const WriteFile = struct {
@@ -100,8 +100,8 @@ pub const WriteFile = struct {
         mkdirp_if_not_exists: bool,
     ) !*WriteFile {
         const Handler = struct {
-            pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) void {
-                callback(bun.cast(Context, ptr), bytes) catch {}; // TODO: properly propagate exception upwards
+            pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) bun.JSTerminated!void {
+                try callback(bun.cast(Context, ptr), bytes);
             }
         };
 
@@ -161,7 +161,7 @@ pub const WriteFile = struct {
         return true;
     }
 
-    pub fn then(this: *WriteFile, _: *jsc.JSGlobalObject) void {
+    pub fn then(this: *WriteFile, _: *jsc.JSGlobalObject) bun.JSTerminated!void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 
@@ -170,15 +170,13 @@ pub const WriteFile = struct {
 
         if (this.system_error) |err| {
             bun.destroy(this);
-            cb(cb_ctx, .{
-                .err = err,
-            });
+            try cb(cb_ctx, .{ .err = err });
             return;
         }
 
         const wrote = this.total_written;
         bun.destroy(this);
-        cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
+        try cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
     }
 
     pub fn run(this: *WriteFile, task: *WriteFileTask) void {
@@ -532,22 +530,20 @@ pub const WriteFileWindows = struct {
         defer event_loop.exit();
 
         // We don't need to enqueue task since this is already in a task.
-        container.runFromJSThread();
+        container.runFromJSThread() catch {}; // TODO: properly propagate exception upwards
     }
 
-    pub fn runFromJSThread(this: *WriteFileWindows) void {
+    pub fn runFromJSThread(this: *WriteFileWindows) bun.JSTerminated!void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 
         if (this.toSystemError()) |err| {
             this.deinit();
-            cb(cb_ctx, .{
-                .err = err,
-            });
+            try cb(cb_ctx, .{ .err = err });
         } else {
             const wrote = this.total_written;
             this.deinit();
-            cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
+            try cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
         }
     }
 
@@ -621,7 +617,7 @@ pub const WriteFileWindows = struct {
         bytes_blob: Blob,
         comptime Context: type,
         context: Context,
-        comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) void,
+        comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) bun.JSTerminated!void,
         mkdirp_if_not_exists: bool,
     ) *WriteFileWindows {
         return WriteFileWindows.createWithCtx(

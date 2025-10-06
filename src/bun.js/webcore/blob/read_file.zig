@@ -232,7 +232,7 @@ pub const ReadFile = struct {
         return true;
     }
 
-    pub fn then(this: *ReadFile, _: *jsc.JSGlobalObject) void {
+    pub fn then(this: *ReadFile, _: *jsc.JSGlobalObject) bun.JSTerminated!void {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 

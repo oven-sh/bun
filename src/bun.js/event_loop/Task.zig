@@ -233,7 +233,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
             @field(Task.Tag, @typeName(ReadFileTask)) => {
                 var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
                 defer transform_task.deinit();
-                transform_task.runFromJS();
+                try transform_task.runFromJS();
             },
             @field(Task.Tag, @typeName(JSCDeferredWorkTask)) => {
                 var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
@@ -243,7 +243,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
             @field(Task.Tag, @typeName(WriteFileTask)) => {
                 var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
                 defer transform_task.deinit();
-                transform_task.runFromJS();
+                try transform_task.runFromJS();
             },
             @field(Task.Tag, @typeName(HotReloadTask)) => {
                 const transform_task: *HotReloadTask = task.get(HotReloadTask).?;
@@ -278,10 +278,9 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine) bu
             },
             @field(Task.Tag, @typeName(GetAddrInfoRequestTask)) => {
                 if (Environment.os == .windows) @panic("This should not be reachable on Windows");
-
                 var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
                 defer any.deinit();
-                any.runFromJS();
+                try any.runFromJS();
             },
             @field(Task.Tag, @typeName(Stat)) => {
                 var any: *Stat = task.get(Stat).?;

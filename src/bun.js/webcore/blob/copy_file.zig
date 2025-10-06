@@ -994,7 +994,7 @@ pub const CopyFileWindows = struct {
         this.event_loop.refConcurrently();
     }
 
-    pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) bun.JSTerminated!void {
+    pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
         const err_instance = err.toJS(globalThis);
@@ -1003,7 +1003,7 @@ pub const CopyFileWindows = struct {
         event_loop.enter();
         defer event_loop.exit();
         this.deinit();
-        try promise.reject(globalThis, err_instance);
+        promise.reject(globalThis, err_instance) catch {}; // TODO: properly propagate exception upwards
     }
 
     fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
@@ -1044,7 +1044,7 @@ pub const CopyFileWindows = struct {
         this.onComplete(req.statbuf.size);
     }
 
-    pub fn onComplete(this: *CopyFileWindows, written_actual: usize) bun.JSTerminated!void {
+    pub fn onComplete(this: *CopyFileWindows, written_actual: usize) void {
         var written = written_actual;
         if (written != @as(@TypeOf(written), @intCast(this.size)) and this.size != Blob.max_size) {
             this.truncate();
@@ -1057,7 +1057,7 @@ pub const CopyFileWindows = struct {
         defer event_loop.exit();
 
         this.deinit();
-        try promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written));
+        promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written)) catch {}; // TODO: properly propagate exception upwards
     }
 
     fn truncate(this: *CopyFileWindows) void {

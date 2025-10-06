@@ -1365,9 +1365,9 @@ pub const RunCommand = struct {
             .argv0 = null,
             .envp = null, // Inherit parent environment
             .cwd = ctx.args.absolute_working_dir orelse "",
-            .stderr = .inherit,
-            .stdout = .inherit,
-            .stdin = .inherit,
+            .stderr = .buffer,
+            .stdout = .buffer,
+            .stdin = .ignore,
             .windows = if (Environment.isWindows) .{
                 .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(null, null)),
             },
@@ -1381,6 +1381,15 @@ pub const RunCommand = struct {
                 return error.SpawnError;
             },
         };
+
+        // Print buffered output
+        if (spawn_result.stdout.items.len > 0) {
+            _ = Output.writer().write(spawn_result.stdout.items) catch {};
+        }
+        if (spawn_result.stderr.items.len > 0) {
+            _ = Output.errorWriter().write(spawn_result.stderr.items) catch {};
+        }
+        Output.flush();
 
         switch (spawn_result.status) {
             .exited => |exit_info| {

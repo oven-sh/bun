@@ -73,22 +73,22 @@ test("--restart=no does not restart on failure", async () => {
   expect(stdout.split("This script fails").length - 1).toBe(1);
 });
 
-test("--restart=on-failure restarts on failure but not success", async () => {
+test("--restart=on-failure restarts on failure", async () => {
   const dir = tempDirWithFiles("restart-on-failure", {
     "counter.js": `
       const fs = require('fs');
       const path = require('path');
       const counterFile = path.join(__dirname, 'restart-counter.txt');
-      
+
       let count = 0;
       if (fs.existsSync(counterFile)) {
         count = parseInt(fs.readFileSync(counterFile, 'utf8') || '0', 10);
       }
       count++;
       fs.writeFileSync(counterFile, count.toString());
-      
+
       console.log(\`Attempt \${count}\`);
-      
+
       // Fail first two attempts, succeed on third
       if (count < 3) {
         process.exit(1);
@@ -96,13 +96,8 @@ test("--restart=on-failure restarts on failure but not success", async () => {
         process.exit(0);
       }
     `,
-    "success.js": `
-      console.log("Success script");
-      process.exit(0);
-    `,
   });
 
-  // Test failure case - should restart (using manual execution to avoid spawn issues)
   const result1 = Bun.spawnSync({
     cmd: [bunExe(), "run", "--restart", "on-failure", resolve(dir, "counter.js")],
     env: bunEnv,
@@ -119,20 +114,28 @@ test("--restart=on-failure restarts on failure but not success", async () => {
     const finalCount = parseInt(fs.readFileSync(counterFile, "utf8"), 10);
     expect(finalCount).toBe(3); // Should have run 3 times (2 failures + 1 success)
   }
+});
 
-  // Test success case - should not restart
-  const result2 = Bun.spawnSync({
+test("--restart=on-failure does not restart on success", async () => {
+  const dir = tempDirWithFiles("restart-on-success", {
+    "success.js": `
+      console.log("Success script");
+      process.exit(0);
+    `,
+  });
+
+  const result = Bun.spawnSync({
     cmd: [bunExe(), "run", "--restart", "on-failure", resolve(dir, "success.js")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  expect(result2.exitCode).toBe(0);
-  const stdout2 = result2.stdout.toString();
-  expect(stdout2).toContain("Success script");
+  expect(result.exitCode).toBe(0);
+  const stdout = result.stdout.toString();
+  expect(stdout).toContain("Success script");
   // Should only appear once, not restarted
-  expect(stdout2.split("Success script").length - 1).toBe(1);
+  expect(stdout.split("Success script").length - 1).toBe(1);
 });
 
 test("--restart=always restarts on both success and failure", async () => {
@@ -188,22 +191,22 @@ test("--restart=always restarts on both success and failure", async () => {
   }
 }, 15000);
 
-test("--restart=unless-stopped restarts on failure but not success", async () => {
+test("--restart=unless-stopped restarts on failure", async () => {
   const dir = tempDirWithFiles("restart-unless-stopped", {
     "counter-fail.js": `
       const fs = require('fs');
       const path = require('path');
       const counterFile = path.join(__dirname, 'unless-stopped-counter.txt');
-      
+
       let count = 0;
       if (fs.existsSync(counterFile)) {
         count = parseInt(fs.readFileSync(counterFile, 'utf8') || '0', 10);
       }
       count++;
       fs.writeFileSync(counterFile, count.toString());
-      
+
       console.log(\`Unless-stopped fail attempt \${count}\`);
-      
+
       // Succeed after 3 attempts
       if (count >= 3) {
         process.exit(0);
@@ -211,13 +214,8 @@ test("--restart=unless-stopped restarts on failure but not success", async () =>
         process.exit(1);
       }
     `,
-    "success-stop.js": `
-      console.log("Unless-stopped success");
-      process.exit(0);
-    `,
   });
 
-  // Test failure case - should restart
   const proc1 = Bun.spawn({
     cmd: [bunExe(), "run", "--restart", "unless-stopped", resolve(dir, "counter-fail.js")],
     env: bunEnv,
@@ -232,21 +230,29 @@ test("--restart=unless-stopped restarts on failure but not success", async () =>
   expect(stdout1).toContain("Unless-stopped fail attempt 1");
   expect(stdout1).toContain("Unless-stopped fail attempt 2");
   expect(stdout1).toContain("Unless-stopped fail attempt 3");
+});
 
-  // Test success case - should NOT restart (stopped manually)
-  const proc2 = Bun.spawn({
+test("--restart=unless-stopped does not restart on success", async () => {
+  const dir = tempDirWithFiles("restart-unless-stopped-success", {
+    "success-stop.js": `
+      console.log("Unless-stopped success");
+      process.exit(0);
+    `,
+  });
+
+  const proc = Bun.spawn({
     cmd: [bunExe(), "run", "--restart", "unless-stopped", resolve(dir, "success-stop.js")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode2).toBe(0);
-  expect(stdout2).toContain("Unless-stopped success");
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("Unless-stopped success");
   // Should only appear once, not restarted
-  expect(stdout2.split("Unless-stopped success").length - 1).toBe(1);
+  expect(stdout.split("Unless-stopped success").length - 1).toBe(1);
 });
 
 test("--restart works with package.json scripts", async () => {

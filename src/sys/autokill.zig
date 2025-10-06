@@ -152,12 +152,14 @@ fn killProcessTreeRecursive(pid: c_int, killed: *std.AutoHashMap(c_int, void), c
 
     if (stop_only) {
         // First pass: SIGSTOP to freeze the process tree
-        _ = std.c.kill(pid, @intFromEnum(bun.SignalCode.SIGSTOP));
+        // Use std.posix.SIG for platform-portable signal constants
+        // (SIGSTOP=17 on macOS, 19 on Linux)
+        _ = std.c.kill(pid, std.posix.SIG.STOP);
     } else {
         // Second pass: try multiple signals to ensure the process dies
-        _ = std.c.kill(pid, @intFromEnum(bun.SignalCode.SIGTERM)); // SIGTERM first
+        _ = std.c.kill(pid, std.posix.SIG.TERM); // SIGTERM first
         std.time.sleep(5 * std.time.ns_per_ms); // Brief delay
-        _ = std.c.kill(pid, @intFromEnum(bun.SignalCode.SIGKILL)); // SIGKILL to ensure it dies
+        _ = std.c.kill(pid, std.posix.SIG.KILL); // SIGKILL to ensure it dies
     }
 }
 

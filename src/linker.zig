@@ -168,8 +168,9 @@ pub const Linker = struct {
                                 import_record.path.text,
                                 "vitest",
                             )) {
-                                import_record.path.namespace = "bun";
-                                import_record.path.text = "test";
+                                import_record.path.text = "bun:test";
+                                import_record.tag = .builtin;
+                                import_record.is_external_without_side_effects = true;
                                 continue;
                             }
                         }

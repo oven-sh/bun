@@ -15,6 +15,7 @@ test("issue #23287: (new Array([1, 2]), 'hi') parses correctly", async () => {
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     cwd: dir,
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",

@@ -476,7 +476,7 @@ Bun.ms("-200"); // -200
 Bun.ms(60000); // "1m"
 Bun.ms(2 * 60000); // "2m"
 Bun.ms(-3 * 60000); // "-3m"
-Bun.ms(ms("10 hours")); // "10h"
+Bun.ms(Bun.ms("10 hours")); // "10h"
 
 Bun.ms(60000, { long: true }); // "1 minute"
 Bun.ms(2 * 60000, { long: true }); // "2 minutes"

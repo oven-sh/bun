@@ -136,6 +136,9 @@ pub fn CreateBinaryExpressionVisitor(
                         // "(0, this.fn)()" => "(0, this.fn)()"
                         if (p.options.features.minify_syntax) {
                             if (SideEffects.simplifyUnusedExpr(p, e_.left)) |simplified_left| {
+                                if (simplified_left.isEmpty()) {
+                                    return e_.right;
+                                }
                                 e_.left = simplified_left;
                             } else {
                                 // The left operand has no side effects, but we need to preserve

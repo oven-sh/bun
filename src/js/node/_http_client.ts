@@ -57,16 +57,18 @@ const { URL } = globalThis;
 
 // Separate class for ReadableStream underlying source to avoid GC keeping ClientRequest alive
 class DirectStreamSource {
-  constructor(bodyChunks, emitDrain, getFinished, handleResponse) {
+  constructor(bodyChunks, emitDrain, getFinished, handleResponse, getNeedDrain, setNeedDrain) {
     this.bodyChunks = bodyChunks;
     this.emitDrain = emitDrain;
     this.getFinished = getFinished;
     this.handleResponse = handleResponse;
+    this.getNeedDrain = getNeedDrain;
+    this.setNeedDrain = setNeedDrain;
     this.pulling = false;
     this.pullAgain = false;
     this.controller = null;
     this.resolveNextChunk = null;
-    this.pendingWrites = [];
+    this.hadBackpressure = false;
   }
 
   notifyChunk(end) {
@@ -98,6 +100,7 @@ class DirectStreamSource {
 
           // If write returns a promise, it means there's backpressure
           if (result instanceof Promise) {
+            this.hadBackpressure = true;
             await result;
           }
 
@@ -109,7 +112,10 @@ class DirectStreamSource {
           }
         }
 
-        if (this.bodyChunks.length === 0) {
+        // Only emit drain if we had backpressure and now buffer is empty
+        if (this.bodyChunks.length === 0 && this.hadBackpressure && this.getNeedDrain()) {
+          this.hadBackpressure = false;
+          this.setNeedDrain(false);
           this.emitDrain();
         }
 
@@ -144,6 +150,7 @@ class DirectStreamSource {
 
           // Handle backpressure
           if (result instanceof Promise) {
+            this.hadBackpressure = true;
             await result;
           }
 
@@ -154,7 +161,10 @@ class DirectStreamSource {
             return;
           }
 
-          if (this.bodyChunks.length === 0) {
+          // Only emit drain if we had backpressure and now buffer is empty
+          if (this.bodyChunks.length === 0 && this.hadBackpressure && this.getNeedDrain()) {
+            this.hadBackpressure = false;
+            this.setNeedDrain(false);
             this.emitDrain();
           }
         }
@@ -207,6 +217,7 @@ function ClientRequest(input, options, cb) {
 
   let writeCount = 0;
   let streamSource = null;
+  this._needDrain = false;
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
@@ -240,7 +251,8 @@ function ClientRequest(input, options, cb) {
     // Check for backpressure from the stream controller
     const backpressurePromise = streamSource?.checkBackpressure();
     if (backpressurePromise) {
-      // There's backpressure, call callback when it resolves
+      // There's backpressure, set _needDrain and call callback when it resolves
+      this._needDrain = true;
       if (callback) {
         backpressurePromise.then(() => callback());
       }
@@ -448,6 +460,8 @@ function ClientRequest(input, options, cb) {
             () => self.emit("drain"),
             () => self.finished,
             handleResponse,
+            () => self._needDrain,
+            value => (self._needDrain = value),
           );
 
           fetchOptions.body = new ReadableStream({
@@ -1106,6 +1120,10 @@ const ClientRequestPrototype = {
 
   get writable() {
     return true;
+  },
+
+  get writableNeedDrain() {
+    return this._needDrain || false;
   },
 };
 

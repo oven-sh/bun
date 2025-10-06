@@ -127,9 +127,8 @@ pub const TestRunner = struct {
         const file_path = this.files.items(.source)[file_id].path.text;
 
         // Check if the file path matches any of the glob patterns
-        const glob = @import("../../glob.zig");
         for (glob_patterns) |pattern| {
-            const result = glob.match(this.allocator, pattern, file_path);
+            const result = bun.glob.match(pattern, file_path);
             if (result == .match) return true;
         }
         return false;

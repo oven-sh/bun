@@ -4772,25 +4772,37 @@ public:
 
 static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
 {
-    uint8_t frame_i = 0;
-    size_t stack_frame_i = 0;
-    const size_t total_frame_count = frames.size();
-    const uint8_t frame_count = total_frame_count < trace.frames_cap ? total_frame_count : trace.frames_cap;
+    if (flags == PopulateStackTraceFlags::OnlyPosition) {
+        uint8_t frame_i = 0;
+        size_t stack_frame_i = 0;
+        const size_t total_frame_count = frames.size();
+        const uint8_t frame_count = total_frame_count < trace.frames_cap ? total_frame_count : trace.frames_cap;
 
-    while (frame_i < frame_count && stack_frame_i < total_frame_count) {
-        // Skip native frames
-        while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
+        while (frame_i < frame_count && stack_frame_i < total_frame_count) {
+            // Skip native frames
+            while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
+                stack_frame_i++;
+            }
+            if (stack_frame_i >= total_frame_count)
+                break;
+
+            ZigStackFrame& frame = trace.frames_ptr[frame_i];
+            frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
+            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags);
             stack_frame_i++;
+            frame_i++;
         }
-        if (stack_frame_i >= total_frame_count)
-            break;
-
-        ZigStackFrame& frame = trace.frames_ptr[frame_i];
-        populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags);
-        stack_frame_i++;
-        frame_i++;
+        trace.frames_len = frame_i;
+    } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
+        for (uint8_t i = 0; i < trace.frames_len; i++) {
+            ZigStackFrame& frame = trace.frames_ptr[i];
+            // A call with flags set to OnlySourceLines always follows a call with flags set to OnlyPosition,
+            // so jsc_stack_frame_index is always a valid value here.
+            ASSERT(frame.jsc_stack_frame_index >= 0);
+            ASSERT(static_cast<size_t>(frame.jsc_stack_frame_index) < frames.size());
+            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags);
+        }
     }
-    trace.frames_len = frame_i;
 }
 
 static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* obj, const JSC::PropertyName& propertyName)

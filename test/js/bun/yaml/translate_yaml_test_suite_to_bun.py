@@ -323,6 +323,40 @@ def detect_shared_references(yaml_content):
 
     return shared_refs
 
+def generate_shared_reference_tests(yaml_content, parsed_path="parsed"):
+    """Generate toBe() tests for shared references based on anchors/aliases in YAML."""
+    tests = []
+
+    # Common patterns for shared references
+    patterns = [
+        # bill-to/ship-to pattern
+        (r'bill-to:\s*&(\w+)', r'ship-to:\s*\*\1', 'bill-to', 'ship-to'),
+        # Array items with anchors
+        (r'-\s*&(\w+)\s+', r'-\s*\*\1', None, None),
+        # Map values with anchors
+        (r':\s*&(\w+)\s+', r':\s*\*\1', None, None),
+    ]
+
+    # Check for bill-to/ship-to pattern specifically
+    if 'bill-to:' in yaml_content and 'ship-to:' in yaml_content:
+        if re.search(r'bill-to:\s*&\w+', yaml_content) and re.search(r'ship-to:\s*\*\w+', yaml_content):
+            tests.append(f'    // Shared reference check: bill-to and ship-to should be the same object')
+            tests.append(f'    expect({parsed_path}["bill-to"]).toBe({parsed_path}["ship-to"]);')
+
+    # Check for x-foo pattern (common in OpenAPI specs)
+    if re.search(r'x-\w+:\s*&\w+', yaml_content):
+        anchor_match = re.search(r'x-(\w+):\s*&(\w+)', yaml_content)
+        if anchor_match:
+            field_name = f'x-{anchor_match.group(1)}'
+            anchor_name = anchor_match.group(2)
+            # Find aliases to this anchor
+            alias_pattern = rf'\*{anchor_name}\b'
+            if re.search(alias_pattern, yaml_content):
+                tests.append(f'    // Shared reference check: anchor {anchor_name}')
+                # This is generic - would need more context to generate specific tests
+
+    return tests
+
 def generate_expected_with_shared_refs(json_data, yaml_content):
     """Generate expected object with shared references for anchors/aliases."""
     shared_refs = detect_shared_references(yaml_content)
@@ -498,6 +532,23 @@ test("{test_name}", () => {{
 '''
 
     # Special handling for known problematic tests
+    if test_name == "yaml-test-suite/2SXE":
+        # 2SXE has complex anchor on key itself, not a shared reference case
+        test = f'''
+test("{test_name}", () => {{
+    // {description}
+    // Note: &a anchors the key "key" itself, *a references that string
+    const input: string = {format_js_string(yaml_content)};
+
+    const parsed = YAML.parse(input);
+
+    const expected: any = {{ key: "value", foo: "key" }};
+
+    expect(parsed).toEqual(expected);
+}});
+'''
+        return test
+
     if test_name == "yaml-test-suite/X38W":
         # X38W has alias key that creates duplicate - yaml package doesn't handle this correctly
         # The correct output is just one key "a,b" with value ["c", "b", "d"]
@@ -738,33 +789,20 @@ test("{test_name}", () => {{
                 # Try to identify simple cases
                 if 'bill-to: &' in yaml_content and 'ship-to: *' in yaml_content:
                     # Common pattern: bill-to/ship-to sharing
-                    test += '''
-    const sharedAddress: any = '''
-                    # Find the shared object from expected data
                     stringified_value = stringify_map_keys(expected_value, from_yaml_package=not has_json)
-                    if isinstance(stringified_value, dict):
-                        if 'bill-to' in stringified_value:
-                            shared_obj = stringified_value.get('bill-to')
-                            test += json_to_js_literal(shared_obj) + ';'
-                            # Now create expected with shared ref
-                            test += '''
-    const expected = '''
-                            # Build object with shared reference
-                            test += '{\n'
-                            for key, value in stringified_value.items():
-                                if key == 'bill-to':
-                                    test += f'        "bill-to": sharedAddress,\n'
-                                elif key == 'ship-to' and value == shared_obj:
-                                    test += f'        "ship-to": sharedAddress,\n'
-                                else:
-                                    test += f'        "{escape_js_string(key)}": {json_to_js_literal(value)},\n'
-                            test = test.rstrip(',\n') + '\n    };'
-                        else:
-                            # Fallback to regular generation
-                            stringified_value = stringify_map_keys(expected_value, from_yaml_package=not has_json)
-                            expected_str = json_to_js_literal(stringified_value)
-                            test += f'''
-    const expected: any = {expected_str};'''
+                    if isinstance(stringified_value, dict) and 'bill-to' in stringified_value:
+                        # Generate expected value normally with toBe check
+                        expected_str = json_to_js_literal(stringified_value)
+                        test += f'''
+    const expected: any = {expected_str};
+
+    expect(parsed).toEqual(expected);
+
+    // Verify shared references - bill-to and ship-to should be the same object
+    expect((parsed as any)["bill-to"]).toBe((parsed as any)["ship-to"]);
+}});
+'''
+                        return test
                     else:
                         # Fallback to regular generation
                         stringified_value = stringify_map_keys(expected_value, from_yaml_package=not has_json)
@@ -774,28 +812,60 @@ test("{test_name}", () => {{
                 else:
                     # Generic anchor/alias case
                     # Look for patterns like "- &anchor value" and "- *anchor"
-                    anchor_matches = re.findall(r'&(\w+)\s+(.+?)(?:\n|$)', yaml_content)
+                    anchor_matches = re.findall(r'&(\w+)', yaml_content)
                     alias_matches = re.findall(r'\*(\w+)', yaml_content)
 
                     if anchor_matches and alias_matches:
                         # Build shared values based on anchors
-                        anchor_vars = {}
-                        for anchor_name, _ in anchor_matches:
-                            if anchor_name in [a for a in alias_matches]:
-                                # This anchor is referenced
-                                anchor_vars[anchor_name] = f'shared_{anchor_name}'
+                        shared_anchors = []
+                        for anchor_name in set(anchor_matches):
+                            if anchor_name in alias_matches:
+                                # This anchor is referenced by an alias
+                                shared_anchors.append(anchor_name)
 
-                        if anchor_vars and isinstance(expected_value, (list, dict)):
-                            # Try to detect which values are shared
-                            test += f'''
-    // Detected anchors that are referenced: {', '.join(anchor_vars.keys())}
-'''
-                            # For now, just generate the expected normally with a note
+                        if shared_anchors and isinstance(expected_value, (list, dict)):
+                            # Generate the expected value
                             stringified_value = stringify_map_keys(expected_value, from_yaml_package=not has_json)
                             expected_str = json_to_js_literal(stringified_value)
+
+                            # Build toBe checks based on detected patterns
+                            toBe_checks = []
+
+                            # Try to detect specific patterns for toBe checks
+                            # Pattern 1: Array with repeated elements (- &anchor value, - *anchor)
+                            for anchor in shared_anchors:
+                                # Check if it's in an array context
+                                if re.search(rf'-\s+&{anchor}\s+', yaml_content) and re.search(rf'-\s+\*{anchor}', yaml_content):
+                                    # This might be array elements - but hard to know indices without parsing
+                                    pass
+                                # Check if it's in mapping values (not keys)
+                                # Pattern: "key: &anchor" not "&anchor:" (which anchors the key)
+                                # Use [\w-]+ to match keys with hyphens like "bill-to"
+                                anchor_key_match = re.search(rf'([\w-]+):\s*&{anchor}\s', yaml_content)
+                                alias_key_matches = re.findall(rf'([\w-]+):\s*\*{anchor}(?:\s|$)', yaml_content)
+                                if anchor_key_match and alias_key_matches:
+                                    anchor_key = anchor_key_match.group(1)
+                                    for alias_key in alias_key_matches:
+                                        if anchor_key != alias_key:
+                                            # Additional check: make sure the anchor is not on a key itself
+                                            if not re.search(rf'&{anchor}:', yaml_content):
+                                                toBe_checks.append(f'    expect((parsed as any)["{anchor_key}"]).toBe((parsed as any)["{alias_key}"]);')
+
                             test += f'''
-    const expected: any = {expected_str};'''
+    // Detected anchors that are referenced: {', '.join(shared_anchors)}
+
+    const expected: any = {expected_str};
+
+    expect(parsed).toEqual(expected);'''
+
+                            if toBe_checks:
+                                test += '\n\n    // Verify shared references\n'
+                                test += '\n'.join(toBe_checks)
+
+                            test += '\n});'
+                            return test
                         else:
+                            # No shared anchors or not a dict/list
                             stringified_value = stringify_map_keys(expected_value, from_yaml_package=not has_json)
                             expected_str = json_to_js_literal(stringified_value)
                             test += f'''
@@ -911,7 +981,21 @@ def main():
 
     mode_comment = "// AST validation disabled - only checking parse success/failure" if not check_ast else "// Using YAML.parse() with eemeli/yaml package as reference"
 
+    # Get yaml-test-suite commit hash
+    yaml_test_suite_commit = None
+    try:
+        result = subprocess.run(['git', 'rev-parse', 'HEAD'],
+                              capture_output=True, text=True,
+                              cwd=yaml_test_suite_path)
+        if result.returncode == 0:
+            yaml_test_suite_commit = result.stdout.strip()
+    except:
+        pass
+
+    commit_comment = f"// Generated from yaml-test-suite commit: {yaml_test_suite_commit}" if yaml_test_suite_commit else ""
+
     output = f'''// Tests translated from official yaml-test-suite
+{commit_comment}
 {mode_comment}
 // Total: {len(test_dirs)} test directories
 
@@ -933,7 +1017,7 @@ import {{ YAML }} from "bun";
         try:
             test_case = generate_test(test_dir, test_name, check_ast)
             if test_case:
-                output += test_case
+                output += test_case + '\n'  # Add newline between tests
                 successful += 1
             else:
                 print(f"    Skipped {test_name}: returned None")

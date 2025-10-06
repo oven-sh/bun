@@ -100,27 +100,54 @@ pub const Source = union(enum) {
 
     pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Pipe) {
         log("openPipe (fd = {})", .{fd});
-        const pipe = bun.handleOom(bun.default_allocator.create(Source.Pipe));
+        const pipe = bun.default_allocator.create(Source.Pipe) catch |err| bun.handleOom(err);
         // we should never init using IPC here see ipc.zig
         switch (pipe.init(loop, false)) {
             .err => |err| {
+                bun.default_allocator.destroy(pipe);
                 return .{ .err = err };
             },
             else => {},
         }
 
-        return switch (pipe.open(fd)) {
-            .err => |err| .{
-                .err = err,
+        switch (pipe.open(fd)) {
+            .err => |err| {
+                bun.default_allocator.destroy(pipe);
+                return .{
+                    .err = err,
+                };
             },
-            .result => .{
-                .result = pipe,
-            },
-        };
+            .result => {},
+        }
+
+        return .{ .result = pipe };
     }
 
-    pub var stdin_tty: uv.uv_tty_t = undefined;
-    pub var stdin_tty_init = false;
+    pub const StdinTTY = struct {
+        var data: uv.uv_tty_t = undefined;
+        var lock: bun.Mutex = .{};
+        var initialized = std.atomic.Value(bool).init(false);
+        const value: *uv.uv_tty_t = &data;
+
+        pub fn isStdinTTY(tty: *const Source.Tty) bool {
+            return tty == StdinTTY.value;
+        }
+
+        fn getStdinTTY(loop: *uv.Loop) bun.sys.Maybe(*Source.Tty) {
+            StdinTTY.lock.lock();
+            defer StdinTTY.lock.unlock();
+
+            if (StdinTTY.initialized.swap(true, .monotonic) == false) {
+                const rc = uv.uv_tty_init(loop, StdinTTY.value, 0, 0);
+                if (rc.toError(.open)) |err| {
+                    StdinTTY.initialized.store(false, .monotonic);
+                    return .{ .err = err };
+                }
+            }
+
+            return .{ .result = StdinTTY.value };
+        }
+    };
 
     pub fn openTty(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Tty) {
         log("openTTY (fd = {})", .{fd});
@@ -128,22 +155,19 @@ pub const Source = union(enum) {
         const uv_fd = fd.uv();
 
         if (uv_fd == 0) {
-            if (!stdin_tty_init) {
-                switch (stdin_tty.init(loop, uv_fd)) {
-                    .err => |err| return .{ .err = err },
-                    .result => {},
-                }
-                stdin_tty_init = true;
-            }
-
-            return .{ .result = &stdin_tty };
+            return StdinTTY.getStdinTTY(loop);
         }
 
-        const tty = bun.handleOom(bun.default_allocator.create(Source.Tty));
-        return switch (tty.init(loop, uv_fd)) {
-            .err => |err| .{ .err = err },
-            .result => .{ .result = tty },
-        };
+        const tty = bun.default_allocator.create(Source.Tty) catch |err| bun.handleOom(err);
+        switch (tty.init(loop, uv_fd)) {
+            .err => |err| {
+                bun.default_allocator.destroy(tty);
+                return .{ .err = err };
+            },
+            .result => {},
+        }
+
+        return .{ .result = tty };
     }
 
     pub fn openFile(fd: bun.FileDescriptor) *Source.File {
@@ -224,10 +248,12 @@ export fn Source__setRawModeStdin(raw: bool) c_int {
         .result => |tty| tty,
         .err => |e| return e.errno,
     };
-    // UV_TTY_MODE_RAW_VT is a variant of UV_TTY_MODE_RAW that enables control sequence processing on the TTY implementer side,
-    // rather than having libuv translate keypress events into control sequences, aligning behavior more closely with
-    // POSIX platforms. This is also required to support some control sequences at all on Windows, such as bracketed paste mode.
-    // The Node.js readline implementation handles differences between these modes.
+    // UV_TTY_MODE_RAW_VT is a variant of UV_TTY_MODE_RAW that enables control
+    // sequence processing on the TTY implementer side, rather than having libuv
+    // translate keypress events into control sequences, aligning behavior more
+    // closely with POSIX platforms. This is also required to support some
+    // control sequences at all on Windows, such as bracketed paste mode. The
+    // Node.js readline implementation handles differences between these modes.
     if (tty.setMode(if (raw) .vt else .normal).toError(.uv_tty_set_mode)) |err| {
         return err.errno;
     }

@@ -55,8 +55,20 @@ const fetch = Bun.fetch;
 
 const { URL } = globalThis;
 
-// Separate class for ReadableStream underlying source to avoid GC keeping ClientRequest alive
+/**
+ * Separate class for ReadableStream underlying source to avoid GC keeping ClientRequest alive.
+ * Implements the underlying source for a direct ReadableStream that streams request body chunks
+ * with proper backpressure handling.
+ */
 class DirectStreamSource {
+  /**
+   * @param {Array} bodyChunks - Array of buffered chunks to write
+   * @param {Function} emitDrain - Callback to emit 'drain' event
+   * @param {Function} getFinished - Callback to check if request is finished
+   * @param {Function} handleResponse - Callback to handle response when stream closes
+   * @param {Function} getNeedDrain - Callback to get needDrain flag state
+   * @param {Function} setNeedDrain - Callback to set needDrain flag state
+   */
   constructor(bodyChunks, emitDrain, getFinished, handleResponse, getNeedDrain, setNeedDrain) {
     this.bodyChunks = bodyChunks;
     this.emitDrain = emitDrain;
@@ -71,6 +83,10 @@ class DirectStreamSource {
     this.hadBackpressure = false;
   }
 
+  /**
+   * Notify the stream that a new chunk is available or the stream has ended.
+   * @param {boolean} end - True if stream is ending, false if new chunk available
+   */
   notifyChunk(end) {
     if (this.resolveNextChunk) {
       this.resolveNextChunk(end);
@@ -78,6 +94,11 @@ class DirectStreamSource {
     }
   }
 
+  /**
+   * ReadableStream pull method - called when the stream needs more data.
+   * Handles concurrent pulls, writes chunks to the controller, and manages backpressure.
+   * @param {ReadableStreamDirectController} controller - The direct stream controller
+   */
   async pull(controller) {
     this.controller = controller;
 
@@ -174,7 +195,10 @@ class DirectStreamSource {
     }
   }
 
-  // Check if there's backpressure and return a promise if so
+  /**
+   * Check if there's backpressure by calling flush() on the controller.
+   * @returns {Promise|null} Promise if there's backpressure, null otherwise
+   */
   checkBackpressure() {
     if (!this.controller) return null;
     const result = this.controller.flush();

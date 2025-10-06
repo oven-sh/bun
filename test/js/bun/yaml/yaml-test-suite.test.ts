@@ -1,4 +1,5 @@
-// Tests translated from official yaml-test-suite (6e6c296)
+// Tests translated from official yaml-test-suite
+// Generated from yaml-test-suite commit: 6e6c296ae9c9d2d5c4134b4b64d01b29ac19ff6f
 // Using YAML.parse() with eemeli/yaml package as reference
 // Total: 402 test directories
 
@@ -60,7 +61,7 @@ top6:
 
   // This YAML has anchors and aliases - creating shared references
 
-  // Detected anchors that are referenced: alias1, alias2
+  // Detected anchors that are referenced: alias2, alias1
 
   const expected: any = {
     top1: { key1: "scalar1" },
@@ -209,16 +210,13 @@ test("yaml-test-suite/2LFX", () => {
 
 test("yaml-test-suite/2SXE", () => {
   // Anchors With Colon in Name
+  // Note: &a anchors the key "key" itself, *a references that string
   const input: string = `&a: key: &a value
 foo:
   *a:
 `;
 
   const parsed = YAML.parse(input);
-
-  // This YAML has anchors and aliases - creating shared references
-
-  // Detected anchors that are referenced: a
 
   const expected: any = { key: "value", foo: "key" };
 
@@ -329,6 +327,9 @@ Reuse anchor: *anchor
   };
 
   expect(parsed).toEqual(expected);
+
+  // Verify shared references
+  expect((parsed as any)["occurrence"]).toBe((parsed as any)["anchor"]);
 });
 
 test("yaml-test-suite/3HFZ", () => {
@@ -1221,6 +1222,9 @@ b: *anchor
   const expected: any = { a: null, b: null };
 
   expect(parsed).toEqual(expected);
+
+  // Verify shared references
+  expect((parsed as any)["a"]).toBe((parsed as any)["b"]);
 });
 
 test("yaml-test-suite/6LVF", () => {
@@ -2514,6 +2518,10 @@ test("yaml-test-suite/C4HZ", () => {
   ];
 
   expect(parsed).toEqual(expected);
+
+  // Verify shared references
+  expect((parsed as any)["center"]).toBe((parsed as any)["start"]);
+  expect((parsed as any)["center"]).toBe((parsed as any)["start"]);
 });
 
 test("yaml-test-suite/CC74", () => {
@@ -3065,7 +3073,7 @@ test("yaml-test-suite/E76Z", () => {
 
   // This YAML has anchors and aliases - creating shared references
 
-  // Detected anchors that are referenced: a
+  // Detected anchors that are referenced: a, b
 
   const expected: any = { a: "b", b: "a" };
 
@@ -5718,22 +5726,30 @@ comments:
 
   // This YAML has anchors and aliases - creating shared references
 
-  const sharedAddress: any = {
-    given: "Chris",
-    family: "Dumars",
-    address: {
-      lines: "458 Walkman Dr.\nSuite #292\n",
-      city: "Royal Oak",
-      state: "MI",
-      postal: 48046,
+  const expected: any = {
+    invoice: 34843,
+    date: "2001-01-23",
+    "bill-to": {
+      given: "Chris",
+      family: "Dumars",
+      address: {
+        lines: "458 Walkman Dr.\nSuite #292\n",
+        city: "Royal Oak",
+        state: "MI",
+        postal: 48046,
+      },
     },
-  };
-  const expected = {
-    "invoice": 34843,
-    "date": "2001-01-23",
-    "bill-to": sharedAddress,
-    "ship-to": sharedAddress,
-    "product": [
+    "ship-to": {
+      given: "Chris",
+      family: "Dumars",
+      address: {
+        lines: "458 Walkman Dr.\nSuite #292\n",
+        city: "Royal Oak",
+        state: "MI",
+        postal: 48046,
+      },
+    },
+    product: [
       {
         sku: "BL394D",
         quantity: 4,
@@ -5747,12 +5763,15 @@ comments:
         price: 2392,
       },
     ],
-    "tax": 251.42,
-    "total": 4443.52,
-    "comments": "Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338.",
+    tax: 251.42,
+    total: 4443.52,
+    comments: "Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338.",
   };
 
   expect(parsed).toEqual(expected);
+
+  // Verify shared references - bill-to and ship-to should be the same object
+  expect((parsed as any)["bill-to"]).toBe((parsed as any)["ship-to"]);
 });
 
 test("yaml-test-suite/UKK6/00", () => {

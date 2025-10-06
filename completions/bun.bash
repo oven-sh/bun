@@ -31,7 +31,6 @@ _long_short_completion() {
 # loads the scripts block in package.json
 _read_scripts_in_package_json() {
     local package_json;
-    local return_package_json
     local line=0;
     local working_dir="${PWD}";
 
@@ -100,8 +99,8 @@ _bun_completions() {
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
-    local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
-    local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
+    cur_word="${COMP_WORDS[${COMP_CWORD}]}";
+    prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
 
     case "${prev}" in
         help|--help|-h|-v|--version) return;;
@@ -114,7 +113,7 @@ _bun_completions() {
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
                     ;;
             esac
-            return ;;
+            return;;
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}") );
             return;;
@@ -161,7 +160,7 @@ _bun_completions() {
             COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
             return;;
         *)
-            local replaced_script;
+            declare -g replaced_script;
             _long_short_completion \
                 "${GLOBAL_OPTIONS[*]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"

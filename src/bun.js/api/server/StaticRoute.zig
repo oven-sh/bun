@@ -28,17 +28,17 @@ pub const InitFromBytesOptions = struct {
 
 /// Ownership of `blob` is transferred to this function.
 pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
-    var headers = Headers.from(options.headers, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
+    var headers = bun.handleOom(Headers.from(options.headers, bun.default_allocator, .{ .body = blob }));
     if (options.mime_type) |mime_type| {
         if (headers.getContentType() == null) {
-            headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
+            bun.handleOom(headers.append("Content-Type", mime_type.value));
         }
     }
 
     // Generate ETag if not already present
     if (headers.get("etag") == null) {
         if (blob.slice().len > 0) {
-            ETag.appendToHeaders(blob.slice(), &headers) catch bun.outOfMemory();
+            bun.handleOom(ETag.appendToHeaders(blob.slice(), &headers));
         }
     }
 
@@ -113,7 +113,11 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                     }
                     var blob = response.body.value.use();
                     blob.globalThis = globalThis;
-                    blob.allocator = null;
+                    bun.assertf(
+                        !blob.isHeapAllocated(),
+                        "expected blob not to be heap-allocated",
+                        .{},
+                    );
                     response.body.value = .{ .Blob = blob.dupe() };
 
                     break :brk .{ .Blob = blob };

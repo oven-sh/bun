@@ -244,9 +244,13 @@ pub const Bunfig = struct {
                         if (expr.get("junit")) |junit_expr| {
                             try this.expectString(junit_expr);
                             if (junit_expr.data.e_string.len() > 0) {
-                                this.ctx.test_options.file_reporter = .junit;
+                                this.ctx.test_options.reporters.junit = true;
                                 this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
                             }
+                        }
+                        if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
+                            try this.expect(dots_expr, .e_boolean);
+                            this.ctx.test_options.reporters.dots = dots_expr.data.e_boolean.value;
                         }
                     }
 
@@ -323,6 +327,47 @@ pub const Bunfig = struct {
                     if (test_.get("coverageSkipTestFiles")) |expr| {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("concurrentTestGlob")) |expr| {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                // Reject empty strings
+                                if (str.len() == 0) {
+                                    try this.addError(expr.loc, "concurrentTestGlob cannot be an empty string");
+                                    return;
+                                }
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.concurrent_test_glob = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) {
+                                    try this.addError(expr.loc, "concurrentTestGlob array cannot be empty");
+                                    return;
+                                }
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "concurrentTestGlob array must contain only strings");
+                                        return;
+                                    }
+                                    // Reject empty strings in array
+                                    if (item.data.e_string.len() == 0) {
+                                        try this.addError(item.loc, "concurrentTestGlob patterns cannot be empty strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.concurrent_test_glob = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "concurrentTestGlob must be a string or array of strings");
+                                return;
+                            },
+                        }
                     }
 
                     if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
@@ -751,7 +796,7 @@ pub const Bunfig = struct {
                             .values = values,
                         };
                     }
-                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+                    this.bunfig.bunfig_path = bun.handleOom(bun.default_allocator.dupe(u8, this.source.path.text));
 
                     if (serve_obj.get("publicPath")) |public_path| {
                         if (public_path.asString(allocator)) |value| {

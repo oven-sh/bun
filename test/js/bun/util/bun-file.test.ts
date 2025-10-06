@@ -15,7 +15,11 @@ test("delete() and stat() should work with unicode paths", async () => {
 
   expect(async () => {
     await Bun.file(filename).stat();
-  }).toThrow(`ENOENT: no such file or directory, stat '${filename}'`);
+  }).toThrow(
+    process.platform === "linux"
+      ? `ENOENT: no such file or directory, statx '${filename}'`
+      : `ENOENT: no such file or directory, stat '${filename}'`,
+  );
 
   await Bun.write(filename, "HI");
 

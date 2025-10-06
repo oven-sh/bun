@@ -142,16 +142,14 @@ pub const OutKind = union(enum) {
                     .capture = .{
                         .buf = cap,
                     },
+                } else if (val.writer.fd.get()) |fd| .{
+                    // We have a valid fd that hasn't been moved to libuv
+                    .fd = fd,
                 } else .{
-                    // Windows notes:
-                    // Since `val.writer.fd` is `MovableFD`, it could
-                    // technically be moved to libuv for ownership.
-                    //
-                    // But since this file descriptor never going to be touched by this
-                    // process, except to hand off to the subprocess when we
-                    // spawn it, we don't really care if the file descriptor
-                    // ends up being invalid.
-                    .fd = val.writer.fd.get().?,
+                    // On Windows, the fd might have been moved to libuv
+                    // In this case, the subprocess should inherit the stdio
+                    // since libuv is already managing it
+                    .inherit = {},
                 };
             },
             .pipe => .pipe,

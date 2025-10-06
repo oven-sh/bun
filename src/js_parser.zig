@@ -545,6 +545,8 @@ pub const StringVoidMap = struct {
     allocator: Allocator,
     map: bun.StringHashMapUnmanaged(void) = bun.StringHashMapUnmanaged(void){},
 
+    pub const deinit = void;
+
     /// Returns true if the map already contained the given key.
     pub fn getOrPutContains(this: *StringVoidMap, key: string) bool {
         const entry = this.map.getOrPut(this.allocator, key) catch unreachable;
@@ -938,6 +940,9 @@ pub const Jest = struct {
     beforeAll: Ref = Ref.None,
     afterAll: Ref = Ref.None,
     jest: Ref = Ref.None,
+    xit: Ref = Ref.None,
+    xtest: Ref = Ref.None,
+    xdescribe: Ref = Ref.None,
 };
 
 // Doing this seems to yield a 1% performance improvement parsing larger files

@@ -706,7 +706,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * 
     Bun::UTF8View validToDateView = Bun::UTF8View(view);
     if (view->isEmpty())
         return JSValue::encode(jsUndefined());
-    std::span<const LChar> span = { reinterpret_cast<const LChar*>(validToDateView.span().data()), validToDateView.span().size() };
+    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validToDateView.span().data()), validToDateView.span().size() };
     double date = WTF::parseDate(span);
     return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), date));
 }
@@ -729,7 +729,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate, (JSGlobalObject 
     Bun::UTF8View validFromDateView = Bun::UTF8View(view);
     if (view->isEmpty())
         return JSValue::encode(jsUndefined());
-    std::span<const LChar> span = { reinterpret_cast<const LChar*>(validFromDateView.span().data()), validFromDateView.span().size() };
+    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validFromDateView.span().data()), validFromDateView.span().size() };
     double date = WTF::parseDate(span);
     return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), date));
 }

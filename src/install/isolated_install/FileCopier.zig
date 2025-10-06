@@ -3,8 +3,32 @@ pub const FileCopier = struct {
 
     src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
     dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+    walker: Walker,
 
-    pub fn copy(this: *FileCopier, skip_dirnames: []const bun.OSPathSlice) OOM!sys.Maybe(void) {
+    pub fn init(
+        src_dir: FD,
+        src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
+        dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+        skip_dirnames: []const bun.OSPathSlice,
+    ) OOM!FileCopier {
+        return .{
+            .src_dir = src_dir,
+            .src_path = src_path,
+            .dest_subpath = dest_subpath,
+            .walker = try .walk(
+                src_dir,
+                bun.default_allocator,
+                &.{},
+                skip_dirnames,
+            ),
+        };
+    }
+
+    pub fn deinit(this: *const FileCopier) void {
+        this.walker.deinit();
+    }
+
+    pub fn copy(this: *FileCopier) OOM!sys.Maybe(void) {
         var dest_dir = bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{}) catch |err| {
             // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
             var errno: bun.sys.E = switch (@as(anyerror, err)) {
@@ -46,15 +70,7 @@ pub const FileCopier = struct {
 
         var copy_file_state: bun.CopyFileState = .{};
 
-        var walker: Walker = try .walk(
-            this.src_dir,
-            bun.default_allocator,
-            &.{},
-            skip_dirnames,
-        );
-        defer walker.deinit();
-
-        while (switch (walker.next()) {
+        while (switch (this.walker.next()) {
             .result => |res| res,
             .err => |err| return .initErr(err),
         }) |entry| {

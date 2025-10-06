@@ -98,8 +98,8 @@ for (let i = 0; i < nativeStartIndex; i++) {
 
     // TODO: there is no reason this cannot be converted automatically.
     // import { ... } from '...' -> `const { ... } = require('...')`
-    const scannedImports = t.scanImports(input);
-    for (const imp of scannedImports) {
+    const scannedImports = t.scan(input);
+    for (const imp of scannedImports.imports) {
       if (imp.kind === "import-statement") {
         var isBuiltin = true;
         try {
@@ -114,12 +114,20 @@ for (let i = 0; i < nativeStartIndex; i++) {
             `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md (from ${moduleList[i]})`,
           );
           err.name = "BunError";
-          err.fileName = moduleList[i];
+          err["fileName"] = moduleList[i];
           throw err;
         }
       }
     }
 
+    if (scannedImports.exports.includes("default") && scannedImports.exports.length > 1) {
+      const err = new Error(
+        `Using \`export default\` AND named exports together in builtin modules is unsupported. See src/js/README.md (from ${moduleList[i]})`,
+      );
+      err.name = "BunError";
+      err["fileName"] = moduleList[i];
+      throw err;
+    }
     let importStatements: string[] = [];
 
     const processed = sliceSourceCode(
@@ -332,14 +340,13 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     // JS internal modules
     ${moduleList
       .map((id, n) => {
+        const moduleName = idToPublicSpecifierOrEnumName(id);
+        const fileBase = JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js"));
+        const urlString = "builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/");
         const inner =
           n >= nativeStartIndex
             ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
-            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-                id.replace(/\.[mc]?[tj]s$/, ".js"),
-              )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-                .replace(/\.[mc]?[tj]s$/, "")
-                .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);`;
+            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "${urlString}"_s);`;
         return `case Field::${idToEnumName(id)}: {
       ${inner}
     }`;
@@ -533,6 +540,27 @@ declare module "module" {
 );
 
 mark("Generate Code");
+
+const evalFiles = new Bun.Glob(path.join(BASE, "eval", "*.ts")).scanSync();
+for (const file of evalFiles) {
+  const {
+    outputs: [output],
+  } = await Bun.build({
+    entrypoints: [file],
+
+    // Shrink it.
+    minify: !debug,
+
+    target: "bun",
+    format: "esm",
+    env: "disable",
+    define: {
+      "process.platform": JSON.stringify(process.platform),
+      "process.arch": JSON.stringify(process.arch),
+    },
+  });
+  writeIfNotChanged(path.join(CODEGEN_DIR, "eval", path.basename(file)), await output.text());
+}
 
 if (!silent) {
   console.log("");

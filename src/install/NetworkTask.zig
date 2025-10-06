@@ -70,6 +70,10 @@ fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) v
     header_builder.count("npm-auth-type", "legacy");
 }
 
+const ForManifestError = OOM || error{
+    InvalidURL,
+};
+
 pub fn forManifest(
     this: *NetworkTask,
     name: string,
@@ -77,7 +81,7 @@ pub fn forManifest(
     scope: *const Npm.Registry.Scope,
     loaded_manifest: ?*const Npm.PackageManifest,
     is_optional: bool,
-) !void {
+) ForManifestError!void {
     this.url_buf = blk: {
 
         // Not all registries support scoped package names when fetching the manifest.
@@ -106,7 +110,7 @@ pub fn forManifest(
                     allocator,
                     "Failed to join registry {} and package {} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else {
                 this.package_manager.log.addWarningFmt(
                     null,
@@ -114,7 +118,7 @@ pub fn forManifest(
                     allocator,
                     "Failed to join registry {} and package {} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return error.InvalidURL;
         }
@@ -127,7 +131,7 @@ pub fn forManifest(
                     allocator,
                     "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .{tmp},
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             } else {
                 this.package_manager.log.addWarningFmt(
                     null,
@@ -135,7 +139,7 @@ pub fn forManifest(
                     allocator,
                     "Registry URL must be http:// or https://\nReceived: \"{}\"",
                     .{tmp},
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return error.InvalidURL;
         }

@@ -274,7 +274,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
 
-    const glob = alloc.create(Glob) catch bun.outOfMemory();
+    const glob = bun.handleOom(alloc.create(Glob));
     glob.* = .{ .pattern = pat_str };
 
     return glob;
@@ -371,7 +371,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
     var str = try str_arg.toSlice(globalThis, arena.allocator());
     defer str.deinit();
 
-    return jsc.JSValue.jsBoolean(globImpl.match(arena.allocator(), this.pattern, str.slice()).matches());
+    return jsc.JSValue.jsBoolean(bun.glob.match(this.pattern, str.slice()).matches());
 }
 
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
@@ -390,12 +390,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
 
-const globImpl = @import("../../glob.zig");
-const GlobWalker = globImpl.BunGlobWalker;
-
 const bun = @import("bun");
 const BunString = bun.String;
 const CodepointIterator = bun.strings.UnsignedCodepointIterator;
+const GlobWalker = bun.glob.BunGlobWalker;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

@@ -11,7 +11,7 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         return globalThis.throwInvalidArguments("toMatch() requires 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
@@ -33,7 +33,7 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         if (expected_value.isString()) {
             break :brk value.stringIncludes(globalThis, expected_value);
         } else if (expected_value.isRegExp()) {
-            break :brk expected_value.toMatch(globalThis, value);
+            break :brk try expected_value.toMatch(globalThis, value);
         }
         unreachable;
     };
@@ -64,7 +64,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

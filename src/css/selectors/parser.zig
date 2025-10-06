@@ -1669,7 +1669,7 @@ pub fn GenericSelector(comptime Impl: type) type {
                 }
                 break :index this.components.items.len;
             };
-            this.components.insert(allocator, index, component) catch bun.outOfMemory();
+            bun.handleOom(this.components.insert(allocator, index, component));
         }
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) This {

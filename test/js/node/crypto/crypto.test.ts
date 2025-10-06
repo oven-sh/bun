@@ -11,6 +11,7 @@ describe("CryptoHasher", () => {
     expect(CryptoHasher.algorithms).toEqual([
       "blake2b256",
       "blake2b512",
+      "blake2s256",
       "md4",
       "md5",
       "ripemd160",
@@ -34,6 +35,7 @@ describe("CryptoHasher", () => {
   const expected = {
     blake2b256: "256c83b297114d201b30179f3f0ef0cace9783622da5974326b436178aeef610",
     blake2b512: "021ced8799296ceca557832ab941a50b4a11f83478cf141f51f933f653ab9fbcc05a037cddbed06e309bf334942c4e58cdf1a46e237911ccd7fcf9787cbc7fd0",
+    blake2s256: "9aec6806794561107e594b1f6a8a6b0c92a0cba9acf5e5e93cca06f781813b0b",
     md4: "aa010fbc1d14c795d86ef98c95479d17",
     md5: "5eb63bbbe01eeed093cb22bb8f5acdc3",
     ripemd160: "98c615784ccb5fe5936fbc0cbe9dfdb408d92f0f",
@@ -55,6 +57,7 @@ describe("CryptoHasher", () => {
   const expectedBitLength = {
     blake2b256: 256,
     blake2b512: 512,
+    blake2s256: 256,
     md4: 128,
     md5: 128,
     ripemd160: 160,

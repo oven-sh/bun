@@ -6,7 +6,6 @@
 
 const EE = require("node:events");
 const { Stream } = require("internal/streams/legacy");
-const { Buffer } = require("node:buffer");
 const destroyImpl = require("internal/streams/destroy");
 const eos = require("internal/streams/end-of-stream");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
@@ -356,8 +355,8 @@ WritableState.prototype[kOnConstructed] = function onConstructed(stream) {
   }
 };
 
-function Writable(options) {
-  if (!(this instanceof Writable)) return Reflect.construct(Writable, [options]);
+function Writable(options): void {
+  if (!(this instanceof Writable)) return new Writable(options);
 
   this._events ??= {
     close: undefined,

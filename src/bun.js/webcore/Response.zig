@@ -1,5 +1,9 @@
 const Response = @This();
 
+// C++ helper functions for AsyncLocalStorage integration
+extern fn Response__getAsyncLocalStorageStore(global: *JSGlobalObject, als: JSValue) JSValue;
+extern fn Response__mergeAsyncLocalStorageOptions(global: *JSGlobalObject, alsStore: JSValue, initOptions: JSValue) void;
+
 const ResponseMixin = BodyMixin(@This());
 pub const js = jsc.Codegen.JSResponse;
 // NOTE: toJS is overridden
@@ -31,7 +35,7 @@ pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncForm
     var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
-    return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch bun.outOfMemory();
+    return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
 }
 
 pub fn estimatedSize(this: *Response) callconv(.C) usize {
@@ -142,38 +146,38 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>ok<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.isOK()), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
         try writer.writeAll("\"");
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>status<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
         try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.init.status_text});
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Private, Writer, writer, try this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>redirected<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Boolean, Writer, writer, jsc.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
-        formatter.printComma(Writer, writer, enable_ansi_colors) catch bun.outOfMemory();
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         formatter.resetLine();
@@ -441,6 +445,16 @@ pub fn constructRedirect(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
+    const response = try constructRedirectImpl(globalThis, callframe);
+    const ptr = bun.new(Response, response);
+    const response_js = ptr.toJS(globalThis);
+    return response_js;
+}
+
+pub fn constructRedirectImpl(
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!Response {
     var args_list = callframe.arguments_old(4);
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -487,7 +501,7 @@ pub fn constructRedirect(
         }
 
         if (globalThis.hasException()) {
-            return .zero;
+            return error.JSError;
         }
         did_succeed = true;
         break :brk response;
@@ -496,10 +510,9 @@ pub fn constructRedirect(
     response.init.headers = try response.getOrCreateHeaders(globalThis);
     var headers_ref = response.init.headers.?;
     try headers_ref.put(.Location, url_string_slice.slice(), globalThis);
-    const ptr = bun.new(Response, response);
-
-    return ptr.toJS(globalThis);
+    return response;
 }
+
 pub fn constructError(
     globalThis: *jsc.JSGlobalObject,
     _: *jsc.CallFrame,
@@ -520,7 +533,7 @@ pub fn constructError(
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Response {
-    const arguments = callframe.argumentsAsArray(2);
+    var arguments = callframe.argumentsAsArray(2);
 
     if (!arguments[0].isUndefinedOrNull() and arguments[0].isObject()) {
         if (arguments[0].as(Blob)) |blob| {

@@ -210,7 +210,7 @@ pub const SocketConfig = struct {
     hostname_or_unix: jsc.ZigString.Slice,
     port: ?u16 = null,
     fd: ?bun.FileDescriptor = null,
-    ssl: ?jsc.API.ServerConfig.SSLConfig = null,
+    ssl: ?SSLConfig = null,
     handlers: Handlers,
     default_data: jsc.JSValue = .zero,
     exclusive: bool = false,
@@ -246,26 +246,18 @@ pub const SocketConfig = struct {
         var reusePort = false;
         var ipv6Only = false;
 
-        var ssl: ?jsc.API.ServerConfig.SSLConfig = null;
+        var ssl: ?SSLConfig = null;
         var default_data = JSValue.zero;
 
         if (try opts.getTruthy(globalObject, "tls")) |tls| {
-            if (tls.isBoolean()) {
-                if (tls.toBoolean()) {
-                    ssl = jsc.API.ServerConfig.SSLConfig.zero;
-                }
-            } else {
-                if (try jsc.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls)) |ssl_config| {
-                    ssl = ssl_config;
-                }
+            if (!tls.isBoolean()) {
+                ssl = try SSLConfig.fromJS(vm, globalObject, tls);
+            } else if (tls.toBoolean()) {
+                ssl = SSLConfig.zero;
             }
         }
 
-        errdefer {
-            if (ssl != null) {
-                ssl.?.deinit();
-            }
-        }
+        errdefer bun.memory.deinit(&ssl);
 
         hostname_or_unix: {
             if (try opts.getTruthy(globalObject, "fd")) |fd_| {
@@ -382,9 +374,10 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const strings = bun.strings;
 const uws = bun.uws;
+const Listener = bun.api.Listener;
+const SSLConfig = bun.api.ServerConfig.SSLConfig;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
 const BinaryType = jsc.ArrayBuffer.BinaryType;
-const Listener = jsc.API.Listener;

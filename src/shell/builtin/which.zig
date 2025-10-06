@@ -136,7 +136,7 @@ pub inline fn bltn(this: *Which) *Builtin {
 }
 
 // --
-const log = bun.Output.scoped(.which, true);
+const log = bun.Output.scoped(.which, .hidden);
 
 const std = @import("std");
 

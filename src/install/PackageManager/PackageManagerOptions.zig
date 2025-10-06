@@ -71,11 +71,21 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+// Security scanner module path
+security_scanner: ?[]const u8 = null,
+
+/// Override CPU architecture for optional dependencies filtering
+cpu: Npm.Architecture = Npm.Architecture.current,
+
+/// Override OS for optional dependencies filtering
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
     otp: string = "",
     auth_type: ?AuthType = null,
+    tolerate_republish: bool = false,
 };
 
 pub const Access = enum {
@@ -277,6 +287,11 @@ pub fn load(
 
         if (config.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (config.security_scanner) |security_scanner| {
+            this.security_scanner = security_scanner;
+            this.do.prefetch_resolved_tarballs = false;
         }
 
         if (config.cafile) |cafile| {
@@ -535,6 +550,10 @@ pub fn load(
 
         this.lockfile_only = cli.lockfile_only;
 
+        if (cli.lockfile_only) {
+            this.do.prefetch_resolved_tarballs = false;
+        }
+
         if (cli.node_linker) |node_linker| {
             this.node_linker = node_linker;
         }
@@ -566,6 +585,10 @@ pub fn load(
         if (cli.backend) |backend| {
             PackageInstall.supported_method = backend;
         }
+
+        // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+        this.cpu = cli.cpu;
+        this.os = cli.os;
 
         this.do.update_to_latest = cli.latest;
         this.do.recursive = cli.recursive;
@@ -624,6 +647,7 @@ pub fn load(
         if (cli.publish_config.auth_type) |auth_type| {
             this.publish_config.auth_type = auth_type;
         }
+        this.publish_config.tolerate_republish = cli.tolerate_republish;
 
         if (cli.ca.len > 0) {
             this.ca = cli.ca;
@@ -668,7 +692,8 @@ pub const Do = packed struct(u16) {
     update_to_latest: bool = false,
     analyze: bool = false,
     recursive: bool = false,
-    _: u3 = 0,
+    prefetch_resolved_tarballs: bool = true,
+    _: u2 = 0,
 };
 
 pub const Enable = packed struct(u16) {

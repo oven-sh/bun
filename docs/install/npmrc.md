@@ -73,3 +73,33 @@ The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](https:
 [install.scopes]
 myorg = { url = "http://localhost:4873/", username = "myusername", password = "$NPM_PASSWORD" }
 ```
+
+### `link-workspace-packages`: Control workspace package installation
+
+Controls how workspace packages are installed when available locally:
+
+```ini
+link-workspace-packages=true
+```
+
+The equivalent `bunfig.toml` option is [`install.linkWorkspacePackages`](https://bun.com/docs/runtime/bunfig#install-linkworkspacepackages):
+
+```toml
+[install]
+linkWorkspacePackages = true
+```
+
+### `save-exact`: Save exact versions
+
+Always saves exact versions without the `^` prefix:
+
+```ini
+save-exact=true
+```
+
+The equivalent `bunfig.toml` option is [`install.exact`](https://bun.com/docs/runtime/bunfig#install-exact):
+
+```toml
+[install]
+exact = true
+```

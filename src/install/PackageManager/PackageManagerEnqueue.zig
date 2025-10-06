@@ -446,7 +446,6 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     if (dependency.behavior.isOptionalPeer()) return;
 
     var name = dependency.realname();
-
     var name_hash = switch (dependency.version.tag) {
         .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
         else => dependency.name_hash,
@@ -1260,7 +1259,7 @@ fn enqueueLocalTarball(
                     ) catch unreachable,
                     .resolution = resolution,
                     .cache_dir = this.getCacheDirectory(),
-                    .temp_dir = this.getTemporaryDirectory(),
+                    .temp_dir = this.getTemporaryDirectory().handle,
                     .dependency_id = dependency_id,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         path,
@@ -1360,7 +1359,6 @@ fn getOrPutResolvedPackageWithFindResult(
         manifest,
         find_result.version,
         find_result.package,
-        manifest.string_buf,
         Features.npm,
     ));
 
@@ -1382,6 +1380,11 @@ fn getOrPutResolvedPackageWithFindResult(
         .done => .{ .package = package, .is_first_time = true },
         // Do we need to download the tarball?
         .extract => extract: {
+            // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
+            if (!this.options.do.prefetch_resolved_tarballs) {
+                break :extract .{ .package = package, .is_first_time = true };
+            }
+
             const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.value.npm.version);
             bun.debugAssert(!this.network_dedupe_map.contains(task_id));
 
@@ -1412,7 +1415,7 @@ fn getOrPutResolvedPackageWithFindResult(
                     .{
                         .pkg_id = package.meta.id,
                         .dependency_id = dependency_id,
-                        .url = this.allocator.dupe(u8, manifest.str(&find_result.package.tarball_url)) catch bun.outOfMemory(),
+                        .url = bun.handleOom(this.allocator.dupe(u8, manifest.str(&find_result.package.tarball_url))),
                     },
                 ),
             },
@@ -1662,7 +1665,7 @@ fn getOrPutResolvedPackage(
                     builder.count(name_slice);
                     builder.count(folder_path);
 
-                    builder.allocate() catch bun.outOfMemory();
+                    bun.handleOom(builder.allocate());
 
                     name_slice = this.lockfile.str(&name);
                     folder_path = this.lockfile.str(&version.value.folder);
@@ -1681,7 +1684,7 @@ fn getOrPutResolvedPackage(
                 }
 
                 // these are always new
-                package = this.lockfile.appendPackage(package) catch bun.outOfMemory();
+                package = bun.handleOom(this.lockfile.appendPackage(package));
 
                 break :res .{
                     .new_package_id = package.meta.id,

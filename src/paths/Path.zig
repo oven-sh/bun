@@ -227,11 +227,15 @@ pub fn AbsPath(comptime opts: Options) type {
     return Path(copy);
 }
 
+pub const AutoAbsPath = Path(.{ .kind = .abs, .sep = .auto });
+
 pub fn RelPath(comptime opts: Options) type {
     var copy = opts;
     copy.kind = .rel;
     return Path(copy);
 }
+
+pub const AutoRelPath = Path(.{ .kind = .rel, .sep = .auto });
 
 pub fn Path(comptime opts: Options) type {
     const Result = opts.ResultFn();
@@ -240,7 +244,7 @@ pub fn Path(comptime opts: Options) type {
     //     @compileError("utf16 not supported");
     // }
 
-    // const log = Output.scoped(.Path, false);
+    // const log = Output.scoped(.Path, .visible);
 
     return struct {
         _buf: opts.Buf(),

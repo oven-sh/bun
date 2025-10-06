@@ -371,7 +371,7 @@ function getZigAgent(platform, options) {
  * @returns {Agent}
  */
 function getTestAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os, arch, profile } = platform;
 
   if (os === "darwin") {
     return {
@@ -391,6 +391,13 @@ function getTestAgent(platform, options) {
   }
 
   if (arch === "aarch64") {
+    if (profile === "asan") {
+      return getEc2Agent(platform, options, {
+        instanceType: "c8g.2xlarge",
+        cpuCount: 2,
+        threadsPerCore: 1,
+      });
+    }
     return getEc2Agent(platform, options, {
       instanceType: "c8g.xlarge",
       cpuCount: 2,
@@ -398,6 +405,13 @@ function getTestAgent(platform, options) {
     });
   }
 
+  if (profile === "asan") {
+    return getEc2Agent(platform, options, {
+      instanceType: "c7i.2xlarge",
+      cpuCount: 2,
+      threadsPerCore: 1,
+    });
+  }
   return getEc2Agent(platform, options, {
     instanceType: "c7i.xlarge",
     cpuCount: 2,
@@ -434,11 +448,17 @@ function getBuildEnv(target, options) {
  * @param {PipelineOptions} options
  * @returns {string}
  */
-function getBuildCommand(target, options) {
+function getBuildCommand(target, options, label) {
   const { profile } = target;
+  const buildProfile = profile || "release";
 
-  const label = profile || "release";
-  return `bun run build:${label}`;
+  if (target.os === "windows" && label === "build-bun") {
+    // Only sign release builds, not canary builds (DigiCert charges per signature)
+    const enableSigning = !options.canary ? " -DENABLE_WINDOWS_CODESIGNING=ON" : "";
+    return `bun run build:${buildProfile}${enableSigning}`;
+  }
+
+  return `bun run build:${buildProfile}`;
 }
 
 /**
@@ -532,9 +552,10 @@ function getLinkBunStep(platform, options) {
     cancel_on_build_failing: isMergeQueue(),
     env: {
       BUN_LINK_ONLY: "ON",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options)} --target bun`,
+    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
   };
 }
 
@@ -595,6 +616,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
     cancel_on_build_failing: isMergeQueue(),
     parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
+    env: {
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`

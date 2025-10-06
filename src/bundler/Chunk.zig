@@ -142,6 +142,7 @@ pub const Chunk = struct {
             chunk: *Chunk,
             chunks: []Chunk,
             display_size: ?*usize,
+            force_absolute_path: bool,
             enable_source_map_shifts: bool,
         ) bun.OOM!CodeResult {
             return switch (enable_source_map_shifts) {
@@ -153,6 +154,7 @@ pub const Chunk = struct {
                     chunk,
                     chunks,
                     display_size,
+                    force_absolute_path,
                     source_map_shifts,
                 ),
             };
@@ -167,10 +169,13 @@ pub const Chunk = struct {
             chunk: *Chunk,
             chunks: []Chunk,
             display_size: ?*usize,
+            force_absolute_path: bool,
             comptime enable_source_map_shifts: bool,
         ) bun.OOM!CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
+            const relative_platform_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(relative_platform_buf);
             switch (this.*) {
                 .pieces => |*pieces| {
                     const entry_point_chunks_for_scb = linker_graph.files.items(.entry_point_chunk_index);
@@ -224,10 +229,10 @@ pub const Chunk = struct {
 
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0)
+                                    if (from_chunk_dir.len == 0 or force_absolute_path)
                                         file_path
                                     else
-                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
+                                        bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -316,10 +321,10 @@ pub const Chunk = struct {
                                 bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0)
+                                    if (from_chunk_dir.len == 0 or force_absolute_path)
                                         file_path
                                     else
-                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
+                                        bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
@@ -349,7 +354,12 @@ pub const Chunk = struct {
                             remain,
                             "\n//# debugId={}\n",
                             .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                        ) catch bun.outOfMemory()).len..];
+                        ) catch |err| switch (err) {
+                            error.NoSpaceLeft => std.debug.panic(
+                                "unexpected NoSpaceLeft error from bufPrint",
+                                .{},
+                            ),
+                        }).len..];
                     }
 
                     bun.assert(remain.len == 0);
@@ -374,10 +384,10 @@ pub const Chunk = struct {
                         if (enable_source_map_shifts and FeatureFlags.source_map_debug_id) {
                             // This comment must go before the //# sourceMappingURL comment
                             const debug_id_fmt = std.fmt.allocPrint(
-                                graph.allocator,
+                                graph.heap.allocator(),
                                 "\n//# debugId={}\n",
                                 .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
 
                             break :brk try joiner.doneWithEnd(allocator, debug_id_fmt);
                         }
@@ -517,13 +527,13 @@ pub const Chunk = struct {
         pub const Layers = bun.ptr.Cow(bun.BabyList(bun.css.LayerName), struct {
             const Self = bun.BabyList(bun.css.LayerName);
             pub fn copy(self: *const Self, allocator: std.mem.Allocator) Self {
-                return self.deepClone2(allocator);
+                return self.deepCloneInfallible(allocator);
             }
 
             pub fn deinit(self: *Self, a: std.mem.Allocator) void {
                 // do shallow deinit since `LayerName` has
                 // allocations in arena
-                self.deinitWithAllocator(a);
+                self.clearAndFree(a);
             }
         });
 

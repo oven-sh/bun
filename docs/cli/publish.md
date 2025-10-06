@@ -82,6 +82,16 @@ The `--dry-run` flag can be used to simulate the publish process without actuall
 $ bun publish --dry-run
 ```
 
+### `--tolerate-republish`
+
+The `--tolerate-republish` flag makes `bun publish` exit with code 0 instead of code 1 when attempting to republish over an existing version number. This is useful in automated workflows where republishing the same version might occur and should not be treated as an error.
+
+```sh
+$ bun publish --tolerate-republish
+```
+
+Without this flag, attempting to publish a version that already exists will result in an error and exit code 1. With this flag, the command will exit successfully even when trying to republish an existing version.
+
 ### `--gzip-level`
 
 Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).

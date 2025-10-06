@@ -1,6 +1,7 @@
 pub const jsc = @import("./bun.js/jsc.zig");
 pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
+pub const bindgen = @import("./bun.js/bindgen.zig");
 
 pub const Run = struct {
     ctx: Command.Context,
@@ -23,7 +24,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        const arena = try Arena.init();
+        const arena = Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
@@ -36,7 +37,6 @@ pub const Run = struct {
                 .args = ctx.args,
                 .graph = graph_ptr,
                 .is_main_thread = true,
-                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             }),
             .arena = arena,
             .ctx = ctx,
@@ -48,7 +48,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
@@ -136,7 +136,7 @@ pub const Run = struct {
             null,
         );
         try bundle.runEnvLoader(false);
-        const mini = jsc.MiniEventLoop.initGlobal(bundle.env);
+        const mini = jsc.MiniEventLoop.initGlobal(bundle.env, null);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
@@ -160,7 +160,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        const arena = try Arena.init();
+        const arena = Arena.init();
 
         // Set the global autokill flag if enabled
         if (ctx.runtime_options.autokill) {
@@ -179,7 +179,6 @@ pub const Run = struct {
                     .debugger = ctx.runtime_options.debugger,
                     .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
-                    .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
                 },
             ),
             .arena = arena,
@@ -192,7 +191,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);
@@ -472,7 +471,9 @@ pub const Run = struct {
         }
 
         bun.api.napi.fixDeadCodeElimination();
+        bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
+        @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();
     }
 

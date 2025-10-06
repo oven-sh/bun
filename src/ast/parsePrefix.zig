@@ -262,7 +262,16 @@ pub fn ParsePrefix(
                 return error.SyntaxError;
             }
 
-            return p.newExpr(E.Unary{ .op = .un_typeof, .value = value }, loc);
+            return p.newExpr(
+                E.Unary{
+                    .op = .un_typeof,
+                    .value = value,
+                    .flags = .{
+                        .was_originally_typeof_identifier = value.data == .e_identifier,
+                    },
+                },
+                loc,
+            );
         }
         fn t_delete(noalias p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
@@ -281,7 +290,14 @@ pub fn ParsePrefix(
                 }
             }
 
-            return p.newExpr(E.Unary{ .op = .un_delete, .value = value }, loc);
+            return p.newExpr(E.Unary{
+                .op = .un_delete,
+                .value = value,
+                .flags = .{
+                    .was_originally_delete_of_identifier_or_property_access = value.data == .e_identifier or
+                        value.isPropertyAccess(),
+                },
+            }, loc);
         }
         fn t_plus(noalias p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
@@ -500,7 +516,7 @@ pub fn ParsePrefix(
                 self_errors.mergeInto(errors.?);
             }
             return p.newExpr(E.Array{
-                .items = ExprNodeList.fromList(items),
+                .items = ExprNodeList.moveFromList(&items),
                 .comma_after_spread = comma_after_spread.toNullable(),
                 .is_single_line = is_single_line,
                 .close_bracket_loc = close_bracket_loc,
@@ -584,7 +600,7 @@ pub fn ParsePrefix(
             }
 
             return p.newExpr(E.Object{
-                .properties = G.Property.List.fromList(properties),
+                .properties = G.Property.List.moveFromList(&properties),
                 .comma_after_spread = if (comma_after_spread.start > 0)
                     comma_after_spread
                 else

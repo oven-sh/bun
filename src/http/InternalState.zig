@@ -217,10 +217,14 @@ pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_c
     return this.body_out_str.?.list.items.len > 0;
 }
 
-const log = Output.scoped(.HTTPInternalState, true);
+const log = Output.scoped(.HTTPInternalState, .hidden);
 
 const HTTPStage = enum {
     pending,
+
+    /// The `onOpen` callback has been called for the first time.
+    opened,
+
     headers,
     body,
     body_chunk,

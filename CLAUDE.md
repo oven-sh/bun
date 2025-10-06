@@ -4,18 +4,14 @@ This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed
 
 ### Build Commands
 
-- **Build debug version**: `bun bd`
+- **Build Bun**: `bun bd`
   - Creates a debug build at `./build/debug/bun-debug`
-  - **CRITICAL**: DO NOT set a build timeout. Compilation takes ~5 minutes. Be patient.
+  - **CRITICAL**: no need for a timeout, the build is really fast!
 - **Run tests with your debug build**: `bun bd test <test-file>`
   - **CRITICAL**: Never use `bun test` directly - it won't include your changes
 - **Run any command with debug build**: `bun bd <command>`
 
-### Other Build Variants
-
-- `bun run build:release` - Release build
-
-Address sanitizer is enabled by default in debug builds of Bun.
+Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.json script.
 
 ## Testing
 
@@ -43,11 +39,11 @@ Tests use Bun's Jest-compatible test runner with proper test fixtures:
 
 ```typescript
 import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("my feature", async () => {
   // Create temp directory with test files
-  const dir = tempDirWithFiles("test-prefix", {
+  using dir = tempDir("test-prefix", {
     "index.js": `console.log("hello");`,
   });
 
@@ -55,7 +51,8 @@ test("my feature", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     env: bunEnv,
-    cwd: dir,
+    cwd: String(dir),
+    stderr: "pipe",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -65,11 +62,14 @@ test("my feature", async () => {
   ]);
 
   expect(exitCode).toBe(0);
-  expect(stdout).toBe("hello\n");
+  // Prefer snapshot tests over expect(stdout).toBe("hello\n");
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"hello"`);
 });
 ```
 
 - Always use `port: 0`. Do not hardcode ports. Do not use your own random port number function.
+- Use `normalizeBunSnapshot` to normalize snapshot output of the test.
+- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. That is NOT a valid test.
 
 ## Code Architecture
 
@@ -143,19 +143,6 @@ When implementing JavaScript classes in C++:
 3. Add iso subspaces for classes with C++ fields
 4. Cache structures in ZigGlobalObject
 
-## Development Workflow
-
-### Code Formatting
-
-- `bun run prettier` - Format JS/TS files
-- `bun run zig-format` - Format Zig files
-- `bun run clang-format` - Format C++ files
-
-### Watching for Changes
-
-- `bun run watch` - Incremental Zig compilation with error checking
-- `bun run watch-windows` - Windows-specific watch mode
-
 ### Code Generation
 
 Code generation happens automatically as part of the build process. The main scripts are:
@@ -177,47 +164,6 @@ Built-in JavaScript modules use special syntax and are organized as:
 - `internal/` - Internal modules not exposed to users
 - `builtins/` - Core JavaScript builtins (streams, console, etc.)
 
-### Special Syntax in Built-in Modules
-
-1. **`$` prefix** - Access to private properties and JSC intrinsics:
-
-   ```js
-   const arr = $Array.from(...);  // Private global
-   map.$set(...);                 // Private method
-   const arr2 = $newArrayWithSize(5); // JSC intrinsic
-   ```
-
-2. **`require()`** - Must use string literals, resolved at compile time:
-
-   ```js
-   const fs = require("fs"); // Directly loads by numeric ID
-   ```
-
-3. **Debug helpers**:
-   - `$debug()` - Like console.log but stripped in release builds
-   - `$assert()` - Assertions stripped in release builds
-   - `if($debug) {}` - Check if debug env var is set
-
-4. **Platform detection**: `process.platform` and `process.arch` are inlined and dead-code eliminated
-
-5. **Export syntax**: Use `export default` which gets converted to a return statement:
-   ```js
-   export default {
-     readFile,
-     writeFile,
-   };
-   ```
-
-Note: These are NOT ES modules. The preprocessor converts `$` to `@` (JSC's actual syntax) and handles the special functions.
-
-## CI
-
-Bun uses BuildKite for CI. To get the status of a PR, you can use the following command:
-
-```bash
-bun ci
-```
-
 ## Important Development Notes
 
 1. **Never use `bun test` or `bun <file>` directly** - always use `bun bd test` or `bun bd <command>`. `bun bd` compiles & runs the debug build.
@@ -229,19 +175,6 @@ bun ci
 7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
 8. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
 9. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
-10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scope>=1` to enable specific scopes
+10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scopeName>=1` to enable specific `Output.scoped(.${scopeName}, .visible)`s
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
-
-## Key APIs and Features
-
-### Bun-Specific APIs
-
-- **Bun.serve()** - High-performance HTTP server
-- **Bun.spawn()** - Process spawning with better performance than Node.js
-- **Bun.file()** - Fast file I/O operations
-- **Bun.write()** - Unified API for writing to files, stdout, etc.
-- **Bun.$ (Shell)** - Cross-platform shell scripting
-- **Bun.SQLite** - Native SQLite integration
-- **Bun.FFI** - Call native libraries from JavaScript
-- **Bun.Glob** - Fast file pattern matching

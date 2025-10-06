@@ -46,7 +46,7 @@ pub const X_OK = 1;
 pub const W_OK = 2;
 pub const R_OK = 4;
 
-const log = bun.Output.scoped(.SYS, false);
+const log = bun.Output.scoped(.SYS, .visible);
 pub const syslog = log;
 
 pub const syscall = switch (Environment.os) {
@@ -301,6 +301,7 @@ pub const Tag = enum(u8) {
 
 pub const Error = @import("./sys/Error.zig");
 pub const autokill = @import("./sys/autokill.zig");
+pub const PosixStat = @import("./sys/PosixStat.zig").PosixStat;
 
 pub fn Maybe(comptime ReturnTypeT: type) type {
     return bun.api.node.Maybe(ReturnTypeT, Error);
@@ -502,6 +503,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
         if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| return err;
+
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -552,8 +554,133 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
         log("fstat({}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
+
     return Maybe(bun.Stat){ .result = stat_ };
 }
+
+pub const StatxField = enum(comptime_int) {
+    type = linux.STATX_TYPE,
+    mode = linux.STATX_MODE,
+    nlink = linux.STATX_NLINK,
+    uid = linux.STATX_UID,
+    gid = linux.STATX_GID,
+    atime = linux.STATX_ATIME,
+    mtime = linux.STATX_MTIME,
+    ctime = linux.STATX_CTIME,
+    btime = linux.STATX_BTIME,
+    ino = linux.STATX_INO,
+    size = linux.STATX_SIZE,
+    blocks = linux.STATX_BLOCKS,
+};
+
+// Linux Kernel v4.11
+pub var supports_statx_on_linux = std.atomic.Value(bool).init(true);
+
+/// Linux kernel makedev encoding for device numbers
+/// From glibc sys/sysmacros.h and Linux kernel <linux/kdev_t.h>
+/// dev_t layout (64 bits):
+///   Bits 31-20: major high (12 bits)
+///   Bits 19-8:  minor high (12 bits)
+///   Bits 7-0:   minor low (8 bits)
+inline fn makedev(major: u32, minor: u32) u64 {
+    const maj: u64 = major & 0xFFF;
+    const min: u64 = minor & 0xFFFFF;
+    return (maj << 8) | (min & 0xFF) | ((min & 0xFFF00) << 12);
+}
+
+fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32) Maybe(PosixStat) {
+    if (comptime !Environment.isLinux) {
+        @compileError("statx is only supported on Linux");
+    }
+
+    var buf: linux.Statx = undefined;
+
+    while (true) {
+        const rc = linux.statx(@intCast(fd.cast()), if (path) |p| p else "", flags, mask, &buf);
+
+        if (Maybe(PosixStat).errnoSys(rc, .statx)) |err| {
+            // Retry on EINTR
+            if (err.getErrno() == .INTR) continue;
+
+            // Handle unsupported statx by setting flag and falling back
+            if (err.getErrno() == .NOSYS or err.getErrno() == .OPNOTSUPP) {
+                supports_statx_on_linux.store(false, .monotonic);
+                if (path) |p| {
+                    const path_span = bun.span(p);
+                    const fallback = if (flags & linux.AT.SYMLINK_NOFOLLOW != 0) lstat(path_span) else stat(path_span);
+                    return switch (fallback) {
+                        .result => |s| .{ .result = PosixStat.init(&s) },
+                        .err => |e| .{ .err = e },
+                    };
+                } else {
+                    return switch (fstat(fd)) {
+                        .result => |s| .{ .result = PosixStat.init(&s) },
+                        .err => |e| .{ .err = e },
+                    };
+                }
+            }
+
+            return err;
+        }
+
+        // Convert statx buffer to PosixStat structure
+        const stat_ = PosixStat{
+            .dev = makedev(buf.dev_major, buf.dev_minor),
+            .ino = buf.ino,
+            .mode = buf.mode,
+            .nlink = buf.nlink,
+            .uid = buf.uid,
+            .gid = buf.gid,
+            .rdev = makedev(buf.rdev_major, buf.rdev_minor),
+            .size = @bitCast(buf.size),
+            .blksize = @intCast(buf.blksize),
+            .blocks = @bitCast(buf.blocks),
+            .atim = .{ .sec = buf.atime.sec, .nsec = buf.atime.nsec },
+            .mtim = .{ .sec = buf.mtime.sec, .nsec = buf.mtime.nsec },
+            .ctim = .{ .sec = buf.ctime.sec, .nsec = buf.ctime.nsec },
+            .birthtim = if (buf.mask & linux.STATX_BTIME != 0)
+                .{ .sec = buf.btime.sec, .nsec = buf.btime.nsec }
+            else
+                .{ .sec = 0, .nsec = 0 },
+        };
+
+        return .{ .result = stat_ };
+    }
+}
+
+pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(PosixStat) {
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+        for (fields) |field| {
+            i |= @intFromEnum(field);
+        }
+        break :brk i;
+    };
+    return statxImpl(fd, null, linux.AT.EMPTY_PATH, mask);
+}
+
+pub fn statx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(PosixStat) {
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+        for (fields) |field| {
+            i |= @intFromEnum(field);
+        }
+        break :brk i;
+    };
+    return statxImpl(bun.FD.fromNative(std.posix.AT.FDCWD), path, 0, mask);
+}
+
+pub fn lstatx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(PosixStat) {
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+        for (fields) |field| {
+            i |= @intFromEnum(field);
+        }
+        break :brk i;
+    };
+    return statxImpl(bun.FD.fromNative(std.posix.AT.FDCWD), path, linux.AT.SYMLINK_NOFOLLOW, mask);
+}
+
 pub fn lutimes(path: [:0]const u8, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.lutimes(path, atime, mtime);
@@ -661,7 +788,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
         const wbuf = bun.w_path_buffer_pool.get();
         defer bun.w_path_buffer_pool.put(wbuf);
         const wpath = bun.strings.toKernel32Path(wbuf, file_path);
-        assertIsValidWindowsPath(u16, wpath);
+
         return Maybe(void).errnoSysP(
             kernel32.CreateDirectoryW(wpath.ptr, null),
             .mkdir,
@@ -812,7 +939,7 @@ fn openDirAtWindowsNtPath(
     const no_follow = options.no_follow;
     const can_rename_or_delete = options.can_rename_or_delete;
     const read_only = options.read_only;
-    assertIsValidWindowsPath(u16, path);
+
     const base_flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
         w.SYNCHRONIZE | w.FILE_TRAVERSE;
     const iterable_flag: u32 = if (iterable) w.FILE_LIST_DIRECTORY else 0;
@@ -1011,7 +1138,6 @@ pub fn openFileAtWindowsNtPath(
     // this path is probably already backslash normalized so we're only going to check for '.\'
     // const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
     // bun.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
-    assertIsValidWindowsPath(u16, path);
 
     var result: windows.HANDLE = undefined;
 
@@ -2250,6 +2376,21 @@ pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void)
     }
 }
 
+/// Same as symlink, except it handles ETXTBUSY by unlinking and retrying.
+pub fn symlinkRunningExecutable(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
+    return switch (symlink(target, dest)) {
+        .err => |err| switch (err.getErrno()) {
+            // If we get ETXTBUSY or BUSY, try deleting it and then symlinking.
+            .BUSY, .TXTBSY => {
+                _ = unlink(dest);
+                return symlink(target, dest);
+            },
+            else => .{ .err = err },
+        },
+        .result => .{ .result = {} },
+    };
+}
+
 pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
         if (Maybe(void).errnoSys(syscall.symlink(target, dest), .symlink)) |err| {
@@ -2610,7 +2751,6 @@ pub fn mmap(
 }
 
 pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(page_size_min) u8) {
-    assertIsValidWindowsPath(u8, path);
     const fd = switch (open(path, bun.O.RDWR, 0)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
@@ -3372,12 +3512,24 @@ pub fn disableLinger(fd: bun.FileDescriptor) void {
 
 pub fn pipe() Maybe([2]bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        @panic("TODO: Implement `pipe()` for Windows");
+        const uv = bun.windows.libuv;
+        var out: [2]bun.FileDescriptor = undefined;
+        var fds: [2]uv.uv_file = undefined;
+        if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
+            const err = Error.fromCode(e, .pipe);
+            log("pipe() = {}", .{err});
+            return .{ .err = err };
+        }
+        out[0] = .fromUV(fds[0]);
+        out[1] = .fromUV(fds[1]);
+        log("pipe() = [{}, {}]", .{ out[0], out[1] });
+        return .{ .result = out };
     }
 
     var fds: [2]i32 = undefined;
     const rc = syscall.pipe(&fds);
     if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .pipe)) |err| {
+        log("pipe() = {}", .{err});
         return err;
     }
     log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });
@@ -3799,6 +3951,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
             if (err.getErrno() == .XDEV) {
                 try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
                 _ = unlinkat(from_dir, filename);
+                return;
             }
 
             return bun.errnoToZigErr(err.errno);
@@ -4129,7 +4282,6 @@ const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const c = bun.c; // translated c headers
 const jsc = bun.jsc;
 const libc_stat = bun.Stat;
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const darwin_nocancel = bun.darwin.nocancel;
 
 const windows = bun.windows;

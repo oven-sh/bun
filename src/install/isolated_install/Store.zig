@@ -8,7 +8,7 @@ pub const Store = struct {
     entries: Entry.List,
     nodes: Node.List,
 
-    const log = Output.scoped(.Store, false);
+    const log = Output.scoped(.Store, .visible);
 
     pub const modules_dir_name = ".bun";
 
@@ -65,7 +65,7 @@ pub const Store = struct {
             if (parent_id == maybe_parent_id) {
                 return true;
             }
-            parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+            bun.handleOom(parent_dedupe.put(parent_id, {}));
         }
 
         len = parent_dedupe.count();
@@ -77,7 +77,7 @@ pub const Store = struct {
                 if (parent_id == maybe_parent_id) {
                     return true;
                 }
-                parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+                bun.handleOom(parent_dedupe.put(parent_id, {}));
                 len = parent_dedupe.count();
             }
             i += 1;
@@ -145,6 +145,15 @@ pub const Store = struct {
                 const pkg_res = pkg_resolutions[pkg_id];
 
                 switch (pkg_res.tag) {
+                    .root => {
+                        if (pkg_name.isEmpty()) {
+                            try writer.writeAll(std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir));
+                        } else {
+                            try writer.print("{}@root", .{
+                                pkg_name.fmtStorePath(string_buf),
+                            });
+                        }
+                    },
                     .folder => {
                         try writer.print("{}@file+{}", .{
                             pkg_name.fmtStorePath(string_buf),
@@ -184,7 +193,7 @@ pub const Store = struct {
                 if (parent_id == .invalid) {
                     continue;
                 }
-                parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                bun.handleOom(parents.put(bun.default_allocator, parent_id, {}));
             }
 
             len = parents.count();
@@ -193,7 +202,7 @@ pub const Store = struct {
                     if (parent_id == .invalid) {
                         continue;
                     }
-                    parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                    bun.handleOom(parents.put(bun.default_allocator, parent_id, {}));
                     len = parents.count();
                 }
                 i += 1;

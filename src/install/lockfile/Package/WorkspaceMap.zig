@@ -130,8 +130,8 @@ pub fn processNamesArray(
 
         if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
-        if (Glob.detectGlobSyntax(input_path)) {
-            workspace_globs.append(input_path) catch bun.outOfMemory();
+        if (glob.detectGlobSyntax(input_path)) {
+            bun.handleOom(workspace_globs.append(input_path));
             continue;
         }
 
@@ -215,12 +215,12 @@ pub fn processNamesArray(
     if (workspace_globs.items.len > 0) {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        for (workspace_globs.items) |user_pattern| {
+        for (workspace_globs.items, 0..) |user_pattern, i| {
             defer _ = arena.reset(.retain_capacity);
 
             const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
                 const parts = [_][]const u8{ user_pattern, "package.json" };
-                break :brk arena.allocator().dupe(u8, bun.path.join(parts, .auto)) catch bun.outOfMemory();
+                break :brk bun.handleOom(arena.allocator().dupe(u8, bun.path.join(parts, .auto)));
             };
 
             var walker: GlobWalker = .{};
@@ -253,7 +253,7 @@ pub fn processNamesArray(
                 return error.GlobError;
             }
 
-            while (switch (try iter.next()) {
+            next_match: while (switch (try iter.next()) {
                 .result => |r| r,
                 .err => |e| {
                     log.addErrorFmt(
@@ -270,6 +270,28 @@ pub fn processNamesArray(
 
                 // skip root package.json
                 if (strings.eqlComptime(matched_path, "package.json")) continue;
+
+                {
+                    const matched_path_without_package_json = strings.withoutTrailingSlash(strings.withoutSuffixComptime(matched_path, "package.json"));
+
+                    // check if it's negated by any remaining patterns
+                    for (workspace_globs.items[i + 1 ..]) |next_pattern| {
+                        switch (bun.glob.match(next_pattern, matched_path_without_package_json)) {
+                            .no_match,
+                            .match,
+                            .negate_match,
+                            => {},
+
+                            .negate_no_match => {
+                                debug("skipping negated path: {s}, {s}\n", .{
+                                    matched_path_without_package_json,
+                                    next_pattern,
+                                });
+                                continue :next_match;
+                            },
+                        }
+                    }
+                }
 
                 debug("matched path: {s}, dirname: {s}\n", .{ matched_path, entry_dir });
 
@@ -375,10 +397,10 @@ fn ignoredWorkspacePaths(path: []const u8) bool {
     }
     return false;
 }
-const GlobWalker = Glob.GlobWalker(ignoredWorkspacePaths, Glob.walk.SyscallAccessor, false);
+const GlobWalker = glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false);
 
 const string = []const u8;
-const debug = Output.scoped(.Lockfile, true);
+const debug = Output.scoped(.Lockfile, .hidden);
 const stringZ = [:0]const u8;
 
 const std = @import("std");
@@ -386,10 +408,10 @@ const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Glob = bun.glob;
 const JSAst = bun.ast;
 const Output = bun.Output;
 const Path = bun.path;
+const glob = bun.glob;
 const logger = bun.logger;
 const strings = bun.strings;
 

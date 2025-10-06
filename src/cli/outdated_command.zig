@@ -5,16 +5,6 @@ pub const OutdatedCommand = struct {
         workspace_pkg_id: PackageID,
         is_catalog: bool,
     };
-    fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
-        return if (dep.version.tag == .catalog) blk: {
-            const catalog_dep = manager.lockfile.catalogs.get(
-                manager.lockfile,
-                dep.version.value.catalog,
-                dep.name,
-            ) orelse return null;
-            break :blk catalog_dep.version;
-        } else dep.version;
-    }
 
     pub fn exec(ctx: Command.Context) !void {
         Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
@@ -88,22 +78,22 @@ pub const OutdatedCommand = struct {
                         original_cwd,
                         manager,
                         filters,
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                     defer bun.default_allocator.free(workspace_pkg_ids);
 
-                    try updateManifestsIfNecessary(manager, workspace_pkg_ids);
+                    try manager.populateManifestCache(.{ .ids = workspace_pkg_ids });
                     try printOutdatedInfoTable(manager, workspace_pkg_ids, true, enable_ansi_colors);
                 } else if (manager.options.do.recursive) {
-                    const all_workspaces = getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
+                    const all_workspaces = bun.handleOom(getAllWorkspaces(bun.default_allocator, manager));
                     defer bun.default_allocator.free(all_workspaces);
 
-                    try updateManifestsIfNecessary(manager, all_workspaces);
+                    try manager.populateManifestCache(.{ .ids = all_workspaces });
                     try printOutdatedInfoTable(manager, all_workspaces, true, enable_ansi_colors);
                 } else {
                     const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
                     if (root_pkg_id == invalid_package_id) return;
 
-                    try updateManifestsIfNecessary(manager, &.{root_pkg_id});
+                    try manager.populateManifestCache(.{ .ids = &.{root_pkg_id} });
                     try printOutdatedInfoTable(manager, &.{root_pkg_id}, false, enable_ansi_colors);
                 }
             },
@@ -200,14 +190,14 @@ pub const OutdatedCommand = struct {
 
                             const abs_res_path = path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &path_buf, &[_]string{res_path}, .posix);
 
-                            if (!glob.walk.matchImpl(allocator, pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
+                            if (!glob.match(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;
                             }
                         },
                         .name => |pattern| {
                             const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                            if (!glob.walk.matchImpl(allocator, pattern, name).matches()) {
+                            if (!glob.match(pattern, name).matches()) {
                                 break :matched false;
                             }
                         },
@@ -342,7 +332,7 @@ pub const OutdatedCommand = struct {
 
             var at_least_one_greater_than_zero = false;
 
-            const patterns_buf = bun.default_allocator.alloc(FilterType, args.len) catch bun.outOfMemory();
+            const patterns_buf = bun.handleOom(bun.default_allocator.alloc(FilterType, args.len));
             for (args, patterns_buf) |arg, *converted| {
                 if (arg.len == 0) {
                     converted.* = FilterType.init(&.{}, false);
@@ -399,8 +389,8 @@ pub const OutdatedCommand = struct {
             for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
                 const package_id = lockfile.buffers.resolutions.items[dep_id];
                 if (package_id == invalid_package_id) continue;
-                const dep = lockfile.buffers.dependencies.items[dep_id];
-                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                const dep = &lockfile.buffers.dependencies.items[dep_id];
+                const resolved_version = manager.lockfile.resolveCatalogDependency(dep) orelse continue;
                 if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
@@ -413,7 +403,7 @@ pub const OutdatedCommand = struct {
                                 .path => unreachable,
                                 .name => |name_pattern| {
                                     if (name_pattern.len == 0) continue;
-                                    if (!glob.walk.matchImpl(bun.default_allocator, name_pattern, dep.name.slice(string_buf)).matches()) {
+                                    if (!glob.match(name_pattern, dep.name.slice(string_buf)).matches()) {
                                         break :match false;
                                     }
                                 },
@@ -459,15 +449,15 @@ pub const OutdatedCommand = struct {
 
                 if (package_name_len > max_name) max_name = package_name_len;
 
-                version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+                bun.handleOom(version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}));
                 if (version_buf.items.len > max_current) max_current = version_buf.items.len;
                 version_buf.clearRetainingCapacity();
 
-                version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                bun.handleOom(version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}));
                 if (version_buf.items.len > max_update) max_update = version_buf.items.len;
                 version_buf.clearRetainingCapacity();
 
-                version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                bun.handleOom(version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}));
                 if (version_buf.items.len > max_latest) max_latest = version_buf.items.len;
                 version_buf.clearRetainingCapacity();
 
@@ -482,7 +472,7 @@ pub const OutdatedCommand = struct {
                         .workspace_pkg_id = workspace_pkg_id,
                         .is_catalog = dep.version.tag == .catalog,
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
         }
 
@@ -494,11 +484,16 @@ pub const OutdatedCommand = struct {
 
         // Recalculate max workspace length after grouping
         var new_max_workspace: usize = max_workspace;
+        var has_catalog_deps = false;
         for (grouped_ids.items) |item| {
             if (item.grouped_workspace_names) |names| {
                 if (names.len > new_max_workspace) new_max_workspace = names.len;
+                has_catalog_deps = true;
             }
         }
+
+        // Show workspace column if filtered OR if there are catalog dependencies
+        const show_workspace_column = was_filtered or has_catalog_deps;
 
         const package_column_inside_length = @max("Packages".len, max_name);
         const current_column_inside_length = @max("Current".len, max_current);
@@ -510,7 +505,7 @@ pub const OutdatedCommand = struct {
         const column_right_pad = 1;
 
         const table = Table("blue", column_left_pad, column_right_pad, enable_ansi_colors).init(
-            &if (was_filtered)
+            &if (show_workspace_column)
                 [_][]const u8{
                     "Package",
                     "Current",
@@ -525,7 +520,7 @@ pub const OutdatedCommand = struct {
                     "Update",
                     "Latest",
                 },
-            &if (was_filtered)
+            &if (show_workspace_column)
                 [_]usize{
                     package_column_inside_length,
                     current_column_inside_length,
@@ -556,7 +551,7 @@ pub const OutdatedCommand = struct {
                 const package_id = item.package_id;
                 const dep_id = item.dep_id;
 
-                const dep = dependencies[dep_id];
+                const dep = &dependencies[dep_id];
                 if (!dep.behavior.includes(group_behavior)) continue;
 
                 const package_name = pkg_names[package_id].slice(string_buf);
@@ -572,7 +567,7 @@ pub const OutdatedCommand = struct {
                 ) orelse continue;
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
-                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                const resolved_version = manager.lockfile.resolveCatalogDependency(dep) orelse continue;
                 const update = if (resolved_version.tag == .npm)
                     manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse continue
                 else
@@ -603,7 +598,7 @@ pub const OutdatedCommand = struct {
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                    version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
+                    bun.handleOom(version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}));
                     Output.pretty("{s}", .{version_buf.items});
                     for (version_buf.items.len..current_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     version_buf.clearRetainingCapacity();
@@ -614,7 +609,7 @@ pub const OutdatedCommand = struct {
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                    version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    bun.handleOom(version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}));
                     Output.pretty("{s}", .{update.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
                     for (version_buf.items.len..update_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     version_buf.clearRetainingCapacity();
@@ -625,13 +620,13 @@ pub const OutdatedCommand = struct {
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
-                    version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
+                    bun.handleOom(version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}));
                     Output.pretty("{s}", .{latest.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
                     for (version_buf.items.len..latest_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     version_buf.clearRetainingCapacity();
                 }
 
-                if (was_filtered) {
+                if (show_workspace_column) {
                     Output.pretty("{s}", .{table.symbols.verticalEdge()});
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
@@ -649,128 +644,6 @@ pub const OutdatedCommand = struct {
         }
 
         table.printBottomLineSeparator();
-    }
-
-    pub fn updateManifestsIfNecessary(
-        manager: *PackageManager,
-        workspace_pkg_ids: []const PackageID,
-    ) !void {
-        const log_level = manager.options.log_level;
-        const lockfile = manager.lockfile;
-        const resolutions = lockfile.buffers.resolutions.items;
-        const dependencies = lockfile.buffers.dependencies.items;
-        const string_buf = lockfile.buffers.string_bytes.items;
-        const packages = lockfile.packages.slice();
-        const pkg_resolutions = packages.items(.resolution);
-        const pkg_names = packages.items(.name);
-        const pkg_dependencies = packages.items(.dependencies);
-
-        for (workspace_pkg_ids) |workspace_pkg_id| {
-            const pkg_deps = pkg_dependencies[workspace_pkg_id];
-            for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
-                if (dep_id >= dependencies.len) continue;
-                const package_id = resolutions[dep_id];
-                if (package_id == invalid_package_id) continue;
-                const dep = dependencies[dep_id];
-                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
-                if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
-                const resolution: Install.Resolution = pkg_resolutions[package_id];
-                if (resolution.tag != .npm) continue;
-
-                const package_name = pkg_names[package_id].slice(string_buf);
-                _ = manager.manifests.byName(
-                    manager,
-                    manager.scopeForPackageName(package_name),
-                    package_name,
-                    .load_from_memory_fallback_to_disk,
-                ) orelse {
-                    const task_id = Install.Task.Id.forManifest(package_name);
-                    if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
-
-                    manager.startProgressBarIfNone();
-
-                    var task = manager.getNetworkTask();
-                    task.* = .{
-                        .package_manager = manager,
-                        .callback = undefined,
-                        .task_id = task_id,
-                        .allocator = manager.allocator,
-                    };
-                    try task.forManifest(
-                        package_name,
-                        manager.allocator,
-                        manager.scopeForPackageName(package_name),
-                        null,
-                        dep.behavior.optional,
-                    );
-
-                    manager.enqueueNetworkTask(task);
-                };
-            }
-
-            manager.flushNetworkQueue();
-            _ = manager.scheduleTasks();
-
-            if (manager.pendingTaskCount() > 1) {
-                try manager.runTasks(
-                    *PackageManager,
-                    manager,
-                    .{
-                        .onExtract = {},
-                        .onResolve = {},
-                        .onPackageManifestError = {},
-                        .onPackageDownloadError = {},
-                        .progress_bar = true,
-                        .manifests_only = true,
-                    },
-                    true,
-                    log_level,
-                );
-            }
-        }
-
-        manager.flushNetworkQueue();
-        _ = manager.scheduleTasks();
-
-        const RunClosure = struct {
-            manager: *PackageManager,
-            err: ?anyerror = null,
-            pub fn isDone(closure: *@This()) bool {
-                if (closure.manager.pendingTaskCount() > 0) {
-                    closure.manager.runTasks(
-                        *PackageManager,
-                        closure.manager,
-                        .{
-                            .onExtract = {},
-                            .onResolve = {},
-                            .onPackageManifestError = {},
-                            .onPackageDownloadError = {},
-                            .progress_bar = true,
-                            .manifests_only = true,
-                        },
-                        true,
-                        closure.manager.options.log_level,
-                    ) catch |err| {
-                        closure.err = err;
-                        return true;
-                    };
-                }
-
-                return closure.manager.pendingTaskCount() == 0;
-            }
-        };
-
-        var run_closure: RunClosure = .{ .manager = manager };
-        manager.sleepUntil(&run_closure, &RunClosure.isDone);
-
-        if (log_level.showProgress()) {
-            manager.endProgressBar();
-            Output.flush();
-        }
-
-        if (run_closure.err) |err| {
-            return err;
-        }
     }
 };
 
@@ -793,7 +666,6 @@ const Table = bun.fmt.Table;
 const Install = bun.install;
 const DependencyID = Install.DependencyID;
 const PackageID = Install.PackageID;
-const Resolution = Install.Resolution;
 const invalid_package_id = Install.invalid_package_id;
 const Behavior = Install.Dependency.Behavior;
 

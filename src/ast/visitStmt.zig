@@ -126,7 +126,7 @@ pub fn VisitStmt(
                 const name = p.loadNameFromRef(data.namespace_ref);
 
                 data.namespace_ref = try p.newSymbol(.other, name);
-                try p.current_scope.generated.push(p.allocator, data.namespace_ref);
+                try p.current_scope.generated.append(p.allocator, data.namespace_ref);
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 if (p.options.features.replace_exports.count() > 0) {
@@ -146,7 +146,7 @@ pub fn VisitStmt(
                         const _name = p.loadNameFromRef(old_ref);
 
                         const ref = try p.newSymbol(.import, _name);
-                        try p.current_scope.generated.push(p.allocator, ref);
+                        try p.current_scope.generated.append(p.allocator, ref);
                         try p.recordDeclaredSymbol(ref);
                         data.items[j] = item;
                         data.items[j].name.ref = ref;
@@ -163,7 +163,7 @@ pub fn VisitStmt(
                     for (data.items) |*item| {
                         const _name = p.loadNameFromRef(item.name.ref.?);
                         const ref = try p.newSymbol(.import, _name);
-                        try p.current_scope.generated.push(p.allocator, ref);
+                        try p.current_scope.generated.append(p.allocator, ref);
                         try p.recordDeclaredSymbol(ref);
                         item.name.ref = ref;
                     }
@@ -176,7 +176,7 @@ pub fn VisitStmt(
                 // "export * from 'path'"
                 const name = p.loadNameFromRef(data.namespace_ref);
                 data.namespace_ref = try p.newSymbol(.other, name);
-                try p.current_scope.generated.push(p.allocator, data.namespace_ref);
+                try p.current_scope.generated.append(p.allocator, data.namespace_ref);
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 // "export * as ns from 'path'"
@@ -262,7 +262,7 @@ pub fn VisitStmt(
                         }) {
                             // declare a temporary ref for this
                             const temp_id = p.generateTempRef("default_export");
-                            try p.current_scope.generated.push(p.allocator, temp_id);
+                            try p.current_scope.generated.append(p.allocator, temp_id);
 
                             try stmts.append(Stmt.alloc(S.Local, .{
                                 .kind = .k_const,
@@ -287,15 +287,15 @@ pub fn VisitStmt(
                         if (p.current_scope.parent == null and p.will_wrap_module_in_try_catch_for_using) {
                             try stmts.ensureUnusedCapacity(2);
 
-                            const decls = p.allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                            const decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
                             decls[0] = .{
                                 .binding = p.b(B.Identifier{ .ref = data.default_name.ref.? }, data.default_name.loc),
                                 .value = data.value.expr,
                             };
                             stmts.appendAssumeCapacity(p.s(S.Local{
-                                .decls = G.Decl.List.init(decls),
+                                .decls = G.Decl.List.fromOwnedSlice(decls),
                             }, stmt.loc));
-                            const items = p.allocator.alloc(js_ast.ClauseItem, 1) catch bun.outOfMemory();
+                            const items = bun.handleOom(p.allocator.alloc(js_ast.ClauseItem, 1));
                             items[0] = js_ast.ClauseItem{
                                 .alias = "default",
                                 .alias_loc = data.default_name.loc,
@@ -343,7 +343,7 @@ pub fn VisitStmt(
                             }
 
                             if (react_hook_data) |*hook| {
-                                stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
+                                bun.handleOom(stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)));
 
                                 data.value = .{
                                     .expr = p.getReactRefreshHookSignalInit(hook, p.newExpr(
@@ -390,7 +390,7 @@ pub fn VisitStmt(
                                         }
 
                                         const temp_id = p.generateTempRef("default_export");
-                                        try p.current_scope.generated.push(p.allocator, temp_id);
+                                        try p.current_scope.generated.append(p.allocator, temp_id);
                                         break :brk temp_id;
                                     };
 
@@ -402,7 +402,7 @@ pub fn VisitStmt(
                                                 .value = data.value.expr,
                                             },
                                         }),
-                                    }, stmt.loc)) catch bun.outOfMemory();
+                                    }, stmt.loc)) catch |err| bun.handleOom(err);
 
                                     data.value = .{ .expr = .initIdentifier(ref_to_use, stmt.loc) };
 
@@ -515,7 +515,7 @@ pub fn VisitStmt(
                     data.func.flags.remove(.is_export);
 
                     const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse bun.outOfMemory();
-                    stmts.ensureUnusedCapacity(3) catch bun.outOfMemory();
+                    bun.handleOom(stmts.ensureUnusedCapacity(3));
                     stmts.appendAssumeCapacity(stmt.*);
                     stmts.appendAssumeCapacity(Stmt.assign(
                         p.newExpr(E.Dot{
@@ -547,7 +547,7 @@ pub fn VisitStmt(
                             }}),
                         }, stmt.loc));
                     } else {
-                        stmts.append(stmt.*) catch bun.outOfMemory();
+                        bun.handleOom(stmts.append(stmt.*));
                     }
                 } else if (mark_as_dead) {
                     if (p.options.features.replace_exports.getPtr(original_name)) |replacement| {
@@ -865,7 +865,7 @@ pub fn VisitStmt(
                                                         .kind = .k_var,
                                                         .is_export = false,
                                                         .was_commonjs_export = true,
-                                                        .decls = G.Decl.List.init(decls),
+                                                        .decls = G.Decl.List.fromOwnedSlice(decls),
                                                     },
                                                     stmt.loc,
                                                 ),
@@ -1200,17 +1200,17 @@ pub fn VisitStmt(
                         const first = p.s(S.Local{
                             .kind = init2.kind,
                             .decls = bindings: {
-                                const decls = p.allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                                const decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
                                 decls[0] = .{
                                     .binding = p.b(B.Identifier{ .ref = id.ref }, loc),
                                     .value = p.newExpr(E.Identifier{ .ref = temp_ref }, loc),
                                 };
-                                break :bindings G.Decl.List.init(decls);
+                                break :bindings G.Decl.List.fromOwnedSlice(decls);
                             },
                         }, loc);
 
                         const length = if (data.body.data == .s_block) data.body.data.s_block.stmts.len else 1;
-                        const statements = p.allocator.alloc(Stmt, 1 + length) catch bun.outOfMemory();
+                        const statements = bun.handleOom(p.allocator.alloc(Stmt, 1 + length));
                         statements[0] = first;
                         if (data.body.data == .s_block) {
                             @memcpy(statements[1..], data.body.data.s_block.stmts);
@@ -1315,10 +1315,10 @@ pub fn VisitStmt(
                     try p.top_level_enums.append(p.allocator, data.name.ref.?);
                 }
 
-                p.recordDeclaredSymbol(data.name.ref.?) catch bun.outOfMemory();
-                p.pushScopeForVisitPass(.entry, stmt.loc) catch bun.outOfMemory();
+                try p.recordDeclaredSymbol(data.name.ref.?);
+                try p.pushScopeForVisitPass(.entry, stmt.loc);
                 defer p.popScope();
-                p.recordDeclaredSymbol(data.arg) catch bun.outOfMemory();
+                try p.recordDeclaredSymbol(data.arg);
 
                 const allocator = p.allocator;
                 // Scan ahead for any variables inside this namespace. This must be done
@@ -1327,7 +1327,7 @@ pub fn VisitStmt(
                 // We need to convert the uses into property accesses on the namespace.
                 for (data.values) |value| {
                     if (value.ref.isValid()) {
-                        p.is_exported_inside_namespace.put(allocator, value.ref, data.arg) catch bun.outOfMemory();
+                        try p.is_exported_inside_namespace.put(allocator, value.ref, data.arg);
                     }
                 }
 
@@ -1336,7 +1336,7 @@ pub fn VisitStmt(
                 // without initializers are initialized to undefined.
                 var next_numeric_value: ?f64 = 0.0;
 
-                var value_exprs = ListManaged(Expr).initCapacity(allocator, data.values.len) catch bun.outOfMemory();
+                var value_exprs = try ListManaged(Expr).initCapacity(allocator, data.values.len);
 
                 var all_values_are_pure = true;
 
@@ -1373,7 +1373,7 @@ pub fn VisitStmt(
                                     p.allocator,
                                     value.ref,
                                     .{ .enum_number = num.value },
-                                ) catch bun.outOfMemory();
+                                ) catch |err| bun.handleOom(err);
 
                                 next_numeric_value = num.value + 1.0;
                             },
@@ -1386,7 +1386,7 @@ pub fn VisitStmt(
                                     p.allocator,
                                     value.ref,
                                     .{ .enum_string = str },
-                                ) catch bun.outOfMemory();
+                                ) catch |err| bun.handleOom(err);
                             },
                             else => {
                                 if (visited.knownPrimitive() == .string) {
@@ -1409,7 +1409,7 @@ pub fn VisitStmt(
                             p.allocator,
                             value.ref,
                             .{ .enum_number = num },
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     } else {
                         value.value = p.newExpr(E.Undefined{}, value.loc);
                     }
@@ -1451,7 +1451,7 @@ pub fn VisitStmt(
 
                     // String-valued enums do not form a two-way map
                     if (has_string_value) {
-                        value_exprs.append(assign_target) catch bun.outOfMemory();
+                        bun.handleOom(value_exprs.append(assign_target));
                     } else {
                         // "Enum[assignTarget] = 'Name'"
                         value_exprs.append(
@@ -1465,7 +1465,7 @@ pub fn VisitStmt(
                                 }, value.loc),
                                 name_as_e_string.?,
                             ),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                         p.recordUsage(data.arg);
                     }
                 }

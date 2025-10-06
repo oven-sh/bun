@@ -111,7 +111,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
             bun.assert(this.socket_context != null);
             this.ref();
-            errdefer this.deref();
+            defer this.deref();
 
             switch (connection) {
                 .host => |c| {
@@ -281,11 +281,11 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn handleConnectError(this: *This, errno: c_int) void {
             const handlers = this.getHandlers();
-            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.active_counts });
+            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.get() });
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
 
             const needs_deref = !this.socket.isDetached();
             this.socket = Socket.detached;
@@ -368,7 +368,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn closeAndDetach(this: *This, code: uws.Socket.CloseCode) void {
             const socket = this.socket;
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
 
             this.socket.detach();
             this.detachNativeCallback();
@@ -401,7 +401,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
-            log("onOpen {s} {*} {} {}", .{ if (this.isServer()) "S" else "C", this, this.socket.isDetached(), this.ref_count.active_counts });
+            log("onOpen {s} {*} {} {}", .{ if (this.isServer()) "S" else "C", this, this.socket.isDetached(), this.ref_count.get() });
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
@@ -418,7 +418,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         if (this.server_name) |server_name| {
                             const host = server_name;
                             if (host.len > 0) {
-                                const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                                const host__ = bun.handleOom(default_allocator.dupeZ(u8, host));
                                 defer default_allocator.free(host__);
                                 ssl_ptr.setHostname(host__);
                             }
@@ -426,7 +426,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                             if (connection == .host) {
                                 const host = connection.host.host;
                                 if (host.len > 0) {
-                                    const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                                    const host__ = bun.handleOom(default_allocator.dupeZ(u8, host));
                                     defer default_allocator.free(host__);
                                     ssl_ptr.setHostname(host__);
                                 }
@@ -830,7 +830,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn getRemoteAddress(this: *This, globalThis: *jsc.JSGlobalObject) JSValue {
+        pub fn getRemoteAddress(this: *This, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 return .js_undefined;
             }
@@ -846,7 +846,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-            return ZigString.init(text).toJS(globalThis);
+            return bun.String.createUTF8ForJS(globalThis, text);
         }
 
         pub fn getRemotePort(this: *This, _: *jsc.JSGlobalObject) JSValue {
@@ -883,7 +883,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn writeBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                 // TODO: should we separate unattached and detached? unattached shouldn't throw here
                 const err: jsc.SystemError = .{
                     .errno = @intFromEnum(bun.sys.SystemErrno.EBADF),
@@ -904,8 +904,8 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn endBuffered(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
-                this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                return JSValue.jsBoolean(false);
+                this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
+                return .false;
             }
 
             const args = callframe.argumentsUndef(2);
@@ -987,8 +987,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
                         if (leftover == 0) {
-                            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                            this.buffered_data_for_node_net = .{};
+                            this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                             break :brk rc;
                         }
 
@@ -1004,7 +1003,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                         }
 
                         if (remaining_in_input_data.len > 0) {
-                            this.buffered_data_for_node_net.append(bun.default_allocator, remaining_in_input_data) catch bun.outOfMemory();
+                            bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                                bun.default_allocator,
+                                remaining_in_input_data,
+                            ));
                         }
 
                         break :brk rc;
@@ -1012,15 +1014,17 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
 
                 // slower-path: clone the data, do one write.
-                this.buffered_data_for_node_net.append(bun.default_allocator, buffer.slice()) catch bun.outOfMemory();
+                bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                    bun.default_allocator,
+                    buffer.slice(),
+                ));
                 const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice());
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
                     // did we write everything?
                     // we can free this temporary buffer.
                     if (wrote == this.buffered_data_for_node_net.len) {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                        this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                     } else {
                         // Otherwise, let's move the temporary buffer back.
                         const len = @as(usize, @intCast(this.buffered_data_for_node_net.len)) - wrote;
@@ -1166,7 +1170,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
                 if (remaining.len > 0) {
-                    this.buffered_data_for_node_net.append(bun.default_allocator, remaining) catch bun.outOfMemory();
+                    bun.handleOom(this.buffered_data_for_node_net.appendSlice(
+                        bun.default_allocator,
+                        remaining,
+                    ));
                 }
             }
 
@@ -1203,8 +1210,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         _ = bun.c.memmove(this.buffered_data_for_node_net.ptr, remaining.ptr, remaining.len);
                         this.buffered_data_for_node_net.len = @truncate(remaining.len);
                     } else {
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                        this.buffered_data_for_node_net = .{};
+                        this.buffered_data_for_node_net.clearAndFree(bun.default_allocator);
                     }
                 }
             }
@@ -1293,7 +1299,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.markInactive();
             this.detachNativeCallback();
 
-            this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
+            this.buffered_data_for_node_net.deinit(bun.default_allocator);
 
             this.poll_ref.unref(jsc.VirtualMachine.get());
             // need to deinit event without being attached
@@ -1406,23 +1412,12 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
-            defer {
-                if (!success) {
-                    if (ssl_opts) |*ssl_config| {
-                        ssl_config.deinit();
-                    }
-                }
-            }
 
             if (try opts.getTruthy(globalObject, "tls")) |tls| {
-                if (tls.isBoolean()) {
-                    if (tls.toBoolean()) {
-                        ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
-                    }
-                } else {
-                    if (try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls)) |ssl_config| {
-                        ssl_opts = ssl_config;
-                    }
+                if (!tls.isBoolean()) {
+                    ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls);
+                } else if (tls.toBoolean()) {
+                    ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
                 }
             }
 
@@ -1430,9 +1425,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            if (ssl_opts == null) {
+            const socket_config = &(ssl_opts orelse {
                 return globalObject.throw("Expected \"tls\" option", .{});
-            }
+            });
+            defer socket_config.deinit();
 
             var default_data = JSValue.zero;
             if (try opts.fastGet(globalObject, .data)) |default_data_value| {
@@ -1443,17 +1439,10 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            var socket_config = ssl_opts.?;
-            ssl_opts = null;
-            defer socket_config.deinit();
             const options = socket_config.asUSockets();
-
-            const protos = socket_config.protos;
-            const protos_len = socket_config.protos_len;
-
             const ext_size = @sizeOf(WrappedSocket);
 
-            var handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
             handlers.withAsyncContextIfNeeded(globalObject);
             handlers_ptr.* = handlers;
             handlers_ptr.protect();
@@ -1464,8 +1453,14 @@ pub fn NewSocket(comptime ssl: bool) type {
                 .socket = TLSSocket.Socket.detached,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
-                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
-                .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+                .protos = if (socket_config.protos) |p|
+                    bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(p)))
+                else
+                    null,
+                .server_name = if (socket_config.server_name) |sn|
+                    bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(sn)))
+                else
+                    null,
                 .socket_context = null, // only set after the wrapTLS
                 .flags = .{
                     .is_active = false,
@@ -1528,7 +1523,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             tls.ref();
             const vm = handlers.vm;
 
-            var raw_handlers_ptr = bun.default_allocator.create(Handlers) catch bun.outOfMemory();
+            var raw_handlers_ptr = bun.handleOom(bun.default_allocator.create(Handlers));
             raw_handlers_ptr.* = blk: {
                 const this_handlers = this.getHandlers();
                 break :blk .{
@@ -1677,7 +1672,7 @@ const NativeCallbacks = union(enum) {
     }
 };
 
-const log = Output.scoped(.Socket, false);
+const log = Output.scoped(.Socket, .visible);
 
 const WriteResult = union(enum) {
     fail: void,
@@ -1949,19 +1944,15 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
     if (try opts.getTruthy(globalObject, "tls")) |tls| {
-        if (tls.isBoolean()) {
-            if (tls.toBoolean()) {
-                ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
-            }
-        } else {
-            if (try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls)) |ssl_config| {
-                ssl_opts = ssl_config;
-            }
+        if (!tls.isBoolean()) {
+            ssl_opts = try jsc.API.ServerConfig.SSLConfig.fromJS(jsc.VirtualMachine.get(), globalObject, tls);
+        } else if (tls.toBoolean()) {
+            ssl_opts = jsc.API.ServerConfig.SSLConfig.zero;
         }
     }
-    if (ssl_opts == null) {
+    const socket_config = &(ssl_opts orelse {
         return globalObject.throw("Expected \"tls\" option", .{});
-    }
+    });
 
     var default_data = JSValue.zero;
     if (try opts.fastGet(globalObject, .data)) |default_data_value| {
@@ -1969,14 +1960,9 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         default_data.ensureStillAlive();
     }
 
-    const socket_config = ssl_opts.?;
-
-    const protos = socket_config.protos;
-    const protos_len = socket_config.protos_len;
-
     const is_server = false; // A duplex socket is always handled as a client
 
-    var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
+    var handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
     handlers_ptr.* = handlers;
     handlers_ptr.is_server = is_server;
     handlers_ptr.withAsyncContextIfNeeded(globalObject);
@@ -1988,8 +1974,14 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .socket = TLSSocket.Socket.detached,
         .connection = null,
         .wrapped = .tls,
-        .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
-        .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
+        .protos = if (socket_config.protos) |p|
+            bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(p)))
+        else
+            null,
+        .server_name = if (socket_config.server_name) |sn|
+            bun.handleOom(bun.default_allocator.dupe(u8, std.mem.span(sn)))
+        else
+            null,
         .socket_context = null, // only set after the wrapTLS
     });
     const tls_js_value = tls.getThisValue(globalObject);
@@ -2000,7 +1992,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .tls = tls,
         .vm = globalObject.bunVM(),
         .task = undefined,
-        .ssl_config = socket_config,
+        .ssl_config = socket_config.*,
     });
     tls.ref();
 
@@ -2044,7 +2036,7 @@ pub fn jsIsNamedPipeSocket(global: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     } else if (socket.as(TLSSocket)) |this| {
         return jsc.JSValue.jsBoolean(this.socket.isNamedPipe());
     }
-    return jsc.JSValue.jsBoolean(false);
+    return .false;
 }
 
 pub fn jsGetBufferedAmount(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

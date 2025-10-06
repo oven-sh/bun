@@ -219,7 +219,7 @@ pub const PendingValue = struct {
 
 /// This is a duplex stream!
 pub const Value = union(Tag) {
-    const log = Output.scoped(.BodyValue, false);
+    const log = Output.scoped(.BodyValue, .visible);
 
     const pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
     pub const HiveRef = bun.HiveRef(jsc.WebCore.Body.Value, pool_size);
@@ -717,7 +717,6 @@ pub const Value = union(Tag) {
                     },
                     .none, .getBlob => {
                         var blob = Blob.new(new.use());
-                        blob.allocator = bun.default_allocator;
                         if (headers) |fetch_headers| {
                             if (fetch_headers.fastGet(.ContentType)) |content_type| {
                                 var content_slice = content_type.toSlice(bun.default_allocator);
@@ -761,7 +760,7 @@ pub const Value = union(Tag) {
         switch (this.*) {
             .Blob => {
                 const new_blob = this.Blob;
-                assert(new_blob.allocator == null); // owned by Body
+                assert(!new_blob.isHeapAllocated()); // owned by Body
                 this.* = .{ .Used = {} };
                 return new_blob;
             },
@@ -790,7 +789,7 @@ pub const Value = union(Tag) {
                     );
                 } else {
                     new_blob = Blob.init(
-                        bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch bun.outOfMemory(),
+                        bun.handleOom(bun.default_allocator.dupe(u8, wtf.latin1Slice())),
                         bun.default_allocator,
                         jsc.VirtualMachine.get().global,
                     );
@@ -930,7 +929,7 @@ pub const Value = union(Tag) {
         return this.toErrorInstance(.{ .Message = bun.String.createFormat(
             "Error reading file {s}",
             .{@errorName(err)},
-        ) catch bun.outOfMemory() }, global);
+        ) catch |e| bun.handleOom(e) }, global);
     }
 
     pub fn deinit(this: *Value) void {
@@ -1080,7 +1079,7 @@ pub fn extract(
 
     body.value = try Value.fromJS(globalThis, value);
     if (body.value == .Blob) {
-        assert(body.value.Blob.allocator == null); // owned by Body
+        assert(!body.value.Blob.isHeapAllocated()); // owned by Body
     }
     return body;
 }
@@ -1289,14 +1288,13 @@ pub fn Mixin(comptime Type: type) type {
             }
 
             var blob = Blob.new(value.use());
-            blob.allocator = bun.default_allocator;
             if (blob.content_type.len == 0) {
                 if (this.getFetchHeaders()) |fetch_headers| {
                     if (fetch_headers.fastGet(.ContentType)) |content_type| {
-                        var content_slice = content_type.toSlice(blob.allocator.?);
+                        var content_slice = content_type.toSlice(bun.default_allocator);
                         defer content_slice.deinit();
                         var allocated = false;
-                        const mimeType = MimeType.init(content_slice.slice(), blob.allocator.?, &allocated);
+                        const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
                         blob.content_type = mimeType.value;
                         blob.content_type_allocated = allocated;
                         blob.content_type_was_set = true;
@@ -1322,7 +1320,7 @@ pub fn Mixin(comptime Type: type) type {
 }
 
 pub const ValueBufferer = struct {
-    const log = bun.Output.scoped(.BodyValueBufferer, false);
+    const log = bun.Output.scoped(.BodyValueBufferer, .visible);
 
     const ArrayBufferSink = bun.webcore.Sink.ArrayBufferSink;
     const Callback = *const fn (ctx: *anyopaque, bytes: []const u8, err: ?Body.Value.ValueError, is_async: bool) void;
@@ -1441,8 +1439,8 @@ pub const ValueBufferer = struct {
         defer {
             if (stream_needs_deinit) {
                 switch (stream_) {
-                    .owned_and_done => |*owned| owned.listManaged(allocator).deinit(),
-                    .owned => |*owned| owned.listManaged(allocator).deinit(),
+                    .owned_and_done => |*owned| owned.deinit(allocator),
+                    .owned => |*owned| owned.deinit(allocator),
                     else => unreachable,
                 }
             }
@@ -1450,7 +1448,7 @@ pub const ValueBufferer = struct {
 
         const chunk = stream.slice();
         log("onStreamPipe chunk {}", .{chunk.len});
-        _ = sink.stream_buffer.write(chunk) catch bun.outOfMemory();
+        _ = bun.handleOom(sink.stream_buffer.write(chunk));
         if (stream.isDone()) {
             const bytes = sink.stream_buffer.list.items;
             log("onStreamPipe done {}", .{bytes.len});
@@ -1503,7 +1501,7 @@ pub const ValueBufferer = struct {
         var globalThis = sink.global;
         buffer_stream.* = ArrayBufferSink.JSSink{
             .sink = ArrayBufferSink{
-                .bytes = bun.ByteList.init(&.{}),
+                .bytes = bun.ByteList.empty,
                 .allocator = allocator,
                 .next = null,
             },
@@ -1607,7 +1605,7 @@ pub const ValueBufferer = struct {
                     sink.byte_stream = byte_stream;
                     log("byte stream pre-buffered {}", .{bytes.len});
 
-                    _ = sink.stream_buffer.write(bytes) catch bun.outOfMemory();
+                    _ = bun.handleOom(sink.stream_buffer.write(bytes));
                     return;
                 },
             }

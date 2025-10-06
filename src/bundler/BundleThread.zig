@@ -41,7 +41,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             // Blocks the calling thread until the bun build thread is created.
             // std.once also blocks other callers of this function until the first caller is done.
             fn loadOnceImpl() void {
-                const bundle_thread = bun.default_allocator.create(Self) catch bun.outOfMemory();
+                const bundle_thread = bun.handleOom(bun.default_allocator.create(Self));
                 bundle_thread.* = uninitialized;
                 instance = bundle_thread;
 
@@ -102,7 +102,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
         /// This is called from `Bun.build` in JavaScript.
         fn generateInNewThread(completion: *CompletionStruct, generation: bun.Generation) !void {
-            var heap = try ThreadLocalArena.init();
+            var heap = ThreadLocalArena.init();
             defer heap.deinit();
 
             const allocator = heap.allocator();
@@ -145,7 +145,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 this.linker.source_maps.quoted_contents_wait_group.wait();
 
                 var out_log = Logger.Log.init(bun.default_allocator);
-                this.transpiler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+                bun.handleOom(this.transpiler.log.appendToWithRecycled(&out_log, true));
                 completion.log = out_log;
             }
 
@@ -154,7 +154,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             } };
 
             var out_log = Logger.Log.init(bun.default_allocator);
-            this.transpiler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+            bun.handleOom(this.transpiler.log.appendToWithRecycled(&out_log, true));
             completion.log = out_log;
             completion.completeOnBundleThread();
         }

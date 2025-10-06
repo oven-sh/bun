@@ -195,6 +195,8 @@ fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
     });
 }
 
+pub const TaggedUnion = @import("./meta/tagged_union.zig").TaggedUnion;
+
 pub fn hasStableMemoryLayout(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     return switch (tyinfo) {
@@ -301,11 +303,10 @@ pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContaine
             return .{ .list = .array_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like babylist
-        if (tyinfo.@"struct".fields.len == 4 and
+        if (tyinfo.@"struct".fields.len == 3 and
             std.mem.eql(u8, tyinfo.@"struct".fields[0].name, "ptr") and
             std.mem.eql(u8, tyinfo.@"struct".fields[1].name, "len") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[3].name, "alloc_ptr"))
+            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap"))
             return .{ .list = .baby_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
 
         // Looks like SmallList
@@ -338,7 +339,9 @@ pub fn SliceChild(comptime T: type) type {
 }
 
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
-pub fn VoidFieldTypes(comptime T: type) type {
+pub fn useAllFields(comptime T: type, _: VoidFields(T)) void {}
+
+fn VoidFields(comptime T: type) type {
     const fields = @typeInfo(T).@"struct".fields;
     var new_fields = fields[0..fields.len].*;
     for (&new_fields) |*field| {
@@ -355,6 +358,20 @@ pub fn VoidFieldTypes(comptime T: type) type {
 
 pub fn voidFieldTypeDiscardHelper(data: anytype) void {
     _ = data;
+}
+
+pub fn hasDecl(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, name),
+        else => false,
+    };
+}
+
+pub fn hasField(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum" => @hasField(T, name),
+        else => false,
+    };
 }
 
 const bun = @import("bun");

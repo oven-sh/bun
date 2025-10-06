@@ -210,6 +210,7 @@ function propRow(
   isWrapped = true,
   defaultPropertyAttributes,
   supportsObjectCreate = false,
+  disableDom,
 ) {
   var {
     defaultValue,
@@ -288,21 +289,21 @@ function propRow(
   } else if (getter && setter) {
     return `
 
-{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
+{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor${disableDom ? "" : "| JSC::PropertyAttribute::DOMAttribute"}${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
 `.trim();
   } else if (defaultValue) {
   } else if (getter && !supportsObjectCreate && !writable) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor${disableDom ? "" : "| JSC::PropertyAttribute::DOMAttribute"}${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
 `.trim();
   } else if (getter && !supportsObjectCreate && writable) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor${disableDom ? "" : "| JSC::PropertyAttribute::DOMAttribute"}${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
 `.trim();
   } else if (getter && supportsObjectCreate) {
     setter = getter.replace("Get", "Set");
     return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor ${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, &${getter}, &${setter} } }
 `.trim();
   } else if (setter) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, 0, ${setter} } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor${disableDom ? "" : "| JSC::PropertyAttribute::DOMAttribute"}${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::GetterSetterType, 0, ${setter} } }
   `.trim();
   }
 
@@ -347,6 +348,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
         wrapped,
         defaultPropertyAttributes,
         obj.supportsObjectCreate || false,
+        !!obj.forBind,
       ),
     );
   }
@@ -431,7 +433,7 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(
         typeName,
         "onStructuredCloneDeserialize",
-      )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);` + "\n";
+      )}(JSC::JSGlobalObject*, uint8_t**, const uint8_t*);` + "\n";
   }
   if (obj.finalize) {
     externs +=
@@ -718,7 +720,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
       structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->${className(typeName)}Structure());
       RETURN_IF_EXCEPTION(scope, {});
     }
-    
+
 ` +
     (!obj.constructNeedsThis
       ? `
@@ -1077,7 +1079,21 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
+    ${
+      obj.forBind
+        ? `
+      JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(JSValue::decode(encodedThisValue));
+      if (!thisBoundFunction) [[unlikely]] {
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
+      }
+      JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
+      ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+      if (!thisObject) [[unlikely]] {
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "The ${typeName}.${name} getter can only be used on instances of ${typeName}"_s);
+      }
+    `
+        : `${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));`
+    }
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     if (JSValue cachedValue = thisObject->${cacheName}.get())
@@ -1090,6 +1106,11 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
+#if ASSERT_ENABLED
+    if (!result.isEmpty() && result.isCell()) {
+      JSC::Integrity::auditCellFully(vm, result.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }`.trim(),
           );
@@ -1131,6 +1152,11 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
+#if ASSERT_ENABLED
+    if (!result.isEmpty() && result.isCell()) {
+      JSC::Integrity::auditCellFully(vm, result.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 `.trim(),
@@ -1152,6 +1178,12 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
       !!proto[name].this ? " encodedThisValue, " : ""
     } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, result);
 }
         `);
@@ -1171,6 +1203,12 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
       !!proto[name].this ? " encodedThisValue, " : ""
     } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, result);
 }
               `);
@@ -1186,10 +1224,9 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsCast<${className(typeName)}*>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    auto result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
+    bool result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
     } lexicalGlobalObject, encodedValue);
-
     RELEASE_AND_RETURN(throwScope, result);
 }
 `,
@@ -1223,7 +1260,19 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   auto& vm = JSC::getVM(lexicalGlobalObject);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
-  ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
+  ${
+    obj.forBind
+      ? `
+        JSC::JSBoundFunction* thisBoundFunction = jsDynamicCast<JSC::JSBoundFunction*>(callFrame->thisValue());
+        if (!thisBoundFunction) [[unlikely]] {
+          scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
+          return {};
+        }
+        JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
+        ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(thisBoundFunctionThisValue);
+    `
+      : `${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());`
+  }
 
   if (!thisObject) [[unlikely]] {
       ${
@@ -1269,6 +1318,13 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
         : std::optional<JSC::JSType>(std::nullopt);
     }`
     }
+
+#if ASSERT_ENABLED
+    JSValue decodedValue = JSValue::decode(result);
+    if (!decodedValue.isEmpty() && decodedValue.isCell()) {
+      JSC::Integrity::auditCellFully(vm, decodedValue.asCell());
+    }
+#endif
 
     return result;
 #endif
@@ -1423,7 +1479,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         static size_t memoryCost(void* ptr);
 
         void* m_ctx { nullptr };
-
 
         ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
             : Base(vm, structure)
@@ -1671,7 +1726,6 @@ void ${name}::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
-
 ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx);
   ptr->finishCreation(vm);
@@ -1758,7 +1812,7 @@ ${
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, globalObject->objectPrototype());
+    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.forBind ? "globalObject->functionPrototype()" : "globalObject->objectPrototype()"});
     structure->setMayBePrototype(true);
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }
@@ -2181,7 +2235,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("structuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
 
       output += `
-      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
+      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
         if (comptime Environment.enable_logs) log_zig_structured_clone_deserialize("${typeName}");
         return @call(.always_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end} });
       }
@@ -2385,6 +2439,9 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #define JSC_CALLCONV "C" SYSV_ABI
 #endif
 
+#if ASSERT_ENABLED
+#include <JavaScriptCore/IntegrityInlines.h>
+#endif
 
 `;
 
@@ -2495,7 +2552,7 @@ const jsc = bun.jsc;
 const Classes = jsc.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
-const zig = bun.Output.scoped(.zig, true);
+const zig = bun.Output.scoped(.zig, .hidden);
 
 const wrapHostFunction = bun.gen_classes_lib.wrapHostFunction;
 const wrapMethod = bun.gen_classes_lib.wrapMethod;
@@ -2567,10 +2624,13 @@ class StructuredCloneableSerialize {
     CppStructuredCloneableSerializeFunction cppWriteBytes;
     ZigStructuredCloneableSerializeFunction zigFunction;
 
-    uint8_t tag;
+    uint8_t tag = 0;
 
     // the type from zig
-    void* impl;
+    void* impl = nullptr;
+
+    bool isForTransfer = false;
+    bool isForStorage = false;
 
     static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
     void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
@@ -2581,7 +2641,7 @@ class StructuredCloneableSerialize {
 
 class StructuredCloneableDeserialize {
   public:
-    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);
+    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*&, const uint8_t*);
 };
 
 }
@@ -2601,7 +2661,7 @@ function writeCppSerializers() {
       return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
         klass.name,
         "onStructuredCloneSerialize",
-      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped() };
+      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped(), .isForTransfer = ${!!klass.structuredClone.transferable}, .isForStorage = ${!!klass.structuredClone.storable} };
     }
     `;
   }
@@ -2609,7 +2669,7 @@ function writeCppSerializers() {
   function fromTagDeserializeForEachClass(klass) {
     return `
     if (tag == ${klass.structuredClone.tag}) {
-      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, ptr, end);
+      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, (uint8_t**)&ptr, end);
     }
     `;
   }
@@ -2623,7 +2683,7 @@ function writeCppSerializers() {
   `;
 
   output += `
-  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t* ptr, const uint8_t* end)
+  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t*& ptr, const uint8_t* end)
   {
     ${structuredClonable.map(fromTagDeserializeForEachClass).join("\n").trim()}
     return std::nullopt;

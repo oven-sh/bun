@@ -1512,11 +1512,13 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
 }
 
 fn generateWorkerBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u8 {
-    assert(route_bundle.server_state == .loaded);
     assert(route_bundle.data == .worker);
 
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
+
+    // Check state inside lock to avoid race condition
+    assert(route_bundle.server_state == .loaded);
 
     const worker = &route_bundle.data.worker;
 
@@ -3278,8 +3280,17 @@ fn tryServeWorker(dev: *DevServer, url: []const u8, resp: AnyResponse) bool {
         RequestEnsureRouteBundledCtx,
         &ctx,
     ) catch |err| switch (err) {
-        error.JSError => dev.vm.global.reportActiveExceptionAsUnhandled(err),
-        error.OutOfMemory => bun.outOfMemory(),
+        error.JSError => {
+            dev.vm.global.reportActiveExceptionAsUnhandled(err);
+            resp.writeStatus("500 Internal Server Error");
+            resp.end("Worker bundle failed to load", false);
+            return true;
+        },
+        error.OutOfMemory => {
+            resp.writeStatus("500 Internal Server Error");
+            resp.end("Out of memory", false);
+            bun.outOfMemory();
+        },
     };
 
     return true;
@@ -3430,13 +3441,13 @@ pub fn getOrCreateWorkerBundle(
     source_index: bun.ast.Index,
     worker_path: []const u8,
 ) !RouteBundle.Index {
-    // Check if we already have a bundle for this worker
+    dev.graph_safety_lock.lock();
+    defer dev.graph_safety_lock.unlock();
+
+    // Check if we already have a bundle for this worker (inside lock to avoid TOCTOU)
     if (dev.worker_lookup.get(source_index)) |bundle_index| {
         return bundle_index;
     }
-
-    dev.graph_safety_lock.lock();
-    defer dev.graph_safety_lock.unlock();
 
     const bundle_index = RouteBundle.Index.init(@intCast(dev.route_bundles.items.len));
 
@@ -3444,14 +3455,14 @@ pub fn getOrCreateWorkerBundle(
     const incremental_graph_index = try dev.server_graph.insertStaleExtra(worker_path, false, true);
 
     try dev.route_bundles.ensureUnusedCapacity(dev.allocator(), 1);
-    const worker_path_owned = try dev.allocator().dupe(u8, worker_path);
-    errdefer dev.allocator().free(worker_path_owned);
+    var worker_path_owned: ?[]u8 = try dev.allocator().dupe(u8, worker_path);
+    errdefer if (worker_path_owned) |path| dev.allocator().free(path);
 
     dev.route_bundles.appendAssumeCapacity(.{
         .data = .{ .worker = .{
             .bundled_file = incremental_graph_index,
             .source_index = source_index,
-            .worker_path = worker_path_owned,
+            .worker_path = worker_path_owned.?,
             .cached_bundle = null,
         } },
         .client_script_generation = std.crypto.random.int(u32),
@@ -3461,7 +3472,10 @@ pub fn getOrCreateWorkerBundle(
     });
 
     try dev.worker_lookup.put(dev.allocator(), source_index, bundle_index);
-    try dev.worker_path_lookup.put(dev.allocator(), worker_path_owned, bundle_index);
+    try dev.worker_path_lookup.put(dev.allocator(), worker_path_owned.?, bundle_index);
+
+    // Transfer ownership - don't free on error after this point
+    worker_path_owned = null;
     return bundle_index;
 }
 

@@ -800,4 +800,3 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
     return functionName;
 }
 }
-

@@ -68,7 +68,7 @@ const { URL } = globalThis;
 class DirectStreamSource {
   /**
    * @param {Array} bodyChunks - Shared array of buffered chunks to write
-   * @param {Map} chunkCallbacks - Shared map of chunks to their write callbacks
+   * @param {Array} chunkCallbacks - Shared array of callbacks in order for each chunk write
    * @param {Function} emitDrain - Callback to emit 'drain' event
    * @param {Function} getFinished - Callback to check if request is finished
    * @param {Function} getNeedDrain - Callback to get needDrain flag state
@@ -124,10 +124,8 @@ class DirectStreamSource {
         // Write any queued chunks
         while (this.bodyChunks.length > 0) {
           const chunk = this.bodyChunks.shift();
-          const callback = this.chunkCallbacks.get(chunk);
-          if (callback) {
-            this.chunkCallbacks.delete(chunk);
-          }
+          // Shift the callback to maintain lockstep order with bodyChunks
+          const callback = this.chunkCallbacks.shift();
 
           const result = controller.write(chunk);
 
@@ -276,13 +274,12 @@ function ClientRequest(input, options, cb) {
   let writeCount = 0;
   let streamSource = null;
   this._needDrain = false;
-  const chunkCallbacks = new Map(); // Track callbacks for each chunk
+  const chunkCallbacks = []; // Track callbacks in order for each chunk write
 
   const pushChunk = (chunk, callback) => {
     this[kBodyChunks].push(chunk);
-    if (callback) {
-      chunkCallbacks.set(chunk, callback);
-    }
+    // Push callback to maintain order with bodyChunks (use null if no callback)
+    chunkCallbacks.push(callback || null);
     // Start fetch on first write in duplex mode
     if (writeCount >= 1 && !fetching) {
       startFetch();

@@ -1500,7 +1500,7 @@ pub const PackageManifest = struct {
         packages: []const PackageVersion,
         group: Semver.Query.Group,
         group_buf: string,
-        minimum_release_age_ms: ?f64,
+        minimum_release_age_ms: f64,
         newest_filtered: *?Semver.Version,
     ) ?FindVersionResult {
         var prev_package_blocked_from_age: ?*const PackageVersion = null;
@@ -1508,10 +1508,7 @@ pub const PackageManifest = struct {
 
         const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
-        const stability_window_ms: f64 = if (minimum_release_age_ms) |min_age_ms|
-            @min(min_age_ms, seven_days_ms)
-        else
-            0;
+        const stability_window_ms: f64 = @min(minimum_release_age_ms, seven_days_ms);
 
         var i = versions.len;
         while (i > 0) {
@@ -1519,48 +1516,39 @@ pub const PackageManifest = struct {
             const version = versions[i];
             if (group.satisfies(version, group_buf, this.string_buf)) {
                 const package = &packages[i];
-                if (minimum_release_age_ms) |min_age_ms| {
-                    if (isPackageVersionTooRecent(package, min_age_ms)) {
-                        if (newest_filtered.* == null) newest_filtered.* = version;
-                        prev_package_blocked_from_age = package;
-                    }
-                    // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
-                    else if (prev_package_blocked_from_age) |prev_package| {
-                        // only try to go backwards for a max of 7 days on top of existing minimum age
-                        if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
-                            if (best_version == null) {
-                                best_version = .{
-                                    .version = version,
-                                    .package = package,
-                                };
-                            }
-                            break;
-                        }
-
-                        const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
-                        if (is_stable) {
+                if (isPackageVersionTooRecent(package, minimum_release_age_ms)) {
+                    if (newest_filtered.* == null) newest_filtered.* = version;
+                    prev_package_blocked_from_age = package;
+                }
+                // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
+                else if (prev_package_blocked_from_age) |prev_package| {
+                    // only try to go backwards for a max of 7 days on top of existing minimum age
+                    if (package.publish_timestamp_ms < current_timestamp_ms - (minimum_release_age_ms + seven_days_ms)) {
+                        if (best_version == null) {
                             best_version = .{
                                 .version = version,
                                 .package = package,
                             };
-                            break;
-                        } else {
-                            if (best_version == null) {
-                                best_version = .{
-                                    .version = version,
-                                    .package = package,
-                                };
-                            }
-                            prev_package_blocked_from_age = package;
-                            continue;
                         }
+                        break;
+                    }
+
+                    const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
+                    if (is_stable) {
+                        best_version = .{
+                            .version = version,
+                            .package = package,
+                        };
+                        break;
                     } else {
-                        return .{
-                            .found = .{
+                        if (best_version == null) {
+                            best_version = .{
                                 .version = version,
                                 .package = package,
-                            },
-                        };
+                            };
+                        }
+                        prev_package_blocked_from_age = package;
+                        continue;
                     }
                 } else {
                     return .{
@@ -1723,18 +1711,21 @@ pub const PackageManifest = struct {
         if (minimum_release_age_ms != null) {
             bun.debugAssert(this.pkg.has_extended_manifest);
         }
+        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
+        const min_age_ms = min_age_gate_ms orelse {
+            const result = this.findBestVersion(group, group_buf);
+            if (result) |r| return .{ .found = r };
+            return .{ .err = .not_found };
+        };
 
         const left = group.head.head.range.left;
         var newest_filtered: ?Semver.Version = null;
-        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
 
         if (left.op == .eql) {
             const result = this.findByVersion(left.version);
             if (result) |r| {
-                if (min_age_gate_ms) |min_age_ms| {
-                    if (isPackageVersionTooRecent(r.package, min_age_ms)) {
-                        return .{ .err = .too_recent };
-                    }
+                if (isPackageVersionTooRecent(r.package, min_age_ms)) {
+                    return .{ .err = .too_recent };
                 }
                 return .{ .found = r };
             }
@@ -1743,10 +1734,8 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (min_age_gate_ms) |min_age_ms| {
-                    if (isPackageVersionTooRecent(result.package, min_age_ms)) {
-                        newest_filtered = result.version;
-                    }
+                if (isPackageVersionTooRecent(result.package, min_age_ms)) {
+                    newest_filtered = result.version;
                 }
                 if (newest_filtered == null) {
                     if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
@@ -1765,7 +1754,7 @@ pub const PackageManifest = struct {
             this.pkg.releases.values.get(this.package_versions),
             group,
             group_buf,
-            min_age_gate_ms,
+            min_age_ms,
             &newest_filtered,
         )) |result| {
             return result;
@@ -1777,7 +1766,7 @@ pub const PackageManifest = struct {
                 this.pkg.prereleases.values.get(this.package_versions),
                 group,
                 group_buf,
-                min_age_gate_ms,
+                min_age_ms,
                 &newest_filtered,
             )) |result| {
                 return result;

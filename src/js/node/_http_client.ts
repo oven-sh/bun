@@ -327,57 +327,84 @@ function ClientRequest(input, options, cb) {
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
         } else if (isDuplex) {
+          let pulling = false;
+          let pullAgain = false;
+          let streamController;
+
           fetchOptions.body = new ReadableStream({
             type: "direct",
             async pull(controller) {
-              // Write any queued chunks
-              while (self[kBodyChunks]?.length > 0) {
-                const chunk = self[kBodyChunks].shift();
-                const result = controller.write(chunk);
+              streamController = controller;
 
-                // If write returns a promise, it means there's backpressure
-                if (result instanceof Promise) {
-                  await result;
-                }
+              // If already pulling, mark that we need to pull again
+              if (pulling) {
+                pullAgain = true;
+                return;
               }
 
-              if (self[kBodyChunks]?.length === 0) {
-                self.emit("drain");
-              }
+              pulling = true;
 
-              // Wait for more data or finish signal
-              while (!self.finished) {
-                const chunk = await new Promise(resolve => {
-                  resolveNextChunk = end => {
-                    resolveNextChunk = undefined;
-                    if (end) {
-                      resolve(undefined);
-                    } else {
-                      resolve(self[kBodyChunks].shift());
+              try {
+                do {
+                  pullAgain = false;
+
+                  // Write any queued chunks
+                  while (self[kBodyChunks]?.length > 0) {
+                    const chunk = self[kBodyChunks].shift();
+                    const result = controller.write(chunk);
+
+                    // If write returns a promise, it means there's backpressure
+                    if (result instanceof Promise) {
+                      await result;
                     }
-                  };
-                });
+                  }
 
-                if (chunk === undefined) {
-                  // Stream is finished
-                  break;
-                }
+                  if (self[kBodyChunks]?.length === 0) {
+                    self.emit("drain");
+                  }
 
-                const result = controller.write(chunk);
+                  // If stream is finished, close it
+                  if (self.finished) {
+                    controller.close();
+                    handleResponse?.();
+                    return;
+                  }
 
-                // Handle backpressure
-                if (result instanceof Promise) {
-                  await result;
-                }
+                  // If no more chunks and not finished, wait for next chunk
+                  if (self[kBodyChunks]?.length === 0 && !pullAgain) {
+                    const chunk = await new Promise(resolve => {
+                      resolveNextChunk = end => {
+                        resolveNextChunk = undefined;
+                        if (end) {
+                          resolve(undefined);
+                        } else {
+                          resolve(self[kBodyChunks].shift());
+                        }
+                      };
+                    });
 
-                if (self[kBodyChunks]?.length === 0) {
-                  self.emit("drain");
-                }
+                    if (chunk === undefined) {
+                      // Stream is finished
+                      controller.close();
+                      handleResponse?.();
+                      return;
+                    }
+
+                    const result = controller.write(chunk);
+
+                    // Handle backpressure
+                    if (result instanceof Promise) {
+                      await result;
+                    }
+
+                    if (self[kBodyChunks]?.length === 0) {
+                      self.emit("drain");
+                    }
+                  }
+                } while (pullAgain);
+              } finally {
+                pulling = false;
               }
-
-              // Close the stream when finished
-              controller.close();
-              handleResponse?.();
             },
           });
         }

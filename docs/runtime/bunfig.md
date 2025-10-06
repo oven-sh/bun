@@ -572,12 +572,12 @@ Valid values are:
 
 ### `install.minimumReleaseAge`
 
-Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+Configure a minimum age for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
 
 ```toml
 [install]
 # Only install package versions published at least 3 days ago
-minimumReleaseAge = 259200
+minimumReleaseAge = "3d"
 # These packages will bypass the 3-day minimum age requirement
 minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
 ```

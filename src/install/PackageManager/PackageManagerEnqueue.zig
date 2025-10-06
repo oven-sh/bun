@@ -591,17 +591,19 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                             err,
                                         );
                                     } else {
-                                        const age_gate_ms = this.options.minimum_release_age_ms orelse 0;
+                                        const age_gate = bun.handleOom(bun.api.ms.formatLong(this.allocator, this.options.minimum_release_age_ms orelse 0));
+                                        defer this.allocator.free(age_gate);
+
                                         if (version.tag == .dist_tag) {
                                             this.log.addErrorFmt(
                                                 null,
                                                 logger.Loc.Empty,
                                                 this.allocator,
-                                                "Package \"{s}\" with tag \"{s}\" not found<r> <d>(all versions blocked by minimum-release-age: {d} seconds)<r>",
+                                                "Package \"{s}\" with tag \"{s}\" not found<r> <d>(all versions blocked by minimum-release-age: {s})<r>",
                                                 .{
                                                     this.lockfile.str(&name),
                                                     this.lockfile.str(&version.value.dist_tag.tag),
-                                                    age_gate_ms / std.time.ms_per_s,
+                                                    age_gate,
                                                 },
                                             ) catch unreachable;
                                         } else {
@@ -609,11 +611,11 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                 null,
                                                 logger.Loc.Empty,
                                                 this.allocator,
-                                                "No version matching \"{s}\" found for specifier \"{s}\"<r> <d>(blocked by minimum-release-age: {d} seconds)<r>",
+                                                "No version matching \"{s}\" found for specifier \"{s}\"<r> <d>(blocked by minimum-release-age: {s})<r>",
                                                 .{
                                                     this.lockfile.str(&name),
                                                     this.lockfile.str(&version.literal),
-                                                    age_gate_ms / std.time.ms_per_s,
+                                                    age_gate,
                                                 },
                                             ) catch unreachable;
                                         }
@@ -1637,26 +1639,28 @@ fn getOrPutResolvedPackage(
                     const package_name = this.lockfile.str(&name);
                     if (this.options.log_level.isVerbose()) {
                         if (filtered.newest_filtered) |newest| {
-                            const min_age_seconds = (this.options.minimum_release_age_ms orelse 0) / std.time.ms_per_s;
+                            const min_age_gate = bun.handleOom(bun.api.ms.formatLong(this.allocator, this.options.minimum_release_age_ms orelse 0));
+                            defer this.allocator.free(min_age_gate);
+
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
-                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-second filter", .{
+                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {s} filter", .{
                                         package_name,
                                         tag_str,
                                         filtered.result.version.fmt(manifest.string_buf),
                                         newest.fmt(manifest.string_buf),
-                                        min_age_seconds,
+                                        min_age_gate,
                                     });
                                 },
                                 .npm => {
                                     const version_str = version.value.npm.version.fmt(manifest.string_buf);
-                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {d}-second filter", .{
+                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {s} filter", .{
                                         package_name,
                                         version_str,
                                         filtered.result.version.fmt(manifest.string_buf),
                                         newest.fmt(manifest.string_buf),
-                                        min_age_seconds,
+                                        min_age_gate,
                                     });
                                 },
                                 else => unreachable,

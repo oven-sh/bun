@@ -675,8 +675,23 @@ pub const Bunfig = struct {
                                 }
                                 install.minimum_release_age_ms = days.value * std.time.ms_per_s;
                             },
+                            .e_string => |str| {
+                                const str_value = str.string(allocator) catch {
+                                    try this.addError(min_age.loc, "Failed to parse minimumReleaseAge");
+                                    return;
+                                };
+                                if (bun.api.ms.parse(str_value)) |ms| {
+                                    if (ms < 0) {
+                                        try this.addError(min_age.loc, "Expected positive age (e.g 3d, 24h) for minimumReleaseAge");
+                                        return;
+                                    }
+                                    install.minimum_release_age_ms = ms;
+                                } else {
+                                    try this.addError(min_age.loc, "Expected positive age (e.g 3d, 24h) for minimumReleaseAge");
+                                }
+                            },
                             else => {
-                                try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");
+                                try this.addError(min_age.loc, "Expected positive age (e.g 3d, 24h) for minimumReleaseAge");
                             },
                         }
                     }

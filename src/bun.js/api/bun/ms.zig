@@ -174,6 +174,57 @@ pub fn format(allocator: std.mem.Allocator, ms: f64, long: bool) ![]u8 {
     return std.fmt.allocPrint(allocator, "{d}ms", .{ms_int});
 }
 
+// Same as other format ms, but this is long and doesn't round
+// `ms` package doesn't have this, but it's more useful for some internal bun things
+pub fn formatLong(allocator: std.mem.Allocator, ms: f64) ![]u8 {
+    const abs_ms = @abs(ms);
+
+    // Years
+    if (abs_ms >= ms_per_year) {
+        const years = abs_ms / ms_per_year;
+        return std.fmt.allocPrint(allocator, "{d} year{s}", .{ years, if (years != 1) "s" else "" });
+    }
+
+    // Months
+    if (abs_ms >= ms_per_month) {
+        const months = abs_ms / ms_per_month;
+        return std.fmt.allocPrint(allocator, "{d} month{s}", .{ months, if (months != 1) "s" else "" });
+    }
+
+    // Weeks
+    if (abs_ms >= std.time.ms_per_week) {
+        const weeks = abs_ms / std.time.ms_per_week;
+        return std.fmt.allocPrint(allocator, "{d} week{s}", .{ weeks, if (weeks != 1) "s" else "" });
+    }
+
+    // Days
+    if (abs_ms >= std.time.ms_per_day) {
+        const days = abs_ms / std.time.ms_per_day;
+        return std.fmt.allocPrint(allocator, "{d} day{s}", .{ days, if (days != 1) "s" else "" });
+    }
+
+    // Hours
+    if (abs_ms >= std.time.ms_per_hour) {
+        const hours = abs_ms / std.time.ms_per_hour;
+        return std.fmt.allocPrint(allocator, "{d} hour{s}", .{ hours, if (hours != 1) "s" else "" });
+    }
+
+    // Minutes
+    if (abs_ms >= std.time.ms_per_min) {
+        const minutes = abs_ms / std.time.ms_per_min;
+        return std.fmt.allocPrint(allocator, "{d} minute{s}", .{ minutes, if (minutes != 1) "s" else "" });
+    }
+
+    // Seconds
+    if (abs_ms >= std.time.ms_per_s) {
+        const seconds = abs_ms / std.time.ms_per_s;
+        return std.fmt.allocPrint(allocator, "{d} second{s}", .{ seconds, if (seconds != 1) "s" else "" });
+    }
+
+    // Milliseconds
+    return std.fmt.allocPrint(allocator, "{d} ms", .{abs_ms});
+}
+
 /// JavaScript function: Bun.ms(value, options?)
 pub fn jsFunction(
     globalThis: *JSGlobalObject,

@@ -327,34 +327,59 @@ function ClientRequest(input, options, cb) {
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
         } else if (isDuplex) {
-          fetchOptions.body = async function* () {
-            while (self[kBodyChunks]?.length > 0) {
-              yield self[kBodyChunks].shift();
-            }
+          fetchOptions.body = new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              // Write any queued chunks
+              while (self[kBodyChunks]?.length > 0) {
+                const chunk = self[kBodyChunks].shift();
+                const result = controller.write(chunk);
 
-            if (self[kBodyChunks]?.length === 0) {
-              self.emit("drain");
-            }
-
-            while (!self.finished) {
-              yield await new Promise(resolve => {
-                resolveNextChunk = end => {
-                  resolveNextChunk = undefined;
-                  if (end) {
-                    resolve(undefined);
-                  } else {
-                    resolve(self[kBodyChunks].shift());
-                  }
-                };
-              });
+                // If write returns a promise, it means there's backpressure
+                if (result instanceof Promise) {
+                  await result;
+                }
+              }
 
               if (self[kBodyChunks]?.length === 0) {
                 self.emit("drain");
               }
-            }
 
-            handleResponse?.();
-          };
+              // Wait for more data or finish signal
+              while (!self.finished) {
+                const chunk = await new Promise(resolve => {
+                  resolveNextChunk = end => {
+                    resolveNextChunk = undefined;
+                    if (end) {
+                      resolve(undefined);
+                    } else {
+                      resolve(self[kBodyChunks].shift());
+                    }
+                  };
+                });
+
+                if (chunk === undefined) {
+                  // Stream is finished
+                  break;
+                }
+
+                const result = controller.write(chunk);
+
+                // Handle backpressure
+                if (result instanceof Promise) {
+                  await result;
+                }
+
+                if (self[kBodyChunks]?.length === 0) {
+                  self.emit("drain");
+                }
+              }
+
+              // Close the stream when finished
+              controller.close();
+              handleResponse?.();
+            },
+          });
         }
       }
 

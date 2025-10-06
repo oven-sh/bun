@@ -429,6 +429,8 @@ pub const BuildCommand = struct {
                     ctx.bundler_options.windows,
                     ctx.bundler_options.compile_exec_argv orelse "",
                     null,
+                    this_transpiler.options.env.behavior,
+                    this_transpiler.options.env.prefix,
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);

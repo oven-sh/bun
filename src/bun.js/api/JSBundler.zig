@@ -57,6 +57,8 @@ pub const JSBundler = struct {
             windows_description: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             windows_copyright: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            env_behavior: api.DotEnvBehavior = .disable,
+            env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{
@@ -69,6 +71,7 @@ pub const JSBundler = struct {
                     .windows_description = OwnedString.initEmpty(allocator),
                     .windows_copyright = OwnedString.initEmpty(allocator),
                     .outfile = OwnedString.initEmpty(allocator),
+                    .env_prefix = OwnedString.initEmpty(allocator),
                     .compile_target = compile_target orelse .{},
                 };
                 errdefer this.deinit();
@@ -177,6 +180,33 @@ pub const JSBundler = struct {
                     try this.outfile.appendSliceExact(slice.slice());
                 }
 
+                if (try object.getTruthy(globalThis, "env")) |env| {
+                    if (env.isString()) {
+                        var slice = try env.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        const env_str = slice.slice();
+
+                        if (bun.strings.indexOfChar(env_str, '*')) |asterisk| {
+                            if (asterisk == 0) {
+                                this.env_behavior = .load_all;
+                            } else {
+                                this.env_behavior = .prefix;
+                                try this.env_prefix.appendSliceExact(env_str[0..asterisk]);
+                            }
+                        } else if (bun.strings.eqlComptime(env_str, "inline") or bun.strings.eqlComptime(env_str, "1")) {
+                            this.env_behavior = .load_all;
+                        } else if (bun.strings.eqlComptime(env_str, "disable") or bun.strings.eqlComptime(env_str, "0")) {
+                            this.env_behavior = .disable;
+                        } else {
+                            return globalThis.throwInvalidArguments("Expected env to be 'inline', 'disable', or a prefix with a '*' character", .{});
+                        }
+                    } else if (env.isBoolean()) {
+                        this.env_behavior = if (env.toBoolean()) .load_all else .disable;
+                    } else {
+                        return globalThis.throwInvalidArguments("Expected env to be a boolean or string", .{});
+                    }
+                }
+
                 return this;
             }
 
@@ -190,6 +220,7 @@ pub const JSBundler = struct {
                 this.windows_description.deinit();
                 this.windows_copyright.deinit();
                 this.outfile.deinit();
+                this.env_prefix.deinit();
             }
         };
 
@@ -689,6 +720,13 @@ pub const JSBundler = struct {
                 const define_values = compile.compile_target.defineValues();
                 for (define_keys, define_values) |key, value| {
                     try this.define.insert(key, value);
+                }
+
+                // Use compile-specific env settings if specified, otherwise use top-level env settings
+                this.env_behavior = compile.env_behavior;
+                if (!compile.env_prefix.isEmpty()) {
+                    this.env_prefix.deinit();
+                    this.env_prefix = try compile.env_prefix.clone();
                 }
 
                 const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");

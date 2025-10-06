@@ -81,11 +81,15 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.options.env.behavior = .load_all_without_inlining;
+        b.options.env.behavior = graph.env_config.dotenv;
+        b.options.env.prefix = graph.env_config.prefix;
 
         b.configureDefines() catch {
             failWithBuildError(vm);
         };
+
+        // Load .env files based on the configured behavior
+        b.runEnvLoader(false) catch {};
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 

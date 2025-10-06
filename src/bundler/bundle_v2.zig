@@ -2043,6 +2043,8 @@ pub const BundleV2 = struct {
                     compile_options.executable_path.slice()
                 else
                     null,
+                compile_options.env_behavior,
+                compile_options.env_prefix.slice(),
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.fail(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}", .{@errorName(err)})));
             };

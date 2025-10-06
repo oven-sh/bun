@@ -7,6 +7,11 @@ pub const StandaloneModuleGraph = struct {
     files: bun.StringArrayHashMap(File),
     entry_point_id: u32 = 0,
     compile_exec_argv: []const u8 = "",
+    env_config: api.LoadedEnvConfig = .{
+        .dotenv = .disable,
+        .prefix = "",
+        .defaults = .{ .keys = &.{}, .values = &.{} },
+    },
 
     // We never want to hit the filesystem for these files
     // We use the `/$bunfs/` prefix to indicate that it's a virtual path
@@ -288,7 +293,11 @@ pub const StandaloneModuleGraph = struct {
         byte_count: usize = 0,
         modules_ptr: bun.StringPointer = .{},
         entry_point_id: u32 = 0,
+        _padding1: u32 = 0, // Ensure compile_exec_argv_ptr is 8-byte aligned
         compile_exec_argv_ptr: bun.StringPointer = .{},
+        dotenv_behavior: api.DotEnvBehavior = .disable,
+        _padding2: u32 = 0, // Ensure dotenv_prefix_ptr is 8-byte aligned
+        dotenv_prefix_ptr: bun.StringPointer = .{},
     };
 
     const trailer = "\n---- Bun! ----\n";
@@ -334,6 +343,11 @@ pub const StandaloneModuleGraph = struct {
             .files = modules,
             .entry_point_id = offsets.entry_point_id,
             .compile_exec_argv = sliceToZ(raw_bytes, offsets.compile_exec_argv_ptr),
+            .env_config = .{
+                .dotenv = offsets.dotenv_behavior,
+                .prefix = sliceToZ(raw_bytes, offsets.dotenv_prefix_ptr),
+                .defaults = .{ .keys = &.{}, .values = &.{} },
+            },
         };
     }
 
@@ -349,7 +363,7 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, dotenv_behavior: api.DotEnvBehavior, dotenv_prefix: []const u8) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -391,6 +405,7 @@ pub const StandaloneModuleGraph = struct {
         string_builder.cap += 16;
         string_builder.cap += @sizeOf(Offsets);
         string_builder.countZ(compile_exec_argv);
+        string_builder.countZ(dotenv_prefix);
 
         try string_builder.allocate(allocator);
 
@@ -497,6 +512,8 @@ pub const StandaloneModuleGraph = struct {
             .entry_point_id = @as(u32, @truncate(entry_point_id.?)),
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
             .compile_exec_argv_ptr = string_builder.appendCountZ(compile_exec_argv),
+            .dotenv_behavior = dotenv_behavior,
+            .dotenv_prefix_ptr = string_builder.appendCountZ(dotenv_prefix),
             .byte_count = string_builder.len,
         };
 
@@ -949,8 +966,10 @@ pub const StandaloneModuleGraph = struct {
         windows_options: bun.options.WindowsOptions,
         compile_exec_argv: []const u8,
         self_exe_path: ?[]const u8,
+        dotenv_behavior: api.DotEnvBehavior,
+        dotenv_prefix: []const u8,
     ) !CompileResult {
-        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv) catch |err| {
+        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, dotenv_behavior, dotenv_prefix) catch |err| {
             return CompileResult.fail(std.fmt.allocPrint(allocator, "failed to generate module graph bytes: {s}", .{@errorName(err)}) catch "failed to generate module graph bytes");
         };
         if (bytes.len == 0) return CompileResult.fail("no output files to bundle");
@@ -1527,3 +1546,4 @@ const macho = bun.macho;
 const pe = bun.pe;
 const strings = bun.strings;
 const Schema = bun.schema.api;
+const api = Schema;

@@ -33,6 +33,8 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/Strong.h>
+#include <variant>
+#include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
 #include <wtf/Gigacage.h>
@@ -57,6 +59,26 @@ class MemoryHandle;
 #endif
 
 namespace WebCore {
+
+class SimpleInMemoryPropertyTableEntry {
+public:
+    // Only:
+    // - String
+    // - Number
+    // - Boolean
+    // - Null
+    // - Undefined
+    using Value = std::variant<JSC::JSValue, WTF::String>;
+
+    WTF::String propertyName;
+    Value value;
+};
+
+enum class FastPath : uint8_t {
+    None,
+    String,
+    SimpleObject,
+};
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
 class DetachedOffscreenCanvas;
@@ -103,6 +125,9 @@ public:
 
     // Fast path for postMessage with pure strings
     static Ref<SerializedScriptValue> createStringFastPath(const String& string);
+
+    // Fast path for postMessage with simple objects
+    static Ref<SerializedScriptValue> createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object);
 
     static Ref<SerializedScriptValue> nullValue();
 
@@ -205,6 +230,7 @@ private:
 
     // Constructor for string fast path
     explicit SerializedScriptValue(const String& fastPathString);
+    explicit SerializedScriptValue(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object);
 
     size_t computeMemoryCost() const;
 
@@ -230,9 +256,10 @@ private:
 
     // Fast path for postMessage with pure strings - avoids serialization overhead
     String m_fastPathString;
-    bool m_isStringFastPath { false };
-
+    FastPath m_fastPath { FastPath::None };
     size_t m_memoryCost { 0 };
+
+    FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};
 };
 
 template<class Encoder>

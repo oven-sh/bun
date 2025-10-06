@@ -22,7 +22,7 @@ describe("SQLite URL Parsing Matrix", () => {
     { input: "test@symbol.db", expected: "test@symbol.db", name: "@ in filename" },
     { input: "test&amp.db", expected: "test&amp.db", name: "ampersand in filename" },
     { input: "test%20encoded.db", expected: "test%20encoded.db", name: "percent encoding" },
-    { input: "", expected: "", name: "empty path" },
+    { input: "", expected: ":memory:", name: "empty path" },
   ] as const;
 
   const testMatrix = protocols
@@ -45,16 +45,15 @@ describe("SQLite URL Parsing Matrix", () => {
     });
 
   describe("Protocol × Path matrix", () => {
-    test.each(testMatrix)("$protocolName with $pathName: $url", testCase => {
+    test.each(testMatrix)("$protocolName with $pathName: $url", async testCase => {
       if (testCase.needsAdapter) {
         // Test with explicit adapter for no-protocol cases
-        const sql = new SQL(testCase.url, { adapter: "sqlite" });
+        await using sql = new SQL(testCase.url, { adapter: "sqlite" });
         expect(sql.options.adapter).toBe("sqlite");
         expect(sql.options.filename).toBe(testCase.expected || ":memory:");
-        sql.close();
       } else {
         // Test without adapter (should auto-detect SQLite)
-        const sql = new SQL(testCase.url);
+        await using sql = new SQL(testCase.url);
         expect(sql.options.adapter).toBe("sqlite");
 
         if (testCase.protocolName === "file://") {
@@ -67,11 +66,14 @@ describe("SQLite URL Parsing Matrix", () => {
             // Not a valid file:// URL, so implementation just strips the prefix
             expected = testCase.url.slice(7); // "file://".length
           }
+          // Empty filename should default to :memory:
+          if (expected === "") {
+            expected = ":memory:";
+          }
           expect(filename).toBe(expected);
         } else {
           expect(sql.options.filename).toBe(testCase.expected);
         }
-        sql.close();
       }
     });
   });
@@ -97,8 +99,8 @@ describe("SQLite URL Parsing Matrix", () => {
       })),
     );
 
-    test.each(queryMatrix)("$base with $name", testCase => {
-      const sql = new SQL(testCase.url);
+    test.each(queryMatrix)("$base with $name", async testCase => {
+      await using sql = new SQL(testCase.url);
 
       expect(sql.options.adapter).toBe("sqlite");
       expect(sql.options.readonly).toBe(testCase.readonly!);
@@ -107,8 +109,6 @@ describe("SQLite URL Parsing Matrix", () => {
       if (!testCase.base.startsWith("file://")) {
         expect(sql.options.filename).toBe("test.db");
       }
-
-      sql.close();
     });
   });
 
@@ -139,8 +139,8 @@ describe("SQLite URL Parsing Matrix", () => {
       })),
     );
 
-    test.each(windowsMatrix)("Windows: $protocol with $pathName", testCase => {
-      const sql = new SQL(testCase.url);
+    test.each(windowsMatrix)("Windows: $protocol with $pathName", async testCase => {
+      await using sql = new SQL(testCase.url);
       expect(sql.options.adapter).toBe("sqlite");
 
       if (testCase.protocol.startsWith("file://")) {
@@ -155,8 +155,6 @@ describe("SQLite URL Parsing Matrix", () => {
       } else {
         expect(sql.options.filename).toBe(testCase.expected);
       }
-
-      sql.close();
     });
   });
 
@@ -181,8 +179,8 @@ describe("SQLite URL Parsing Matrix", () => {
       })),
     );
 
-    test.each(unixMatrix)("Unix: $protocol with $pathName", testCase => {
-      const sql = new SQL(testCase.url);
+    test.each(unixMatrix)("Unix: $protocol with $pathName", async testCase => {
+      await using sql = new SQL(testCase.url);
       expect(sql.options.adapter).toBe("sqlite");
 
       if (testCase.protocol === "file://") {
@@ -198,8 +196,6 @@ describe("SQLite URL Parsing Matrix", () => {
       } else {
         expect(sql.options.filename).toBe(testCase.expected);
       }
-
-      sql.close();
     });
   });
 
@@ -234,71 +230,62 @@ describe("SQLite URL Parsing Matrix", () => {
       },
     ]);
 
-    test.each(charMatrix)("$description", testCase => {
-      const sql = new SQL(testCase.url);
+    test.each(charMatrix)("$description", async testCase => {
+      await using sql = new SQL(testCase.url);
       expect(sql.options.adapter).toBe("sqlite");
       expect(sql.options.filename).toBe(testCase.expected);
-      sql.close();
     });
   });
 
   describe("import.meta.resolve() compatibility", () => {
-    test("handles URLs from import.meta.resolve()", () => {
+    test("handles URLs from import.meta.resolve()", async () => {
       // Use import.meta.resolve() to get the actual format for the current platform
       const resolvedUrl = import.meta.resolve("./test.db");
 
-      const sql = new SQL(resolvedUrl);
+      await using sql = new SQL(resolvedUrl);
       expect(sql.options.adapter).toBe("sqlite");
 
       const filename = sql.options.filename;
       const expected = Bun.fileURLToPath(resolvedUrl);
       expect(filename).toBe(expected);
-
-      sql.close();
     });
   });
 
   describe("Edge cases", () => {
-    test("handles very long paths", () => {
+    test("handles very long paths", async () => {
       const longFilename = "a".repeat(255) + ".db";
       const longPath = `/tmp/${longFilename}`;
-      const sql = new SQL(`sqlite://${longPath}`);
+      await using sql = new SQL(`sqlite://${longPath}`);
       expect(sql.options.filename).toBe(longPath);
-      sql.close();
     });
 
-    test("handles database with .db in middle of name", () => {
+    test("handles database with .db in middle of name", async () => {
       // Use a path that won't create a file in the project root
       const path = "/tmp/test.db.backup";
-      const sql = new SQL(`sqlite://${path}`);
+      await using sql = new SQL(`sqlite://${path}`);
       expect(sql.options.filename).toBe(path);
-      sql.close();
     });
 
-    test("handles path with multiple dots", () => {
+    test("handles path with multiple dots", async () => {
       // Use a path that won't create a file in the project root
       const path = "/tmp/test...db";
-      const sql = new SQL(`sqlite://${path}`);
+      await using sql = new SQL(`sqlite://${path}`);
       expect(sql.options.filename).toBe(path);
-      sql.close();
     });
 
-    test("empty string with adapter defaults to :memory:", () => {
-      const sql = new SQL("", { adapter: "sqlite" });
+    test("empty string with adapter defaults to :memory:", async () => {
+      await using sql = new SQL("", { adapter: "sqlite" });
       expect(sql.options.filename).toBe(":memory:");
-      sql.close();
     });
 
-    test("null with adapter defaults to :memory:", () => {
-      const sql = new SQL(null as never, { adapter: "sqlite" });
+    test("null with adapter defaults to :memory:", async () => {
+      await using sql = new SQL(null as never, { adapter: "sqlite" });
       expect(sql.options.filename).toBe(":memory:");
-      sql.close();
     });
 
-    test("undefined with adapter defaults to :memory:", () => {
-      const sql = new SQL(undefined as never, { adapter: "sqlite" });
+    test("undefined with adapter defaults to :memory:", async () => {
+      await using sql = new SQL(undefined as never, { adapter: "sqlite" });
       expect(sql.options.filename).toBe(":memory:");
-      sql.close();
     });
   });
 
@@ -316,10 +303,9 @@ describe("SQLite URL Parsing Matrix", () => {
       "postgresql://user:pass@localhost/db",
     ];
 
-    test.each(nonSqliteUrls)("treats %s as postgres", url => {
-      const sql = new SQL(url);
+    test.each(nonSqliteUrls)("treats %s as postgres", async url => {
+      await using sql = new SQL(url);
       expect(sql.options.adapter).toBe("postgres");
-      sql.close();
     });
   });
 });

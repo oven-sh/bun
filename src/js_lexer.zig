@@ -882,7 +882,7 @@ fn NewLexer_(
                     lexer.step();
 
                     if (lexer.code_point != 'u') {
-                        try lexer.syntaxError();
+                        try lexer.addSyntaxError(lexer.loc().toUsize(), "{any}", .{InvalidEscapeSequenceFormatter{ .code_point = lexer.code_point }});
                     }
                     lexer.step();
                     if (lexer.code_point == '{') {
@@ -2675,7 +2675,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.initCopy(lexer.allocator, text) catch bun.outOfMemory();
+            var bytes = bun.handleOom(MutableString.initCopy(lexer.allocator, text));
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';
@@ -3366,6 +3366,20 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     return bun.highway.indexOfInterestingCharacterInStringLiteral(text_, quote);
 }
+
+const InvalidEscapeSequenceFormatter = struct {
+    code_point: i32,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self.code_point) {
+            '"' => try writer.writeAll("Unexpected escaped double quote '\"'"),
+            '\'' => try writer.writeAll("Unexpected escaped single quote \"'\""),
+            '`' => try writer.writeAll("Unexpected escaped backtick '`'"),
+            '\\' => try writer.writeAll("Unexpected escaped backslash '\\'"),
+            else => try writer.writeAll("Unexpected escape sequence"),
+        }
+    }
+};
 
 const string = []const u8;
 

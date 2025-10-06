@@ -144,7 +144,7 @@ pub fn findImportedPartsInJSOrder(
                     v.c.graph.files.items(.entry_point_chunk_index)[source_index] = v.chunk_index;
                 }
 
-                v.files.append(source_index) catch bun.outOfMemory();
+                bun.handleOom(v.files.append(source_index));
 
                 // CommonJS files are all-or-nothing so all parts must be contiguous
                 if (!can_be_split) {
@@ -154,7 +154,7 @@ pub fn findImportedPartsInJSOrder(
                             .part_index_begin = 0,
                             .part_index_end = @as(u32, @truncate(parts.len)),
                         },
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             }
         }

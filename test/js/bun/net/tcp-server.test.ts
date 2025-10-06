@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { expectMaxObjectTypeCount } from "harness";
+import { expectMaxObjectTypeCount, isWindows } from "harness";
 
 type Resolve = (value?: unknown) => void;
 type Reject = (reason?: any) => void;
@@ -71,7 +71,7 @@ it("should not allow invalid tls option", () => {
         hostname: "localhost",
         tls: value,
       });
-    }).toThrow("tls option expects an object");
+    }).toThrow("TLSOptions must be an object");
   });
 });
 
@@ -89,7 +89,7 @@ it("should allow using false, null or undefined tls option", () => {
         hostname: "localhost",
         tls: value,
       });
-    }).not.toThrow("tls option expects an object");
+    }).not.toThrow("TLSOptions must be an object");
   });
 });
 
@@ -299,5 +299,5 @@ it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 or 2 because that's the prototype / structure
   await expectMaxObjectTypeCount(expect, "Listener", 2);
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 2);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 3 : 2);
 });

@@ -31,9 +31,6 @@
     macro(origin) \
     macro(s3) \
     macro(semver) \
-    macro(stderr) \
-    macro(stdin) \
-    macro(stdout) \
     macro(unsafe) \
     macro(valkey) \
 

@@ -200,7 +200,7 @@ pub const FFI = struct {
             }
             msg = msg[offset..];
 
-            this.deferred_errors.append(bun.default_allocator, bun.default_allocator.dupe(u8, msg) catch bun.outOfMemory()) catch bun.outOfMemory();
+            bun.handleOom(this.deferred_errors.append(bun.default_allocator, bun.handleOom(bun.default_allocator.dupe(u8, msg))));
         }
 
         const DeferredError = error{DeferredErrors};
@@ -456,7 +456,7 @@ pub const FFI = struct {
             for (this.symbols.map.keys(), this.symbols.map.values()) |symbol, *function| {
                 // FIXME: why are we duping here? can we at least use a stack
                 // fallback allocator?
-                const duped = bun.default_allocator.dupeZ(u8, symbol) catch bun.outOfMemory();
+                const duped = bun.handleOom(bun.default_allocator.dupeZ(u8, symbol));
                 defer bun.default_allocator.free(duped);
                 function.symbol_from_dynamic_library = state.getSymbol(duped) orelse {
                     return globalThis.throw("{} is missing from {s}. Was it included in the source code?", .{ bun.fmt.quote(symbol), this.source.first() });
@@ -529,7 +529,7 @@ pub const FFI = struct {
                 }
                 const str = try val.getZigString(globalThis);
                 if (str.isEmpty()) continue;
-                items.append(str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+                bun.handleOom(items.append(bun.handleOom(str.toOwnedSliceZ(bun.default_allocator))));
             }
 
             return .{ .items = items.items };
@@ -543,7 +543,7 @@ pub const FFI = struct {
             const str = try value.getZigString(globalThis);
             if (str.isEmpty()) return .{};
             var items = std.ArrayList([:0]const u8).init(bun.default_allocator);
-            items.append(str.toOwnedSliceZ(bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
+            bun.handleOom(items.append(bun.handleOom(str.toOwnedSliceZ(bun.default_allocator))));
             return .{ .items = items.items };
         }
 
@@ -607,7 +607,7 @@ pub const FFI = struct {
 
                 var flags = std.ArrayList(u8).init(allocator);
                 defer flags.deinit();
-                flags.appendSlice(CompileC.default_tcc_options) catch bun.outOfMemory();
+                bun.handleOom(flags.appendSlice(CompileC.default_tcc_options));
 
                 while (try iter.next()) |value| {
                     if (!value.isString()) {
@@ -616,10 +616,10 @@ pub const FFI = struct {
                     const slice = try value.toSlice(globalThis, allocator);
                     if (slice.len == 0) continue;
                     defer slice.deinit();
-                    flags.append(' ') catch bun.outOfMemory();
-                    flags.appendSlice(slice.slice()) catch bun.outOfMemory();
+                    bun.handleOom(flags.append(' '));
+                    bun.handleOom(flags.appendSlice(slice.slice()));
                 }
-                flags.append(0) catch bun.outOfMemory();
+                bun.handleOom(flags.append(0));
                 compile_c.flags = flags.items[0 .. flags.items.len - 1 :0];
                 flags = std.ArrayList(u8).init(allocator);
             } else {
@@ -629,7 +629,7 @@ pub const FFI = struct {
 
                 const str = try flags_value.getZigString(globalThis);
                 if (!str.isEmpty()) {
-                    compile_c.flags = str.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                    compile_c.flags = bun.handleOom(str.toOwnedSliceZ(allocator));
                 }
             }
         }
@@ -644,13 +644,13 @@ pub const FFI = struct {
                 var iter = try Iter.init(globalThis, define_obj);
                 defer iter.deinit();
                 while (try iter.next()) |entry| {
-                    const key = entry.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                    const key = bun.handleOom(entry.toOwnedSliceZ(allocator));
                     var owned_value: [:0]const u8 = "";
                     if (!iter.value.isUndefinedOrNull()) {
                         if (iter.value.isString()) {
                             const value = try iter.value.getZigString(globalThis);
                             if (value.len > 0) {
-                                owned_value = value.toOwnedSliceZ(allocator) catch bun.outOfMemory();
+                                owned_value = bun.handleOom(value.toOwnedSliceZ(allocator));
                             }
                         }
                     }
@@ -659,7 +659,7 @@ pub const FFI = struct {
                         return error.JSError;
                     }
 
-                    compile_c.define.append(allocator, .{ key, owned_value }) catch bun.outOfMemory();
+                    bun.handleOom(compile_c.define.append(allocator, .{ key, owned_value }));
                 }
             }
         }
@@ -705,10 +705,10 @@ pub const FFI = struct {
                     var combined = std.ArrayList(u8).init(bun.default_allocator);
                     defer combined.deinit();
                     var writer = combined.writer();
-                    writer.print("{d} errors while compiling {s}\n", .{ compile_c.deferred_errors.items.len, if (compile_c.current_file_for_errors.len > 0) compile_c.current_file_for_errors else compile_c.source.first() }) catch bun.outOfMemory();
+                    bun.handleOom(writer.print("{d} errors while compiling {s}\n", .{ compile_c.deferred_errors.items.len, if (compile_c.current_file_for_errors.len > 0) compile_c.current_file_for_errors else compile_c.source.first() }));
 
                     for (compile_c.deferred_errors.items) |deferred_error| {
-                        writer.print("{s}\n", .{deferred_error}) catch bun.outOfMemory();
+                        bun.handleOom(writer.print("{s}\n", .{deferred_error}));
                     }
 
                     return globalThis.throw("{s}", .{combined.items});
@@ -766,7 +766,7 @@ pub const FFI = struct {
         }
 
         // TODO: pub const new = bun.TrivialNew(FFI)
-        var lib = bun.default_allocator.create(FFI) catch bun.outOfMemory();
+        var lib = bun.handleOom(bun.default_allocator.create(FFI));
         lib.* = .{
             .dylib = null,
             .shared_state = tcc_state,
@@ -921,7 +921,7 @@ pub const FFI = struct {
             return val;
         }
         jsc.markBinding(@src());
-        var strs = std.ArrayList(bun.String).initCapacity(allocator, symbols.count()) catch bun.outOfMemory();
+        var strs = bun.handleOom(std.ArrayList(bun.String).initCapacity(allocator, symbols.count()));
         defer {
             for (strs.items) |str| {
                 str.deref();
@@ -2308,7 +2308,7 @@ const CompilerRT = struct {
             }) catch {};
         }
         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        compiler_rt_dir = bun.default_allocator.dupeZ(u8, bun.getFdPath(.fromStdDir(bunCC), &path_buf) catch return) catch bun.outOfMemory();
+        compiler_rt_dir = bun.handleOom(bun.default_allocator.dupeZ(u8, bun.getFdPath(.fromStdDir(bunCC), &path_buf) catch return));
     }
     var create_compiler_rt_dir_once = std.once(createCompilerRTDir);
 

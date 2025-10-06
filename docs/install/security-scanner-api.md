@@ -76,6 +76,6 @@ For a complete example with tests and CI setup, see the official template:
 
 ## Related
 
-- [Configuration (bunfig.toml)](/docs/runtime/bunfig#installsecurityscanner)
+- [Configuration (bunfig.toml)](/docs/runtime/bunfig#install-security-scanner)
 - [Package Manager](/docs/install)
 - [Security Scanner Template](https://github.com/oven-sh/security-scanner-template)

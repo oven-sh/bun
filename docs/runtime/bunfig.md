@@ -232,6 +232,23 @@ Set path where coverage reports will be saved. Please notice, that it works only
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
 
+### `test.concurrentTestGlob`
+
+Specify a glob pattern to automatically run matching test files with concurrent test execution enabled. Test files matching this pattern will behave as if the `--concurrent` flag was passed, running all tests within those files concurrently.
+
+```toml
+[test]
+concurrentTestGlob = "**/concurrent-*.test.ts"
+```
+
+This is useful for:
+
+- Gradually migrating test suites to concurrent execution
+- Running integration tests concurrently while keeping unit tests sequential
+- Separating fast concurrent tests from tests that require sequential execution
+
+The `--concurrent` CLI flag will override this setting when specified.
+
 ## Package manager
 
 Package management is a complex issue; to support a range of use cases, the behavior of `bun install` can be configured under the `[install]` section.
@@ -521,7 +538,7 @@ When a security scanner is configured:
 - Installation is cancelled if fatal issues are found
 - Security warnings are displayed during installation
 
-Learn more about [using and writing security scanners](/docs/install/security).
+Learn more about [using and writing security scanners](/docs/install/security-scanner-api).
 
 ### `install.linker`
 
@@ -552,6 +569,20 @@ Valid values are:
 - Link dependencies inside each package installation.
 
 {% /table %}
+
+### `install.minimumReleaseAge`
+
+Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+
+```toml
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = 259200
+# These packages will bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+```
+
+For more details see [Minimum release age](https://bun.com/docs/cli/install#minimum-release-age) in the install documentation.
 
 <!-- ## Debugging -->
 

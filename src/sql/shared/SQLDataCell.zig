@@ -141,6 +141,32 @@ pub const SQLDataCell = extern struct {
         _: u29 = 0,
     };
 
+    // TODO: cppbind isn't yet able to detect slice parameters when the next is uint32_t
+    pub fn constructObjectFromDataCell(
+        globalObject: *jsc.JSGlobalObject,
+        encodedArrayValue: jsc.JSValue,
+        encodedStructureValue: jsc.JSValue,
+        cells: [*]SQLDataCell,
+        count: u32,
+        flags: SQLDataCell.Flags,
+        result_mode: u8,
+        namesPtr: ?[*]bun.jsc.JSObject.ExternColumnIdentifier,
+        namesCount: u32,
+    ) !jsc.JSValue {
+        if (comptime bun.Environment.ci_assert) {
+            var scope: jsc.ExceptionValidationScope = undefined;
+            scope.init(globalObject, @src());
+            defer scope.deinit();
+            const value = JSC__constructObjectFromDataCell(globalObject, encodedArrayValue, encodedStructureValue, cells, count, flags, result_mode, namesPtr, namesCount);
+            scope.assertExceptionPresenceMatches(value == .zero);
+            return if (value == .zero) error.JSError else value;
+        } else {
+            const value = JSC__constructObjectFromDataCell(globalObject, encodedArrayValue, encodedStructureValue, cells, count, flags, result_mode, namesPtr, namesCount);
+            if (value == .zero) return error.JSError;
+            return value;
+        }
+    }
+
     pub extern fn JSC__constructObjectFromDataCell(
         *jsc.JSGlobalObject,
         JSValue,

@@ -816,12 +816,34 @@ pub fn insert(
 pub const MatchedParams = struct {
     pub const max_count = 64;
 
-    params: std.BoundedArray(Entry, max_count),
+    params: bun.BoundedArray(Entry, max_count),
 
     pub const Entry = struct {
         key: []const u8,
         value: []const u8,
     };
+
+    /// Convert the matched params to a JavaScript object
+    /// Returns null if there are no params
+    pub fn toJS(self: *const MatchedParams, global: *jsc.JSGlobalObject) JSValue {
+        const params_array = self.params.slice();
+
+        if (params_array.len == 0) {
+            return JSValue.null;
+        }
+
+        // Create a JavaScript object with params
+        const obj = JSValue.createEmptyObject(global, params_array.len);
+        for (params_array) |param| {
+            const key_str = bun.String.cloneUTF8(param.key);
+            defer key_str.deref();
+            const value_str = bun.String.cloneUTF8(param.value);
+            defer value_str.deref();
+
+            _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global)) catch unreachable;
+        }
+        return obj;
+    }
 };
 
 /// Fast enough for development to be seamless, but avoids building a
@@ -874,7 +896,7 @@ const PatternParseError = error{InvalidRoutePattern};
 /// Non-allocating single message log, specialized for the messages from the route pattern parsers.
 /// DevServer uses this to special-case the printing of these messages to highlight the offending part of the filename
 pub const TinyLog = struct {
-    msg: std.BoundedArray(u8, 512 + std.fs.max_path_bytes),
+    msg: bun.BoundedArray(u8, 512 + @min(std.fs.max_path_bytes, 4096)),
     cursor_at: u32,
     cursor_len: u32,
 

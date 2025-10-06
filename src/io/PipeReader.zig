@@ -198,7 +198,7 @@ const PosixBufferedReader = struct {
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         if (this.flags.memfd and this.handle == .fd) {
             defer this.handle.close(null, {});
-            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), false).unwrap() catch |err| {
+            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), .unknown_size).unwrap() catch |err| {
                 bun.Output.debugWarn("error reading from memfd\n{}", .{err});
                 return this.buffer();
             };
@@ -451,7 +451,7 @@ const PosixBufferedReader = struct {
                             // Stream this chunk and register for next cycle
                             _ = parent.vtable.onReadChunk(stack_buffer[0..bytes_read], if (received_hup and bytes_read < stack_buffer.len) .eof else .progress);
                         } else {
-                            resizable_buffer.appendSlice(stack_buffer[0..bytes_read]) catch bun.outOfMemory();
+                            bun.handleOom(resizable_buffer.appendSlice(stack_buffer[0..bytes_read]));
                         }
                     },
                     .err => |err| {
@@ -463,7 +463,7 @@ const PosixBufferedReader = struct {
                     },
                 }
             } else {
-                resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
+                bun.handleOom(resizable_buffer.ensureUnusedCapacity(16 * 1024));
                 var buf: []u8 = resizable_buffer.unusedCapacitySlice();
 
                 switch (bun.sys.readNonblocking(fd, buf)) {
@@ -584,7 +584,7 @@ const PosixBufferedReader = struct {
             switch (sys_fn(fd, stack_buffer, 0)) {
                 .result => |bytes_read| {
                     if (bytes_read > 0) {
-                        resizable_buffer.appendSlice(stack_buffer[0..bytes_read]) catch bun.outOfMemory();
+                        bun.handleOom(resizable_buffer.appendSlice(stack_buffer[0..bytes_read]));
                     }
                     if (parent.maxbuf) |l| l.onReadBytes(bytes_read);
                     parent._offset += bytes_read;
@@ -615,7 +615,7 @@ const PosixBufferedReader = struct {
         }
 
         while (true) {
-            resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
+            bun.handleOom(resizable_buffer.ensureUnusedCapacity(16 * 1024));
             var buf: []u8 = resizable_buffer.unusedCapacitySlice();
 
             switch (sys_fn(fd, buf, parent._offset)) {
@@ -854,7 +854,7 @@ pub const WindowsBufferedReader = struct {
 
     pub fn getReadBufferWithStableMemoryAddress(this: *WindowsBufferedReader, suggested_size: usize) []u8 {
         this.flags.has_inflight_read = true;
-        this._buffer.ensureUnusedCapacity(suggested_size) catch bun.outOfMemory();
+        bun.handleOom(this._buffer.ensureUnusedCapacity(suggested_size));
         const res = this._buffer.allocatedSlice()[this._buffer.items.len..];
         return res;
     }
@@ -1072,14 +1072,14 @@ pub const WindowsBufferedReader = struct {
                     pipe.close(onPipeClose);
                 },
                 .tty => |tty| {
-                    if (tty == &Source.stdin_tty) {
-                        Source.stdin_tty = undefined;
-                        Source.stdin_tty_init = false;
+                    if (Source.StdinTTY.isStdinTTY(tty)) {
+                        // Node only ever closes stdin on process exit.
+                    } else {
+                        tty.data = tty;
+                        tty.close(onTTYClose);
                     }
 
-                    tty.data = tty;
                     this.flags.is_paused = true;
-                    tty.close(onTTYClose);
                 },
             }
             this.source = null;

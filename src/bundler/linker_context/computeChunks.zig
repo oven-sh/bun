@@ -94,7 +94,7 @@ pub noinline fn computeChunks(
                     .content = .{
                         .css = .{
                             .imports_in_chunk_in_order = order,
-                            .asts = this.allocator().alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                            .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                         },
                     },
                     .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
@@ -156,7 +156,7 @@ pub noinline fn computeChunks(
                     var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
-                            css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                            bun.handleOom(css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}));
                         }
                     }
                     css_chunk_entry.value_ptr.* = .{
@@ -169,7 +169,7 @@ pub noinline fn computeChunks(
                         .content = .{
                             .css = .{
                                 .imports_in_chunk_in_order = order,
-                                .asts = this.allocator().alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                                .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                             },
                         },
                         .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
@@ -286,7 +286,7 @@ pub noinline fn computeChunks(
         }
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
-        try sorted_chunks.append(this.allocator(), html_chunks.values());
+        try sorted_chunks.appendSlice(this.allocator(), html_chunks.values());
 
         break :sort_chunks sorted_chunks.slice();
     };
@@ -389,7 +389,10 @@ pub noinline fn computeChunks(
                 };
                 defer dir.close();
 
-                break :dir try dir.getFdPath(&real_path_buf);
+                break :dir dir.getFdPath(&real_path_buf) catch |err| {
+                    try this.log.addErrorFmt(null, .Empty, this.allocator(), "{s}: Failed to get full path for directory '{s}'", .{ @errorName(err), dir_path });
+                    return error.BuildFailed;
+                };
             };
 
             chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator(), this.resolver.opts.root_dir, dir);

@@ -123,44 +123,6 @@ pub const Bin = extern struct {
         unreachable;
     }
 
-    pub fn cloneAppend(this: *const Bin, this_buf: string, this_extern_strings: []const ExternalString, lockfile: *Lockfile) OOM!Bin {
-        var string_buf = lockfile.stringBuf();
-        defer string_buf.apply(lockfile);
-
-        const cloned: Bin = .{
-            .tag = this.tag,
-
-            .value = switch (this.tag) {
-                .none => Value.init(.{ .none = {} }),
-                .file => Value.init(.{
-                    .file = try string_buf.append(this.value.file.slice(this_buf)),
-                }),
-                .named_file => Value.init(.{ .named_file = .{
-                    try string_buf.append(this.value.named_file[0].slice(this_buf)),
-                    try string_buf.append(this.value.named_file[1].slice(this_buf)),
-                } }),
-                .dir => Value.init(.{
-                    .dir = try string_buf.append(this.value.dir.slice(this_buf)),
-                }),
-                .map => map: {
-                    const off = lockfile.buffers.extern_strings.items.len;
-                    for (this.value.map.get(this_extern_strings)) |extern_string| {
-                        try lockfile.buffers.extern_strings.append(
-                            lockfile.allocator,
-                            try string_buf.appendExternal(extern_string.slice(this_buf)),
-                        );
-                    }
-                    const new = lockfile.buffers.extern_strings.items[off..];
-                    break :map Value.init(.{
-                        .map = ExternalStringList.init(lockfile.buffers.extern_strings.items, new),
-                    });
-                },
-            },
-        };
-
-        return cloned;
-    }
-
     /// Used for packages read from text lockfile.
     pub fn parseAppend(
         allocator: std.mem.Allocator,
@@ -598,11 +560,11 @@ pub const Bin = extern struct {
             if (this.seen) |seen| {
                 // Skip seen destinations for this tree
                 // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-                const entry = seen.getOrPut(abs_dest) catch bun.outOfMemory();
+                const entry = bun.handleOom(seen.getOrPut(abs_dest));
                 if (entry.found_existing) {
                     return;
                 }
-                entry.key_ptr.* = seen.allocator.dupe(u8, abs_dest) catch bun.outOfMemory();
+                entry.key_ptr.* = bun.handleOom(seen.allocator.dupe(u8, abs_dest));
             }
 
             // Skip if the target does not exist. This is important because placing a dangling
@@ -757,7 +719,7 @@ pub const Bin = extern struct {
 
             bun.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
 
-            switch (bun.sys.symlink(rel_target, abs_dest)) {
+            switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                 .err => |err| {
                     if (err.getErrno() != .EXIST and err.getErrno() != .NOENT) {
                         this.err = err.toZigErr();
@@ -776,7 +738,7 @@ pub const Bin = extern struct {
                         bun.makePath(std.fs.cwd(), this.node_modules_path.slice()) catch {};
                         node_modules_path_save.restore();
 
-                        switch (bun.sys.symlink(rel_target, abs_dest)) {
+                        switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                             .err => |real_error| {
                                 // It was just created, no need to delete destination and symlink again
                                 this.err = real_error.toZigErr();
@@ -784,7 +746,7 @@ pub const Bin = extern struct {
                             },
                             .result => return,
                         }
-                        bun.sys.symlink(rel_target, abs_dest).unwrap() catch |real_err| {
+                        bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |real_err| {
                             this.err = real_err;
                         };
                         return;
@@ -798,7 +760,7 @@ pub const Bin = extern struct {
 
             // delete and try again
             std.fs.deleteTreeAbsolute(abs_dest) catch {};
-            bun.sys.symlink(rel_target, abs_dest).unwrap() catch |err| {
+            bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |err| {
                 this.err = err;
             };
         }
@@ -1050,7 +1012,6 @@ const std = @import("std");
 
 const Install = @import("./install.zig");
 const ExternalStringList = @import("./install.zig").ExternalStringList;
-const Lockfile = Install.Lockfile;
 
 const bun = @import("bun");
 const JSON = bun.json;

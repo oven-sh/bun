@@ -736,6 +736,8 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
     return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
+void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
+
 const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table {
@@ -753,7 +755,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
+        &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming

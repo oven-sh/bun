@@ -137,11 +137,12 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
         this.active_scope = new_scope;
         group.log("collection:runOne set scope to {s}", .{this.active_scope.base.name orelse "undefined"});
 
-        BunTest.runTestCallback(buntest_strong, globalThis, callback.get(), false, .{
-            .collection = .{
-                .active_scope = previous_scope,
-            },
-        }, .epoch);
+        if (BunTest.runTestCallback(buntest_strong, globalThis, callback.get(), false, .{
+            .collection = .{ .active_scope = previous_scope },
+        }, &.epoch)) |cfg_data| {
+            // the result is available immediately; queue
+            buntest.addResult(cfg_data);
+        }
 
         return .{ .waiting = .{} };
     }

@@ -140,6 +140,19 @@ The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that erro
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) will compile your source code into bytecode. We can move this parsing work from runtime to bundle time, saving you startup time.
 
+## Embedding runtime arguments
+
+**`--compile-exec-argv="args"`** - Embed runtime arguments that are available via `process.execArgv`:
+
+```bash
+bun build --compile --compile-exec-argv="--smol --user-agent=MyBot" ./app.ts --outfile myapp
+```
+
+```js
+// In the compiled app
+console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
+```
+
 ## Act as the Bun CLI
 
 {% note %}

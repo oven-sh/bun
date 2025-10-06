@@ -17,6 +17,7 @@ import {
   bunExe,
   bunEnv as env,
   isWindows,
+  joinP,
   readdirSorted,
   runBunInstall,
   tempDirWithFiles,
@@ -4448,7 +4449,7 @@ it("should report error on invalid format for package.json", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
+  expect(err.replaceAll(joinP(package_dir + sep), "[dir]/").replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);
@@ -4472,7 +4473,7 @@ it("should report error on invalid format for dependencies", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
+  expect(err.replaceAll(joinP(package_dir + sep), "[dir]/")).toMatchSnapshot();
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);
@@ -4497,7 +4498,7 @@ it("should report error on invalid format for optionalDependencies", async () =>
   });
 
   let err = await stderr.text();
-  err = err.replaceAll(package_dir + sep, "[dir]/");
+  err = err.replaceAll(joinP(package_dir + sep), "[dir]/");
   err = err.substring(0, err.indexOf("\n", err.lastIndexOf("[dir]/package.json:"))).trim();
   expect(err.split("\n")).toEqual([
     `1 | {"name":"foo","version":"0.0.1","optionalDependencies":"bar"}`,
@@ -4533,7 +4534,7 @@ it("should report error on invalid format for workspaces", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
+  expect(err.replaceAll(joinP(package_dir + sep), "[dir]/")).toMatchSnapshot();
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);
@@ -4794,7 +4795,7 @@ it("should fail on invalid Git URL", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain('error: "git clone" for "uglify" failed');
+  expect(err.split(/\r?\n/)).toContain("error: InstallFailed cloning repository for uglify");
   const out = await stdout.text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));
   expect(await exited).toBe(1);

@@ -22,6 +22,22 @@ pub const WTF = struct {
         return res;
     }
 
+    extern fn WTF__parseES5Date(bytes: [*]const u8, length: usize) f64;
+
+    // 2000-01-01T00:00:00.000Z -> 946684800000 (ms)
+    pub fn parseES5Date(buf: []const u8) !f64 {
+        jsc.markBinding(@src());
+
+        if (buf.len == 0)
+            return error.InvalidDate;
+
+        const ms = WTF__parseES5Date(buf.ptr, buf.len);
+        if (std.math.isFinite(ms))
+            return ms;
+
+        return error.InvalidDate;
+    }
+
     extern fn Bun__writeHTTPDate(buffer: *[32]u8, length: usize, timestampMs: u64) c_int;
 
     pub fn writeHTTPDate(buffer: *[32]u8, timestampMs: u64) []u8 {
@@ -39,6 +55,8 @@ pub const WTF = struct {
 
     pub const StringBuilder = @import("./StringBuilder.zig");
 };
+
+const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -1401,6 +1401,16 @@ pub const Parser = struct {
             );
         }
 
+        // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
+        if (!p.response_ref.isNull() and is_used_and_has_no_links: {
+            // We only want to do this if the symbol is used and didn't get
+            // bound to some other value
+            const symbol: *const Symbol = &p.symbols.items[p.response_ref.innerIndex()];
+            break :is_used_and_has_no_links !symbol.hasLink() and symbol.use_count_estimate > 0;
+        }) {
+            try p.generateImportStmtForBakeResponse(&before);
+        }
+
         if (before.items.len > 0 or after.items.len > 0) {
             try parts.ensureUnusedCapacity(before.items.len + after.items.len);
             const parts_len = parts.items.len;

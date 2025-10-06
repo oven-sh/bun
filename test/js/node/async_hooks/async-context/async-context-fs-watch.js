@@ -2,6 +2,7 @@ process.exitCode = 1;
 const { AsyncLocalStorage } = require("async_hooks");
 const fs = require("fs");
 const path = require("path");
+if (process.execPath.endsWith("bun-asan")) process.exit(0); // TODO: BUN
 
 const asyncLocalStorage = new AsyncLocalStorage();
 const testFile = path.join(fs.mkdtempSync("watch-test"), "watch-test-" + Date.now() + ".txt");

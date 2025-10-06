@@ -5,7 +5,7 @@ exports[`should report error on invalid format for package.json 1`] = `
     ^
 error: Unexpected foo
     at [dir]/package.json:1:1
-ParserError parsing package.json in "[dir]/"
+ParserError: failed to parse '[dir]/package.json'
 "
 `;
 

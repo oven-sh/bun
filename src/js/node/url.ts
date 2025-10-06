@@ -871,7 +871,6 @@ Url.prototype.parseHost = function parseHost() {
   if (host) this.hostname = host;
 };
 
-"".charCodeAt;
 // function fileURLToPath(...args) {
 //   // Since we use WTF::URL::fileSystemPath directly in Bun.fileURLToPath, we don't get invalid windows
 //   // path checking. We patch this in to `node:url` for compatibility. Note that

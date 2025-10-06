@@ -1,5 +1,6 @@
-import { YAML } from "bun";
+import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { join } from "path";
 
 describe("Bun.YAML", () => {
   describe("parse", () => {
@@ -539,9 +540,9 @@ null_value: null
     });
 
     test("throws on invalid YAML", () => {
-      expect(() => YAML.parse("[ invalid")).toThrow();
-      expect(() => YAML.parse("{ key: value")).toThrow();
-      expect(() => YAML.parse(":\n :  - invalid")).toThrow();
+      expect(() => YAML.parse("[ invalid")).toThrow(SyntaxError);
+      expect(() => YAML.parse("{ key: value")).toThrow(SyntaxError);
+      expect(() => YAML.parse(":\n :  - invalid")).toThrow(SyntaxError);
     });
 
     test("handles dates and timestamps", () => {
@@ -701,6 +702,64 @@ production:
           database: "prod_db",
         },
       });
+    });
+
+    test("issue 22659", () => {
+      const input1 = `- test2: next
+  test1: +`;
+      expect(YAML.parse(input1)).toMatchInlineSnapshot(`
+        [
+          {
+            "test1": "+",
+            "test2": "next",
+          },
+        ]
+      `);
+      const input2 = `- test1: +
+  test2: next`;
+      expect(YAML.parse(input2)).toMatchInlineSnapshot(`
+        [
+          {
+            "test1": "+",
+            "test2": "next",
+          },
+        ]
+      `);
+    });
+
+    test("issue 22392", () => {
+      const input = `
+foo: "some
+  ...
+  string"
+`;
+      expect(YAML.parse(input)).toMatchInlineSnapshot(`
+        {
+          "foo": "some ... string",
+        }
+      `);
+    });
+
+    test("issue 22286", async () => {
+      const input1 = `
+my_anchor: &MyAnchor "MyAnchor"
+
+my_config:
+  *MyAnchor :
+    some_key: "some_value"
+`;
+      expect(YAML.parse(input1)).toMatchInlineSnapshot(`
+        {
+          "my_anchor": "MyAnchor",
+          "my_config": {
+            "MyAnchor": {
+              "some_key": "some_value",
+            },
+          },
+        }
+      `);
+      const input2 = await file(join(import.meta.dir, "fixtures", "AHatInTime.yaml")).text();
+      expect(YAML.parse(input2)).toMatchSnapshot();
     });
   });
 

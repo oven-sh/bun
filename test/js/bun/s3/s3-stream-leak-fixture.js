@@ -33,7 +33,7 @@ async function run(inputType) {
   const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
   if (rss > MAX_ALLOWED_MEMORY_USAGE) {
     await s3file.unlink();
-    throw new Error("Memory usage is too high");
+    throw new Error("RSS reached " + rss + "MB");
   }
 }
 await run(new Buffer(1024 * 1024 * 1, "A".charCodeAt(0)).toString("utf-8"));

@@ -1350,10 +1350,10 @@ pub fn transpileSourceCode(
                 if (virtual_source) |source| {
                     if (globalObject) |globalThis| {
                         // attempt to avoid reading the WASM file twice.
-                        const encoded = jsc.EncodedJSValue{
-                            .asPtr = globalThis,
+                        const decoded: jsc.DecodedJSValue = .{
+                            .u = .{ .ptr = @ptrCast(globalThis) },
                         };
-                        const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
+                        const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
@@ -1600,9 +1600,10 @@ pub export fn Bun__transpileFile(
     ret: *jsc.ErrorableResolvedSource,
     allow_promise: bool,
     is_commonjs_require: bool,
-    force_loader_type: bun.options.Loader.Optional,
+    _force_loader_type: bun.schema.api.Loader,
 ) ?*anyopaque {
     jsc.markBinding(@src());
+    const force_loader_type: bun.options.Loader.Optional = .fromAPI(_force_loader_type);
     var log = logger.Log.init(jsc_vm.transpiler.allocator);
     defer log.deinit();
 
@@ -2632,6 +2633,7 @@ pub const FetchFlags = enum {
 pub const HardcodedModule = enum {
     bun,
     @"abort-controller",
+    @"bun:app",
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
@@ -2719,6 +2721,7 @@ pub const HardcodedModule = enum {
     pub const map = bun.ComptimeStringMap(HardcodedModule, [_]struct { []const u8, HardcodedModule }{
         // Bun
         .{ "bun", .bun },
+        .{ "bun:app", .@"bun:app" },
         .{ "bun:ffi", .@"bun:ffi" },
         .{ "bun:jsc", .@"bun:jsc" },
         .{ "bun:main", .@"bun:main" },
@@ -2986,6 +2989,7 @@ pub const HardcodedModule = enum {
         const bun_extra_alias_kvs = [_]struct { string, Alias }{
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:test", .{ .path = "bun:test" } },
+            .{ "bun:app", .{ .path = "bun:app" } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },

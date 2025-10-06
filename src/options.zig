@@ -641,6 +641,14 @@ pub const Loader = enum(u8) {
         pub fn unwrap(opt: Optional) ?Loader {
             return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
         }
+
+        pub fn fromAPI(loader: bun.schema.api.Loader) Optional {
+            if (loader == ._none) {
+                return .none;
+            }
+            const l: Loader = .fromAPI(loader);
+            return @enumFromInt(@intFromEnum(l));
+        }
     };
 
     pub fn isCSS(this: Loader) bool {

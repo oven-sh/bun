@@ -146,6 +146,7 @@ test/js/bun/sqlite/sqlite.test.js
 test/js/workerd/html-rewriter.test.js
 test/regression/issue/12250.test.ts
 test/js/bun/test/parallel/test-http-10177-response.write-with-non-ascii-latin1-should-not-cause-duplicated-character-or-segfault.ts
+test/cli/install/minimum-release-age.test.ts
 
 
 # crash for reasons not related to LSAN

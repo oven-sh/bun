@@ -142,7 +142,7 @@ _bun_completions() {
             esac
             return;;
         --cwd|--public-dir)
-            readarray -t COMPREPLY <<<"$(compgen -d -- "${cur_word}"))";
+            readarray -t COMPREPLY <<<"$(compgen -d -- "${cur_word}")";
             return;;
         --jsx-runtime)
             # shellcheck disable=SC2207 # see above.

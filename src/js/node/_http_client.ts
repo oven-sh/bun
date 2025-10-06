@@ -63,19 +63,21 @@ const { URL } = globalThis;
 class DirectStreamSource {
   /**
    * @param {Array} bodyChunks - Array of buffered chunks to write
+   * @param {Map} chunkCallbacks - Map of chunks to their write callbacks
    * @param {Function} emitDrain - Callback to emit 'drain' event
    * @param {Function} getFinished - Callback to check if request is finished
-   * @param {Function} handleResponse - Callback to handle response when stream closes
    * @param {Function} getNeedDrain - Callback to get needDrain flag state
    * @param {Function} setNeedDrain - Callback to set needDrain flag state
+   * @param {Function} emitFinish - Callback to emit 'finish' event after stream closes
    */
-  constructor(bodyChunks, emitDrain, getFinished, handleResponse, getNeedDrain, setNeedDrain) {
+  constructor(bodyChunks, chunkCallbacks, emitDrain, getFinished, getNeedDrain, setNeedDrain, emitFinish) {
     this.bodyChunks = bodyChunks;
+    this.chunkCallbacks = chunkCallbacks;
     this.emitDrain = emitDrain;
     this.getFinished = getFinished;
-    this.handleResponse = handleResponse;
     this.getNeedDrain = getNeedDrain;
     this.setNeedDrain = setNeedDrain;
+    this.emitFinish = emitFinish;
     this.pulling = false;
     this.pullAgain = false;
     this.controller = null;
@@ -117,6 +119,11 @@ class DirectStreamSource {
         // Write any queued chunks
         while (this.bodyChunks.length > 0) {
           const chunk = this.bodyChunks.shift();
+          const callback = this.chunkCallbacks.get(chunk);
+          if (callback) {
+            this.chunkCallbacks.delete(chunk);
+          }
+
           const result = controller.write(chunk);
 
           // If write returns a promise, it means there's backpressure
@@ -125,12 +132,14 @@ class DirectStreamSource {
             await result;
           }
 
-          // Check if stream finished while awaiting write
-          if (this.getFinished()) {
-            controller.close();
-            this.handleResponse?.();
-            return;
+          // Call the callback after write completes (after backpressure resolves)
+          // The callback is called when write is done, not necessarily when data is sent
+          if (callback) {
+            callback();
           }
+
+          // NOTE: Don't check getFinished() here - we need to write all queued chunks
+          // even if end() has been called. Only check after all chunks are written.
         }
 
         // Only emit drain if we had backpressure and now buffer is empty
@@ -140,69 +149,64 @@ class DirectStreamSource {
           this.emitDrain();
         }
 
-        // If stream is finished, close it
-        if (this.getFinished()) {
-          controller.close();
-          this.handleResponse?.();
-          return;
-        }
-
-        // If no more chunks and not finished, wait for next chunk
+        // If no more chunks, wait for notification or check if finished
         if (this.bodyChunks.length === 0 && !this.pullAgain) {
-          const chunk = await new Promise(resolve => {
+          // If stream is finished and no more chunks, end it
+          if (this.getFinished()) {
+            // Clean up any pending promise resolution and references
+            this.resolveNextChunk = null;
+            this.controller = null;
+            controller.end();
+            // Emit finish event after stream ends
+            this.emitFinish();
+            return;
+          }
+
+          // Otherwise, wait for next chunk or end signal
+          const ended = await new Promise(resolve => {
             this.resolveNextChunk = end => {
               this.resolveNextChunk = null;
-              if (end) {
-                resolve(undefined);
-              } else {
-                resolve(this.bodyChunks.shift());
-              }
+              resolve(end);
             };
           });
 
-          if (chunk === undefined) {
-            // Stream is finished
-            controller.close();
-            this.handleResponse?.();
+          // If ended, end the stream
+          if (ended) {
+            // Clean up any pending promise resolution and references
+            this.resolveNextChunk = null;
+            this.controller = null;
+            controller.end();
+            // Emit finish event after stream ends
+            this.emitFinish();
             return;
           }
-
-          const result = controller.write(chunk);
-
-          // Handle backpressure
-          if (result instanceof Promise) {
-            this.hadBackpressure = true;
-            await result;
-          }
-
-          // Check if stream finished while awaiting write
-          if (this.getFinished()) {
-            controller.close();
-            this.handleResponse?.();
-            return;
-          }
-
-          // Only emit drain if we had backpressure and now buffer is empty
-          if (this.bodyChunks.length === 0 && this.hadBackpressure && this.getNeedDrain()) {
-            this.hadBackpressure = false;
-            this.setNeedDrain(false);
-            this.emitDrain();
-          }
+          // Otherwise, loop again to process newly arrived chunks
         }
-      } while (this.pullAgain);
+      } while (this.pullAgain || this.bodyChunks.length > 0 || !this.getFinished());
+
+      // If we exit the loop naturally (finished and no more chunks), end the stream
+      if (this.getFinished() && this.bodyChunks.length === 0) {
+        // Clean up any pending promise resolution and references
+        this.resolveNextChunk = null;
+        this.controller = null;
+        controller.end();
+        this.emitFinish();
+      }
     } finally {
       this.pulling = false;
     }
   }
 
   /**
-   * Check if there's backpressure by calling flush() on the controller.
-   * @returns {Promise|null} Promise if there's backpressure, null otherwise
+   * Check if there's backpressure based on buffered chunk count.
+   * Direct streams don't have a traditional high water mark, so we use
+   * a simple heuristic: signal backpressure when we have many buffered chunks.
+   * @returns {boolean} True if there's backpressure
    */
   checkBackpressure() {
-    if (!this.controller) return null;
-    const result = this.controller.flush();
-    return result instanceof Promise ? result : null;
+    // Signal backpressure if we have more than 16 chunks buffered
+    // This is a heuristic - adjust as needed for performance
+    return this.bodyChunks.length > 16;
   }
 }
 
@@ -242,13 +246,20 @@ function ClientRequest(input, options, cb) {
   let writeCount = 0;
   let streamSource = null;
   this._needDrain = false;
+  const chunkCallbacks = new Map(); // Track callbacks for each chunk
 
-  const pushChunk = chunk => {
+  const pushChunk = (chunk, callback) => {
     this[kBodyChunks].push(chunk);
-    if (writeCount > 1) {
+    if (callback) {
+      chunkCallbacks.set(chunk, callback);
+    }
+    // Start fetch on first write in duplex mode
+    if (writeCount >= 1 && !fetching) {
       startFetch();
     }
-    streamSource?.notifyChunk(false);
+    if (streamSource) {
+      streamSource.notifyChunk(false);
+    }
   };
 
   const write_ = (chunk, encoding, callback) => {
@@ -264,27 +275,20 @@ function ClientRequest(input, options, cb) {
 
     if (!this[kBodyChunks]) {
       this[kBodyChunks] = [];
-      pushChunk(chunk);
-
-      if (callback) callback();
+      pushChunk(chunk, callback);
       return true;
     }
 
-    pushChunk(chunk);
+    pushChunk(chunk, callback);
 
     // Check for backpressure from the stream controller
-    const backpressurePromise = streamSource?.checkBackpressure();
-    if (backpressurePromise) {
-      // There's backpressure, set _needDrain and call callback when it resolves
+    const hasBackpressure = streamSource?.checkBackpressure();
+    if (hasBackpressure) {
+      // There's backpressure, set _needDrain flag
       this._needDrain = true;
-      if (callback) {
-        backpressurePromise.then(() => callback());
-      }
       return false;
     }
 
-    // No backpressure
-    if (callback) callback();
     return true;
   };
 
@@ -326,8 +330,17 @@ function ClientRequest(input, options, cb) {
     }
 
     if (!this.finished) {
-      send();
-      streamSource?.notifyChunk(true);
+      // If fetch is already started (duplex mode), just notify end
+      // Otherwise call send() to start fetch with complete body
+      if (fetching) {
+        // Mark as finished so stream knows to close after writing all chunks
+        this.finished = true;
+        streamSource?.notifyChunk(true);
+        // Note: 'finish' event will be emitted after stream closes and all data is flushed
+      } else {
+        send();
+        streamSource?.notifyChunk(true);
+      }
     }
 
     return this;
@@ -478,14 +491,19 @@ function ClientRequest(input, options, cb) {
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
         } else if (isDuplex) {
+          // Ensure bodyChunks array is initialized
+          if (!self[kBodyChunks]) {
+            self[kBodyChunks] = [];
+          }
           // Create DirectStreamSource to avoid GC keeping ClientRequest alive
           streamSource = new DirectStreamSource(
             self[kBodyChunks],
+            chunkCallbacks,
             () => self.emit("drain"),
             () => self.finished,
-            handleResponse,
             () => self._needDrain,
             value => (self._needDrain = value),
+            () => maybeEmitFinish(),
           );
 
           fetchOptions.body = new ReadableStream({
@@ -578,6 +596,10 @@ function ClientRequest(input, options, cb) {
         };
 
         if (!keepOpen) {
+          handleResponse();
+        } else {
+          // In duplex mode, call handleResponse when fetch completes
+          // The fetch promise resolves when response is received
           handleResponse();
         }
 

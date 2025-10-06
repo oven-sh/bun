@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/22003
-test("tab character in filename should be escaped in sourcemap JSON", async () => {
+test.skipIf(isWindows)("tab character in filename should be escaped in sourcemap JSON", async () => {
   using dir = tempDir("22003", {
     // Filename with tab character
     "file\ttab.js": "module.exports = 42;",

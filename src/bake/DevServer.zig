@@ -3239,6 +3239,11 @@ fn tryServeWorker(dev: *DevServer, url: []const u8, resp: AnyResponse) bool {
     // Remove leading slash if present
     const url_path = if (url.len > 0 and url[0] == '/') url[1..] else url;
 
+    // Validate path doesn't contain traversal sequences
+    if (std.mem.indexOf(u8, url_path, "..") != null) {
+        return false;
+    }
+
     // Build absolute path from root
     const abs_path = bun.path.joinAbsStringBuf(
         dev.root,
@@ -3246,6 +3251,11 @@ fn tryServeWorker(dev: *DevServer, url: []const u8, resp: AnyResponse) bool {
         &[_][]const u8{url_path},
         .auto,
     );
+
+    // Ensure resolved path is still within project root
+    if (!bun.strings.startsWith(abs_path, dev.root)) {
+        return false;
+    }
 
     // Check if this path is a known worker
     dev.graph_safety_lock.lock();

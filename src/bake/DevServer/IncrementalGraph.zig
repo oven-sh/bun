@@ -1064,6 +1064,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                             continue;
                         };
                         log("Worker registered successfully: {s}", .{worker_path});
+                        continue;
                     }
                 }
 

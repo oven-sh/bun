@@ -1519,6 +1519,12 @@ pub fn VisitExpr(
                     if (target_ref.eql(p.worker_ref)) {
                         const args = e_.args.slice();
 
+                        // Preserve semantics when extra arguments (and their side effects) are present
+                        // Worker() only takes 2 arguments, so >2 means there are side-effecting expressions
+                        if (args.len > 2) {
+                            return expr;
+                        }
+
                         // Try to extract worker path from first argument
                         var worker_path_string: ?[]const u8 = null;
                         var worker_path_loc: logger.Loc = undefined;

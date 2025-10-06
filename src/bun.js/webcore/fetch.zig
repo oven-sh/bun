@@ -872,15 +872,22 @@ pub const FetchTasklet = struct {
         this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
     }
 
-    pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
+    pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
         const this = bun.cast(*FetchTasklet, ctx);
-        if (this.http) |http_| {
-            http_.enableBodyStreaming();
-        }
         if (this.signal_store.aborted.load(.monotonic)) {
             return jsc.WebCore.DrainResult{
                 .aborted = {},
             };
+        }
+
+        if (this.http) |http_| {
+            http_.enableResponseBodyStreaming();
+
+            // If the server sent the headers and the response body in two separate socket writes
+            // and if the server doesn't close the connection by itself
+            // and doesn't send any follow-up data
+            // then we must make sure the HTTP thread flushes.
+            bun.http.http_thread.scheduleResponseBodyDrain(http_.async_http_id);
         }
 
         this.mutex.lock();
@@ -930,7 +937,7 @@ pub const FetchTasklet = struct {
                     .size_hint = this.getSizeHint(),
                     .task = this,
                     .global = this.global_this,
-                    .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
+                    .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                 },
             };
@@ -981,7 +988,7 @@ pub const FetchTasklet = struct {
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.http) |http_| {
-            http_.enableBodyStreaming();
+            http_.enableResponseBodyStreaming();
         }
         // we should not keep the process alive if we are ignoring the body
         const vm = this.javascript_vm;
@@ -1345,7 +1352,7 @@ pub const FetchTasklet = struct {
         task.http.?.* = async_http.*;
         task.http.?.response_buffer = async_http.response_buffer;
 
-        log("callback success={} has_more={} bytes={}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
+        log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;

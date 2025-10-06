@@ -10,15 +10,23 @@ pub fn killAllChildProcesses() void {
     // Walk the process tree and kill only child processes
     // Do NOT kill the entire process group with kill(-pid) as that would
     // kill the Bun process itself before it can finish shutting down
-    var killed = std.AutoHashMap(c_int, void).init(bun.default_allocator);
-    defer killed.deinit();
 
-    const children = getChildPids(current_pid, current_pid) catch return;
-    defer if (children.len > 0) bun.default_allocator.free(children);
+    // Pass 1: freeze entire tree with SIGSTOP to minimize reparenting races
+    const children_freeze = getChildPids(current_pid, current_pid) catch return;
+    defer if (children_freeze.len > 0) bun.default_allocator.free(children_freeze);
+    var seen_stop = std.AutoHashMap(c_int, void).init(bun.default_allocator);
+    defer seen_stop.deinit();
+    for (children_freeze) |child| {
+        killProcessTreeRecursive(child, &seen_stop, current_pid, true) catch {};
+    }
 
-    // Kill each child process and its descendants
-    for (children) |child| {
-        killProcessTreeRecursive(child, &killed, current_pid, false) catch {};
+    // Pass 2: terminate (SIGTERM then SIGKILL)
+    const children_kill = getChildPids(current_pid, current_pid) catch return;
+    defer if (children_kill.len > 0) bun.default_allocator.free(children_kill);
+    var seen_kill = std.AutoHashMap(c_int, void).init(bun.default_allocator);
+    defer seen_kill.deinit();
+    for (children_kill) |child| {
+        killProcessTreeRecursive(child, &seen_kill, current_pid, false) catch {};
     }
 }
 

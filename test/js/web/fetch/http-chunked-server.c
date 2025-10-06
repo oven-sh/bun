@@ -11,7 +11,7 @@
 // 2. Accepts one connection
 // 3. Sends HTTP headers with Transfer-Encoding: chunked
 // 4. Sends one chunk containing "hello\n"
-// 5. Keeps the connection open for 10 seconds before closing
+// 5. Keeps the connection open indefinitely before closing
 //
 // Without the fix, step 4 would cause the client to hang indefinitely waiting
 // for data that's already been received by the HTTP thread but not drained.

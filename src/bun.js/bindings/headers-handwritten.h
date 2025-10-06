@@ -236,10 +236,9 @@ const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
-// Must be kept in sync.
+// Must be kept in sync with bun.schema.api.Loader in schema.zig
 typedef uint8_t BunLoaderType;
 const BunLoaderType BunLoaderTypeNone = 254;
-// Must match api/schema.zig Loader enum values
 const BunLoaderType BunLoaderTypeJSX = 1;
 const BunLoaderType BunLoaderTypeJS = 2;
 const BunLoaderType BunLoaderTypeTS = 3;

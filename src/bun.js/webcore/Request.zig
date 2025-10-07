@@ -880,7 +880,7 @@ pub fn doClone(
             }
         }
     }
-
+    this.checkBodyStreamRef(globalThis);
     return js_wrapper;
 }
 
@@ -999,7 +999,18 @@ pub fn cloneInto(
     _ = allocator;
     this.ensureURL() catch {};
     const vm = globalThis.bunVM();
-    var body_ = try this.#body.value.clone(globalThis);
+    var body_ = brk: {
+        if (this.#js_ref.tryGet()) |js_ref| {
+            if (js.gc.stream.get(js_ref)) |stream| {
+                var readable = try jsc.WebCore.ReadableStream.fromJS(stream, globalThis);
+                if (readable != null) {
+                    break :brk try this.#body.cloneWithReadableStream(globalThis, &readable.?);
+                }
+            }
+        }
+
+        break :brk try this.#body.clone(globalThis);
+    };
     errdefer body_.deinit();
     const body = try vm.initRequestBodyValue(body_);
     const url = if (preserve_url) req.url else this.url.dupeRef();

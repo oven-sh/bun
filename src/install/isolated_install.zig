@@ -253,9 +253,6 @@ pub fn installIsolatedPackages(
                     // ids are equal.
                     const peer_dep = dependencies[peer_dep_id];
 
-                    // TODO: double check this
-                    // Start with the current package. A package
-                    // can satisfy it's own peers.
                     var curr_id = node_parent_ids[node_id.get()];
 
                     visited_parent_node_ids.clearRetainingCapacity();

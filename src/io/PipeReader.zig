@@ -928,7 +928,9 @@ pub const WindowsBufferedReader = struct {
         switch (nread_int) {
             0 => {
                 // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
-                return this.onRead(.{ .result = 0 }, "", .drained);
+                // Certain readers (such as pipes) may return 0-byte reads even when
+                // not at EOF (libuv 1.51.0+). Just ignore them and wait for the next callback.
+                return;
             },
             uv.UV_EOF => {
                 _ = this.stopReading();

@@ -10,7 +10,7 @@
 // TODO(markovejnovic): This is a fraction of what hosted-git-info actually delivers, but it's the
 // fraction that matters for us. If we want to make this API public, we will likely need to expose
 // more information.
-pub const DefaultRepresentation = enum {
+pub const Representation = enum {
     shortcut,
     sshurl,
     ssh,
@@ -20,6 +20,8 @@ pub const DefaultRepresentation = enum {
 };
 
 pub const HostedGitInfo = struct {
+    const Self = @This();
+
     // TODO(markovejnovic): We will likely start to care about a lot of these fields lol.
     //
     // The original JS object has a lot more fields, but we mostly don't care about them.
@@ -36,13 +38,11 @@ pub const HostedGitInfo = struct {
     //   hash: "",
     //   search: "",
     //   searchParams: URLSearchParams {},
-    type: []const u8,
-    domain: []const u8,
     committish: ?[]const u8,
     project: []const u8,
     user: ?[]const u8,
-    default_representation: DefaultRepresentation,
     _allocator: std.mem.Allocator,
+    host_provider: HostProvider,
 
     /// Clean up owned memory
     pub fn deinit(self: HostedGitInfo) void {
@@ -51,202 +51,13 @@ pub const HostedGitInfo = struct {
         self._allocator.free(self.project);
     }
 
-    /// Generate an SSH URL (sshtemplate): git@{domain}:{user}/{project}.git#{committish}
-    /// Note: gist URLs omit the user: git@{domain}:{project}.git#{committish}
-    pub fn ssh(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
-
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git@{s}:{s}.git#{s}",
-                    .{ self.domain, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git@{s}:{s}.git",
-                    .{ self.domain, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git@{s}:{s}/{s}.git#{s}",
-                    .{ self.domain, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git@{s}:{s}/{s}.git",
-                    .{ self.domain, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate an SSH URL (sshurltemplate): git+ssh://git@{domain}/{user}/{project}.git#{committish}
-    /// Note: gist URLs omit the user: git+ssh://git@{domain}/{project}.git#{committish}
-    pub fn sshurl(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
-
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+ssh://git@{s}/{s}.git#{s}",
-                    .{ self.domain, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+ssh://git@{s}/{s}.git",
-                    .{ self.domain, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+ssh://git@{s}/{s}/{s}.git#{s}",
-                    .{ self.domain, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+ssh://git@{s}/{s}/{s}.git",
-                    .{ self.domain, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate an HTTPS URL (httpstemplate): git+https://{domain}/{user}/{project}.git#{committish}
-    pub fn https(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
-
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+https://{s}/{s}.git#{s}",
-                    .{ self.domain, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+https://{s}/{s}.git",
-                    .{ self.domain, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+https://{s}/{s}/{s}.git#{s}",
-                    .{ self.domain, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git+https://{s}/{s}/{s}.git",
-                    .{ self.domain, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate a Git URL (gittemplate): git://{domain}/{user}/{project}.git#{committish}
-    pub fn git(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
-
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git://{s}/{s}.git#{s}",
-                    .{ self.domain, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git://{s}/{s}.git",
-                    .{ self.domain, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git://{s}/{s}/{s}.git#{s}",
-                    .{ self.domain, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "git://{s}/{s}/{s}.git",
-                    .{ self.domain, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate a shortcut URL (shortcuttemplate): {type}:{user}/{project}#{committish}
-    /// Example: github:user/project#v1.0.0
-    /// Note: gist URLs omit the user: gist:{project}#{committish}
-    pub fn shortcut(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        const is_gist = std.mem.eql(u8, self.type, "gist");
-
-        if (is_gist) {
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "{s}:{s}#{s}",
-                    .{ self.type, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "{s}:{s}",
-                    .{ self.type, self.project },
-                );
-            }
-        } else {
-            const user = self.user orelse "";
-            if (self.committish) |c| {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "{s}:{s}/{s}#{s}",
-                    .{ self.type, user, self.project, c },
-                );
-            } else {
-                return std.fmt.allocPrint(
-                    allocator,
-                    "{s}:{s}/{s}",
-                    .{ self.type, user, self.project },
-                );
-            }
-        }
-    }
-
-    /// Generate a URL string based on the default representation
+    /// Generate a URL string based on the default representation.
     /// Mimics hosted-git-info's toString() method
     pub fn toString(self: HostedGitInfo, allocator: std.mem.Allocator) ![]const u8 {
-        return switch (self.default_representation) {
-            .shortcut => try self.shortcut(allocator),
-            .sshurl => try self.sshurl(allocator),
-            .ssh => try self.ssh(allocator),
-            .https => try self.https(allocator),
-            .git => try self.git(allocator),
-            // http doesn't have a template, falls back to sshurl
-            .http => try self.sshurl(allocator),
-        };
+        _ = self;
+        _ = allocator;
+
+        @panic("Not Implemented");
     }
 };
 
@@ -718,7 +529,7 @@ pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?HostedGitInfo {
     defer protocol.deinit();
     const protocol_slice = protocol.slice();
 
-    const is_shortcut = findHostInfoByProtocol(protocol_slice) != null;
+    const is_shortcut = HostProvider.fromShortcut(protocol_slice, .without_colon) != null;
 
     var user: ?[]const u8 = null;
     var project: []const u8 = undefined;
@@ -785,7 +596,7 @@ pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?HostedGitInfo {
 
     // Determine the default representation based on the protocol
     const default_repr = if (is_shortcut)
-        DefaultRepresentation.shortcut
+        Representation.shortcut
     else blk: {
         // Get the protocol and append colon (URL.protocol() returns without colon)
         const proto_slice = proto_str.byteSlice();
@@ -797,7 +608,7 @@ pub fn fromUrl(allocator: std.mem.Allocator, git_url: []u8) !?HostedGitInfo {
     };
 
     return .{
-        .type = host_info.shortcutWithoutColon(),
+        .provider = host_info,
         .domain = host_info.domain,
         .user = user,
         .project = project,
@@ -944,12 +755,480 @@ const UrlProtocol = enum {
     }
 };
 
-const Host = enum {
-    github,
+/// This enumeration encapsulates all known host providers and their configurations.
+///
+/// Providers each have different configuration fields and, on top of that, have different
+/// mechanisms for formatting URLs. For example, GitHub will format SSH URLs as
+/// `git+ssh://git@${domain}/${user}/${project}.git${maybeJoin('#', committish)}`, while `gist`
+/// will format URLs as `git+ssh://git@${domain}/${project}.git${maybeJoin('#', committish)}`. This
+/// structure encapsulates the differences between providers and how they handle all of that.
+///
+/// Effectively, this enumeration acts as a registry of all known providers as well as methods on
+/// these providers.
+const HostProvider = enum {
+    const Self = @This();
+
     bitbucket,
-    gitlab,
     gist,
+    github,
+    gitlab,
     sourcehut,
+
+    pub fn formatSsh(
+        self: Self,
+        allocator: std.mem.Allocator,
+        user: ?[]const u8,
+        project: []const u8,
+        committish: ?[]const u8,
+    ) error{OutOfMemory}![]u8 {
+        return configs.get(self).format_ssh(self, allocator, user, project, committish);
+    }
+
+    pub fn formatSshUrl(
+        self: Self,
+        allocator: std.mem.Allocator,
+        user: ?[]const u8,
+        project: []const u8,
+        committish: ?[]const u8,
+    ) error{OutOfMemory}![]u8 {
+        return configs.get(self).format_sshurl(self, allocator, user, project, committish);
+    }
+
+    pub fn formatHttps(
+        self: Self,
+        allocator: std.mem.Allocator,
+        auth: ?[]const u8,
+        user: ?[]const u8,
+        project: []const u8,
+        committish: ?[]const u8,
+    ) error{OutOfMemory}![]u8 {
+        return configs.get(self).format_https(self, allocator, auth, user, project, committish);
+    }
+
+    pub fn formatShortcut(
+        self: Self,
+        allocator: std.mem.Allocator,
+        user: ?[]const u8,
+        project: []const u8,
+        committish: ?[]const u8,
+    ) error{OutOfMemory}![]u8 {
+        return configs.get(self).format_shortcut(self, allocator, user, project, committish);
+    }
+
+    const Config = struct {
+        protocols: []const UrlProtocol,
+        domain: []const u8,
+        shortcut: []const u8,
+        tree_path: ?[]const u8,
+        blob_path: ?[]const u8,
+        edit_path: ?[]const u8,
+
+        format_ssh: Formatters.Ssh.Type = Self.Config.Formatters.Ssh.default,
+        format_sshurl: Formatters.SshUrl.Type = Self.Config.Formatters.SshUrl.default,
+        format_https: Formatters.Https.Type = Self.Config.Formatters.Https.default,
+        format_shortcut: Formatters.Shortcut.Type = Self.Config.Formatters.Shortcut.default,
+        format_git: Formatters.Git.Type = Self.Config.Formatters.Git.default,
+
+        /// Encapsulates all the various foramtters that different hosts may have. Usually this has
+        /// to do with URLs, but could be other things.
+        const Formatters = struct {
+            fn requiresUser(user: ?[]const u8) void {
+                if (user == null) {
+                    @panic("Attempted to format a default SSH URL without a user. This is an " ++
+                        "irrecoverable programming bug in Bun. Please report this issue " ++
+                        "on GitHub.");
+                }
+            }
+
+            /// Mirrors hosts.js's sshtemplate
+            const Ssh = struct {
+                const Type = *const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                fn default(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "git@{s}:{s}/{s}.git{s}{s}",
+                        .{ self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = user;
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        allocator,
+                        "git@{s}:{s}.git{s}{s}",
+                        .{ self.domain(), project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+
+            /// Mirrors hosts.js's sshurltemplate
+            const SshUrl = struct {
+                const Type = *const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                fn default(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "git+ssh://git@{s}/{s}/{s}.git{s}{s}",
+                        .{ self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = user;
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        allocator,
+                        "git+ssh://git@{s}/{s}.git{s}{s}",
+                        .{ self.domain(), project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+
+            /// Mirrors hosts.js's httpstemplate
+            const Https = struct {
+                const Type = *const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                fn default(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+
+                    const auth_str = if (auth) |a| a else "";
+                    const auth_sep = if (auth_str.len > 0) "@" else "";
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "git+https://{s}{s}{s}/{s}/{s}.git{s}{s}",
+                        .{ auth_str, auth_sep, self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = auth;
+                    _ = user;
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "git+https://{s}/{s}.git{s}{s}",
+                        .{ self.domain(), project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn sourcehut(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+                    _ = auth;
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "https://{s}/{s}/{s}.git{s}{s}",
+                        .{ self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+
+            /// Mirrors hosts.js's shortcuttemplate
+            const Shortcut = struct {
+                const Type = *const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                fn default(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "{s}:{s}/{s}{s}{s}",
+                        .{ self.shortcut(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    alloc: std.mem.Allocator,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = user;
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        alloc,
+                        "{s}:{s}{s}{s}",
+                        .{ self.shortcut(), project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+
+            /// Mirrors hosts.js's gittemplate
+            const Git = struct {
+                const Type = ?*const fn (
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8;
+
+                const default: Type = null;
+
+                fn github(
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    requiresUser(user);
+
+                    const auth_str = if (auth) |a| a else "";
+                    const auth_sep = if (auth_str.len > 0) "@" else "";
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        allocator,
+                        "git://{s}{s}{s}/{s}/{s}.git{s}{s}",
+                        .{ auth_str, auth_sep, self.domain(), user.?, project, cmsh_sep, cmsh },
+                    );
+                }
+
+                fn gist(
+                    self: Self,
+                    allocator: std.mem.Allocator,
+                    auth: ?[]const u8,
+                    user: ?[]const u8,
+                    project: []const u8,
+                    committish: ?[]const u8,
+                ) error{OutOfMemory}![]u8 {
+                    _ = auth;
+                    _ = user;
+
+                    const cmsh: []const u8 = if (committish) |c| c else "";
+                    const cmsh_sep = if (cmsh.len > 0) "#" else "";
+
+                    return std.fmt.allocPrint(
+                        allocator,
+                        "git://{s}/{s}.git{s}{s}",
+                        .{ self.domain(), project, cmsh_sep, cmsh },
+                    );
+                }
+            };
+        };
+    };
+
+    const configs = std.enums.EnumArray(Self, Config).init(.{
+        .bitbucket = .{
+            .protocols = &.{ .git_plus_http, .git_plus_https, .ssh, .https },
+            .domain = "bitbucket.org",
+            .shortcut = "bitbucket:",
+            .tree_path = "src",
+            .blob_path = "src",
+            .edit_path = "?mode=edit",
+        },
+        .gist = .{
+            .protocols = &.{ .git, .git_plus_ssh, .git_plus_https, .ssh, .https },
+            .domain = "gist.github.com",
+            .shortcut = "gist:",
+            .tree_path = null,
+            .blob_path = null,
+            .edit_path = "edit",
+            .format_ssh = Self.Config.Formatters.Ssh.gist,
+            .format_sshurl = Self.Config.Formatters.SshUrl.gist,
+            .format_https = Self.Config.Formatters.Https.gist,
+            .format_shortcut = Self.Config.Formatters.Shortcut.gist,
+            .format_git = Self.Config.Formatters.Git.gist,
+        },
+        .github = .{
+            .protocols = &.{ .git, .http, .git_plus_ssh, .git_plus_https, .ssh, .https },
+            .domain = "github.com",
+            .shortcut = "github:",
+            .tree_path = "tree",
+            .blob_path = "blob",
+            .edit_path = "edit",
+            .format_git = Self.Config.Formatters.Git.github,
+        },
+        .gitlab = .{
+            .protocols = &.{ .git_plus_ssh, .git_plus_https, .ssh, .https },
+            .domain = "gitlab.com",
+            .shortcut = "gitlab:",
+            .tree_path = "tree",
+            .blob_path = "tree",
+            .edit_path = "-/edit",
+        },
+        .sourcehut = .{
+            .protocols = &.{ .git_plus_ssh, .https },
+            .domain = "git.sr.ht",
+            .shortcut = "sourcehut:",
+            .tree_path = "tree",
+            .blob_path = "tree",
+            .edit_path = null,
+            .format_https = Self.Config.Formatters.Https.sourcehut,
+        },
+    });
+
+    /// Return the string representation of the provider.
+    pub fn typeStr(self: Self) []const u8 {
+        return @tagName(self);
+    }
+
+    pub fn shortcut(self: Self) []const u8 {
+        return configs.get(self).shortcut;
+    }
+
+    pub fn domain(self: Self) []const u8 {
+        return configs.get(self).domain;
+    }
+
+    pub fn protocols(self: Self) []const UrlProtocol {
+        return configs.get(self).protocols;
+    }
+
+    pub fn shortcutWithoutColon(self: Self) []const u8 {
+        const shct = self.shortcut();
+        return shct[0 .. shct.len - 1];
+    }
+
+    pub fn treePath(self: Self) ?[]const u8 {
+        return configs.get(self).tree_path;
+    }
+
+    pub fn blobPath(self: Self) ?[]const u8 {
+        return configs.get(self).blob_path;
+    }
+
+    pub fn editPath(self: Self) ?[]const u8 {
+        return configs.get(self).edit_path;
+    }
+
+    /// Find the appropriate host provider by its shortcut (e.g. "github:").
+    ///
+    /// The second parameter allows you to declare whether the given string includes the protocol:
+    /// colon or not.
+    pub fn fromShortcut(
+        shortcut_str: []const u8,
+        comptime with_colon: enum { with_colon, without_colon },
+    ) ?HostProvider {
+        inline for (std.meta.fields(Self)) |field| {
+            const provider: HostProvider = @enumFromInt(field.value);
+
+            const shortcut_matches = std.mem.eql(
+                u8,
+                switch (with_colon) {
+                    .with_colon => provider.shortcut(),
+                    .without_colon => provider.shortcutWithoutColon(),
+                },
+                shortcut_str,
+            );
+
+            if (shortcut_matches) {
+                return provider;
+            }
+        }
+
+        return null;
+    }
 };
 
 const HostInfo = struct {
@@ -968,96 +1247,9 @@ const HostInfo = struct {
     }
 };
 
-fn getHostInfo(host: Host) HostInfo {
-    return switch (host) {
-        .github => .{
-            .protocols = &.{
-                .git,
-                .http,
-                .git_plus_ssh,
-                .git_plus_https,
-                .ssh,
-                .https,
-            },
-            .domain = "github.com",
-            .shortcut = "github:",
-            .tree_path = "tree",
-            .blob_path = "blob",
-            .edit_path = "edit",
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-        .bitbucket => .{
-            .protocols = &.{ .git_plus_ssh, .git_plus_https, .ssh, .https },
-            .domain = "bitbucket.org",
-            .shortcut = "bitbucket:",
-            .tree_path = "src",
-            .blob_path = "src",
-            .edit_path = "?mode=edit",
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-        .gitlab => .{
-            .protocols = &.{ .git_plus_ssh, .git_plus_https, .ssh, .https },
-            .domain = "gitlab.com",
-            .shortcut = "gitlab:",
-            .tree_path = "tree",
-            .blob_path = "tree",
-            .edit_path = "-/edit",
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-        .gist => .{
-            .protocols = &.{
-                .git,
-                .git_plus_ssh,
-                .git_plus_https,
-                .ssh,
-                .https,
-            },
-            .domain = "gist.github.com",
-            .shortcut = "gist:",
-            .tree_path = null,
-            .blob_path = null,
-            .edit_path = "edit",
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-        .sourcehut => .{
-            .protocols = &.{ .git_plus_ssh, .https },
-            .domain = "git.sr.ht",
-            .shortcut = "sourcehut:",
-            .tree_path = "tree",
-            .blob_path = "tree",
-            .edit_path = null,
-            .edit_template = 0,
-            .tarball_template = 0,
-            .extract = 0,
-        },
-    };
-}
-
-/// Search for the appropriate `HostInfo` by the protocol string.
-fn findHostInfoByProtocol(protocol: []const u8) ?HostInfo {
-    inline for (std.meta.fields(Host)) |field| {
-        const host: Host = @enumFromInt(field.value);
-        const info = getHostInfo(host);
-        // We slice the last character off since URL.protocol() returns foo out of foo:// and
-        // info.shortcut includes the colon.
-        if (std.mem.eql(u8, info.shortcutWithoutColon(), protocol)) {
-            return info;
-        }
-    }
-    return null;
-}
-
 /// Determine the default representation from a protocol string
 /// Mirrors the logic in from-url.js line 110: protocols[parsed.protocol]?.name || parsed.protocol.slice(0, -1)
-fn defaultRepresentationFromProtocol(protocol_with_colon: []const u8) DefaultRepresentation {
+fn defaultRepresentationFromProtocol(protocol_with_colon: []const u8) Representation {
     // Protocol mappings from hosted-git-info/lib/index.js #protocols
     if (bun.strings.eqlComptime(protocol_with_colon, "git+ssh:")) return .sshurl;
     if (bun.strings.eqlComptime(protocol_with_colon, "ssh:")) return .sshurl;
@@ -1075,29 +1267,24 @@ fn defaultRepresentationFromProtocol(protocol_with_colon: []const u8) DefaultRep
     return .sshurl;
 }
 
-fn findHostInfoByDomain(hostname: []const u8) ?HostInfo {
-    inline for (std.meta.fields(Host)) |field| {
-        const host: Host = @enumFromInt(field.value);
-        const info = getHostInfo(host);
-        if (std.mem.eql(u8, info.domain, hostname)) {
-            return info;
-        }
-    }
-    return null;
-}
-
 /// Search the the appropriate `HostInfo` by deducing it from the URL.
 fn deduceHostInfo(allocator: std.mem.Allocator, url: *jsc.URL) ?HostInfo {
-    const proto_str = url.protocol();
-    if (findHostInfoByProtocol(proto_str.byteSlice())) |host_info| {
-        return host_info;
-    }
+    // TODO(markovejnovic): Re-implement
+    _ = allocator;
+    _ = url;
+    @panic("Not implemented");
+    //const proto_str = url.protocol();
+    //if (HostProvider.fromShortcut(proto_str.byteSlice(), .without_colon)) |host_info| {
+    //    return host_info;
+    //}
+    //if (findHostInfoByProtocol(proto_str.byteSlice())) |host_info| {
+    //}
 
-    // TODO(markovejnovic): I don't know if this conversion is correct.
-    const as_slice = url.hostname().toSlice(allocator);
-    defer as_slice.deinit();
-    const hostname = bun.strings.withoutPrefixComptime(as_slice.slice(), "www.");
-    return findHostInfoByDomain(hostname);
+    //// TODO(markovejnovic): I don't know if this conversion is correct.
+    //const as_slice = url.hostname().toSlice(allocator);
+    //defer as_slice.deinit();
+    //const hostname = bun.strings.withoutPrefixComptime(as_slice.slice(), "www.");
+    //return findHostInfoByDomain(hostname);
 }
 
 /// Test whether the given node-package-arg string is a GitHub shorthand.
@@ -1203,7 +1390,7 @@ const UrlProtocolPair = struct {
 
 /// Given a loose string that may or may not be a valid URL, attempt to normalize it.
 ///
-/// This never allocates but requires `npa_str` be stable.
+/// Requires `npa_str` be stable.
 ///
 /// Returns a struct containing the URL string with the `protocol://` part removed and a tagged
 /// enumeration. If the protocol is known, it is returned as a UrlProtocol. If the protocol is

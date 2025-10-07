@@ -67,28 +67,31 @@ _read_scripts_in_package_json() {
     }
 
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
-    local re_prev_script="(^| )${prev}($| )";
-    [[ ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) ]] && {
-        declare -a new_reply;
-        for comp in "${COMPREPLY[@]}"; do
-            case " ${package_json_compreply[@]} " in
-                ( *[[:space:]]"$comp"[[:space:]]* )
-                    continue;
-                ;;
-                ( * )
-                    case "$comp" in
-                        ( "$cur_word"* )
-                            new_reply+=( "$comp" );
-                        ;;
-                    esac
-                ;;
-            esac
-        done
-        COMPREPLY=();
-        for comp in "${new_reply[@]}"; do
-            COMPREPLY+=( "$comp" );
-        done
-        replaced_script="${prev}";
+    [[ -n "${COMP_WORDS[2]}" ]] && {
+        case " ${COMPREPLY[*]} " in
+            *" ${prev} "*)
+            declare -a new_reply;
+            for comp in "${COMPREPLY[@]}"; do
+                case " ${package_json_compreply[@]} " in
+                    *" ${comp} "*)
+                        continue;
+                    ;;
+                            *)
+                        case "${comp}" in
+                            "${cur_word}"* )
+                                new_reply+=( "${comp}" );
+                            ;;
+                        esac
+                    ;;
+                esac
+            done
+            COMPREPLY=();
+            for comp in "${new_reply[@]}"; do
+                COMPREPLY+=( "${comp}" );
+            done
+            replaced_script="${prev}";
+            ;;
+        esac
     }
 }
 
@@ -211,12 +214,14 @@ _bun_completions() {
                         comp_reply_associative["$comp"]="$comp"
                     done
                 [[ -z "${comp_reply_associative["${prev}"]}" ]] && {
-                    local re_prev_prev="(^| )${COMP_WORDS[(( COMP_CWORD - 2 ))]}($| )";
                     local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
-                    [[
-                        ( -n "${replaced_script}" && "${replaced_script}" == "${prev}" ) || \
-                            ( "${global_option_with_extra_args}" =~ ${re_prev_prev} )
-                    ]] && return;
+                    [[ ( -n "${replaced_script}" && "${replaced_script}" == "${prev}" ) ]] || {
+                        case " ${global_option_with_extra_args} " in
+                            *" ${COMP_WORDS[(( COMP_CWORD - 2 ))]} "*)
+                                return
+                            ;;
+                          esac
+                    }
                     unset COMPREPLY;
                 }
             }

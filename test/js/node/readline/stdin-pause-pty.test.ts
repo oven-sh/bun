@@ -19,15 +19,57 @@ test("stdin pause should stop reading so child can read from stdin", async () =>
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const out = stdout || "";
-  console.log(out);
-
-  // Child should receive all 3 keystrokes (A, B, C)
-  expect(out).toMatch(/CHILD:.*1/);
-  expect(out).toMatch(/CHILD:.*2/);
-  expect(out).toMatch(/CHILD:.*3/);
-
-  // Parent should receive 0 keystrokes (while paused)
-  expect(out).toMatch(/PARENT:.*0/);
+  const lfilter = (l: string): boolean => {
+    if (l === "%ready%") return false;
+    if (l.startsWith("PYTHON:")) return false;
+    return true;
+  };
+  expect(
+    stdout
+      .trim()
+      .split("\n")
+      .map(l => l.trim())
+      .filter(lfilter),
+  ).toMatchInlineSnapshot(`
+    [
+      "PARENT: reading",
+      "PARENT: received "1"",
+      "PARENT: received "2"",
+      "PARENT: received "3"",
+      "PARENT: received "\\r\\n"",
+      "PARENT: pause",
+      "CHILD: reading",
+      "CHILD: received "A"",
+      "CHILD: received "B"",
+      "CHILD: received "C"",
+      "CHILD: received "D"",
+      "CHILD: received "E"",
+      "CHILD: received "F"",
+      "CHILD: received "G"",
+      "CHILD: received "\\r\\n"",
+      "CHILD: exiting",
+      "PARENT: child exited with code 0. reading again.",
+      "PARENT: received "4"",
+      "PARENT: received "5"",
+      "PARENT: received "6"",
+      "PARENT: received "\\r\\n"",
+      "PARENT: pause",
+      "CHILD: reading",
+      "CHILD: received "H"",
+      "CHILD: received "I"",
+      "CHILD: received "J"",
+      "CHILD: received "K"",
+      "CHILD: received "L"",
+      "CHILD: received "M"",
+      "CHILD: received "N"",
+      "CHILD: received "O"",
+      "CHILD: received "P"",
+      "CHILD: received "\\r\\n"",
+      "CHILD: exiting",
+      "PARENT: child exited with code 0. reading again.",
+      "PARENT: received "\\u0003"",
+      "PARENT: exiting.",
+    ]
+  `);
   expect(exitCode).toBe(0);
 });

@@ -1157,7 +1157,6 @@ pub export fn Bun__NodeHTTPResponse_setClosed(response: *NodeHTTPResponse) void 
 
 const string = []const u8;
 
-const WebSocketServerContext = @import("./WebSocketServerContext.zig");
 const std = @import("std");
 
 const bun = @import("bun");

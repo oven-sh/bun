@@ -402,27 +402,41 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
-  test("module() throws error", async () => {
-    expect(() =>
-      Bun.build({
-        entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
-        plugins: [
-          {
-            name: "test",
-            setup: b => {
-              b.module("ad", () => {
-                return {
-                  exports: {
-                    hello: "world",
-                  },
-                  loader: "object",
-                };
-              });
-            },
+  test("module() is now supported", async () => {
+    const dir = tempDirWithFiles("module-api-test", {
+      "entry.js": `
+        import msg from "test-virtual-module";
+        console.log(msg);
+      `,
+    });
+
+    // module() is now implemented and should not throw
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: String(dir),
+      plugins: [
+        {
+          name: "test",
+          setup: b => {
+            // Verify module() exists and can be called
+            expect(typeof b.module).toBe("function");
+            b.module("test-virtual-module", () => {
+              return {
+                contents: "export default 'Hello from virtual module';",
+                loader: "js",
+              };
+            });
           },
-        ],
-      }),
-    ).toThrow();
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs).toHaveLength(1);
+
+    // Check that the virtual module content is in the output
+    const output = await result.outputs[0].text();
+    expect(output).toContain("Hello from virtual module");
   });
 
   test("non-object plugins throw invalid argument errors", () => {

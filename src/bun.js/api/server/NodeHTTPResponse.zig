@@ -108,7 +108,7 @@ pub fn getThisValue(this: *NodeHTTPResponse) jsc.JSValue {
         return .zero;
     }
 
-    return Bun__getNodeHTTPResponseThisValue(this.raw_response.? == .SSL, this.raw_response.socket());
+    return Bun__getNodeHTTPResponseThisValue(this.raw_response.? == .SSL, this.raw_response.?.socket());
 }
 
 extern "C" fn Bun__getNodeHTTPServerSocketThisValue(bool, *anyopaque) jsc.JSValue;
@@ -116,7 +116,7 @@ pub fn getServerSocketValue(this: *NodeHTTPResponse) jsc.JSValue {
     if (this.flags.socket_closed or this.flags.upgraded or this.raw_response == null) {
         return .zero;
     }
-    return Bun__getNodeHTTPServerSocketThisValue(this.raw_response.? == .SSL, this.raw_response.socket());
+    return Bun__getNodeHTTPServerSocketThisValue(this.raw_response.? == .SSL, this.raw_response.?.socket());
 }
 
 pub fn pauseSocket(this: *NodeHTTPResponse) void {
@@ -506,6 +506,9 @@ pub const AbortEvent = enum(u8) {
 };
 
 fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent, js_value: jsc.JSValue) void {
+    defer {
+        if (event == .abort) this.raw_response = null;
+    }
     if (this.flags.request_has_completed) {
         return;
     }

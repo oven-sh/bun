@@ -1339,9 +1339,9 @@ export class BunTestController implements vscode.Disposable {
       t = t.replaceAll(/\$[\w\.\[\]]+/g, ".*?");
 
       if (test?.tags?.some(tag => tag.id === "test" || tag.id === "it")) {
-        testNames.push(`^ ?${t}$`);
+        testNames.push(`^?${t}$`);
       } else if (test?.tags?.some(tag => tag.id === "describe")) {
-        testNames.push(`^ ?${t} `);
+        testNames.push(`^?${t} `);
       } else {
         testNames.push(t);
       }

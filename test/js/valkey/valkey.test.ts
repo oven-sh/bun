@@ -16,6 +16,7 @@ import {
   TLS_REDIS_URL,
 } from "./test-utils";
 import type { RedisTestStartMessage } from "./valkey.failing-subscriber";
+import type { Message } from "./valkey.failing-subscriber-no-ipc";
 
 for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
   const ctx = { ..._ctx, redis: connectionType ? _ctx.redis : (_ctx.redisTLS as RedisClient) };
@@ -6570,13 +6571,112 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         );
       });
 
+      test("high volume pub/sub", async () => {
+        const channel = testChannel();
+
+        const MESSAGE_COUNT = 1000;
+        const MESSAGE_SIZE = 1024 * 1024;
+
+        let byteCounter = awaitableCounter(5_000); // 5s timeout
+        const subscriber = await ctx.redis.duplicate();
+        await subscriber.subscribe(channel, message => {
+          byteCounter.incrementBy(message.length);
+        });
+
+        for (let i = 0; i < MESSAGE_COUNT; i++) {
+          await ctx.redis.publish(channel, "X".repeat(MESSAGE_SIZE));
+        }
+
+        expect(await byteCounter.untilValue(MESSAGE_COUNT * MESSAGE_SIZE)).toBe(MESSAGE_COUNT * MESSAGE_SIZE);
+        subscriber.close();
+      });
+
+      test("callback errors don't crash the client (without IPC)", async () => {
+        const channel = "error-callback-channel";
+
+        const subscriberProc = spawn({
+          cmd: [bunExe(), `${__dirname}/valkey.failing-subscriber-no-ipc.ts`],
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "pipe",
+          env: { ...process.env, NODE_ENV: "development" },
+        });
+
+        const reader = subscriberProc.stdout.getReader();
+        async function* readLines() {
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              yield line;
+            }
+          }
+        }
+
+        async function waitForChildMessage<MsgT extends Message>(expectedEvent: MsgT["event"]): Promise<MsgT> {
+          for await (const line of readLines()) {
+            const parsed = JSON.parse(line);
+            if (typeof parsed !== "object") {
+              throw new Error("Expected object message");
+            }
+            if (parsed.event === undefined || typeof parsed.event !== "string") {
+              throw new Error("Expected event field as a string");
+            }
+            if (parsed.event !== expectedEvent) {
+              throw new Error(`Expected event ${expectedEvent} but got ${parsed.event}`);
+            }
+            return parsed as MsgT;
+          }
+          throw new Error("Input stream unexpectedly closed");
+        }
+
+        async function messageChild<MsgT extends Message>(msg: MsgT): Promise<void> {
+          subscriberProc.stdin!.write(JSON.stringify(msg) + "\n");
+        }
+
+        try {
+          // Wait for the process to announce it is ready for messages.
+          await waitForChildMessage("ready-for-url");
+
+          // Tell the child to start and connect to Redis.
+          await messageChild({
+            event: "start",
+            url: connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,
+            tlsPaths: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tlsPaths : undefined,
+          });
+          await waitForChildMessage("ready");
+
+          expect(await ctx.redis.publish(channel, "message1")).toBeGreaterThanOrEqual(1);
+          expect(await waitForChildMessage("message")).toMatchObject({ index: 1 });
+
+          // This should throw inside the child process, so it should notify us.
+          expect(await ctx.redis.publish(channel, "message2")).toBeGreaterThanOrEqual(1);
+          await waitForChildMessage("exception");
+
+          expect(await ctx.redis.publish(channel, "message1")).toBeGreaterThanOrEqual(1);
+          expect(await waitForChildMessage("message")).toMatchObject({ index: 3 });
+        } finally {
+          subscriberProc.kill();
+          await subscriberProc.exited;
+        }
+      });
+
       test("callback errors don't crash the client", async () => {
         const channel = "error-callback-channel";
 
-        const STEP_SUBSCRIBED = 1;
-        const STEP_FIRST_MESSAGE = 2;
-        const STEP_SECOND_MESSAGE = 3;
-        const STEP_THIRD_MESSAGE = 4;
+        const STEP_WAITING_FOR_URL = 1;
+        const STEP_SUBSCRIBED = 2;
+        const STEP_FIRST_MESSAGE = 3;
+        const STEP_SECOND_MESSAGE = 4;
+        const STEP_THIRD_MESSAGE = 5;
 
         const stepCounter = awaitableCounter();
         let currentMessage: any = {};
@@ -6595,6 +6695,8 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           },
         });
 
+        await stepCounter.untilValue(STEP_WAITING_FOR_URL);
+        expect(currentMessage.event).toBe("waiting-for-url");
         subscriberProc.send({
           event: "start",
           url: connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,

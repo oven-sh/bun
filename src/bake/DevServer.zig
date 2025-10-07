@@ -3351,13 +3351,15 @@ fn sendSerializedFailures(
                 }
             }
             const fetch_headers = try headers.toFetchHeaders(r.global);
-            var response = Response{
-                .body = .{ .value = .{ .Blob = any_blob.toBlob(r.global) } },
-                .init = Response.Init{
+            var response = Response.init(
+                .{
                     .status_code = 500,
                     .headers = fetch_headers,
                 },
-            };
+                .{ .value = .{ .Blob = any_blob.toBlob(r.global) } },
+                bun.String.empty,
+                false,
+            );
             dev.vm.eventLoop().enter();
             r.promise.reject(r.global, response.toJS(r.global));
             defer dev.vm.eventLoop().exit();

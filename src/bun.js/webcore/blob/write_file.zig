@@ -355,6 +355,8 @@ pub const WriteFileWindows = struct {
 
     const log = bun.Output.scoped(.WriteFile, .hidden);
 
+    pub const WriteFileWindowsError = error{WriteFileWindowsDeinitialized};
+
     pub fn createWithCtx(
         file_blob: Blob,
         bytes_blob: Blob,
@@ -362,7 +364,7 @@ pub const WriteFileWindows = struct {
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
-    ) *WriteFileWindows {
+    ) WriteFileWindowsError!*WriteFileWindows {
         const write_file = WriteFileWindows.new(.{
             .file_blob = file_blob,
             .bytes_blob = bytes_blob,
@@ -380,7 +382,7 @@ pub const WriteFileWindows = struct {
 
         switch (file_blob.store.?.data.file.pathlike) {
             .path => {
-                write_file.open();
+                try write_file.open();
             },
             .fd => {
                 write_file.fd = brk: {
@@ -398,7 +400,7 @@ pub const WriteFileWindows = struct {
                     break :brk file_blob.store.?.data.file.pathlike.fd.uv();
                 };
 
-                write_file.doWriteLoop(write_file.loop());
+                try write_file.doWriteLoop(write_file.loop());
             },
         }
 
@@ -410,18 +412,17 @@ pub const WriteFileWindows = struct {
         return this.event_loop.virtual_machine.event_loop_handle.?;
     }
 
-    pub fn open(this: *WriteFileWindows) void {
+    pub fn open(this: *WriteFileWindows) WriteFileWindowsError!void {
         const path = this.file_blob.store.?.data.file.pathlike.path.slice();
         this.io_request.data = this;
         const rc = uv.uv_fs_open(
             this.loop(),
             &this.io_request,
             &(std.posix.toPosixPath(path) catch {
-                this.throw(bun.sys.Error{
+                return this.throw(bun.sys.Error{
                     .errno = @intFromEnum(bun.sys.E.NAMETOOLONG),
                     .syscall = .open,
                 });
-                return;
             }),
             uv.O.CREAT | uv.O.WRONLY | uv.O.NOCTTY | uv.O.NONBLOCK | uv.O.SEQUENTIAL | uv.O.TRUNC,
             0o644,
@@ -432,7 +433,7 @@ pub const WriteFileWindows = struct {
         if (rc.errEnum()) |err| {
             bun.assert(err != .NOENT);
 
-            this.throw(.{
+            return this.throw(.{
                 .errno = @intFromEnum(err),
                 .path = path,
                 .syscall = .open,
@@ -459,18 +460,22 @@ pub const WriteFileWindows = struct {
                 return;
             }
 
-            this.throw(.{
+            switch (this.throw(.{
                 .errno = @intFromEnum(err),
                 .path = this.file_blob.store.?.data.file.pathlike.path.slice(),
                 .syscall = .open,
-            });
+            })) {
+                error.WriteFileWindowsDeinitialized => {},
+            }
             return;
         }
 
         this.fd = @intCast(rc.int());
 
         // the loop must be copied
-        this.doWriteLoop(this.loop());
+        this.doWriteLoop(this.loop()) catch |e| switch (e) {
+            error.WriteFileWindowsDeinitialized => {},
+        };
     }
 
     fn mkdirp(this: *WriteFileWindows) void {
@@ -494,12 +499,16 @@ pub const WriteFileWindows = struct {
         const err = this.err;
         this.err = null;
         if (err) |err_| {
-            this.throw(err_);
-            bun.default_allocator.free(err_.path);
+            defer bun.default_allocator.free(err_.path);
+            switch (this.throw(err_)) {
+                error.WriteFileWindowsDeinitialized => {},
+            }
             return;
         }
 
-        this.open();
+        this.open() catch |e| switch (e) {
+            error.WriteFileWindowsDeinitialized => {},
+        };
     }
 
     fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: bun.sys.Maybe(void)) void {
@@ -514,28 +523,32 @@ pub const WriteFileWindows = struct {
         bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
         const rc = this.io_request.result;
         if (rc.errno()) |err| {
-            this.throw(.{
+            switch (this.throw(.{
                 .errno = @intCast(err),
                 .syscall = .write,
-            });
+            })) {
+                error.WriteFileWindowsDeinitialized => {},
+            }
             return;
         }
 
         this.total_written += @intCast(rc.int());
-        this.doWriteLoop(this.loop());
+        this.doWriteLoop(this.loop()) catch |e| switch (e) {
+            error.WriteFileWindowsDeinitialized => {},
+        };
     }
 
-    pub fn onFinish(container: *WriteFileWindows) void {
+    pub fn onFinish(container: *WriteFileWindows) WriteFileWindowsError {
         container.event_loop.unrefConcurrently();
         var event_loop = container.event_loop;
         event_loop.enter();
         defer event_loop.exit();
 
         // We don't need to enqueue task since this is already in a task.
-        container.runFromJSThread();
+        return container.runFromJSThread();
     }
 
-    pub fn runFromJSThread(this: *WriteFileWindows) void {
+    pub fn runFromJSThread(this: *WriteFileWindows) WriteFileWindowsError {
         const cb = this.onCompleteCallback;
         const cb_ctx = this.onCompleteCtx;
 
@@ -549,35 +562,35 @@ pub const WriteFileWindows = struct {
             this.deinit();
             cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
         }
+
+        return error.WriteFileWindowsDeinitialized;
     }
 
-    pub fn throw(this: *WriteFileWindows, err: bun.sys.Error) void {
+    pub fn throw(this: *WriteFileWindows, err: bun.sys.Error) WriteFileWindowsError {
         bun.assert(this.err == null);
         this.err = err;
-        this.onFinish();
+        return this.onFinish();
     }
 
     pub fn toSystemError(this: *WriteFileWindows) ?jsc.SystemError {
         if (this.err) |err| {
             var sys_err = err;
-            if (this.owned_fd) {
-                sys_err = sys_err.withPath(this.file_blob.store.?.data.file.pathlike.path.slice());
-            } else {
-                sys_err = sys_err.withFd(this.file_blob.store.?.data.file.pathlike.fd);
-            }
+            sys_err = switch (this.file_blob.store.?.data.file.pathlike) {
+                .path => |path| sys_err.withPath(path.slice()),
+                .fd => |fd| sys_err.withFd(fd),
+            };
 
             return sys_err.toSystemError();
         }
         return null;
     }
 
-    pub fn doWriteLoop(this: *WriteFileWindows, uv_loop: *uv.Loop) void {
+    pub fn doWriteLoop(this: *WriteFileWindows, uv_loop: *uv.Loop) WriteFileWindowsError!void {
         var remain = this.bytes_blob.sharedView();
         remain = remain[@min(this.total_written, remain.len)..];
 
         if (remain.len == 0 or this.err != null) {
-            this.onFinish();
-            return;
+            return this.onFinish();
         }
 
         this.uv_bufs[0].base = @constCast(remain.ptr);
@@ -592,11 +605,10 @@ pub const WriteFileWindows = struct {
         }
 
         if (rc.errno()) |err| {
-            this.throw(.{
+            return this.throw(.{
                 .errno = err,
                 .syscall = .write,
             });
-            return;
         }
 
         if (rc.int() != 0) bun.Output.panic("unexpected return code from uv_fs_write: {d}", .{rc.int()});
@@ -623,8 +635,8 @@ pub const WriteFileWindows = struct {
         context: Context,
         comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) void,
         mkdirp_if_not_exists: bool,
-    ) *WriteFileWindows {
-        return WriteFileWindows.createWithCtx(
+    ) WriteFileWindowsError!*WriteFileWindows {
+        return try WriteFileWindows.createWithCtx(
             file_blob,
             bytes_blob,
             event_loop,

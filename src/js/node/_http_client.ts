@@ -323,8 +323,6 @@ function ClientRequest(input, options, cb) {
   const oldEnd = this.end;
 
   this.end = function (chunk, encoding, callback) {
-    oldEnd?.$call(this, chunk, encoding, callback);
-
     if ($isCallable(chunk)) {
       callback = chunk;
       chunk = undefined;
@@ -351,11 +349,14 @@ function ClientRequest(input, options, cb) {
           callback($ERR_STREAM_ALREADY_FINISHED("end"));
         }
       }
+      return this;
     }
 
     if (callback) {
       this.once("finish", callback);
     }
+
+    oldEnd?.$call(this, chunk, encoding, callback);
 
     if (!this.finished) {
       // If fetch is already started (duplex mode), just notify end

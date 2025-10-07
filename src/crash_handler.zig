@@ -631,60 +631,71 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
         // The usage of `unreachable` in Zig's std.posix may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
             if (comptime bun.Environment.isPosix) {
-                const limit = std.posix.getrlimit(.NOFILE) catch std.mem.zeroes(std.posix.rlimit);
-
-                if (limit.cur > 0 and limit.cur < (8192 * 2)) {
-                    Output.prettyError(
-                        \\
-                        \\<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
-                        \\
-                        \\<d>Current limit: {d}<r>
-                        \\
-                        \\To fix this, try running:
-                        \\
-                        \\  <cyan>ulimit -n 2147483646<r>
-                        \\
-                    ,
-                        .{
-                            limit.cur,
-                        },
+                // First check if the current directory was deleted
+                var cwd_buf: bun.PathBuffer = undefined;
+                const cwd_result = bun.sys.getcwd(&cwd_buf);
+                if (cwd_result == .err and cwd_result.err.getErrno() == .NOENT) {
+                    Output.errGeneric(
+                        "The current directory was deleted",
+                        .{},
                     );
+                    Output.note("Please change to a valid directory and try again", .{});
+                } else {
+                    const limit = std.posix.getrlimit(.NOFILE) catch std.mem.zeroes(std.posix.rlimit);
 
-                    if (bun.Environment.isLinux) {
-                        if (bun.getenvZ("USER")) |user| {
-                            if (user.len > 0) {
-                                Output.prettyError(
-                                    \\
-                                    \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
-                                    \\
-                                    \\ <cyan>{s} soft nofile 2147483646<r>
-                                    \\ <cyan>{s} hard nofile 2147483646<r>
-                                    \\
-                                ,
-                                    .{
-                                        user,
-                                        user,
-                                    },
-                                );
-                            }
-                        }
-                    } else if (bun.Environment.isMac) {
+                    if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                         Output.prettyError(
                             \\
-                            \\If that still doesn't work, you may need to run:
+                            \\<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
                             \\
-                            \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                            \\<d>Current limit: {d}<r>
+                            \\
+                            \\To fix this, try running:
+                            \\
+                            \\  <cyan>ulimit -n 2147483646<r>
                             \\
                         ,
-                            .{},
+                            .{
+                                limit.cur,
+                            },
                         );
+
+                        if (bun.Environment.isLinux) {
+                            if (bun.getenvZ("USER")) |user| {
+                                if (user.len > 0) {
+                                    Output.prettyError(
+                                        \\
+                                        \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
+                                        \\
+                                        \\ <cyan>{s} soft nofile 2147483646<r>
+                                        \\ <cyan>{s} hard nofile 2147483646<r>
+                                        \\
+                                    ,
+                                        .{
+                                            user,
+                                            user,
+                                        },
+                                    );
+                                }
+                            }
+                        } else if (bun.Environment.isMac) {
+                            Output.prettyError(
+                                \\
+                                \\If that still doesn't work, you may need to run:
+                                \\
+                                \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                                \\
+                            ,
+                                .{},
+                            );
+                        }
+                    } else {
+                        Output.errGeneric(
+                            "An unknown error occurred <d>(<red>{s}<r><d>)<r>",
+                            .{@errorName(err)},
+                        );
+                        show_trace = true;
                     }
-                } else {
-                    Output.errGeneric(
-                        "An unknown error occurred <d>(<red>{s}<r><d>)<r>",
-                        .{@errorName(err)},
-                    );
-                    show_trace = true;
                 }
             } else {
                 Output.errGeneric(

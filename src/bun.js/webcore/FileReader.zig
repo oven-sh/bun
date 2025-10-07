@@ -304,7 +304,15 @@ pub fn deinit(this: *FileReader) void {
 
 pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {
     var buf = init_buf;
-    log("onReadChunk() = {d} ({s}) - read_inside_on_pull: {s}", .{ buf.len, @tagName(state), @tagName(this.read_inside_on_pull) });
+    log("onReadChunk() = {d} ({s}) - read_inside_on_pull: {s}, flowing: {}", .{ buf.len, @tagName(state), @tagName(this.read_inside_on_pull), this.flowing });
+
+    // If not flowing (paused), buffer the data but don't process it
+    if (!this.flowing and buf.len > 0) {
+        log("onReadChunk() buffering {d} bytes while paused", .{buf.len});
+        bun.handleOom(this.buffered.appendSlice(bun.default_allocator, buf));
+        // Don't continue reading
+        return false;
+    }
 
     if (this.done) {
         this.reader.close();
@@ -651,6 +659,25 @@ pub fn setFlowing(this: *FileReader, flag: bool) void {
 
     if (flag) {
         this.reader.unpause();
+        // If we have a pending callback and buffered data, fulfill it now
+        if (this.pending.state == .pending and this.buffered.items.len > 0) {
+            var buffer_data = bun.ByteList.moveFromList(&this.buffered);
+            defer buffer_data.deinit(bun.default_allocator);
+
+            if (this.pending_view.len >= buffer_data.len) {
+                @memcpy(this.pending_view[0..buffer_data.len], buffer_data.slice());
+                this.pending.result = .{ .into_array = .{ .value = this.pending_value.get() orelse .zero, .len = buffer_data.len } };
+            } else {
+                this.pending.result = .{ .owned = buffer_data };
+            }
+
+            this.pending_value.clearWithoutDeallocation();
+            this.pending_view = &.{};
+            this.pending.run();
+        } else if (!this.reader.isDone() and !this.reader.hasPendingRead()) {
+            // Kick off a new read if needed
+            this.reader.read();
+        }
     } else {
         this.reader.pause();
     }

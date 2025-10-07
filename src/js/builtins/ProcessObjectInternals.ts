@@ -99,6 +99,7 @@ export function getStdinStream(
   $assert(fd === 0);
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
+  $debug("getStdinStream: source.setFlowing =", typeof source?.setFlowing);
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
@@ -183,16 +184,16 @@ export function getStdinStream(
 
   const originalPause = stream.pause;
   stream.pause = function () {
-    $debug("pause();");
-    console.log("[ProcessObjectInternals] pause() called, source?.setFlowing=", typeof source?.setFlowing);
+    console.error("[ProcessObjectInternals] pause() called, source?.setFlowing =", typeof source?.setFlowing);
+    $debug("pause(); source.setFlowing =", typeof source?.setFlowing);
     source?.setFlowing?.(false);
     return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
-    $debug("resume();");
-    console.log("[ProcessObjectInternals] resume() called");
+    console.error("[ProcessObjectInternals] resume() called, source?.setFlowing =", typeof source?.setFlowing);
+    $debug("resume(); source.setFlowing =", typeof source?.setFlowing);
     own();
     source?.setFlowing?.(true);
     return originalResume.$call(this);

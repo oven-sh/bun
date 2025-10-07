@@ -4,6 +4,18 @@ const KillPass = enum {
     sigkill, // Send SIGKILL for forced termination
 };
 
+/// Kill all child processes using a three-pass strategy:
+///
+/// 1. SIGTERM: Graceful shutdown - allows cleanup handlers to run (500μs delay)
+/// 2. SIGSTOP: Freeze survivors - prevents reparenting races
+/// 3. SIGKILL: Force termination - ensures nothing survives
+///
+/// Each pass freshly enumerates children to catch any spawned during the sequence.
+/// Early bailout if no children remain after any pass.
+///
+/// This is more graceful than SIGSTOP→SIGKILL (allows cleanup) and more thorough
+/// than SIGTERM→SIGKILL (SIGSTOP prevents races). Most processes exit from SIGTERM,
+/// making this faster in practice despite being three passes.
 pub fn killAllChildProcesses() void {
     if (Environment.isWindows) {
         // Windows already uses Job Objects which automatically kill children on exit

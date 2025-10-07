@@ -111,8 +111,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   const required_functions = ["deepClone", "parse", "toCss", "eql"];
 
   return `
-  // Copy manually implemented functions.
-  pub const toCss = properties_impl.property_mixin.toCss
+  pub const toCss = properties_impl.property_mixin.toCss;
 
   // Sanity check to make sure all types have the following functions:
   // - deepClone()
@@ -273,7 +272,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined) {
             return `.${escapeIdent(name)} => |*v| {
-              if (!v[1].eq(property_id.prefix())) return null;
+              if (v[1] != property_id.prefix()) return null;
               return v[0].longhand(property_id);
             },`;
           }
@@ -292,7 +291,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined)
-            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &rhs.${escapeIdent(name)}[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
+            return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &rhs.${escapeIdent(name)}[0]) and v[1] == rhs.${escapeIdent(name)}[1],`;
           return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, v, &rhs.${escapeIdent(name)}),`;
         })
         .join("\n")}
@@ -359,10 +358,9 @@ ${Object.entries(property_defs)
   unparsed,
   custom: CustomPropertyName,
 
-  // Copy manually implemented functions.
   pub const toCss = properties_impl.property_id_mixin.toCss;
-  pub const parse = properties_impl.property_id_mixin.toCss;
-  pub const fromString = properties_impl.property_id_mixin.toCss;
+  pub const parse = properties_impl.property_id_mixin.parse;
+  pub const fromString = properties_impl.property_id_mixin.fromString;
   pub const fromStr = fromString;
 
 ${generatePropertyIdImpl(property_defs)}
@@ -388,7 +386,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   pub fn prefix(this: *const PropertyId) VendorPrefix {
     return switch (this.*) {
       ${generatePropertyIdImplPrefix(property_defs)}
-      .all, .custom, .unparsed => VendorPrefix{},
+      .all, .custom, .unparsed => .empty,
     };
   }
 
@@ -398,15 +396,35 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
         ([prop_name, def], i) => `${escapeIdent(prop_name)}${i === Object.keys(property_defs).length - 1 ? "" : ", "}`,
       )
       .join("")} };
+
+    const PrefixMap = comptime blk: {
+      @setEvalBranchQuota(${Object.keys(property_defs).length * 10});
+      break :blk std.enums.EnumMap(Enum, VendorPrefix).init(.{
+        ${Object.entries(property_defs)
+          .map(([name, meta]) => {
+            return `.${escapeIdent(name)} = ${constructVendorPrefix(meta.valid_prefixes)},`;
+          })
+          .join("\n        ")}
+      });
+    };
+
+    // Normalize empty prefix to .none to avoid matching everything
+    const normalized_pre: VendorPrefix = if (pre.isEmpty()) VendorPrefix{ .none = true } else pre;
+
     const Map = comptime bun.ComptimeEnumMap(Enum);
     if (Map.getASCIIICaseInsensitive(name1)) |prop| {
-      switch (prop) {
-        ${Object.entries(property_defs).map(([name, meta]) => {
-          return `.${escapeIdent(name)} => {
-            const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
-            if (allowed_prefixes.contains(pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
-          }`;
-        })}
+      const allowed_prefixes = PrefixMap.get(prop) orelse return null;
+      if (bun.bits.contains(VendorPrefix, allowed_prefixes, normalized_pre)) {
+        return switch (prop) {
+          ${Object.entries(property_defs)
+            .map(([name, meta]) => {
+              if (meta.valid_prefixes === undefined) {
+                return `.${escapeIdent(name)} => .${escapeIdent(name)},`;
+              }
+              return `.${escapeIdent(name)} => .{ .${escapeIdent(name)} = normalized_pre },`;
+            })
+            .join("\n          ")}
+        };
       }
     }
 
@@ -428,12 +446,13 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
   pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
     return switch (this.*) {
       ${Object.entries(property_defs)
-        .map(([prop_name, def]) => {
-          if (def.valid_prefixes === undefined) return `.${escapeIdent(prop_name)} => {},`;
-          return `.${escapeIdent(prop_name)} => |*p| { p.insert(pre); },`;
-        })
+        .filter(([_, def]) => def.valid_prefixes !== undefined)
+        .map(([prop_name]) => `.${escapeIdent(prop_name)} => |*p| { bun.bits.insert(VendorPrefix, p, pre); },`)
         .join("\n")}
-      else => {},
+      ${Object.entries(property_defs)
+        .filter(([_, def]) => def.valid_prefixes === undefined)
+        .map(([prop_name]) => `.${escapeIdent(prop_name)}`)
+        .join(", ")}, .all, .unparsed, .custom => {},
     };
   }
 
@@ -446,7 +465,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
     inline for (bun.meta.EnumFields(PropertyId), std.meta.fields(PropertyId)) |enum_field, union_field| {
       if (enum_field.value == @intFromEnum(lhs.*)) {
         if (comptime union_field.type == css.VendorPrefix) {
-          return @field(lhs, union_field.name).eql(@field(rhs, union_field.name));
+          return @field(lhs, union_field.name) == @field(rhs, union_field.name);
         } else {
           return true;
         }
@@ -480,7 +499,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
 function generatePropertyIdImplPrefix(property_defs: Record<string, PropertyDef>): string {
   return Object.entries(property_defs)
     .map(([name, meta]) => {
-      if (meta.valid_prefixes === undefined) return `.${escapeIdent(name)} => VendorPrefix{},`;
+      if (meta.valid_prefixes === undefined) return `.${escapeIdent(name)} => .empty,`;
       return `.${escapeIdent(name)} => |p| p,`;
     })
     .join("\n");
@@ -493,7 +512,7 @@ function generatePropertyIdImplFromNameAndPrefix(property_defs: Record<string, P
       if (name === "unparsed") return "";
       return `if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "${name}")) {
   const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
-  if (allowed_prefixes.contains(pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
+  if (bun.bits.contains(VendorPrefix, allowed_prefixes, pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
 } else `;
     })
     .join("\n");
@@ -1796,6 +1815,7 @@ const VendorPrefix = css.VendorPrefix;
 
 const properties_impl = @import("./properties_impl.zig");
 
+
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
 const CustomProperty = css.css_properties.custom.CustomProperty;
@@ -1817,30 +1837,16 @@ const css_values = css.css_values;
 const CssColor = css.css_values.color.CssColor;
 const Image = css.css_values.image.Image;
 const Length = css.css_values.length.Length;
-const LengthValue = css.css_values.length.LengthValue;
 const LengthPercentage = css_values.length.LengthPercentage;
 const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
-const PropertyCategory = css.PropertyCategory;
-const LogicalGroup = css.LogicalGroup;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const CSSInteger = css.css_values.number.CSSInteger;
 const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
-const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
-const Percentage = css.css_values.percentage.Percentage;
-const Angle = css.css_values.angle.Angle;
-const DashedIdentReference = css.css_values.ident.DashedIdentReference;
 const Time = css.css_values.time.Time;
 const EasingFunction = css.css_values.easing.EasingFunction;
-const CustomIdent = css.css_values.ident.CustomIdent;
-const CSSString = css.css_values.string.CSSString;
-const DashedIdent = css.css_values.ident.DashedIdent;
-const Url = css.css_values.url.Url;
-const CustomIdentList = css.css_values.ident.CustomIdentList;
-const Location = css.Location;
 const HorizontalPosition = css.css_values.position.HorizontalPosition;
 const VerticalPosition = css.css_values.position.VerticalPosition;
-const ContainerName = css.css_rules.container.ContainerName;
 
 pub const font = css.css_properties.font;
 const border = css.css_properties.border;
@@ -2039,9 +2045,9 @@ const Position = position.Position;
 
 const Result = css.Result;
 
+const SmallList = css.SmallList;
 const BabyList = bun.BabyList;
 const ArrayList = std.ArrayListUnmanaged;
-const SmallList = css.SmallList;
 
 `;
 }

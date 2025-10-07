@@ -2,12 +2,14 @@
 
 _file_arguments() {
     local extensions="${1}"
+    # escape all bash specials: ]~$"'`><()[{}=|*?;&#\
+    local re_escape_sed='[]~$"'"'"'`><()[{}=|*?;&#\]'
 
     # requires "findutils" package
     readarray -t -d '' COMPREPLY < <(
         find . -regextype posix-extended -maxdepth 1 \
-            -xtype f -regex "${extensions}" -name "${cur_word}*" -printf '%f\0' | \
-        sed -z 's|\n|\$'\''\\n'\''|g' # this is "s|\n|$'\n'|g" expression, it replaces \n with $'\n'.
+            -xtype f -regex "${extensions}" -name "${cur_word}*" -printf '%f\0' |
+        sed -z "s/\n/\$'n'/g;s/${re_escape_sed}/\\\\&/g"
     )
 }
 
@@ -44,12 +46,15 @@ _read_scripts_in_package_json() {
         local matched="${BASH_REMATCH[1]}";
         local scripts="${matched%\}*}";
         local scripts_rem="${scripts}";
+        # escape all bash specials _except_ " (quote) and \ (backslash)
+        # since they ar already escaped in package.json: ]~$'`><()[{}=|*?;&#
+        local re_escape_bash='[]~$\"'"\'"'\`><\()[{\}=|*?;&#\\]'
         while [[ "${scripts_rem}" =~ ^"\""(([^\"\\]|\\.)+)"\""[[:space:]]*":"[[:space:]]*"\""(([^\"\\]|\\.)*)"\""[[:space:]]*(,[[:space:]]*|$) ]]; do
             local script_name="${BASH_REMATCH[1]}";
             package_json_compreply+=( "${script_name}" );
             case "${script_name}" in
                 ( "${cur_word}"* )
-                    COMPREPLY+=( "${script_name}" );
+                    COMPREPLY+=( "${script_name//${re_escape_bash}/\\&}" );
                 ;;
             esac
             scripts_rem="${scripts_rem:${#BASH_REMATCH[0]}}";

@@ -365,6 +365,7 @@ pub const FetchTasklet = struct {
         const globalThis = this.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
         var buffer_reset = true;
+        log("onBodyReceived success={} has_more={}", .{ success, this.result.has_more });
         defer {
             if (buffer_reset) {
                 this.scheduled_response_buffer.reset();
@@ -416,6 +417,7 @@ pub const FetchTasklet = struct {
         }
 
         if (this.readable_stream_ref.get(globalThis)) |readable| {
+            log("onBodyReceived readable_stream_ref", .{});
             if (readable.ptr == .Bytes) {
                 readable.ptr.Bytes.size_hint = this.getSizeHint();
                 // body can be marked as used but we still need to pipe the data
@@ -448,9 +450,11 @@ pub const FetchTasklet = struct {
         }
 
         if (this.getCurrentResponse()) |response| {
+            log("onBodyReceived Current Response", .{});
             const sizeHint = this.getSizeHint();
             response.setSizeHint(sizeHint);
             if (response.getBodyReadableStream(globalThis)) |readable| {
+                log("onBodyReceived CurrentResponse BodyReadableStream", .{});
                 if (readable.ptr == .Bytes) {
                     const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
@@ -492,6 +496,7 @@ pub const FetchTasklet = struct {
                     },
                 };
                 body.* = body_value;
+                log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
                 this.scheduled_response_buffer = .{
                     .allocator = this.memory_reporter.allocator(),
@@ -502,6 +507,7 @@ pub const FetchTasklet = struct {
                 };
 
                 if (old == .Locked) {
+                    log("onBodyReceived old.resolve", .{});
                     old.resolve(body, this.global_this, response.getFetchHeaders());
                 }
             }
